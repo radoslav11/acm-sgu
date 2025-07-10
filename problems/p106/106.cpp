@@ -1,0 +1,172 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int64_t extend_gcd(int64_t a, int64_t b, int64_t &x, int64_t &y) {
+    if(b == 0) {
+        x = 1;
+        y = 0;
+        return a;
+    }
+    int64_t x1, y1;
+    int64_t d = extend_gcd(b, a % b, x1, y1);
+    x = y1;
+    y = x1 - y1 * (a / b);
+    return d;
+}
+
+int64_t a, b, c;
+pair<int64_t, int64_t> range_x, range_y;
+
+void read() {
+    cin >> a >> b >> c;
+    cin >> range_x >> range_y;
+}
+
+int64_t first_in_range_k(
+    pair<int64_t, int64_t> range, int64_t x, int64_t delta
+) {
+    if(delta > 0) {
+        if(x < range.first) {
+            int64_t k = (range.first - x + delta - 1) / delta;
+            return k;
+        } else {
+            int64_t k = (x - range.first) / delta;
+            return -k;
+        }
+    } else {
+        if(x >= range.first) {
+            int64_t k = (x - range.first) / (-delta);
+            return k;
+        } else {
+            int64_t k = (range.first - x - delta - 1) / (-delta);
+            return -k;
+        }
+    }
+}
+
+int64_t last_in_range_k(
+    pair<int64_t, int64_t> range, int64_t x, int64_t delta
+) {
+    if(delta > 0) {
+        if(x > range.second) {
+            int64_t k = (x - range.second + delta - 1) / delta;
+            return -k;
+        } else {
+            int64_t k = (range.second - x) / delta;
+            return k;
+        }
+    } else {
+        if(x <= range.second) {
+            int64_t k = (range.second - x) / (-delta);
+            return -k;
+        } else {
+            int64_t k = (x - range.second - delta - 1) / (-delta);
+            return k;
+        }
+    }
+}
+
+bool not_in_range(int64_t x, pair<int64_t, int64_t> range) {
+    return x < range.first || x > range.second;
+}
+
+void solve() {
+    c *= -1;
+
+    if(b < 0) {
+        a *= -1;
+        b *= -1;
+        c *= -1;
+    }
+
+    if(a == 0 && b == 0) {
+        if(c == 0) {
+            cout << (range_x.second - range_x.first + 1) * 1ll *
+                        (range_y.second - range_y.first + 1)
+                 << '\n';
+        } else {
+            cout << 0 << '\n';
+        }
+        return;
+    }
+
+    int64_t x, y;
+    // a x + b y = g
+    int64_t g = extend_gcd(a, b, x, y);
+
+    if(c % g) {
+        cout << 0 << '\n';
+        return;
+    }
+
+    x *= c / g;
+    y *= c / g;
+
+    int64_t delta_x = b / g;
+    int64_t delta_y = -a / g;
+
+    int64_t lxk = first_in_range_k(range_x, x, delta_x),
+            rxk = last_in_range_k(range_x, x, delta_x);
+    int64_t lyk = first_in_range_k(range_y, y, delta_y),
+            ryk = last_in_range_k(range_y, y, delta_y);
+
+    if(not_in_range(x + lxk * delta_x, range_x) ||
+       not_in_range(y + lyk * delta_y, range_y) ||
+       not_in_range(x + rxk * delta_x, range_x) ||
+       not_in_range(y + ryk * delta_y, range_y)) {
+        cout << 0 << '\n';
+        return;
+    }
+
+    if(lxk > rxk) {
+        swap(lxk, rxk);
+    }
+    if(lyk > ryk) {
+        swap(lyk, ryk);
+    }
+
+    int64_t ans = max(0ll, min(rxk, ryk) - max(lxk, lyk) + 1);
+    cout << ans << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
