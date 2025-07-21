@@ -1,0 +1,334 @@
+1. Abridged Problem Statement  
+Given a prime P, integers K and A (0≤A<P), find all integers x in [0..P−1] satisfying  
+ x^K ≡ A  (mod P).  
+Output the number of solutions and the solutions in ascending order.
+
+2. Detailed Editorial  
+
+Overview  
+We need to solve the congruence x^K ≡ A mod P, where P is prime. If A=0 the only root is x=0 (unless K=0 triviality). Otherwise, we reduce the problem to a discrete logarithm and a linear congruence.
+
+Steps  
+
+1. Handle A=0.  
+   If A=0, then x^K ≡ 0 mod P ⇒ x≡0 is the only root. Return {0}.
+
+2. Check solvability via Fermat’s little theorem.  
+   For a solution to exist, A^((P−1)/d) ≡1 mod P, where d=gcd(K,P−1). If this fails, there are no solutions.
+
+3. Compute a primitive root g of P.  
+   - Factor φ(P)=P−1 into its distinct prime factors.  
+   - Test candidates g=2,3,... until for every prime factor q of P−1 we have g^{(P−1)/q}≠1 mod P.
+
+4. Compute the discrete logarithm T such that g^T ≡ A mod P (baby-step giant-step).  
+   Let m=⌈√(P−1)⌉. Precompute baby steps g^j for 0≤j<m into a hash map. Then compute giant steps A·(g^{−m})^i for i=0.. until a match. Recover T=i·m + j.
+
+5. Solve the linear congruence K·y ≡ T  (mod P−1).  
+   - Let d=gcd(K,P−1).  
+   - If d ∤ T, no solution.  
+   - Otherwise set K'=K/d, M=(P−1)/d, T'=T/d.  
+   - Compute inv_K' = inverse of K' mod M (extended gcd).  
+   - A particular solution is y0 = T'·inv_K' mod M.  
+   - All solutions are y = y0 + i·M for i=0..d−1.
+
+6. Convert solutions y back to x:  
+   x_i = g^{y_i} mod P. Sort and deduplicate.
+
+Complexities  
+– Finding primitive root: O(sqrt(P−1)/log + factor count) but P−1≤1e9 so factoring in O(√P) worst-case.  
+– Discrete log: O(√P log P). For P up to 1e9 this is ~3·10^4 steps, acceptable.  
+– Overall fits in 1s with optimized code.
+
+3. C++ Solution with Line-by-Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+using int64 = long long;
+
+// Fast modular exponentiation: computes base^exp mod m in O(log exp).
+int64 modexp(int64 base, int64 exp, int64 m) {
+    int64 res = 1 % m;
+    base %= m;
+    while (exp > 0) {
+        if (exp & 1) res = (__int128)res * base % m;
+        base = (__int128)base * base % m;
+        exp >>= 1;
+    }
+    return res;
+}
+
+// Extended GCD: returns (g, x, y) such that a*x + b*y = g = gcd(a,b).
+tuple<int64,int64,int64> extgcd(int64 a, int64 b) {
+    if (b == 0) return {a, 1, 0};
+    int64 g, x1, y1;
+    tie(g, x1, y1) = extgcd(b, a % b);
+    int64 x = y1;
+    int64 y = x1 - (a / b) * y1;
+    return {g, x, y};
+}
+
+// Modular inverse of a mod m, if gcd(a,m)==1.
+int64 invmod(int64 a, int64 m) {
+    int64 g, x, y;
+    tie(g, x, y) = extgcd(a, m);
+    if (g != 1) return -1;
+    x %= m;
+    if (x < 0) x += m;
+    return x;
+}
+
+// Factor n into its distinct prime divisors.
+vector<int64> factorize(int64 n) {
+    vector<int64> fac;
+    for (int64 p = 2; p*p <= n; ++p) {
+        if (n % p == 0) {
+            fac.push_back(p);
+            while (n % p == 0) n /= p;
+        }
+    }
+    if (n > 1) fac.push_back(n);
+    return fac;
+}
+
+// Find a primitive root modulo prime p.
+int64 find_primitive(int64 p) {
+    if (p == 2) return 1;
+    int64 phi = p - 1;
+    auto primes = factorize(phi);
+    // Check if g is generator: for all prime factors q of phi, g^(phi/q) != 1
+    for (int64 g = 2; g < p; ++g) {
+        bool ok = true;
+        for (auto q : primes) {
+            if (modexp(g, phi / q, p) == 1) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return g;
+    }
+    return -1;
+}
+
+// Baby-step Giant-step discrete log: find x s.t. a^x ≡ b (mod p), returns x or -1.
+int64 discrete_log(int64 a, int64 b, int64 p) {
+    a %= p; b %= p;
+    if (b == 1) return 0;
+    int64 m = (int64)ceil(sqrt(p - 1));
+    unordered_map<int64,int64> baby;
+    baby.reserve(m+1);
+    // Baby steps: store a^j
+    int64 cur = 1;
+    for (int64 j = 0; j < m; ++j) {
+        if (!baby.count(cur))
+            baby[cur] = j;
+        cur = (__int128)cur * a % p;
+    }
+    // Compute factor a^{-m}
+    int64 factor = modexp(a, p-1-m, p);
+    int64 giant = b;
+    for (int64 i = 0; i <= m; ++i) {
+        if (baby.count(giant)) {
+            return i*m + baby[giant];
+        }
+        giant = (__int128)giant * factor % p;
+    }
+    return -1;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(NULL);
+
+    int64 P, K, A;
+    cin >> P >> K >> A;
+
+    // Special case A == 0
+    if (A == 0) {
+        cout << 1 << "\n" << 0 << "\n";
+        return 0;
+    }
+
+    // Compute d = gcd(K, P-1) and test solvability
+    int64 d = gcd(K, P-1LL);
+    // If A^((P-1)/d) != 1, no solutions
+    if (modexp(A, (P-1)/d, P) != 1) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // Find primitive root g
+    int64 g = find_primitive(P);
+
+    // Compute discrete log T: g^T ≡ A (mod P)
+    int64 T = discrete_log(g, A, P);
+    // T must exist and be divisible by d
+    if (T < 0 || T % d != 0) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // Reduce the linear congruence K*y ≡ T (mod P-1)
+    int64 Kp = K / d;
+    int64 Mp = (P-1) / d;
+    int64 Tp = T / d;
+
+    // Inverse of K' mod M'
+    int64 invKp = invmod(Kp, Mp);
+
+    // Particular solution y0
+    int64 y0 = ( (__int128)Tp * invKp ) % Mp;
+    if (y0 < 0) y0 += Mp;
+
+    // Generate all d solutions: y = y0 + i*Mp
+    vector<int64> roots;
+    for (int64 i = 0; i < d; ++i) {
+        int64 exp = y0 + i*Mp;
+        exp %= (P-1);
+        int64 x = modexp(g, exp, P);
+        roots.push_back(x);
+    }
+
+    sort(roots.begin(), roots.end());
+    roots.erase(unique(roots.begin(), roots.end()), roots.end());
+
+    // Output
+    cout << roots.size() << "\n";
+    for (auto x : roots) cout << x << " ";
+    cout << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+from math import gcd, isqrt
+
+def mod_exp(base, exp, mod):
+    # Fast power: compute (base^exp) % mod in O(log exp).
+    result = 1
+    base %= mod
+    while exp > 0:
+        if exp & 1:
+            result = (result * base) % mod
+        base = (base * base) % mod
+        exp >>= 1
+    return result
+
+def extended_gcd(a, b):
+    # Returns (g, x, y) so that a*x + b*y = g = gcd(a, b).
+    if b == 0:
+        return (a, 1, 0)
+    g, x1, y1 = extended_gcd(b, a % b)
+    # Back-substitute
+    x = y1
+    y = x1 - (a // b) * y1
+    return (g, x, y)
+
+def inv_mod(a, m):
+    # Modular inverse of a mod m, if it exists.
+    g, x, _ = extended_gcd(a, m)
+    if g != 1:
+        return None
+    return x % m
+
+def factorize(n):
+    # Return distinct prime factors of n in O(sqrt(n)).
+    factors = []
+    limit = isqrt(n) + 1
+    for i in range(2, limit):
+        if n % i == 0:
+            factors.append(i)
+            while n % i == 0:
+                n //= i
+    if n > 1:
+        factors.append(n)
+    return factors
+
+def find_primitive_root(p):
+    # Finds smallest generator g of Z_p^*.
+    if p == 2:
+        return 1
+    phi = p - 1
+    primes = factorize(phi)
+    # A candidate g is primitive iff for every prime factor q,
+    # g^(phi/q) != 1 mod p.
+    for g in range(2, p):
+        ok = True
+        for q in primes:
+            if mod_exp(g, phi // q, p) == 1:
+                ok = False
+                break
+        if ok:
+            return g
+    return None
+
+def baby_step_giant_step(a, b, p):
+    # Solve a^x ≡ b mod p, return x or None.
+    a %= p; b %= p
+    if b == 1:
+        return 0
+    m = isqrt(p - 1) + 1
+    # Baby steps: store a^j
+    baby = {}
+    cur = 1
+    for j in range(m):
+        if cur not in baby:
+            baby[cur] = j
+        cur = cur * a % p
+    # Compute a^{-m} = a^(p-1-m) mod p
+    a_inv_m = mod_exp(a, p - 1 - m, p)
+    giant = b
+    for i in range(m):
+        if giant in baby:
+            return i * m + baby[giant]
+        giant = giant * a_inv_m % p
+    return None
+
+def solve_kth_roots(P, K, A):
+    # Special case A = 0
+    if A == 0:
+        return 1, [0]
+    # d = gcd(K, P-1)
+    d = gcd(K, P - 1)
+    # Check if A^((P-1)/d) ≡ 1 mod P; otherwise no roots.
+    if mod_exp(A, (P - 1) // d, P) != 1:
+        return 0, []
+    # Find primitive root and discrete log T: g^T ≡ A
+    g = find_primitive_root(P)
+    T = baby_step_giant_step(g, A, P)
+    if T is None or T % d != 0:
+        return 0, []
+    # Solve K*y ≡ T (mod P-1)
+    Kp = K // d
+    Mp = (P - 1) // d
+    Tp = T // d
+    invKp = inv_mod(Kp, Mp)
+    y0 = Tp * invKp % Mp
+    # Generate all d solutions y = y0 + i*Mp
+    roots = []
+    for i in range(d):
+        exp = (y0 + i * Mp) % (P - 1)
+        roots.append(mod_exp(g, exp, P))
+    roots = sorted(set(roots))
+    return len(roots), roots
+
+def main():
+    data = sys.stdin.read().split()
+    P, K, A = map(int, data)
+    cnt, ans = solve_kth_roots(P, K, A)
+    print(cnt)
+    if cnt > 0:
+        print(*ans)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+1) If A=0, the only solution is x=0.  
+2) Let d=gcd(K,P−1). Require A^{(P−1)/d}≡1 or no roots.  
+3) Find primitive root g mod P.  
+4) Compute T=discrete_log_g(A).  
+5) Solve K·y≡T (mod P−1): d divides T, let y0 = (T/d)·(K/d)^{-1} mod ((P−1)/d).  
+6) Solutions y=y0+i·((P−1)/d), i=0..d−1 ⇒ x=g^y mod P. Sort and output.

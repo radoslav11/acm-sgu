@@ -1,0 +1,326 @@
+1. Abridged Problem Statement  
+Given an H×W binary matrix A, we define an (H−1)×(W−1) fingerprint B by  
+ B[i][j] = A[i][j] + A[i+1][j] + A[i][j+1] + A[i+1][j+1].  
+You are given H, W (≤300) and the matrix B (entries 0…4). Reconstruct any A that matches B or report CORRUPT if none exists.
+
+2. Detailed Editorial  
+
+Overview  
+We need to recover the full H×W matrix A of 0/1 entries given all its overlapping 2×2 sums. A direct brute‐force over 2^(H×W) is impossible. Instead we observe that once we fix the first row and first column of A, every other entry is determined uniquely by the fingerprint equations. We then only need to check that each computed entry is 0 or 1; if a bad value (outside {0,1}) arises, that forbids certain assignments of the row/column variables. These forbidden pairs translate naturally into 2‐SAT clauses.
+
+Step 1: Variables  
+Let r[j] = A[0][j] for j=1…W−1,  
+    c[i] = A[i][0] for i=1…H−1,  
+and also we try both possibilities for A[0][0] = 0 or 1.  
+In total there are (H−1)+(W−1) Boolean variables.
+
+Step 2: Propagation Formula  
+Define a helper array δ so that for i,j≥1,  
+ δ[i][j] = B[i−1][j−1] − δ[i−1][j] − δ[i][j−1] − δ[i−1][j−1].  
+One can show that the true A[i][j] is  
+ A[i][j] = δ[i][j]  
+  + ( (j even) ? r[j] : −r[j] )  
+  + ( (i even) ? c[i] : −c[i] )  
+(with all indices 0‐based). This is just unwinding the 2×2 sum equations.
+
+Step 3: 2‐SAT Constraints  
+For each cell (i,j) with i,j≥1 we compute  
+ val = δ[i][j] ± r[j] ± c[i]  
+according to the parities. If val ∉ {0,1}, then that particular combination  
+(r[j], c[i]) = (v_row, v_col) is impossible. A forbidden pair is a clause  
+ ¬(r[j]=v_row ∧ c[i]=v_col)  
+which in 2‐SAT form is (r[j]≠v_row) ∨ (c[i]≠v_col). We add the two implications accordingly.
+
+Step 4: Solve and Reconstruct  
+We build a 2‐SAT instance with N=(H−1)+(W−1) variables and O(HW) clauses. We run Kosaraju or Tarjan SCC in O(N+number_of_clauses). Try A[0][0]=0 or 1; if satisfiable, read off r[], c[], rebuild A fully and output. Otherwise print CORRUPT.
+
+Complexity: O(H W) time and memory, with constant‐factor for SCC.
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A simple 2‐SAT solver via implication graph + Kosaraju
+struct TwoSat {
+    int n;                        // number of boolean variables
+    vector<vector<int>> adj, radj; // implication graph and its reverse
+    vector<int> comp, order;
+    vector<bool> used;
+
+    TwoSat(int _n=0) { init(_n); }
+    void init(int _n) {
+        n = _n;
+        adj.assign(2*n, {});
+        radj.assign(2*n, {});
+        used.assign(2*n, false);
+        comp.assign(2*n, -1);
+        order.clear();
+    }
+
+    // add implication (x is f) => (y is g)
+    // x, y: variable indices in [0..n-1]
+    // f, g: boolean (false=> normal, true=> negated)
+    void addImp(int x, bool f, int y, bool g) {
+        int u = 2*x + (f?1:0);
+        int v = 2*y + (g?1:0);
+        adj[u].push_back(v);
+        radj[v].push_back(u);
+    }
+
+    // add clause (x=f) OR (y=g)
+    void addOr(int x, bool f, int y, bool g) {
+        // (¬(x=f) => y=g) and (¬(y=g) => x=f)
+        addImp(x, !f, y, g);
+        addImp(y, !g, x, f);
+    }
+
+    // first pass DFS (topological order)
+    void dfs1(int u) {
+        used[u] = true;
+        for(int v: adj[u])
+            if(!used[v]) dfs1(v);
+        order.push_back(u);
+    }
+    // second pass DFS (assign component ids)
+    void dfs2(int u, int cid) {
+        comp[u] = cid;
+        for(int v: radj[u])
+            if(comp[v] < 0) dfs2(v, cid);
+    }
+
+    // Solve 2‐SAT. Returns {satisfiable, assignment}
+    pair<bool, vector<bool>> solve() {
+        // 1) order vertices by finish time
+        for(int i = 0; i < 2*n; i++)
+            if(!used[i]) dfs1(i);
+        // 2) assign component ids in reverse order
+        int cid = 0;
+        for(int i = 2*n-1; i >= 0; i--) {
+            int u = order[i];
+            if(comp[u] < 0) dfs2(u, cid++);
+        }
+        // 3) check for conflicts x and ¬x in same component
+        vector<bool> res(n);
+        for(int i = 0; i < n; i++) {
+            if(comp[2*i] == comp[2*i+1])
+                return {false, {}};
+            // x = true if comp[x] > comp[¬x]
+            res[i] = comp[2*i] < comp[2*i+1];
+        }
+        return {true, res};
+    }
+};
+
+int H, W;
+vector<vector<int>> B; // fingerprint (H-1)x(W-1)
+
+void readInput() {
+    cin >> H >> W;
+    B.assign(H-1, vector<int>(W-1));
+    for(int i = 0; i < H-1; i++){
+        string s; cin >> s;
+        for(int j = 0; j < W-1; j++)
+            B[i][j] = s[j]-'0';
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    readInput();
+
+    // Try both possibilities for A[0][0]
+    for(int start = 0; start < 2; start++){
+        // Precompute delta by pure recurrence
+        vector<vector<int>> delta(H, vector<int>(W, 0));
+        delta[0][0] = start;
+
+        for(int i = 1; i < H; i++){
+            for(int j = 1; j < W; j++){
+                delta[i][j] = B[i-1][j-1]
+                            - delta[i-1][j]
+                            - delta[i][j-1]
+                            - delta[i-1][j-1];
+            }
+        }
+
+        // We have (H-1)+(W-1) boolean vars: c[1..H-1], r[1..W-1]
+        int vars = (H-1) + (W-1);
+        TwoSat solver(vars);
+
+        // For each cell i,j≥1, enforce that computed A[i][j]∈{0,1}
+        for(int i = 1; i < H; i++){
+            for(int j = 1; j < W; j++){
+                // we will iterate over the four possible assignments
+                // of c[i],r[j] and forbid those that push val outside {0,1}
+                for(int ci = 0; ci < 2; ci++){
+                    for(int rj = 0; rj < 2; rj++){
+                        int val = delta[i][j];
+                        // add or subtract row-var based on column parity
+                        val += (j%2==0 ?  ci : -ci);
+                        // add or subtract col-var based on row parity
+                        val += (i%2==0 ?  rj : -rj);
+                        if(val < 0 || val > 1){
+                            // forbid (c[i]=ci AND r[j]=rj)
+                            // c[i] index = i-1, r[j] index = H-1 + (j-1)
+                            int idx_c = i-1;
+                            int idx_r = (H-1) + (j-1);
+                            // clause: (c[i]!=ci OR r[j]!=rj)
+                            solver.addOr(idx_c, !ci, idx_r, !rj);
+                        }
+                    }
+                }
+            }
+        }
+
+        // solve 2‐SAT
+        auto [ok, assign] = solver.solve();
+        if(!ok) continue;
+
+        // reconstruct A
+        vector<vector<int>> A(H, vector<int>(W));
+        A[0][0] = start;
+        // fill first column
+        for(int i = 1; i < H; i++)
+            A[i][0] = assign[i-1];
+        // fill first row
+        for(int j = 1; j < W; j++)
+            A[0][j] = assign[(H-1)+(j-1)];
+        // fill the interior
+        for(int i = 1; i < H; i++){
+            for(int j = 1; j < W; j++){
+                A[i][j] = B[i-1][j-1]
+                        - A[i-1][j]
+                        - A[i][j-1]
+                        - A[i-1][j-1];
+                // must be 0 or 1
+                assert(A[i][j]==0 || A[i][j]==1);
+            }
+        }
+        // output solution
+        for(int i = 0; i < H; i++){
+            for(int j = 0; j < W; j++)
+                cout << A[i][j];
+            cout << "\n";
+        }
+        return 0;
+    }
+
+    // no assignment worked
+    cout << "CORRUPT\n";
+    return 0;
+}
+```
+
+4. Python Solution with Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read():
+    H,W = map(int, sys.stdin.readline().split())
+    B = [list(map(int, list(sys.stdin.readline().strip())))
+         for _ in range(H-1)]
+    return H,W,B
+
+# A simple 2-SAT using Kosaraju
+class TwoSat:
+    def __init__(self,n):
+        self.n = n
+        self.adj = [[] for _ in range(2*n)]
+        self.radj = [[] for _ in range(2*n)]
+    def add_imp(self, x, f, y, g):
+        # (x is f) => (y is g)
+        u = 2*x + (0 if f else 1)
+        v = 2*y + (0 if g else 1)
+        self.adj[u].append(v)
+        self.radj[v].append(u)
+    def add_or(self, x, f, y, g):
+        # (x=f) or (y=g)
+        # ≡ (¬(x=f) => y=g) and (¬(y=g) => x=f)
+        self.add_imp(x, not f, y, g)
+        self.add_imp(y, not g, x, f)
+    def solve(self):
+        n2 = 2*self.n
+        used = [False]*n2
+        order=[]
+        def dfs1(u):
+            used[u]=True
+            for v in self.adj[u]:
+                if not used[v]: dfs1(v)
+            order.append(u)
+        for i in range(n2):
+            if not used[i]: dfs1(i)
+        comp=[-1]*n2
+        cid=0
+        def dfs2(u):
+            comp[u]=cid
+            for v in self.radj[u]:
+                if comp[v]<0: dfs2(v)
+        for u in reversed(order):
+            if comp[u]<0:
+                dfs2(u)
+                cid+=1
+        assign=[False]*self.n
+        for i in range(self.n):
+            if comp[2*i]==comp[2*i+1]:
+                return None
+            assign[i] = (comp[2*i] < comp[2*i+1])
+        return assign
+
+def solve():
+    H,W,B = read()
+    # Try A[0][0] = 0 or 1
+    for start in (0,1):
+        # build delta table by recurrence
+        D = [[0]*W for _ in range(H)]
+        D[0][0] = start
+        for i in range(1,H):
+            for j in range(1,W):
+                D[i][j] = B[i-1][j-1] - D[i-1][j] - D[i][j-1] - D[i-1][j-1]
+
+        vars = (H-1)+(W-1)
+        ts = TwoSat(vars)
+
+        # impose that for each cell A[i][j] computed must be 0 or 1
+        for i in range(1,H):
+            for j in range(1,W):
+                for ci in (0,1):
+                    for rj in (0,1):
+                        val = D[i][j]
+                        # row var index = H-1 + (j-1)
+                        # col var index = i-1
+                        val += (ci if j%2==0 else -ci)
+                        val += (rj if i%2==0 else -rj)
+                        if val not in (0,1):
+                            idx_c = i-1
+                            idx_r = (H-1)+(j-1)
+                            # forbid (c[i]=ci AND r[j]=rj)
+                            ts.add_or(idx_c, ci^1, idx_r, rj^1)
+        res = ts.solve()
+        if res is None:
+            continue
+        # reconstruct A
+        A = [[0]*W for _ in range(H)]
+        A[0][0] = start
+        for i in range(1,H):
+            A[i][0] = res[i-1]
+        for j in range(1,W):
+            A[0][j] = res[(H-1)+(j-1)]
+        for i in range(1,H):
+            for j in range(1,W):
+                A[i][j] = B[i-1][j-1] - A[i-1][j] - A[i][j-1] - A[i-1][j-1]
+        # output
+        for row in A:
+            print("".join(map(str,row)))
+        return
+    print("CORRUPT")
+
+if __name__=="__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+Treat the top row and left column as Boolean variables (plus two choices for A[0][0]). All other A[i][j] are determined by unwinding the 2×2‐sum equations into a recurrence (δ‐array) plus linear corrections from the row/column variables with signs depending on parity. Enforcing each A[i][j]∈{0,1} forbids certain assignments of a pair (row_var, col_var), which is exactly a 2‐SAT clause. Build the implication graph in O(HW), solve 2‐SAT, and reconstruct or report CORRUPT.

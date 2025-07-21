@@ -1,0 +1,190 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+321. The Spy Network
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+The network of spies consists of N intelligence officers. They are numbered with the code numbers from 1 to N so that nobody could discover them. The number 1 belongs to the radiowoman Kat. There is exactly N - 1 communication channels between the spies. It is known that a message from any spy to Kat can reach her. All channels are unidirectional.
+
+A channel can have one of two types: protected and almost protected. It is known that a message will not be intercepted almost surely by the hostile security service if at least half of the channels along the path to radiowoman Kat are protected. What is the minimum number of channels to be made protected from almost protected, so that any message from any spy will not be intercepted almost surely ? What are those channels?
+
+Input
+The first line of the input contains the integer number N (1 ≤ N ≤ 200000). The following N - 1 lines contain the description of the communication channels. Each channel is described by a pair of the code numbers of spies (the direction of the channel is from the first spy to the second one) and the parameter pi. If pi = protected, the channel is protected and if pi = almost protected, the channel is almost protected.
+
+Output
+Write the number of channels to be converted to protected to the first line of the output. To the next line write numbers of channels to be made protected. If there are several solutions, choose any of them.
+
+Example(s)
+sample input
+sample output
+5
+5 1 almost protected
+3 1 almost protected
+2 3 protected
+4 3 almost protected
+2
+1 2
+
+<|response|>
+1. Abridged problem statement  
+We have N spies (nodes), numbered 1…N, and N−1 one‐way channels forming a directed tree pointing toward spy 1 (the root), so every other spy can reach 1 uniquely. Each channel is either “protected” or “almost protected.”  
+A path is safe if at least half of its edges are protected. We want to upgrade (convert) as few almost‐protected channels to protected as possible so that **every** path from any spy to spy 1 is safe. Output the minimum number of upgrades and any valid list of channel indices to upgrade.
+
+2. Key observations  
+- Because there are N−1 edges and every node except 1 has exactly one outgoing edge on the unique path to 1, the structure is a rooted tree directed toward 1.  
+- For any node at depth d (number of edges on its path to root), let k = number of almost-protected edges on that path. Safety requires:  
+    protected ≥ almost  
+    ⇒ (d − k) ≥ k  
+    ⇒ 2k ≤ d  
+- As we do a DFS from the root (following edges in reverse direction), we maintain the multiset S of all almost-protected edges on the current root→u path, stored by their depths.  
+- If at a node u of depth d we ever have 2|S| > d, we must immediately upgrade (remove from S) one almost-protected edge. To maximize its effect on deeper nodes, we should upgrade the edge **closest to the root**, i.e., the one in S with minimum depth.  
+- This greedy never wastes upgrades and ensures all root→u paths satisfy safety. Each edge is inserted and removed at most once, and each upgrade is one set operation, giving O(N log N) time.
+
+3. Full solution approach  
+a. Read N, then for each of the N−1 channels read (u, v, type). Here the directed channel is u→v, meaning on the unique path from u to 1, v is one step closer to 1.  
+b. Build an adjacency list **reversing** the input edges: from v we store child u. Each entry carries (child, edge_index, isAlmost). We number input channels 1…N−1 in reading order; `isAlmost = 1` if type is “almost protected,” else 0.  
+c. Declare a set `S` of pairs (depth_of_edge, edge_index) for the currently active almost edges. Also prepare a vector `answer` to collect upgrades.  
+d. DFS(node u, integer depth):  
+   1. While 2*|S| > depth, remove the element of S with smallest `depth_of_edge` (that is `*S.begin()`), record its `edge_index` in `answer`.  
+   2. For each child v of u via edge index `idx` and `isAlmost`:  
+      - If `isAlmost`, insert `(depth+1, idx)` into S.  
+      - Recursively call DFS(v, depth+1).  
+      - Upon return, if `isAlmost` and `(depth+1, idx)` is still in S, erase it (backtrack).  
+e. Start DFS from root = 1 (zero‐based: node 0) with depth = 0.  
+f. Print the size of `answer` and then the list of indices.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int N;
+// adj[u] = list of (child v, edge_index, isAlmost)
+vector<vector<tuple<int,int,int>>> adj;
+vector<int> answer;
+set<pair<int,int>> almostSet;  
+//   stores (depthOfEdge, edgeIndex) for all active almost-protected edges
+
+void dfs(int u, int depth) {
+    // If too many almost edges on the path, upgrade the earliest one
+    while ((int)almostSet.size() * 2 > depth) {
+        auto it = almostSet.begin();           // smallest depthOfEdge
+        answer.push_back(it->second);          // record this edge index
+        almostSet.erase(it);                   // treat it as protected
+    }
+    // Visit children
+    for (auto &e : adj[u]) {
+        int v, idx, isAlmost;
+        tie(v, idx, isAlmost) = e;
+        if (isAlmost) {
+            // This edge contributes an almost count at depth+1
+            almostSet.insert({depth+1, idx});
+        }
+        dfs(v, depth+1);
+        // Backtrack: remove if still present
+        if (isAlmost) {
+            auto key = make_pair(depth+1, idx);
+            auto it2 = almostSet.find(key);
+            if (it2 != almostSet.end())
+                almostSet.erase(it2);
+        }
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> N;
+    adj.assign(N, {});
+
+    // Read channels 1..N-1
+    for(int i = 1; i < N; i++){
+        int u, v;
+        string p1, p2;
+        cin >> u >> v;
+        // Next token(s) form type: either "protected" or "almost protected"
+        // We peek next character
+        char c = cin.peek();
+        // Read remainder of line
+        getline(cin, p1);
+        bool isAlmost = (p1.find("almost") != string::npos);
+
+        // Convert to 0-based
+        --u; --v;
+        // reverse the edge: v -> u
+        adj[v].push_back(make_tuple(u, i, isAlmost ? 1 : 0));
+    }
+
+    dfs(0, 0);  // start from spy #1 (0 in zero-based), depth=0
+
+    // Output the upgrades
+    cout << answer.size() << "\n";
+    for (int i = 0; i < (int)answer.size(); i++) {
+        cout << answer[i] << (i+1==(int)answer.size() ? "\n" : " ");
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(1 << 25)
+input = sys.stdin.readline
+
+N = int(input())
+# adj[u] = list of (child v, edge_index, isAlmost)
+adj = [[] for _ in range(N)]
+
+for idx in range(1, N):
+    parts = input().split()
+    u, v = int(parts[0]) - 1, int(parts[1]) - 1
+    # parts[2:] is either ["almost","protected"] or ["protected"]
+    isAlmost = (parts[2][0] == 'a')
+    # reverse the edge: v -> u
+    adj[v].append((u, idx, isAlmost))
+
+# We keep a set of (depth_of_edge, edge_index) for active almost edges
+import bisect
+# We'll simulate an ordered multiset with a list for simplicity
+active = []
+answer = []
+
+def dfs(u, depth):
+    # Enforce safety: while 2*|active| > depth, upgrade the earliest edge
+    while len(active) * 2 > depth:
+        d0, e0 = active.pop(0)  # pop the smallest depth_of_edge
+        answer.append(e0)
+    # Traverse children
+    for (v, idx, isAlmost) in adj[u]:
+        if isAlmost:
+            # insert in sorted order by depth then idx
+            bisect.insort(active, (depth+1, idx))
+        dfs(v, depth+1)
+        # backtrack
+        if isAlmost:
+            key = (depth+1, idx)
+            # remove if still present
+            pos = bisect.bisect_left(active, key)
+            if pos < len(active) and active[pos] == key:
+                active.pop(pos)
+
+dfs(0, 0)  # start DFS at root=0 with depth=0
+
+# Output result
+print(len(answer))
+print(*answer)
+```
+
+Explanation of main steps:  
+- We reverse edges to walk **down** the tree from node 1.  
+- We maintain `active`, the depths of almost edges on the current path.  
+- At each node of depth `d`, if `2*len(active) > d`, we repeatedly remove the earliest almost edge (shallowest) until `2*len(active) ≤ d`.  
+- Each removal corresponds to an upgrade; we record its input index.  
+- This guarantees all root→u paths satisfy the condition with a minimum number of upgrades.

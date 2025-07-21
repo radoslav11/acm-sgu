@@ -1,0 +1,307 @@
+1. Abridged Problem Statement  
+A group of M tourists must cross a river of width W by jumping among N floating rubbish piles at coordinates (xi, yi). Each jump (in any direction) can cover at most distance D and takes exactly 1 second. Pile i can hold at most ci tourists simultaneously. Tourists start on the near bank (y=0) and wish to reach the far bank (y=W). Determine the minimal time for all M tourists to cross, or report IMPOSSIBLE.
+
+2. Detailed Editorial  
+We model the crossing as a maximum-flow problem on a time-expanded network:
+
+  • Time layers: we consider discrete time steps t=0,1,2,…,T.  One jump corresponds to moving from layer t to t+1.  
+  • Nodes: for each pile i and each time t we create two nodes: “in” and “out.”  We will enforce pile capacity by an edge from in→out of capacity ci.  
+  • Source and sink: a super-source S and super-sink T.  
+  • Edges from the start bank: at every time t, if pile i is within jump distance D of y=0 (i.e., yi ≤ D), we add an infinite-capacity edge S→(t,i,in).  
+  • Edges to the far bank: at every time t, if yi+D ≥ W, we add an infinite-capacity edge (t,i,out)→T.  
+  • Jump edges between piles: for each t>0, and for any two piles i and j with squared distance ≤D², add an infinite-capacity edge from (t−1,j,out)→(t,i,in).  
+  • Special case: if D ≥ W, every tourist can jump directly from bank to bank in 1 second; answer is 1.  
+
+We then ask: for increasing T, what is the maximum flow from S to T?  Each unit of flow represents one tourist’s journey over up to T+1 jumps (T time-steps means T+2 seconds, counting the final jump to the far bank).  Once the cumulative flow ≥M, we output the corresponding time.  If even with T up to N+M no flow of M is possible, we output IMPOSSIBLE.
+
+Complexity: N≤50, M≤50, T≤N+M≈100.  Dinic’s algorithm handles these sizes easily.
+
+3. Commented C++ Solution  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Dinic max-flow implementation with integer capacities
+struct Dinic {
+    struct Edge { int to, rev; int cap; };
+    int n, S, T;
+    vector<vector<Edge>> adj;
+    vector<int> level, ptr;
+
+    Dinic(int n_) : n(n_), adj(n_), level(n_), ptr(n_) {}
+
+    void add_edge(int u, int v, int c) {
+        // forward edge u->v with capacity c, backward edge v->u with capacity 0
+        adj[u].push_back({v, (int)adj[v].size(), c});
+        adj[v].push_back({u, (int)adj[u].size()-1, 0});
+    }
+
+    bool bfs() {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        q.push(S);
+        level[S] = 0;
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e: adj[u]) {
+                if (level[e.to] < 0 && e.cap > 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[T] >= 0;
+    }
+
+    int dfs(int u, int pushed) {
+        if (u == T || pushed == 0) return pushed;
+        for (int &cid = ptr[u]; cid < (int)adj[u].size(); cid++) {
+            auto &e = adj[u][cid];
+            if (level[e.to] != level[u] + 1 || e.cap == 0) continue;
+            int tr = dfs(e.to, min(pushed, e.cap));
+            if (tr == 0) continue;
+            e.cap -= tr;
+            adj[e.to][e.rev].cap += tr;
+            return tr;
+        }
+        return 0;
+    }
+
+    int maxflow(int S_, int T_) {
+        S = S_; T = T_;
+        int flow = 0;
+        while (bfs()) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (int pushed = dfs(S, INT_MAX))
+                flow += pushed;
+        }
+        return flow;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M, D, W;
+    cin >> N >> M >> D >> W;
+    vector<tuple<int,int,int>> piles(N);
+    for(int i=0;i<N;i++){
+        int x,y,c; cin>>x>>y>>c;
+        piles[i] = {x,y,c};
+    }
+
+    // If one jump suffices, answer is 1
+    if (D >= W) {
+        cout << 1 << "\n";
+        return 0;
+    }
+
+    // Upper bound on time-layers to try
+    int maxT = N + M;
+    // We do a binary search on T in [0..maxT], asking if flow≥M
+    int lo = 0, hi = maxT, answer = -1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        // Build graph for T = mid
+        // Node indexing:
+        // 0              = source
+        // 1              = sink
+        // Then for each t=0..mid, each pile i, two nodes:
+        //   id_in  = 2 + (t* N + i)*2
+        //   id_out = 2 + (t* N + i)*2 + 1
+        int layers = mid + 1;
+        int totalNodes = 2 + layers * N * 2;
+        int SRC = 0, SNK = 1;
+        Dinic dinic(totalNodes);
+
+        auto id_in = [&](int t,int i){
+            return 2 + (t*N + i)*2;
+        };
+        auto id_out = [&](int t,int i){
+            return 2 + (t*N + i)*2 + 1;
+        };
+
+        // Add edges
+        for(int t=0; t<layers; t++){
+            for(int i=0; i<N; i++){
+                auto [x,y,c] = piles[i];
+                // capacity of the pile
+                dinic.add_edge(id_in(t,i), id_out(t,i), c);
+
+                // from source if reachable from start bank
+                if (y <= D) {
+                    dinic.add_edge(SRC, id_in(t,i), INT_MAX);
+                }
+                // to sink if can jump to far bank
+                if (y + D >= W) {
+                    dinic.add_edge(id_out(t,i), SNK, INT_MAX);
+                }
+                // transitions from previous time
+                if (t > 0) {
+                    for(int j=0; j<N; j++){
+                        auto [x2,y2,c2] = piles[j];
+                        long long dx = x - x2, dy = y - y2;
+                        if (dx*dx + dy*dy <= 1LL*D*D) {
+                            dinic.add_edge(id_out(t-1,j), id_in(t,i), INT_MAX);
+                        }
+                    }
+                }
+            }
+        }
+
+        int flow = dinic.maxflow(SRC, SNK);
+        if (flow >= M) {
+            answer = mid;
+            hi = mid-1;
+        } else {
+            lo = mid+1;
+        }
+    }
+
+    if (answer < 0) {
+        cout << "IMPOSSIBLE\n";
+    } else {
+        // mid jumps => mid+2 seconds (including final jump to far bank)
+        cout << answer + 2 << "\n";
+    }
+    return 0;
+}
+```
+
+4. Python Solution with Comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+        self.level = [0]*n
+        self.it = [0]*n
+
+    def add_edge(self, u, v, c):
+        # forward edge index len(adj[u]), backward edge index len(adj[v])
+        self.adj[u].append([v, c, len(self.adj[v])])
+        self.adj[v].append([u, 0, len(self.adj[u]) - 1])
+
+    def bfs(self, S, T):
+        for i in range(self.n):
+            self.level[i] = -1
+        dq = deque([S])
+        self.level[S] = 0
+        while dq:
+            u = dq.popleft()
+            for v, cap, rev in self.adj[u]:
+                if cap > 0 and self.level[v] < 0:
+                    self.level[v] = self.level[u] + 1
+                    dq.append(v)
+        return self.level[T] >= 0
+
+    def dfs(self, u, T, flow):
+        if u == T:
+            return flow
+        for i in range(self.it[u], len(self.adj[u])):
+            self.it[u] = i
+            v, cap, rev = self.adj[u][i]
+            if cap and self.level[v] == self.level[u] + 1:
+                pushed = self.dfs(v, T, min(flow, cap))
+                if pushed:
+                    # reduce forward, increase backward
+                    self.adj[u][i][1] -= pushed
+                    self.adj[v][rev][1] += pushed
+                    return pushed
+        return 0
+
+    def maxflow(self, S, T):
+        flow = 0
+        INF = 10**18
+        while self.bfs(S, T):
+            self.it = [0]*self.n
+            while True:
+                pushed = self.dfs(S, T, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    M = int(next(it))
+    D = int(next(it))
+    W = int(next(it))
+    piles = []
+    for _ in range(N):
+        x = int(next(it)); y = int(next(it)); c = int(next(it))
+        piles.append((x, y, c))
+
+    # Special case: direct jump bank->bank
+    if D >= W:
+        print(1)
+        return
+
+    # Precompute adjacency by distance
+    adj = [[False]*N for _ in range(N)]
+    for i in range(N):
+        x1,y1,_ = piles[i]
+        for j in range(N):
+            x2,y2,_ = piles[j]
+            dx, dy = x1-x2, y1-y2
+            adj[i][j] = (dx*dx + dy*dy <= D*D)
+
+    # binary search minimal T such that flow >= M
+    lo, hi = 0, N + M
+    res = -1
+    while lo <= hi:
+        mid = (lo + hi)//2
+        # build time-expanded graph for t=0..mid
+        layers = mid + 1
+        # nodes: source=0, sink=1, then for each (t,i), two nodes
+        node_cnt = 2 + layers*N*2
+        SRC, SNK = 0, 1
+        dinic = Dinic(node_cnt)
+
+        def in_id(t, i):
+            return 2 + (t*N + i)*2
+        def out_id(t, i):
+            return 2 + (t*N + i)*2 + 1
+
+        # add edges
+        for t in range(layers):
+            for i, (x,y,c) in enumerate(piles):
+                # capacity of pile
+                dinic.add_edge(in_id(t,i), out_id(t,i), c)
+                # reachable from start bank
+                if y <= D:
+                    dinic.add_edge(SRC, in_id(t,i), 10**18)
+                # can jump to far bank
+                if y + D >= W:
+                    dinic.add_edge(out_id(t,i), SNK, 10**18)
+                # transitions from previous time
+                if t > 0:
+                    for j in range(N):
+                        if adj[j][i]:  # pile j(t-1,out) -> i(t,in)
+                            dinic.add_edge(out_id(t-1,j), in_id(t,i), 10**18)
+
+        # compute max flow
+        f = dinic.maxflow(SRC, SNK)
+        if f >= M:
+            res = mid
+            hi = mid - 1
+        else:
+            lo = mid + 1
+
+    if res < 0:
+        print("IMPOSSIBLE")
+    else:
+        print(res + 2)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+Model the tourists’ crossing as flow on a time-expanded graph: for each time step t and each pile i, create an “in”→“out” edge of capacity ci. Connect the source to piles reachable from the start bank at every t, and piles able to reach the far bank to the sink. Between time layers add infinite-capacity edges for feasible jumps. Find the smallest T (number of inter-pile transitions) so that the max flow ≥ M; output T+2 seconds (or 1 if D≥W).

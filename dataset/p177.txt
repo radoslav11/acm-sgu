@@ -1,0 +1,263 @@
+1. Abridged Problem Statement  
+Given an N×N grid initially all white, perform M repaint operations. Each operation specifies a rectangle by its corners (x₁,y₁) and (x₂,y₂) and a color C (‘w’ for white, ‘b’ for black). After all operations, output the total number of white cells.
+
+2. Detailed Editorial
+
+Overview  
+We must support up to N=1000 and M=5000 rectangle-paint operations on an N×N grid and then count white cells. A naïve per-cell update in each rectangle (O(M·N²)) would be too slow. Instead we exploit bit-parallelism: represent each row as a bitset of length N, where bit j=1 means “white” and 0 means “black.” Then:
+
+- To paint columns y₁…y₂ white in row i, we OR that row’s bitset with a mask having 1s in [y₁,y₂].
+- To paint them black, we AND with the bitwise complement of that mask.
+
+A single row update is O(N/word_size)≈O(N/64). Applying this for all rows x₁…x₂ makes a rectangle update O((x₂–x₁+1)·N/64). In the worst case M=5000 and each rectangle covers almost all rows, total cost is M·(N/64)·N≈5000·(1000/64)≈78 million 64-bit operations. This passes comfortably in 1.25 s in C++.  
+
+Further optimization (used in the provided C++ code) is a √-decomposition over rows: group rows into blocks of size B≈√N. For each block, maintain two lazy bitsets: one for pending ORs and one for pending ANDs. When a rectangle fully covers an entire block, we update the block’s lazy bitsets in O(N/64) time instead of touching each row. When it partially covers a block, we first “push” (apply) that block’s lazies to its rows, then do per-row updates. Finally, we push all lazies and count bits.
+
+Step-by-step  
+1. Initialize each row’s bitset to all 1s (white).  
+2. Compute block size sq = ⌊√N⌋+1, number of blocks ≈ ⌈N/sq⌉.  
+3. For each operation (x₁,y₁)-(x₂,y₂), normalize coordinates so x₁≤x₂, y₁≤y₂ and build mask = ((1<<(y₂−y₁+1))−1) << y₁.  
+4. Identify block indices r₁ = x₁/sq, r₂ = x₂/sq.  
+   - If r₁=r₂, push that block’s lazy into rows and update rows x₁…x₂ directly with OR or AND.  
+   - Else: push lazies for r₁ and r₂, update the partial rows at the ends; for each fully covered block between r₁+1 and r₂−1, update its lazy OR/AND bitsets.  
+5. After all operations, push all lazies to rows, then sum the counts of 1-bits in each row.
+
+3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair to ease debugging (not used in final solution)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pair (not essential here)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload << for vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int B = 1024;           // Max grid width (bitset size)
+
+int n, m;                     // Grid size and number of operations
+int sq;                       // Block size ≈ sqrt(n)
+vector<bitset<B>> grid;       // grid[i] stores row i’s bits
+vector<bitset<B>> set_1_lazy; // Lazy OR masks per block
+vector<bitset<B>> set_0_lazy; // Lazy AND masks per block
+bitset<B> full_m;             // mask with first n bits = 1
+
+// Apply pending lazy updates for block 'bucket' to its rows
+void apply_lazy(
+    vector<bitset<B>>& grid,
+    vector<bitset<B>>& set_1_lazy,
+    vector<bitset<B>>& set_0_lazy,
+    int bucket,
+    int n,
+    int sq
+) {
+    int start = bucket * sq;                    // first row in this block
+    int end = min(n, (bucket + 1) * sq);        // one past last row
+    for(int i = start; i < end; i++) {
+        // OR with pending whites, then AND with complement of pending blacks
+        grid[i] |= set_1_lazy[bucket];
+        grid[i] &= ~set_0_lazy[bucket];
+    }
+    // Clear lazies once applied
+    set_1_lazy[bucket].reset();
+    set_0_lazy[bucket].reset();
+}
+
+// (Optional) debugging printer to show current grid state
+void print_table(
+    vector<bitset<B>>& grid, 
+    vector<bitset<B>>& set_1_lazy,
+    vector<bitset<B>>& set_0_lazy, 
+    int n, 
+    int sq
+) {
+    // First push all lazies
+    for(int bucket = 0; bucket * sq < n; bucket++) {
+        apply_lazy(grid, set_1_lazy, set_0_lazy, bucket, n, sq);
+    }
+    // Print rows as W/B characters
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            cout << (grid[i][j] ? 'W' : 'B');
+        }
+        cout << '\n';
+    }
+    cout << '\n';
+}
+
+// Read input
+void read() {
+    cin >> n >> m;
+}
+
+void solve() {
+    sq = sqrt(n) + 1;                      // choose block size
+    grid.assign(n, bitset<B>());           // n empty bitsets
+    set_1_lazy.assign(sq, bitset<B>());    // lazies per block
+    set_0_lazy.assign(sq, bitset<B>());
+
+    // Build a bitset with first n bits = 1
+    full_m.reset();
+    for(int i = 0; i < n; i++) {
+        full_m.set(i);
+    }
+    // Initialize all rows to white
+    for(int i = 0; i < n; i++) {
+        grid[i] = full_m;
+    }
+
+    // Process each repaint operation
+    while(m--) {
+        int x1, y1, x2, y2;
+        string c;
+        cin >> x1 >> y1 >> x2 >> y2 >> c; // read corners and color
+        // Convert to 0-based
+        x1--; y1--; x2--; y2--;
+        if(x1 > x2) swap(x1, x2);
+        if(y1 > y2) swap(y1, y2);
+
+        bool color = (c == "w"); // true=white, false=black
+        // Build mask with bits y1..y2 set
+        bitset<B> mask = (full_m >> (n - (y2 - y1 + 1))) << y1;
+
+        int r1 = x1 / sq;  // block index of top row
+        int r2 = x2 / sq;  // block index of bottom row
+
+        if(r1 == r2) {
+            // Entirely within one block: push its lazy
+            apply_lazy(grid, set_1_lazy, set_0_lazy, r1, n, sq);
+            // Update rows x1..x2 directly
+            for(int i = x1; i <= x2; i++) {
+                if(color) grid[i] |= mask;
+                else       grid[i] &= ~mask;
+            }
+        } else {
+            // Left partial block
+            apply_lazy(grid, set_1_lazy, set_0_lazy, r1, n, sq);
+            for(int i = x1; i < (r1 + 1) * sq && i <= x2; i++) {
+                if(color) grid[i] |= mask;
+                else       grid[i] &= ~mask;
+            }
+            // Right partial block
+            apply_lazy(grid, set_1_lazy, set_0_lazy, r2, n, sq);
+            for(int i = r2 * sq; i <= x2; i++) {
+                if(color) grid[i] |= mask;
+                else       grid[i] &= ~mask;
+            }
+            // Fully covered blocks in between
+            for(int b = r1 + 1; b < r2; b++) {
+                if(color) {
+                    // Mark to OR mask later, clear any pending AND on those bits
+                    set_1_lazy[b] |= mask;
+                    set_0_lazy[b] &= ~mask;
+                } else {
+                    // Mark to AND-mask-out later, clear any pending OR on those bits
+                    set_0_lazy[b] |= mask;
+                    set_1_lazy[b] &= ~mask;
+                }
+            }
+        }
+
+        // (Optional) debug print
+        // print_table(grid, set_1_lazy, set_0_lazy, n, sq);
+    }
+
+    // Push remaining lazies to actual rows
+    for(int bucket = 0; bucket * sq < n; bucket++) {
+        apply_lazy(grid, set_1_lazy, set_0_lazy, bucket, n, sq);
+    }
+    // Count white bits in each row
+    long long ans = 0;
+    for(int i = 0; i < n; i++) {
+        ans += grid[i].count();
+    }
+    cout << ans << '\n';
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+input = sys.stdin.readline
+
+def main():
+    n, m = map(int, input().split())
+    # rows[i] is a Python int whose binary representation stores row i
+    # Bit j=1 means white, 0 means black.
+    rows = [(1 << n) - 1 for _ in range(n)]  # initialize all n bits to 1
+
+    for _ in range(m):
+        x1, y1, x2, y2, c = input().split()
+        x1 = int(x1)-1; y1 = int(y1)-1
+        x2 = int(x2)-1; y2 = int(y2)-1
+        # Ensure x1<=x2 and y1<=y2
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+
+        length = y2 - y1 + 1
+        # mask with length 1s, then shift to y1
+        mask = ((1 << length) - 1) << y1
+
+        if c == 'w':
+            # paint white: OR with mask
+            for i in range(x1, x2+1):
+                rows[i] |= mask
+        else:
+            # paint black: AND with complement of mask
+            comp = ~mask
+            for i in range(x1, x2+1):
+                rows[i] &= comp
+
+    # Count total white bits
+    total = 0
+    for r in rows:
+        # built-in bit_count() in Python 3.8+
+        total += r.bit_count()
+    print(total)
+
+if __name__ == '__main__':
+    main()
+```
+
+5. Compressed Editorial  
+- Represent each row as an N-bit bitmask.  
+- Build for any rectangle the column-mask `( (1<<(y2−y1+1))−1 )<<y1`.  
+- For each row in [x1…x2], do `row |= mask` for white or `row &= ~mask` for black.  
+- Bitwise operations on 64-bit (or Python int) chunks make this fast.  
+- Optionally speed up further via √-decomposition and lazy masks on row-blocks.

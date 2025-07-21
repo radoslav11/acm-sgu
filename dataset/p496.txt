@@ -1,0 +1,199 @@
+1. Concise Problem Statement  
+Given N (≤5000) non-degenerate line segments in the plane, count how many unordered pairs of segments form an L-shape—that is, they share exactly one endpoint and meet at a right angle.
+
+2. Detailed Editorial  
+
+Overview  
+We need to count all pairs of segments (i, j) such that they share an endpoint P and their directions at P are perpendicular. Since N is up to 5000, an O(N²) check of all pairs is too slow (≈25 million checks). Instead, we process locally at each point.
+
+Step-by-step  
+1. **Representation of a segment direction**  
+   For a segment with endpoints (x₁,y₁)→(x₂,y₂), define its direction vector Δ=(dx,dy)=(x₂−x₁,y₂−y₁). Normalize Δ by dividing by g = gcd(|dx|,|dy|) to make it primitive. Then canonically orient it so that:
+   - dx < 0 ⇒ flip both signs
+   - if dx==0, set dy=±1
+   - if dy==0, set dx=±1  
+   This ensures two collinear segments have the same direction key (dx,dy).
+
+2. **Bucket by endpoints**  
+   Build a map `M` whose keys are points P, and whose values are maps from direction Δ to the count of segments at P having that direction. For each segment, insert its normalized Δ into both endpoint buckets.
+
+3. **Counting perpendicular pairs at each point**  
+   At a point P, suppose we have counts c(Δ) for each direction Δ. A perpendicular direction to Δ=(dx,dy) is Δ′ = (−dy,dx) (then renormalized). The number of L-shapes at P using directions Δ and Δ′ is c(Δ)·c(Δ′). Summing over Δ gives twice the true count, because when you visit Δ′ you count the same pairs again. So we sum all c(Δ)·c(Δ′) and then divide by 2.
+
+4. **Aggregate over all endpoints**  
+   Sum the half-counts from every point to get the final answer.
+
+Complexities  
+- Building the structure: O(N · log N) for gcd and map insertions.  
+- Counting: total unique (point,direction) pairs ≤2N, so iterating and lookups are O(N · log N).  
+Fits within time/memory.
+
+3. C++ Solution with Inline Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << and >> for convenience (pairs, vectors)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n;
+// Each segment: {x1, y1, x2, y2}
+vector<array<int,4>> a;
+
+// Read input
+void read() {
+    cin >> n;
+    a.resize(n);
+    for(auto& seg: a) {
+        cin >> seg[0] >> seg[1] >> seg[2] >> seg[3];
+    }
+}
+
+void solve() {
+    // For each point P=(x,y), map direction (dx,dy) → count
+    map<pair<int,int>, map<pair<int,int>,int>> mp;
+
+    // Populate mp
+    for(int i = 0; i < n; i++) {
+        int x1 = a[i][0], y1 = a[i][1];
+        int x2 = a[i][2], y2 = a[i][3];
+        int dx = x2 - x1, dy = y2 - y1;
+        int g = gcd(dx, dy);
+        dx /= g;  // make primitive
+        dy /= g;
+        // Canonical orientation: ensure unique key
+        if (dx < 0) {
+            dx = -dx; dy = -dy;
+        }
+        if (dx == 0) {
+            // purely vertical: force dy = +1
+            dy = 1;
+        }
+        if (dy == 0) {
+            // purely horizontal: force dx = +1
+            dx = 1;
+        }
+        // Count this direction at both endpoints
+        mp[{x1,y1}][{dx,dy}]++;
+        mp[{x2,y2}][{dx,dy}]++;
+    }
+
+    long long total = 0;
+    // For each shared endpoint
+    for(auto& [pt, slopes]: mp) {
+        long long local = 0;
+        // For each direction at this point
+        for(auto& [slope, cnt]: slopes) {
+            // compute perpendicular: (-dy, dx)
+            int dx = slope.first, dy = slope.second;
+            int pdx = -dy, pdy = dx;
+            // re-canonicalize perpendicular exactly as before:
+            if (pdx < 0) {
+                pdx = -pdx; pdy = -pdy;
+            }
+            if (pdx == 0) {
+                pdy = 1;
+            }
+            if (pdy == 0) {
+                pdx = 1;
+            }
+            // if that perp exists, add cross-count
+            auto it = slopes.find({pdx,pdy});
+            if (it != slopes.end()) {
+                local += 1LL * cnt * it->second;
+            }
+        }
+        // local counted each pair twice (Δ vs perp(Δ)), so we sum and fix later
+        total += local;
+    }
+    // Every L at a point was double-counted, so divide by 2
+    cout << (total / 2) << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Comments  
+```python
+import sys
+import threading
+
+def main():
+    import math
+    input = sys.stdin.readline
+
+    n = int(input())
+    segments = [tuple(map(int, input().split())) for _ in range(n)]
+
+    # Map: point (x,y) -> dict of direction (dx,dy) -> count
+    mp = {}
+
+    def normalize(dx, dy):
+        """Return a canonical primitive direction for vector (dx,dy)."""
+        g = math.gcd(dx, dy)
+        dx //= g
+        dy //= g
+        # Ensure dx >= 0, or if dx==0 then dy>0
+        if dx < 0:
+            dx, dy = -dx, -dy
+        if dx == 0:
+            # vertical line: force dy = +1
+            dy = 1
+        if dy == 0:
+            # horizontal line: force dx = +1
+            dx = 1
+        return dx, dy
+
+    # Build the mapping
+    for x1, y1, x2, y2 in segments:
+        dx, dy = x2 - x1, y2 - y1
+        dirn = normalize(dx, dy)
+        for pt in ((x1,y1), (x2,y2)):
+            if pt not in mp:
+                mp[pt] = {}
+            mp[pt][dirn] = mp[pt].get(dirn, 0) + 1
+
+    ans = 0
+    # For each shared endpoint, count perpendicular pairs
+    for slopes in mp.values():
+        for (dx, dy), cnt in slopes.items():
+            # perpendicular vector
+            pdx, pdy = -dy, dx
+            pdx, pdy = normalize(pdx, pdy)
+            # add cross count if exists
+            cnt2 = slopes.get((pdx, pdy), 0)
+            ans += cnt * cnt2
+
+    # Every pair was counted twice (A with B and B with A)
+    print(ans // 2)
+
+if __name__ == "__main__":
+    threading.Thread(target=main).start()
+```
+
+5. Compressed Editorial  
+Group segments by their endpoints, track primitive normalized directions. At each point, count how many segments go in each direction. For each direction Δ, its perpendicular is (−Δ.y,Δ.x). The number of L-shapes at that point is the sum over Δ of cnt(Δ)·cnt(perp(Δ)), divided by 2 to correct double counting. Summing across all points yields the answer in O(N log N).

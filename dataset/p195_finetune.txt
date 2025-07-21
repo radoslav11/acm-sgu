@@ -1,0 +1,262 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+195. New Year Bonus Grant
+time limit per test: 0.75 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+All programmers of Mocrosoft software company are organized in a strict subordination hierarchy. Every programmer has exactly one chief, except Bill Hates who is also the head of the company and has no chief.
+
+Due to the celebration of the new 2003 year, chief accountant of Mocrosoft decided to pay a New Year Bonus Grant of 1000 dollars to some programmers. However being extremely concerned of the company wealth she would like to designate the least possible amount of money for these grants. On the other hand she didn't want to be accused of being too greedy or of giving preferences to some programmers. To do this, she developed the following scheme of grants appointment:
+
+
+Each programmer may either assign a grant to one of his subordinates or have a grant assigned to him by his chief or none of the above.
+No programmer can simultaneously receive a grant and assign a grant to one of his subordinates.
+No programmer can assign a grant to more than one of his subordinates
+
+
+The scheme seemed to be designed perfectly — nobody would like to assign a grant to anybody since in this case he himself would not receive money. But programmers somehow discovered the plan of chief accountant and decided to make a trick to get the most money possible and share them fairly afterwards. The idea was to make such grant assignments that the total amount of grant money received is maximum possible.
+
+You were selected to write the program which will find the optimal grants appointment.
+
+Input
+
+The first line of the input file contains integer N — the number of programmers in Mocrosoft company (2 ≤ N ≤ 500 000). Each programmer is assigned his unique identifier — integer number ranging from 1 to N. Bill Hates has number 1 and each programmer has the number greater then the number of his chief. The second line of the input file contains N-1 integers, i-th of which being the number of the chief of the worker whose number is (i + 1).
+
+Output
+
+On the first line of the output file print the maximum possible amount of money workers can get. On the second line output the numbers of programmers that will receive grant in ascending order.
+
+Sample test(s)
+
+Input
+4
+1 1 2
+
+Output
+2000
+3 4
+
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Winter Trainings 2003
+Date:	2003-02-06
+
+<|response|>
+1. Abridged Problem Statement  
+You are given a rooted tree of N programmers (nodes) numbered 1…N, with node 1 as the root (“Bill Hates”). Every other node has exactly one parent whose number is smaller. We want to select a set of “bonus assignments” along parent→child edges so as to maximize the number of children who actually receive a \$1000 bonus, under these constraints:  
+  - A node can either receive a bonus from its parent, or assign a bonus to exactly one of its children, or do neither—but not both.  
+  - No node can assign more than one bonus downward.  
+
+Output the maximum total bonus (in dollars) and the list of all nodes who receive a bonus, in ascending order.
+
+2. Key Observations  
+1. This is exactly a maximum matching problem on a rooted tree, where matched edges go from parent to child, and no two matched edges share a node.  
+2. We can solve it by a tree-DP with two states per node u:  
+   - dp0[u]: the maximum number of matched child-receivers in u’s subtree if u is *not* receiving from its parent (so u is “free” to match to one child or none).  
+   - dp1[u]: the maximum number if u *is* receiving from its parent (so u cannot match to any child, but u itself counts as one receiver).  
+3. Recurrence for each u (after computing all children):  
+   - dp1[u] = 1 + Σ_{v child of u} dp0[v]  
+   - Let S = Σ_{v child of u} dp0[v]. Then  
+       dp0[u] = max( S,  max over children v of [ S − dp0[v] + dp1[v] ] )  
+     Explanation: either u matches no child (take S), or u matches exactly one child v (replace dp0[v] by dp1[v]).  
+4. The answer is dp0[1] × 1000.  
+5. To reconstruct *which* children receive, we do a second traversal from the root, keeping a boolean array take[u] that indicates “u is forced to receive from its parent.” We resolve choices at each node to see whether it matched a child.
+
+3. Full Solution Approach  
+Step 1. Read N and the parent array. Build a 0-based adjacency list of children for each node.  
+Step 2. Allocate two arrays dp0, dp1 of size N.  
+Step 3. Post-order DP: because in the input every parent has a smaller index, we can process u from N−1 down to 0.  
+  - Compute dp1[u] = 1 + sum of dp0[v] over all children v.  
+  - Compute S = sum of dp0[v] over all children v.  
+  - Compute dp0[u] = S initially, then for each child v consider candidate = S − dp0[v] + dp1[v] and take the maximum.  
+  - Finally (for reconstruction convenience) let dp1[u] = max(dp1[u], dp0[u]).  
+Step 4. Reconstruction of matching:  
+  - Initialize take[u]=false for all u, and an empty vector `receivers`.  
+  - Traverse u from 0 to N−1 (top-down in index order):  
+     a) If take[u] is true but dp1[u]==dp0[u], cancel it (take[u]=false).  
+     b) If take[u] is true after that, record u+1 in `receivers`, and set take[v]=false for all children v (they cannot receive).  
+     c) If take[u] is false, compute S = Σ dp0[v]. Check whether dp0[u]==S (meaning u matched no child). If not, find a child v for which dp0[u] == S−dp0[v]+dp1[v]. Set take[v]=true and all other take[w]=false.  
+  - At the end, all u with take[u]==true are the receivers. They will be encountered in ascending order of u, so `receivers` is already sorted.  
+Step 5. Output dp0[0] × 1000 and the list `receivers`.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    vector<vector<int>> children(N);
+    // Input parents of nodes 2..N, build adjacency list (0-based)
+    for(int i = 1; i < N; i++){
+        int p;
+        cin >> p;
+        --p;               // convert to 0-based
+        children[p].push_back(i);
+    }
+
+    // dp0[u]: best if u is free (not receiving from parent)
+    // dp1[u]: best if u receives from its parent
+    vector<int> dp0(N, 0), dp1(N, 0);
+
+    // Post-order DP: since parents < children, iterate from N-1 down to 0
+    for(int u = N - 1; u >= 0; u--) {
+        // 1) Compute dp1[u]: u is matched from above, so u counts as 1,
+        //    children must be free (dp0)
+        dp1[u] = 1;
+        for(int v: children[u]) {
+            dp1[u] += dp0[v];
+        }
+
+        // 2) Compute dp0[u]: u is free, can match no child or exactly one
+        int sum0 = 0;
+        for(int v: children[u]) {
+            sum0 += dp0[v];
+        }
+        // Case A: match no child
+        int best0 = sum0;
+        // Case B: match exactly one child v
+        for(int v: children[u]) {
+            int candidate = sum0 - dp0[v] + dp1[v];
+            if(candidate > best0) {
+                best0 = candidate;
+            }
+        }
+        dp0[u] = best0;
+
+        // For convenience in reconstruction, allow dp1[u] >= dp0[u]
+        if(dp1[u] < dp0[u]) {
+            dp1[u] = dp0[u];
+        }
+    }
+
+    // Reconstruction of which nodes receive
+    vector<bool> take(N, false);
+    vector<int> receivers;
+    // We start with root free: take[0] is initially false
+    for(int u = 0; u < N; u++){
+        // If we previously marked take[u] but it was not needed, clear it
+        if(take[u] && dp1[u] == dp0[u]) {
+            take[u] = false;
+        }
+
+        if(take[u]) {
+            // u is receiving from its parent
+            receivers.push_back(u + 1); // back to 1-based ID
+            // None of its children can receive
+            for(int v: children[u]) {
+                take[v] = false;
+            }
+        } else {
+            // u is free: see if it matched a child
+            int sum0 = 0;
+            for(int v: children[u]) sum0 += dp0[v];
+            int picked = -1;
+            // If dp0[u] > sum0, it must have matched exactly one child
+            if(dp0[u] > sum0) {
+                for(int v: children[u]) {
+                    if(dp0[u] == sum0 - dp0[v] + dp1[v]) {
+                        picked = v;
+                        take[v] = true;
+                        break;
+                    }
+                }
+            }
+            // All other children are not receiving
+            for(int v: children[u]) {
+                if(v != picked) take[v] = false;
+            }
+        }
+    }
+
+    // Output total bonus and the list of receivers
+    cout << (long long)dp0[0] * 1000 << "\n";
+    for(int x: receivers) {
+        cout << x << ' ';
+    }
+    cout << "\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+input = sys.stdin.readline
+
+def main():
+    n = int(input())
+    parents = list(map(int, input().split()))
+    # Build children lists, 0-based
+    children = [[] for _ in range(n)]
+    for i, p in enumerate(parents, start=1):
+        children[p-1].append(i)
+
+    # dp0[u], dp1[u] as described above
+    dp0 = [0]*n
+    dp1 = [0]*n
+
+    # Post-order: since parent < child, loop from n-1 down to 0
+    for u in range(n-1, -1, -1):
+        # Case: u receives from its parent
+        dp1[u] = 1 + sum(dp0[v] for v in children[u])
+
+        # Case: u is free
+        sum0 = sum(dp0[v] for v in children[u])
+        best0 = sum0
+        for v in children[u]:
+            candidate = sum0 - dp0[v] + dp1[v]
+            if candidate > best0:
+                best0 = candidate
+        dp0[u] = best0
+
+        # Ensure dp1[u] >= dp0[u] for reconstruction logic
+        if dp1[u] < dp0[u]:
+            dp1[u] = dp0[u]
+
+    # Reconstruct which nodes receive
+    take = [False]*n  # take[u]=True means u receives from its parent
+    receivers = []
+
+    for u in range(n):
+        # If we marked take[u] but it wasn't necessary, clear it
+        if take[u] and dp1[u] == dp0[u]:
+            take[u] = False
+
+        if take[u]:
+            # u is a receiver
+            receivers.append(u+1)  # convert to 1-based
+            # Children cannot receive
+            for v in children[u]:
+                take[v] = False
+        else:
+            # u is free: detect if it matched a child
+            sum0 = sum(dp0[v] for v in children[u])
+            picked = None
+            if dp0[u] > sum0:
+                for v in children[u]:
+                    if dp0[u] == sum0 - dp0[v] + dp1[v]:
+                        picked = v
+                        take[v] = True
+                        break
+            # all other children are not receiving
+            for v in children[u]:
+                if v != picked:
+                    take[v] = False
+
+    # Output
+    print(dp0[0] * 1000)
+    print(*receivers)
+
+if __name__ == "__main__":
+    main()
+```

@@ -1,0 +1,238 @@
+1. Abridged Problem Statement  
+Given a positive integer n (1 ≤ n ≤ 10^12), determine the number of distinct finite abelian groups (up to isomorphism) of order n. Output this count.
+
+2. Detailed Editorial  
+
+**Theory**  
+- **Classification**. By the Fundamental Theorem of Finite Abelian Groups, any finite abelian group of order n factors uniquely (up to isomorphism) into a direct sum of p-power cyclic groups, one for each prime dividing n. Concretely, if  
+  n = ∏ p_i^{e_i},  
+  then every abelian group of order n is a direct sum over i of abelian p_i-groups of order p_i^{e_i}.  
+- **Counting p-groups**. The number of abelian p-groups of order p^e is equal to the number of integer partitions of e. Denote by p(e) the partition function: the count of ways to write e as a sum of positive integers in nonincreasing order.  
+- **Multiplicativity**. Different primes give independent choices, so the total number is  
+  Answer = ∏_{i} p(e_i).  
+
+**Implementation Steps**  
+1. **Prime factorization** of n (up to 10^12). A simple trial division up to √n (∼10^6) suffices in 0.25 s. Record each exponent e_i.  
+2. **Partition numbers** up to max(e_i). Since max(e_i) ≤ log₂(10^12) < 40, we can safely precompute partitions up to, say, 100. We use Euler’s recurrence with generalized pentagonal numbers:  
+   p(0)=1; for m>0,  
+   p(m) = ∑_{k=1..∞} (−1)^{k−1} [p(m − k(3k−1)/2) + p(m − k(3k+1)/2)],  
+   stopping when arguments go negative.  
+3. **Multiply** the relevant p(e_i) together (use 64-bit or big integers).  
+4. **Output** the product.
+
+**Complexities**  
+- Factorization: O(√n).  
+- Partition precompute (up to N): O(N √N).  
+- Overall fits easily in 0.25 s for n ≤ 10^12.
+
+3. C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair to ease debugging/printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pair.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vector: read elements sequentially.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload << for vector: print elements with spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int64_t n;  // Global to hold the input n.
+
+// Read input.
+void read() {
+    cin >> n;
+}
+
+// A straightforward DP to compute partition numbers up to max_n.
+// This is O(max_n^2) and too slow for large max_n, but kept for reference.
+vector<int64_t> compute_partitions_slow(int max_n) {
+    vector<int64_t> dp(max_n + 1, 0);
+    dp[0] = 1;  // Base: one way to partition 0.
+    // For each possible part size j, add ways to build sums ≥ j.
+    for(int j = 1; j <= max_n; ++j) {
+        for(int i = j; i <= max_n; ++i) {
+            dp[i] += dp[i - j];
+        }
+    }
+    return dp;
+}
+
+// Fast partition computation using Euler's pentagonal recurrence.
+// Runs in about O(max_n * sqrt(max_n)).
+vector<int64_t> compute_partitions(int max_n) {
+    vector<int64_t> p(max_n + 1, 0);
+    p[0] = 1;  // p(0) = 1
+    // Fill p[1..max_n]
+    for(int m = 1; m <= max_n; ++m) {
+        int64_t sum = 0;
+        for(int k = 1;; ++k) {
+            // Generalized pentagonal numbers:
+            int pent1 = k * (3*k - 1) / 2;      // +k
+            int pent2 = k * (3*k + 1) / 2;      // -k
+            if(pent1 > m && pent2 > m) break;  // no more contributions
+
+            // Sign alternates: +, +, -, -, +, +, ...
+            int sign = (k % 2 == 1 ? +1 : -1);
+
+            if(pent1 <= m) sum += sign * p[m - pent1];
+            if(pent2 <= m) sum += sign * p[m - pent2];
+        }
+        p[m] = sum;
+    }
+    return p;
+}
+
+void solve() {
+    // Precompute partition numbers up to 100 (more than enough).
+    vector<int64_t> partitions = compute_partitions(100);
+
+    int64_t result = 1;
+    int64_t temp = n;
+
+    // Factor n by trial division up to sqrt(temp).
+    for(int64_t p = 2; p * p <= temp; ++p) {
+        if(temp % p == 0) {
+            int e = 0;
+            // Count exponent of prime p.
+            while(temp % p == 0) {
+                e++;
+                temp /= p;
+            }
+            // Multiply by number of partitions of e.
+            result *= partitions[e];
+        }
+    }
+    // If after division we still have a prime factor > 1.
+    if(temp > 1) {
+        // It contributes exponent 1.
+        result *= partitions[1];
+    }
+
+    // Output the final count.
+    cout << result << '\n';
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import math
+
+def compute_partitions(max_n):
+    """
+    Compute partition numbers p(0..max_n) using Euler's
+    recurrence with generalized pentagonal numbers.
+    """
+    p = [0] * (max_n + 1)
+    p[0] = 1  # Base case
+
+    for m in range(1, max_n + 1):
+        total = 0
+        k = 1
+        while True:
+            # Generalized pentagonal numbers:
+            pent1 = k * (3*k - 1) // 2
+            pent2 = k * (3*k + 1) // 2
+            if pent1 > m and pent2 > m:
+                break
+            sign = 1 if (k % 2 == 1) else -1
+
+            if pent1 <= m:
+                total += sign * p[m - pent1]
+            if pent2 <= m:
+                total += sign * p[m - pent2]
+
+            k += 1
+        p[m] = total
+
+    return p
+
+def main():
+    # Read n from stdin
+    n = int(sys.stdin.readline())
+    temp = n
+    result = 1
+
+    # Factor n by trial division
+    # Keep track of maximum exponent to know how far to compute partitions
+    exponents = []
+    # Check divisor 2 separately for slight speedup
+    if temp % 2 == 0:
+        cnt = 0
+        while temp % 2 == 0:
+            temp //= 2
+            cnt += 1
+        exponents.append(cnt)
+
+    # Check odd divisors up to sqrt(temp)
+    f = 3
+    while f * f <= temp:
+        if temp % f == 0:
+            cnt = 0
+            while temp % f == 0:
+                temp //= f
+                cnt += 1
+            exponents.append(cnt)
+        f += 2
+
+    # If remainder > 1, it's a prime factor with exponent 1
+    if temp > 1:
+        exponents.append(1)
+
+    # Precompute partitions up to the largest exponent
+    max_e = max(exponents, default=0)
+    partitions = compute_partitions(max_e)
+
+    # Multiply partition(exponent) for each prime's exponent
+    for e in exponents:
+        result *= partitions[e]
+
+    # Print the result
+    print(result)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Factor n = ∏ pᵢ^{eᵢ}.  
+- By classification, # of abelian p-groups of order pᵉ = partition(e).  
+- Overall answer = ∏ partition(eᵢ).  
+- Compute partition numbers up to max e via Euler’s pentagonal recurrence in O(N√N).  
+- Factor n by trial division in O(√n).  
+- Multiply and output.

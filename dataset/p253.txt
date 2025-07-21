@@ -1,0 +1,248 @@
+1. Abridged problem statement  
+Given a convex polygon with N vertices (in counter-clockwise order) and M query points, determine how many query points lie inside or on the boundary of the polygon. If at least K queries are inside, print “YES”; otherwise, print “NO”. Constraints: N, M up to 10^5, coordinates up to ±10^9.
+
+2. Detailed editorial  
+— Observation  
+  • The polygon is convex. Point-in-convex-polygon queries can be answered in O(log N) each by fan-triangulating from one fixed vertex.  
+— Preprocessing  
+  1. Choose a distinguished vertex P0 of the polygon. A common choice is the lexicographically smallest vertex (smallest x, then smallest y).  
+  2. Reorder the other vertices so that they form a strictly increasing angle around P0 (this gives a “fan” of triangles P0–Pi–Pi+1). If the input is already in CCW order, you can simply rotate the array so that P0 comes first and keep the rest in CCW sequence.  
+— Querying a point Q  
+  1. Quick reject: check if Q lies to the right of the ray P0→P1 or to the left of the ray P0→P_{N−1}. If so, Q is outside.  
+  2. Otherwise, binary-search for the largest index i in [1…N−2] such that orient(P0, P_i, Q) ≥ 0. This finds the triangle (P0, P_i, P_{i+1}) that Q could lie in.  
+  3. Finally, test if Q is inside (or on) triangle (P0, P_i, P_{i+1]) by checking that the three cross-products orient(P0,P_i,Q), orient(P_i,P_{i+1},Q), orient(P_{i+1},P0,Q) are all nonnegative (or all nonpositive).  
+Each query takes O(log N), total O((N+M) log N), which is fine for N,M up to 10^5.  
+
+3. Provided C++ solution with detailed comments  
+#include <bits/stdc++.h>  
+using namespace std;  
+
+// Define Point in 2D with operations  
+using coord_t = double;  // use double for cross, dot, sqrt  
+
+struct Point {  
+    coord_t x, y;  
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}  
+
+    // Vector addition, subtraction, scalar mul/div  
+    Point operator+(const Point &p) const { return Point(x + p.x, y + p.y); }  
+    Point operator-(const Point &p) const { return Point(x - p.x, y - p.y); }  
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }  
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }  
+
+    // Dot and cross products  
+    coord_t operator*(const Point &p) const { return x * p.x + y * p.y; }  
+    coord_t operator^(const Point &p) const { return x * p.y - y * p.x; }  
+
+    // Comparison operators (by x then y)  
+    bool operator<(const Point &p) const {  
+        return x != p.x ? x < p.x : y < p.y;  
+    }  
+    bool operator==(const Point &p) const { return x == p.x && y == p.y; }  
+
+    // Norm squared, length, angle  
+    coord_t norm2() const { return x*x + y*y; }  
+    double norm() const { return sqrt(norm2()); }  
+    double angle() const { return atan2(y, x); }  
+
+    // Perpendicular, unit vector, projection, reflection  
+    Point perp() const { return Point(-y, x); }  
+    Point unit() const { return *this / norm(); }  
+    Point normal() const { return perp().unit(); }  
+    Point project(const Point &p) const {  
+        return *this * ((*this * p) / norm2());  
+    }  
+    Point reflect(const Point &p) const {  
+        return *this * 2 * (*this * p) / norm2() - p;  
+    }  
+
+    // Stream IO  
+    friend ostream &operator<<(ostream &os, const Point &p) {  
+        return os << p.x << ' ' << p.y;  
+    }  
+    friend istream &operator>>(istream &is, Point &p) {  
+        return is >> p.x >> p.y;  
+    }  
+
+    // Orientation: +1 if a→b→c is CCW, –1 if CW, 0 if collinear  
+    friend int ccw(const Point &a, const Point &b, const Point &c) {  
+        coord_t v = (b - a) ^ (c - a);  
+        if (v > 0) return 1;  
+        if (v < 0) return -1;  
+        return 0;  
+    }  
+
+    // Check if point p lies inside or on triangle a,b,c  
+    friend bool point_in_triangle(  
+        const Point &a, const Point &b, const Point &c, const Point &p  
+    ) {  
+        int d1 = ccw(a,b,p), d2 = ccw(b,c,p), d3 = ccw(c,a,p);  
+        // All same sign or zero  
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||  
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);  
+    }  
+};  
+
+// Simple Polygon class to get area (unused in logic)  
+class Polygon {  
+  public:  
+    vector<Point> points;  
+    Polygon(const vector<Point> &pts) : points(pts) {}  
+    int size() const { return points.size(); }  
+    coord_t area() const {  
+        coord_t a = 0;  
+        for(int i = 0; i < size(); i++)  
+            a += points[i] ^ points[(i+1)%size()];  
+        return a / 2.0;  
+    }  
+};  
+
+// Data structure for fast point-in-convex-polygon queries  
+class PointInConvexPolygon {  
+  private:  
+    Point base;  
+    vector<Point> fan;  // points sorted by angle around base  
+
+    // Prepare the ‘fan’ from the input polygon  
+    void prepare() {  
+        // Copy polygon points  
+        fan = polygon.points;  
+        // Find lexicographically minimum point  
+        auto it = min_element(fan.begin(), fan.end());  
+        base = *it;  
+        fan.erase(it);  
+        // Sort remaining by angle around base (CCW)  
+        sort(fan.begin(), fan.end(), [&](auto &A, auto &B){  
+            int d = ccw(base, A, B);  
+            if (d != 0) return d > 0;  
+            // If collinear, closer one comes first  
+            return (A-base).norm2() < (B-base).norm2();  
+        });  
+    }  
+
+  public:  
+    Polygon polygon;  
+    PointInConvexPolygon(const Polygon &poly) : polygon(poly) {  
+        prepare();  
+    }  
+
+    // Return true if Q inside or on boundary  
+    bool contains(const Point &Q) const {  
+        int L = 0, R = (int)fan.size()-1;  
+        // Find wedge where Q might lie  
+        while(R - L > 1) {  
+            int M = (L+R)/2;  
+            if (ccw(base, fan[M], Q) >= 0) L = M;  
+            else               R = M;  
+        }  
+        // Check triangle (base, fan[L], fan[R])  
+        return point_in_triangle(base, fan[L], fan[R], Q);  
+    }  
+};  
+
+// Globals  
+int n, m, k;  
+vector<Point> P, Q;  
+
+// Read input  
+void read() {  
+    cin >> n >> m >> k;  
+    P.resize(n);  Q.resize(m);  
+    for(int i=0;i<n;i++) cin >> P[i];  
+    for(int i=0;i<m;i++) cin >> Q[i];  
+}  
+
+// Solve one test  
+void solve() {  
+    Polygon poly(P);  
+    PointInConvexPolygon picp(poly);  
+
+    int cnt = 0;  
+    for(auto &q: Q)  
+        if (picp.contains(q))  cnt++;  
+
+    cout << (cnt >= k ? "YES\n" : "NO\n");  
+}  
+
+int main(){  
+    ios::sync_with_stdio(false);  
+    cin.tie(nullptr);  
+
+    read();  
+    solve();  
+    return 0;  
+}  
+
+4. Python solution with detailed comments  
+```python
+import sys
+import threading
+
+def main():
+    import sys
+    data = sys.stdin.read().split()
+    it = iter(data)
+    # Read N, M, K
+    n = int(next(it))
+    m = int(next(it))
+    k = int(next(it))
+    # Read polygon vertices
+    poly = [(int(next(it)), int(next(it))) for _ in range(n)]
+    # Read query points
+    queries = [(int(next(it)), int(next(it))) for _ in range(m)]
+
+    # Find lexicographically minimal vertex as base
+    idx = min(range(n), key=lambda i: (poly[i][0], poly[i][1]))
+    # Rotate the polygon so base is first, keep CCW order
+    pts = poly[idx:] + poly[:idx]
+    base = pts[0]
+    # Fan points are the rest
+    fan = pts[1:]
+
+    # Cross product of vectors AB x AC
+    def cross(a, b, c):
+        return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+
+    # Orientation test
+    def orient(a, b, c):
+        v = cross(a,b,c)
+        if v > 0: return  1
+        if v < 0: return -1
+        return 0
+
+    # Check if point p is inside or on triangle a,b,c
+    def in_triangle(a, b, c, p):
+        d1 = orient(a,b,p)
+        d2 = orient(b,c,p)
+        d3 = orient(c,a,p)
+        # all non-negative or all non-positive
+        return (d1>=0 and d2>=0 and d3>=0) or (d1<=0 and d2<=0 and d3<=0)
+
+    cnt = 0
+    # For each query point q
+    for q in queries:
+        # Quick reject: outside the outer wedge
+        if orient(base, fan[0], q) < 0: continue
+        if orient(base, fan[-1], q) > 0: continue
+        # Binary-search for wedge
+        L, R = 0, len(fan)-1
+        while R - L > 1:
+            mid = (L + R) // 2
+            if orient(base, fan[mid], q) >= 0:
+                L = mid
+            else:
+                R = mid
+        # Final check in triangle
+        if in_triangle(base, fan[L], fan[R], q):
+            cnt += 1
+
+    # Output result
+    sys.stdout.write("YES\n" if cnt >= k else "NO\n")
+
+
+if __name__ == "__main__":
+    threading.Thread(target=main).start()
+```
+
+5. Compressed editorial  
+Choose one vertex P0 (e.g. lexicographically smallest). Reorder the polygon in CCW so P0 is first. For each query Q, reject if it lies outside the extreme rays P0→P1 or P0→P_{N−1}. Otherwise binary-search which adjacent pair (P0,P_i,P_{i+1}) forms the triangle containing Q, then test with three orientation (cross) checks. Each query runs in O(log N).

@@ -1,0 +1,416 @@
+1. Abridged Problem Statement  
+Given an undirected weighted graph with N junctions (nodes) and M roads (edges), find two edge-disjoint paths from node 1 to node N such that both paths have the minimum possible total length (i.e., both are shortest paths). Paths may share vertices but must not share any edge. If no such pair exists, output "No solution". Otherwise, print the two sequences of junction indices.
+
+2. Detailed Editorial  
+
+Overview  
+We need two distinct shortest routes (by total length) from source 1 to sink N, sharing no edge. Standard two-disjoint-paths on a weighted graph, but with the extra constraint that each path individually must have length equal to the graph’s shortest‐path distance D.
+
+Steps  
+1. Compute single‐source shortest‐path distances dist[u] from node 1 to every node using Dijkstra (O(M log N)).  
+2. Build the “shortest‐path DAG”: for each undirected edge (u, v, w), if dist[u] + w = dist[v], add directed edge u→v; if dist[v]+w = dist[u], add v→u. This DAG contains exactly all edges that lie on at least one shortest path from 1.  
+3. On this DAG, we want two edge‐disjoint paths from 1 to N. Reduce to a unit‐capacity max‐flow problem:  
+   a. Create a flow network with vertex set {0…N−1} ∪ {N…N+M−1}. We reserve one flow-node per original DAG edge.  
+   b. For each DAG edge u→v corresponding to input edge index i, add two directed arcs:  
+      • u → (N + i) with capacity 1  
+      • (N + i) → v with capacity 1 and store i as an “idx”.  
+   This construction ensures that any flow of value k corresponds to k paths each using distinct original edges, since each edge‐node N+i has unit capacity.  
+4. Run Dinic’s max‐flow from source=0 to sink=N−1 with early exit once flow ≥2. If max‐flow < 2, print "No solution". Otherwise flow=2.  
+5. Extract the two paths: traverse the flow graph, starting at 0, repeatedly following an outgoing arc that carries flow to a neighbor, decrementing that flow, until you reach N−1. Do this twice to recover two edge‐disjoint sequences of nodes.  
+6. Output the two paths (converting back to 1-based indices).
+
+Complexity  
+Dijkstra: O(M log N)  
+Building DAG & network: O(N + M)  
+Dinic on unit capacities with small flow (2): effectively O(M √N) worst-case, but practically very fast for N≤400, M≤≈80 000. Path extraction: O(N) twice.
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload for printing a pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload for reading a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload for reading a vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Overload for printing a vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// Dinic's max‐flow template with edge struct
+template<class T>
+class MaxFlow {
+  private:
+    // Internal edge representation
+    struct Edge {
+        int to, rev, idx;  // 'to'=endpoint, rev=index of reverse edge in adj[to], idx=user label
+        T flow, cap;       // current flow and capacity
+        Edge(int _to,int _rev,T _flow,T _cap,int _idx)
+          : to(_to), rev(_rev), idx(_idx), flow(_flow), cap(_cap) {}
+    };
+
+    vector<vector<Edge>> adj; // adjacency list of edges
+    vector<int> dist, ptr;    // level graph dist[], pointer ptr[] for DFS
+    int n;                    // number of vertices
+
+    // Build level graph by BFS
+    bool bfs(int s, int t) {
+        fill(dist.begin(), dist.end(), -1);
+        fill(ptr.begin(), ptr.end(), 0);
+        queue<int> q;
+        q.push(s);
+        dist[s] = 0;
+        while(!q.empty()) {
+            int u = q.front(); q.pop();
+            for(auto &e: adj[u]) {
+                if(dist[e.to] < 0 && e.flow < e.cap) {
+                    dist[e.to] = dist[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return dist[t] >= 0;
+    }
+
+    // DFS to send flow along blocking flow
+    T dfs(int u, int t, T pushed) {
+        if(!pushed) return 0;
+        if(u == t) return pushed;
+        for(int &cid = ptr[u]; cid < (int)adj[u].size(); ++cid) {
+            auto &e = adj[u][cid];
+            if(dist[e.to] != dist[u] + 1 || e.flow == e.cap)
+                continue;
+            T tr = dfs(e.to, t, min(pushed, e.cap - e.flow));
+            if(tr == 0) continue;
+            e.flow += tr;
+            adj[e.to][e.rev].flow -= tr;
+            return tr;
+        }
+        return 0;
+    }
+
+  public:
+    const static T INF = numeric_limits<T>::max();
+
+    // Constructor
+    MaxFlow(int _n=0) { init(_n); }
+
+    // Initialize with n vertices
+    void init(int _n) {
+        n = _n;
+        adj.assign(n, {});
+        dist.resize(n);
+        ptr.resize(n);
+    }
+
+    // Add directed edge u->v with capacity cap; user label idx
+    void add_edge(int u, int v, T cap, int idx = -1) {
+        adj[u].emplace_back(v, (int)adj[v].size(), 0, cap, idx);
+        adj[v].emplace_back(u, (int)adj[u].size()-1, 0, 0, -1);
+    }
+
+    // Compute max‐flow from s to t, optionally early stopping if flow >= max_add
+    T flow(int s, int t, T max_add = INF) {
+        assert(s != t);
+        T total = 0;
+        while(total < max_add && bfs(s, t)) {
+            while(total < max_add) {
+                T pushed = dfs(s, t, max_add - total);
+                if(!pushed) break;
+                total += pushed;
+            }
+        }
+        return total;
+    }
+};
+
+// Structure to hold an undirected edge
+struct Edge {
+    int u, v, w; // endpoints (0-based) and weight
+    Edge(int _u=0, int _v=0, int _w=0): u(_u), v(_v), w(_w) {}
+};
+
+int n, m;
+vector<Edge> edges;
+vector<vector<pair<int,int>>> adj; // adjacency: node -> list of (neighbor, edge_index)
+
+// Read input
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    adj.assign(n, {});
+    for(int i = 0; i < m; i++) {
+        cin >> edges[i].u >> edges[i].v >> edges[i].w;
+        // convert to 0-based
+        --edges[i].u;
+        --edges[i].v;
+        adj[edges[i].u].push_back({edges[i].v, i});
+        adj[edges[i].v].push_back({edges[i].u, i});
+    }
+}
+
+// Build shortest‐path DAG from source=0
+vector<vector<pair<int,int>>> get_shortest_path_dag(int src) {
+    const int INF_DIST = numeric_limits<int>::max();
+    vector<int> dist(n, INF_DIST);
+    dist[src] = 0;
+    // min‐heap of (distance, node)
+    priority_queue<pair<int,int>, vector<pair<int,int>>, greater<>> pq;
+    pq.push({0, src});
+    while(!pq.empty()) {
+        auto [d, u] = pq.top(); pq.pop();
+        if(d > dist[u]) continue;
+        for(auto &pr: adj[u]) {
+            int v = pr.first, idx = pr.second;
+            int nd = d + edges[idx].w;
+            if(nd < dist[v]) {
+                dist[v] = nd;
+                pq.push({nd, v});
+            }
+        }
+    }
+    // Build DAG: for each original edge, check if it lies on some shortest path
+    vector<vector<pair<int,int>>> dag(n);
+    for(int i = 0; i < m; i++) {
+        int u = edges[i].u, v = edges[i].v, w = edges[i].w;
+        if(dist[u] + w == dist[v])
+            dag[u].push_back({v, i});
+        if(dist[v] + w == dist[u])
+            dag[v].push_back({u, i});
+    }
+    return dag;
+}
+
+// Solve one test
+void solve() {
+    // 1) Build DAG of shortest‐path edges
+    auto dag = get_shortest_path_dag(0);
+
+    // 2) Build flow network with N + M nodes
+    MaxFlow<int> mf(n + m);
+    for(int u = 0; u < n; u++) {
+        for(auto &pr: dag[u]) {
+            int v = pr.first, idx = pr.second;
+            // u -> edge‐node (N+idx) capacity=1
+            mf.add_edge(u, n + idx, 1);
+            // edge‐node -> v capacity=1, label the edge with idx
+            mf.add_edge(n + idx, v, 1, idx);
+        }
+    }
+
+    // 3) Compute max‐flow from 0 to n-1, but stop early if <2
+    int f = mf.flow(0, n - 1, 2);
+    if(f < 2) {
+        cout << "No solution\n";
+        return;
+    }
+
+    // 4) Extract the two paths from the used flow edges
+    //    Build adjacency list of the final chosen edges
+    vector<vector<int>> final_graph(n);
+    for(int node = n; node < n + m; node++) {
+        for(auto &e: mf.adj[node]) {
+            // e.idx holds original edge index; flow>0 means used
+            if(e.idx != -1 && e.flow > 0) {
+                // e is edge-node -> v, but reverse edge in code
+                int idx = e.idx;
+                int a = edges[idx].u, b = edges[idx].v;
+                // Determine correct direction
+                int from = (e.to == a ? b : a);
+                int to   = (e.to == a ? a : b);
+                final_graph[from].push_back(to);
+            }
+        }
+    }
+
+    // 5) Recover exactly 2 paths
+    for(int k = 0; k < 2; k++) {
+        vector<int> path = {0};
+        int u = 0;
+        while(u != n - 1) {
+            int v = final_graph[u].back();
+            final_graph[u].pop_back();
+            path.push_back(v);
+            u = v;
+        }
+        // Print path in 1-based
+        for(int x: path) cout << x+1 << ' ';
+        cout << "\n";
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import threading
+def main():
+    import heapq
+    sys.setrecursionlimit(10**7)
+    input_data = sys.stdin.read().split()
+    it = iter(input_data)
+    n, m = map(int, (next(it), next(it)))
+    # Read edges; store 0-based
+    edges = []
+    adj = [[] for _ in range(n)]
+    for i in range(m):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        w = int(next(it))
+        edges.append((u, v, w))
+        adj[u].append((v, i))
+        adj[v].append((u, i))
+
+    # Step 1: Dijkstra from source=0
+    INF = 10**18
+    dist = [INF]*n
+    dist[0] = 0
+    pq = [(0,0)]
+    while pq:
+        d,u = heapq.heappop(pq)
+        if d>dist[u]: continue
+        for v,idx in adj[u]:
+            nd = d + edges[idx][2]
+            if nd<dist[v]:
+                dist[v] = nd
+                heapq.heappush(pq,(nd,v))
+
+    # Step 2: Build the shortest-path DAG
+    dag = [[] for _ in range(n)]
+    for i,(u,v,w) in enumerate(edges):
+        if dist[u]+w == dist[v]:
+            dag[u].append((v,i))
+        if dist[v]+w == dist[u]:
+            dag[v].append((u,i))
+
+    # Step 3: Build flow network (Dinic) with unit capacities
+    N = n + m
+    class Edge:
+        __slots__ = ('to','cap','flow','rev','idx')
+        def __init__(self,to,cap,flow,rev,idx):
+            self.to, self.cap, self.flow, self.rev, self.idx = to,cap,flow,rev,idx
+
+    graph = [[] for _ in range(N)]
+    def add_edge(u,v,cap,idx=-1):
+        graph[u].append(Edge(v, cap, 0, len(graph[v]), idx))
+        graph[v].append(Edge(u, 0,   0, len(graph[u])-1, -1))
+
+    # Add edges: u -> edge-node, edge-node -> v
+    for u in range(n):
+        for v, idx in dag[u]:
+            add_edge(u,   n+idx, 1)
+            add_edge(n+idx, v,   1, idx)
+
+    # Dinic implementation
+    level = [0]*N
+    ptr = [0]*N
+
+    def bfs(s,t):
+        for i in range(N):
+            level[i] = -1
+        queue = [s]
+        level[s] = 0
+        for u in queue:
+            for e in graph[u]:
+                if level[e.to]<0 and e.flow<e.cap:
+                    level[e.to] = level[u]+1
+                    queue.append(e.to)
+        return level[t]>=0
+
+    def dfs(u,t,pushed):
+        if u==t or pushed==0:
+            return pushed
+        for i in range(ptr[u], len(graph[u])):
+            e = graph[u][i]
+            if level[e.to]==level[u]+1 and e.flow<e.cap:
+                tr = dfs(e.to,t, min(pushed, e.cap-e.flow))
+                if tr>0:
+                    e.flow += tr
+                    graph[e.to][e.rev].flow -= tr
+                    return tr
+            ptr[u]+=1
+        return 0
+
+    # Compute maxflow up to 2
+    flow = 0
+    S, T = 0, n-1
+    while flow<2 and bfs(S,T):
+        ptr = [0]*N
+        pushed = dfs(S,T,2-flow)
+        while pushed and flow<2:
+            flow += pushed
+            pushed = dfs(S,T,2-flow)
+
+    if flow<2:
+        print("No solution")
+        return
+
+    # Step 4: Extract the two paths
+    final_adj = [[] for _ in range(n)]
+    # For each edge-node, find which outgoing flow edge was used
+    for u in range(n, n+m):
+        for e in graph[u]:
+            if e.idx>=0 and e.flow>0:
+                # e: edge-node->v
+                idx = e.idx
+                a,b,_ = edges[idx]
+                # determine direction
+                if e.to == a:
+                    final_adj[b].append(a)
+                else:
+                    final_adj[a].append(b)
+
+    # DFS to recover path
+    def extract_path():
+        path = [0]
+        u = 0
+        while u != n-1:
+            v = final_adj[u].pop()
+            path.append(v)
+            u = v
+        return path
+
+    # Print two paths
+    for _ in range(2):
+        p = extract_path()
+        print(' '.join(str(x+1) for x in p))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Run Dijkstra from node 1 to get dist[].  
+- Build a directed acyclic “shortest‐path DAG” containing only edges on some shortest path.  
+- Transform each DAG edge into a little gadget (node with two unit‐cap edges) in a flow network of size N+M.  
+- Max‐flow (Dinic) from 1 to N, capacity=1 per edge, stop once flow≥2.  
+- If max‐flow<2 → no solution. Otherwise, extract the two unit‐flows as two edge‐disjoint shortest paths.

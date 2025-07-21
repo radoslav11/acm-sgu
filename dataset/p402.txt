@@ -1,0 +1,346 @@
+1. Abridged Problem Statement  
+Given a connected undirected graph of N cities (3 ≤ N ≤ 50) and M roads (1 ≤ M ≤ 500), each road i between cities a_i and b_i has a destruction cost w_i. You must choose exactly one city c to “capture” (removing it from the graph) and then pay to destroy some roads, so that the remaining graph (with c and those roads removed) becomes disconnected. Find the minimum total destruction cost, and output which roads to destroy (by their input indices).
+
+2. Detailed Editorial
+
+We need to pick a city c and a set of roads E′ such that removing c and E′ splits the graph into at least two components, and we want to minimize the sum of weights of E′.
+
+Observation. After removing c, the graph G–c is still connected unless we also remove roads. To make G–c disconnected, it suffices to pick two surviving nodes u, v in (G–c) and separate them by removing a minimum-weight cut of roads. Among all choices of c and node-pairs (u,v) in G–c, we seek the global minimum cut.
+
+Brute‐force scheme:
+1. For each candidate captured city r from 1 to N:
+   a. Consider the graph G_r formed by deleting node r and all incident edges.
+   b. To ensure G_r is disconnected, pick two surviving nodes u≠v in G_r and remove a minimum‐weight set of roads separating u from v in G_r. That is exactly the s–t minimum cut (max‐flow) between u and v in G_r.
+2. Pick the pair (r,u,v) with the smallest cut value.
+
+We can restrict (u,v) pairs to those both originally adjacent to r (neighbors of r). Why? If you want G–r to split, the destroyed roads must separate some neighbors of r into different components—only they can “fall on different sides” of r’s removal. That reduces the number of flow computations significantly.
+
+Implementation details:
+- Use Dinic’s algorithm on up to N ≤ 50 nodes.  
+- Remove r by simply skipping edges that touch r.  
+- For each edge in G_r, add two directed edges u→v and v→u with capacity = its weight.  
+- Compute max‐flow from s=u to t=v; that value is the min‐cut.  
+- After the flow, find the side of the cut reachable from s via edges with residual capacity > 0; any original edge from reachable to non-reachable is in the cut. Record its index.  
+- Track the overall minimum; finally output its total cost, the number of edges in that cut, and their (sorted) indices.
+
+Time complexity: For each r (N choices), we do at most deg(r)·(deg(r)–1)/2 flow calls. In the worst case sum of deg(r)² over all r is O((2M)²/N) ≲ O(N·(2M/N)²)=O(M²/N), well within limits for N≤50, M≤500. Dinic runs very fast on small graphs.
+
+3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+#define endl '\n'
+using namespace std;
+
+// A templated Dinic (max-flow) implementation
+template<class FlowT>
+struct max_flow {
+    static constexpr FlowT INF = FlowT(1e9);
+    struct Edge {
+        int to, rev, idx;
+        FlowT cap, flow;
+        Edge(int _to, int _rev, FlowT _cap, int _idx)
+          : to(_to), rev(_rev), idx(_idx), cap(_cap), flow(0) {}
+    };
+    
+    int n;
+    vector<vector<Edge>> G;
+    vector<int> level, ptr;
+    vector<char> used_cut;
+
+    max_flow(int _n = 0) { init(_n); }
+    void init(int _n) {
+        n = _n;
+        G.assign(n+1, {});
+        level.assign(n+1, -1);
+        ptr.assign(n+1, 0);
+        used_cut.assign(n+1, 0);
+    }
+
+    // Add a directed edge u→v with capacity w, and store idx for original-edge labeling
+    void add_edge(int u, int v, FlowT w, int idx = -1) {
+        G[u].emplace_back(v, (int)G[v].size(), w, idx);
+        G[v].emplace_back(u, (int)G[u].size()-1, 0,   -1);
+    }
+    
+    // BFS to build level graph
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0; 
+        q.push(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e : G[u]) {
+                if (level[e.to] < 0 && e.flow < e.cap) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+    
+    // DFS to send flow along level graph
+    FlowT dfs(int u, int t, FlowT pushed) {
+        if (u == t || pushed == 0) return pushed;
+        for (int &cid = ptr[u]; cid < (int)G[u].size(); ++cid) {
+            auto &e = G[u][cid];
+            if (level[e.to] == level[u] + 1 && e.flow < e.cap) {
+                FlowT tr = dfs(e.to, t, min(pushed, e.cap - e.flow));
+                if (tr > 0) {
+                    e.flow += tr;
+                    G[e.to][e.rev].flow -= tr;
+                    return tr;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Compute max-flow = min-cut capacity
+    FlowT flow(int s, int t) {
+        FlowT total = 0;
+        while (bfs(s, t)) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (FlowT pushed = dfs(s, t, INF)) {
+                total += pushed;
+            }
+        }
+        return total;
+    }
+    
+    // After max-flow, mark reachable vertices in residual graph
+    void mark_reachable(int u) {
+        used_cut[u] = 1;
+        for (auto &e : G[u]) {
+            if (!used_cut[e.to] && e.flow < e.cap) {
+                mark_reachable(e.to);
+            }
+        }
+    }
+};
+
+const int MAXM = 505;
+int n, m;
+pair<int,int> endpoints[MAXM];
+int weight_edge[MAXM];
+vector<int> adj[55];
+
+int best_cost = -1;
+vector<int> best_cut;
+max_flow<int> mf;
+
+void attempt_cut(int r, int u, int v) {
+    // Build flow network on nodes {1..n}, excluding node r
+    mf.init(n);
+    for (int i = 1; i <= m; ++i) {
+        int a = endpoints[i].first;
+        int b = endpoints[i].second;
+        if (a == r || b == r) continue; // skip edges touching r
+        // add both directions with capacity = weight, record i as idx
+        mf.add_edge(a, b, weight_edge[i], i);
+        mf.add_edge(b, a, weight_edge[i], i);
+    }
+    // compute min-cut between u and v
+    int cost = mf.flow(u, v);
+    if (best_cost == -1 || cost < best_cost) {
+        // identify the cut edges
+        fill(mf.used_cut.begin(), mf.used_cut.end(), 0);
+        mf.mark_reachable(u);
+        vector<int> cut_edges;
+        for (int x = 1; x <= n; ++x) {
+            if (!mf.used_cut[x]) continue;
+            for (auto &e : mf.G[x]) {
+                if (!mf.used_cut[e.to] && e.idx != -1)
+                    cut_edges.push_back(e.idx);
+            }
+        }
+        sort(cut_edges.begin(), cut_edges.end());
+        cut_edges.erase(unique(cut_edges.begin(), cut_edges.end()), cut_edges.end());
+        best_cost = cost;
+        best_cut = cut_edges;
+    }
+}
+
+void solve() {
+    // Read input
+    cin >> n >> m;
+    for (int i = 1; i <= m; ++i) {
+        int a,b,w; 
+        cin >> a >> b >> w;
+        endpoints[i] = {a,b};
+        weight_edge[i] = w;
+        adj[a].push_back(b);
+        adj[b].push_back(a);
+    }
+    mf.init(n);
+    // Try every captured city r=1..n
+    for (int r = 1; r <= n; ++r) {
+        // only need pairs among r's neighbors
+        auto &nbr = adj[r];
+        int d = nbr.size();
+        for (int i = 0; i < d; ++i)
+            for (int j = i+1; j < d; ++j) {
+                attempt_cut(r, nbr[i], nbr[j]);
+            }
+    }
+    // Output answer
+    cout << best_cost << endl;
+    cout << best_cut.size() << endl;
+    for (int id : best_cut) 
+        cout << id << " ";
+    if (!best_cut.empty()) 
+        cout << endl;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+from collections import deque
+
+sys.setrecursionlimit(10**7)
+input = sys.stdin.readline
+
+class Dinic:
+    """Dinic’s algorithm for max-flow / min-cut."""
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n+1)]
+    
+    def add_edge(self, u, v, cap, idx=-1):
+        """Add directed edge u->v with capacity cap and original index idx."""
+        # forward edge: (to, capacity, idx, rev)
+        self.adj[u].append([v, cap, idx, len(self.adj[v])])
+        # backward edge: zero capacity
+        self.adj[v].append([u, 0, -1, len(self.adj[u]) - 1])
+    
+    def bfs(self, s, t, level):
+        """Build level graph via BFS."""
+        for i in range(len(level)):
+            level[i] = -1
+        queue = deque([s])
+        level[s] = 0
+        while queue:
+            u = queue.popleft()
+            for v, cap, idx, rev in self.adj[u]:
+                if cap > 0 and level[v] < 0:
+                    level[v] = level[u] + 1
+                    queue.append(v)
+        return level[t] >= 0
+    
+    def dfs(self, u, t, flow, level, it):
+        """Push flow along DFS in level graph."""
+        if u == t:
+            return flow
+        for i in range(it[u], len(self.adj[u])):
+            it[u] = i
+            v, cap, idx, rev = self.adj[u][i]
+            if cap > 0 and level[v] == level[u] + 1:
+                pushed = self.dfs(v, t, min(flow, cap), level, it)
+                if pushed:
+                    # update residual capacities
+                    self.adj[u][i][1] -= pushed
+                    self.adj[v][rev][1] += pushed
+                    return pushed
+        return 0
+    
+    def max_flow(self, s, t):
+        """Compute max flow s->t."""
+        flow = 0
+        level = [-1]*(self.n+1)
+        while self.bfs(s, t, level):
+            it = [0]*(self.n+1)
+            pushed = self.dfs(s, t, 10**18, level, it)
+            while pushed:
+                flow += pushed
+                pushed = self.dfs(s, t, 10**18, level, it)
+        return flow
+    
+    def min_cut_edges(self, s):
+        """After max_flow, find reachable from s in residual graph."""
+        vis = [False]*(self.n+1)
+        stack = [s]
+        vis[s] = True
+        while stack:
+            u = stack.pop()
+            for v, cap, idx, rev in self.adj[u]:
+                # if residual cap > 0, can go
+                if cap > 0 and not vis[v]:
+                    vis[v] = True
+                    stack.append(v)
+        return vis
+
+def main():
+    n, m = map(int, input().split())
+    edges = [None]*(m+1)
+    cost = [0]*(m+1)
+    adj = [[] for _ in range(n+1)]
+    for i in range(1, m+1):
+        a, b, w = map(int, input().split())
+        edges[i] = (a, b)
+        cost[i] = w
+        adj[a].append(b)
+        adj[b].append(a)
+    
+    best = None
+    best_list = []
+    
+    # Try capturing each city r
+    for r in range(1, n+1):
+        # Only pairs of neighbors of r can become disconnected across r
+        nbrs = adj[r]
+        L = len(nbrs)
+        for i in range(L):
+            for j in range(i+1, L):
+                u, v = nbrs[i], nbrs[j]
+                # Build flow network on nodes 1..n excluding r
+                din = Dinic(n)
+                for idx in range(1, m+1):
+                    a, b = edges[idx]
+                    if a == r or b == r:
+                        continue
+                    # Undirected -> two directed edges
+                    din.add_edge(a, b, cost[idx], idx)
+                    din.add_edge(b, a, cost[idx], idx)
+                # Compute min-cut between u and v
+                f = din.max_flow(u, v)
+                if best is None or f < best:
+                    # Identify which original edges are in the cut
+                    reachable = din.min_cut_edges(u)
+                    cut_edges = set()
+                    for x in range(1, n+1):
+                        if not reachable[x]: continue
+                        for to, cap, idx, rev in din.adj[x]:
+                            if not reachable[to] and idx != -1:
+                                cut_edges.add(idx)
+                    cut_list = sorted(cut_edges)
+                    best = f
+                    best_list = cut_list
+    
+    # Output
+    print(best)
+    print(len(best_list))
+    if best_list:
+        print(*best_list)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+
+- We must capture a city r and remove roads to disconnect G–r.
+- That is equivalent to finding an s–t minimum cut in G–r for some two survivors s,t.
+- Try every r∈[1..N], and among its neighbors u,v compute min-cut(u,v) on G with r removed.
+- Track the global minimum and record which edges cross that cut via the residual graph.
+- Use Dinic’s algorithm (O(E√V) or better) on N≤50, M≤500.

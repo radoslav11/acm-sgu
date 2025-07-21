@@ -1,0 +1,277 @@
+1. Abridged Problem Statement  
+Given N teams (numbered 1…N, your team is 1), each has current wins w[i], total remaining games r[i], and for every pair (i, j) the number of their remaining head-to-head games cnt[i][j]. Each remaining game produces exactly one win. Decide whether it’s possible to assign outcomes of all remaining games so that team 1 finishes with at least as many wins as every other team. Print “YES” if it’s possible, otherwise “NO.”
+
+2. Detailed Editorial  
+We face the classical “baseball elimination” problem. Team 1’s maximum possible wins is  
+ W1_max = w[1] + r[1].  
+We must check if we can distribute the wins of all remaining games among the other teams so none exceed W1_max. Games involving team 1 can trivially be “given” to team 1 (or lost), but games between other teams require consistent assignment.
+
+We build a flow network to model this:
+
+ 1. Compute W1_max.  
+ 2. For each opponent i = 2…N:  
+    - If w[i] > W1_max already, answer NO immediately.  
+    - We will enforce that i’s final wins ≤ W1_max by bounding its extra wins to (W1_max − w[i]).  
+ 3. Create a source node S and sink T.  
+ 4. For every pair of distinct opponents i<j, let g = cnt[i][j]:  
+    - Create a “game node” G_{i,j}.  
+    - Add an edge (S → G_{i,j}) with capacity = g, representing all these games.  
+    - Add edges (G_{i,j} → i) and (G_{i,j} → j), each with capacity = g, so each game’s single win goes to either team i or team j.  
+    - Sum these g values as total_games.  
+ 5. For each opponent i = 2…N, add edge (i → T) with capacity = (W1_max − w[i]), limiting additional wins they can take.  
+ 6. Compute max flow from S to T.  
+    - If max_flow = total_games, we can assign every head-to-head game between opponents without making anyone exceed W1_max. Hence answer YES.  
+    - Otherwise NO.
+
+Complexity: There are O(N^2) game nodes and O(N^2) edges; using Dinic or Edmonds–Karp runs comfortably for N≤20.
+
+3. C++ Solution with Detailed Comments  
+#include <bits/stdc++.h>  
+using namespace std;
+
+// Dinic’s max‐flow template with integer capacities
+struct Dinic {
+    struct Edge { int to, rev; int cap; };
+    int N;
+    vector<vector<Edge>> adj;
+    vector<int> level, ptr;
+
+    Dinic(int n) : N(n), adj(n), level(n), ptr(n) {}
+
+    // add a directed edge u→v with capacity c
+    void addEdge(int u, int v, int c) {
+        adj[u].push_back({v, (int)adj[v].size(), c});
+        adj[v].push_back({u, (int)adj[u].size()-1, 0});
+    }
+
+    // BFS to build level graph
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0;
+        q.push(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e : adj[u]) {
+                if (level[e.to] < 0 && e.cap > 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+
+    // DFS to send flow along level graph
+    int dfs(int u, int t, int pushed) {
+        if (pushed == 0) return 0;
+        if (u == t) return pushed;
+        for (int &cid = ptr[u]; cid < (int)adj[u].size(); cid++) {
+            auto &e = adj[u][cid];
+            if (level[e.to] == level[u] + 1 && e.cap > 0) {
+                int tr = dfs(e.to, t, min(pushed, e.cap));
+                if (tr > 0) {
+                    e.cap -= tr;
+                    adj[e.to][e.rev].cap += tr;
+                    return tr;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // compute max flow from s to t
+    int maxFlow(int s, int t) {
+        int flow = 0;
+        while (bfs(s, t)) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (int pushed = dfs(s, t, INT_MAX)) {
+                flow += pushed;
+            }
+        }
+        return flow;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+
+    vector<int> w(N), r(N);
+    for(int i = 0; i < N; i++) cin >> w[i];
+    for(int i = 0; i < N; i++) cin >> r[i];
+
+    vector<vector<int>> cnt(N, vector<int>(N));
+    for(int i = 0; i < N; i++)
+        for(int j = 0; j < N; j++)
+            cin >> cnt[i][j];
+
+    // Team 1’s maximum possible wins
+    int W1_max = w[0] + r[0];
+
+    // Early check: if any other team already exceeds W1_max, impossible
+    for(int i = 1; i < N; i++) {
+        if (w[i] > W1_max) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // Build flow network
+    // Nodes:
+    //   0…N-1    : team nodes
+    //   N…N+M-1  : game nodes (one per pair i<j with cnt>0)
+    //   S = N+M, T = N+M+1
+    vector<tuple<int,int,int>> games; // (i,j,g)
+    int total_games = 0;
+    for(int i = 1; i < N; i++) {
+        for(int j = i+1; j < N; j++) {
+            int g = cnt[i][j];
+            if (g > 0) {
+                games.emplace_back(i, j, g);
+                total_games += g;
+            }
+        }
+    }
+    int M = games.size();
+    int S = N + M;
+    int T = N + M + 1;
+    Dinic dinic(N + M + 2);
+
+    // Source→game nodes
+    for(int idx = 0; idx < M; idx++){
+        int i, j, g;
+        tie(i,j,g) = games[idx];
+        int gameNode = N + idx;
+        dinic.addEdge(S, gameNode, g);
+        // game node→team i and →team j
+        dinic.addEdge(gameNode, i, g);
+        dinic.addEdge(gameNode, j, g);
+    }
+
+    // Team nodes→sink with capacity = how many more wins they can take
+    for(int i = 1; i < N; i++){
+        int cap = W1_max - w[i];
+        dinic.addEdge(i, T, cap);
+    }
+
+    // Run max flow
+    int flow = dinic.maxFlow(S, T);
+    cout << (flow == total_games ? "YES\n" : "NO\n");
+    return 0;
+}
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+
+    def add_edge(self, u, v, cap):
+        # forward edge index = len(adj[u])
+        # backward edge index = len(adj[v])
+        self.adj[u].append([v, cap, len(self.adj[v])])
+        self.adj[v].append([u, 0,   len(self.adj[u]) - 1])
+
+    def bfs(self, s, t, level):
+        for i in range(self.n):
+            level[i] = -1
+        queue = deque([s])
+        level[s] = 0
+        while queue:
+            u = queue.popleft()
+            for v, cap, rev in self.adj[u]:
+                if cap > 0 and level[v] < 0:
+                    level[v] = level[u] + 1
+                    queue.append(v)
+        return level[t] >= 0
+
+    def dfs(self, u, t, f, level, it):
+        if u == t:
+            return f
+        for i in range(it[u], len(self.adj[u])):
+            v, cap, rev = self.adj[u][i]
+            if cap > 0 and level[v] == level[u] + 1:
+                pushed = self.dfs(v, t, min(f, cap), level, it)
+                if pushed:
+                    # reduce forward capacity
+                    self.adj[u][i][1] -= pushed
+                    # increase backward capacity
+                    self.adj[v][rev][1] += pushed
+                    return pushed
+            it[u] += 1
+        return 0
+
+    def max_flow(self, s, t):
+        flow = 0
+        level = [-1]*self.n
+        while self.bfs(s, t, level):
+            it = [0]*self.n
+            while True:
+                pushed = self.dfs(s, t, 10**18, level, it)
+                if pushed == 0:
+                    break
+                flow += pushed
+        return flow
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    w = [int(next(it)) for _ in range(N)]
+    r = [int(next(it)) for _ in range(N)]
+    cnt = [ [int(next(it)) for _ in range(N)] for _ in range(N) ]
+
+    # Max wins for team 1
+    W1 = w[0] + r[0]
+    # Immediate elimination check
+    for i in range(1, N):
+        if w[i] > W1:
+            print("NO")
+            return
+
+    # Collect games among opponents 2..N
+    games = []
+    total_games = 0
+    for i in range(1, N):
+        for j in range(i+1, N):
+            g = cnt[i][j]
+            if g > 0:
+                games.append((i, j, g))
+                total_games += g
+
+    M = len(games)
+    S = N + M
+    T = N + M + 1
+    dinic = Dinic(N + M + 2)
+
+    # Build graph edges
+    # source -> game nodes
+    for idx, (i, j, g) in enumerate(games):
+        game_node = N + idx
+        dinic.add_edge(S, game_node, g)
+        dinic.add_edge(game_node, i, g)
+        dinic.add_edge(game_node, j, g)
+
+    # team nodes -> sink
+    for i in range(1, N):
+        cap = W1 - w[i]
+        dinic.add_edge(i, T, cap)
+
+    # compute max flow
+    flow = dinic.max_flow(S, T)
+    print("YES" if flow == total_games else "NO")
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Compute team 1’s max possible wins W1. Build a flow network: source→each opponent-vs-opponent game node (capacity = number of games), game node→its two teams (capacity same), and each opponent team→sink (capacity = W1 − current wins of that team). If the max flow equals total inter-opponent games, answer YES; else NO.

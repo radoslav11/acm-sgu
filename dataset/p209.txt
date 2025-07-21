@@ -1,0 +1,397 @@
+1. Abridged Problem Statement  
+Given N distinct infinite lines on the plane (1 ≤ N ≤ 80), they partition the plane into regions—some finite, some infinite. Compute the number of finite regions and list their areas in non-decreasing order, accurate to 1e-4. Ignore any region of area ≤1e-8.
+
+2. Detailed Editorial  
+
+Overview  
+We must find all finite faces in the planar subdivision induced by N lines and compute their areas. A robust approach uses exact arithmetic for intersections and a face-walking algorithm on the planar graph.
+
+Steps  
+
+1. Read Input  
+   • N lines, each by two distinct integer points (x₁,y₁), (x₂,y₂).  
+
+2. Compute All Intersections  
+   • For each pair of lines i<j, check if they’re non-parallel by the determinant D = (dx₁·dy₂ – dy₁·dx₂) ≠ 0.  
+   • If non-parallel, compute the intersection point P exactly as rational coordinates, store in a global set to deduplicate.  
+
+3. Build the Planar Graph  
+   • Index the unique intersection points 0…V–1.  
+   • For each line, collect all intersection points that lie on it, sort these points along the line’s parameter t (or by projecting onto the line).  
+   • Connect consecutive points on that line by undirected edges.  
+
+4. Sort Neighbors by Angle  
+   • For each vertex u, take its adjacency list of neighbors.  
+   • Convert each neighbor v to a vector Δ = (x_v–x_u, y_v–y_u) in floating form and compute its angle θ = atan2(Δy,Δx).  
+   • Sort neighbors in increasing θ order (counter-clockwise around u). This ordering lets us trace faces consistently.  
+
+5. Face Tracing (Planar Embedding)  
+   • We treat each undirected edge as two directed edges (u→v and v→u).  
+   • Maintain a visited set for directed edges.  
+   • For each unvisited directed edge (u→v), start a new face trace:  
+     – Mark (u→v) visited; initialize cycle = [v].  
+     – Repeat: at current vertex v coming from u, find the index k of u in v’s neighbor list; the previous neighbor in cyclic order (k–1 mod deg) is the next vertex w.  
+     – Move to directed edge (v→w), mark visited, append w to cycle, and set (u,v) ← (v,w).  
+     – Stop when we return to the starting directed edge.  
+   • The collected cycle of vertices (excluding the duplicate final vertex) encloses one face.  
+
+6. Compute Area  
+   • If the cycle has <3 vertices, skip (no face).  
+   • Compute the signed area via the shoelace formula. Only keep faces with positive signed area > 1e-8.  
+
+7. Output  
+   • Sort all face areas in non-decreasing order.  
+   • Print K = number of faces, then each area to four decimal places.  
+
+Complexities  
+- Intersection computation: O(N²) pairs.  
+- Sorting points on lines: total intersections ≤ N², sorting per line O(N log N).  
+- Face tracing: each directed edge is visited once; total edges O(N²).  
+- Overall O(N² log N) is acceptable for N ≤ 80.
+
+3. C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A rational number represented exactly as n/d in lowest terms
+struct Rational {
+    int64_t n, d;
+    // Constructor: default 0/1 or given numerator and denominator
+    Rational(int64_t nn = 0, int64_t dd = 1) : n(nn), d(dd) {
+        normalize();
+    }
+    // Reduce to lowest terms, ensure d>0
+    void normalize() {
+        if (d < 0) {
+            n = -n;
+            d = -d;
+        }
+        int64_t g = gcd(abs(n), abs(d));
+        n /= g; 
+        d /= g;
+    }
+    // Comparison operators for storing in sets/maps
+    bool operator==(const Rational& o) const { return n == o.n && d == o.d; }
+    bool operator<(const Rational& o) const { return n * o.d < o.n * d; }
+    // Arithmetic operators
+    Rational operator+(const Rational& o) const {
+        return Rational(n * o.d + o.n * d, d * o.d);
+    }
+    Rational operator-(const Rational& o) const {
+        return Rational(n * o.d - o.n * d, d * o.d);
+    }
+    Rational operator*(const Rational& o) const {
+        return Rational(n * o.n, d * o.d);
+    }
+    Rational operator/(const Rational& o) const {
+        return Rational(n * o.d, d * o.n);
+    }
+};
+
+// A 2D point with rational coordinates
+struct Point {
+    Rational x, y;
+    Point(Rational xx = 0, Rational yy = 0) : x(xx), y(yy) {}
+    bool operator==(const Point& o) const { return x == o.x && y == o.y; }
+    bool operator<(const Point& o) const {
+        if (!(x == o.x)) return x < o.x;
+        return y < o.y;
+    }
+};
+
+// A line given by two integer points (x1,y1)-(x2,y2)
+struct Line {
+    int64_t x1, y1, x2, y2;
+};
+
+int N;
+vector<Line> lines;
+
+// Read input: N and then each line’s two points
+void read_input() {
+    cin >> N;
+    lines.resize(N);
+    for (int i = 0; i < N; i++) {
+        cin >> lines[i].x1 >> lines[i].y1
+            >> lines[i].x2 >> lines[i].y2;
+    }
+}
+
+void solve() {
+    // 1) Compute all intersection points (rationals), collect in a set
+    set<Point> all_vertices;
+    for (int i = 0; i < N; i++) {
+        auto &L1 = lines[i];
+        int64_t dx1 = L1.x2 - L1.x1;
+        int64_t dy1 = L1.y2 - L1.y1;
+        for (int j = i + 1; j < N; j++) {
+            auto &L2 = lines[j];
+            int64_t dx2 = L2.x2 - L2.x1;
+            int64_t dy2 = L2.y2 - L2.y1;
+            // Determinant to check parallelism
+            int64_t den = dx1 * dy2 - dy1 * dx2;
+            if (den == 0) continue; // parallel or coincident → no unique intersection
+            // Solve for parameter t on line1: L1.p + t*(dx1,dy1) = intersection
+            int64_t num_t = (L2.x1 - L1.x1) * dy2
+                          - (L2.y1 - L1.y1) * dx2;
+            // Intersection coordinates = L1.p + t*(dx1,dy1)
+            // We compute x_num = L1.x1*den + num_t*dx1, similarly for y
+            int64_t x_num = L1.x1 * den + num_t * dx1;
+            int64_t y_num = L1.y1 * den + num_t * dy1;
+            // Build rational intersection point
+            Point P(Rational(x_num, den), Rational(y_num, den));
+            all_vertices.insert(P);
+        }
+    }
+
+    // 2) Index the vertices and prepare adjacency
+    int V = all_vertices.size();
+    vector<Point> verts(all_vertices.begin(), all_vertices.end());
+    map<Point,int> vid;
+    for (int i = 0; i < V; i++) {
+        vid[verts[i]] = i;
+    }
+    vector<vector<int>> adj(V);
+
+    // 3) For each line, gather intersections on it, sort along the line, connect consecutive
+    for (int i = 0; i < N; i++) {
+        auto &L = lines[i];
+        vector<pair<Rational,int>> pts; // (parameter t, vertex_id)
+        int64_t dx = L.x2 - L.x1, dy = L.y2 - L.y1;
+        for (int v = 0; v < V; v++) {
+            // Check if vertex lies on the line via cross-product zero:
+            // (P - L1) × (dx,dy) == 0
+            Rational rx = verts[v].x - Rational(L.x1,1);
+            Rational ry = verts[v].y - Rational(L.y1,1);
+            if (rx * Rational(dy,1) == ry * Rational(dx,1)) {
+                // Compute t = projection onto direction (choose dx ≠0 or dy)
+                Rational t = (dx != 0)
+                    ? (verts[v].x - Rational(L.x1,1)) / Rational(dx,1)
+                    : (verts[v].y - Rational(L.y1,1)) / Rational(dy,1);
+                pts.emplace_back(t, v);
+            }
+        }
+        // Sort by t along the line, then connect neighbors
+        sort(pts.begin(), pts.end(), [](auto &a, auto &b){
+            return a.first < b.first;
+        });
+        for (int k = 1; k < (int)pts.size(); k++) {
+            int u = pts[k-1].second;
+            int w = pts[k].second;
+            adj[u].push_back(w);
+            adj[w].push_back(u);
+        }
+    }
+
+    // 4) Sort neighbor lists by angle around each vertex
+    vector<vector<int>> nbr_sorted(V);
+    for (int u = 0; u < V; u++) {
+        auto &nb = adj[u];
+        // Remove duplicate neighbors (possible if 3+ lines meet)
+        sort(nb.begin(), nb.end());
+        nb.erase(unique(nb.begin(), nb.end()), nb.end());
+        vector<int> order = nb;
+        sort(order.begin(), order.end(), [&](int a, int b){
+            // Vector from u→a
+            double ax = double(verts[a].x.n)/verts[a].x.d - double(verts[u].x.n)/verts[u].x.d;
+            double ay = double(verts[a].y.n)/verts[a].y.d - double(verts[u].y.n)/verts[u].y.d;
+            double bx = double(verts[b].x.n)/verts[b].x.d - double(verts[u].x.n)/verts[u].x.d;
+            double by = double(verts[b].y.n)/verts[b].y.d - double(verts[u].y.n)/verts[u].y.d;
+            return atan2(ay,ax) < atan2(by,bx);
+        });
+        nbr_sorted[u] = order;
+    }
+
+    // 5) Face tracing using directed edges
+    set<pair<int,int>> used_dir;
+    vector<double> areas;
+
+    for (int u = 0; u < V; u++) {
+        for (int v : adj[u]) {
+            if (used_dir.count({u,v})) continue;
+            // Start tracing from directed edge u→v
+            int su = u, sv = v;
+            vector<int> cycle;
+            used_dir.insert({su,sv});
+            cycle.push_back(sv);
+            int pu = su, pv = sv;
+            while (true) {
+                // In pv’s neighbor list, find index of pu
+                auto &lst = nbr_sorted[pv];
+                int deg = lst.size();
+                int idx = find(lst.begin(), lst.end(), pu) - lst.begin();
+                // Turn “right” in cyclic order: (idx - 1 + deg) % deg
+                int ni = (idx - 1 + deg) % deg;
+                int nv = lst[ni];
+                // Move to directed edge pv→nv
+                if (used_dir.count({pv,nv})) {
+                    // already traced this directed edge, but we still complete the cycle
+                }
+                used_dir.insert({pv,nv});
+                cycle.push_back(nv);
+                pu = pv; pv = nv;
+                if (pu == su && pv == sv) break;
+            }
+            // Remove the last repeated vertex
+            cycle.pop_back();
+            if (cycle.size() < 3) continue; // not a face
+            // Compute signed area via shoelace
+            double A = 0;
+            int M = cycle.size();
+            for (int i = 0; i < M; i++) {
+                auto &P1 = verts[cycle[i]];
+                auto &P2 = verts[cycle[(i+1)%M]];
+                double x1 = double(P1.x.n)/P1.x.d, y1 = double(P1.y.n)/P1.y.d;
+                double x2 = double(P2.x.n)/P2.x.d, y2 = double(P2.y.n)/P2.y.d;
+                A += x1*y2 - x2*y1;
+            }
+            A *= 0.5;
+            if (A > 1e-8) areas.push_back(A);
+        }
+    }
+
+    // 6) Output sorted positive areas
+    sort(areas.begin(), areas.end());
+    cout << areas.size() << "\n" << fixed << setprecision(4);
+    for (double a : areas) cout << a << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import threading
+def main():
+    import math
+    sys.setrecursionlimit(10**7)
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    lines = []
+    for _ in range(N):
+        x1,y1,x2,y2 = map(int, (next(it),next(it),next(it),next(it)))
+        lines.append((x1,y1,x2,y2))
+
+    # Compute intersections exactly as rationals (num,den) in lowest terms
+    from fractions import Fraction
+    pts_set = set()
+    for i in range(N):
+        x1,y1,x2,y2 = lines[i]
+        dx1, dy1 = x2-x1, y2-y1
+        for j in range(i+1, N):
+            X1,Y1,X2,Y2 = lines[j]
+            dx2, dy2 = X2-X1, Y2-Y1
+            det = dx1*dy2 - dy1*dx2
+            if det == 0:
+                continue  # parallel or coincident
+            # solve for parameter t on line i
+            num_t = (X1-x1)*dy2 - (Y1-y1)*dx2
+            # intersection = (x1 + t*dx1, y1 + t*dy1)
+            # as rationals:
+            t = Fraction(num_t, det)
+            xi = Fraction(x1,1) + t * dx1
+            yi = Fraction(y1,1) + t * dy1
+            pts_set.add((xi, yi))
+
+    # Index vertices
+    verts = list(pts_set)
+    V = len(verts)
+    vid = {p:i for i,p in enumerate(verts)}
+    adj = [[] for _ in range(V)]
+
+    # For each line, collect intersection points on it, sort by parameter t, link consecutive
+    for (x1,y1,x2,y2) in lines:
+        dx, dy = x2-x1, y2-y1
+        temp = []
+        for idx,(xi,yi) in enumerate(verts):
+            # check collinearity via cross product
+            if (xi - x1)*dy == (yi - y1)*dx:
+                # project to line: t = (xi-x1)/dx if dx!=0 else (yi-y1)/dy
+                if dx != 0:
+                    t = (xi - x1)/dx
+                else:
+                    t = (yi - y1)/dy
+                temp.append((t, idx))
+        temp.sort(key=lambda x: x[0])
+        for k in range(1, len(temp)):
+            u = temp[k-1][1]
+            v = temp[k][1]
+            adj[u].append(v)
+            adj[v].append(u)
+
+    # Sort neighbors of each vertex by angle for planar embedding
+    nbr_sorted = []
+    for i,(xi,yi) in enumerate(verts):
+        # remove duplicates
+        neigh = sorted(set(adj[i]))
+        def angle(j):
+            xj,yj = verts[j]
+            dx, dy = float(xj-xi), float(yj-yi)
+            return math.atan2(dy, dx)
+        neigh.sort(key=angle)
+        nbr_sorted.append(neigh)
+
+    # Face tracing: each undirected edge → two directed edges
+    used = set()
+    areas = []
+    for u in range(V):
+        for v in adj[u]:
+            if (u,v) in used:
+                continue
+            # start face walk from u->v
+            su, sv = u, v
+            used.add((su,sv))
+            cycle = [sv]
+            pu, pv = su, sv
+            while True:
+                lst = nbr_sorted[pv]
+                # find index of pu in pv's neighbor list
+                k = lst.index(pu)
+                # next neighbor in clockwise order = (k-1) mod deg
+                nv = lst[(k-1) % len(lst)]
+                used.add((pv,nv))
+                cycle.append(nv)
+                pu, pv = pv, nv
+                if pu==su and pv==sv:
+                    break
+            cycle.pop()  # remove repeated start
+            if len(cycle) < 3:
+                continue
+            # compute signed area
+            A = 0
+            for i in range(len(cycle)):
+                x1,y1 = verts[cycle[i]]
+                x2,y2 = verts[cycle[(i+1)%len(cycle)]]
+                A += float(x1*y2 - x2*y1)
+            A *= 0.5
+            if A > 1e-8:
+                areas.append(A)
+
+    areas.sort()
+    # Output
+    print(len(areas))
+    for a in areas:
+        print(f"{a:.4f}")
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+1. Compute all pairwise line intersections as exact rationals; collect unique vertices.  
+2. For each line, sort intersections along it and link consecutive points to form edges.  
+3. At each vertex, sort neighbors by angle to enable consistent face traversal.  
+4. Trace faces by walking directed edges, always turning “right” in the sorted neighbor list.  
+5. Compute shoelace area for each cycle; keep positive areas >1e-8, sort, and output.

@@ -1,0 +1,264 @@
+1. Abridged Problem Statement
+
+Given N (1≤N≤16) players and a matrix R where Rij=1 means player i always beats j (and Rij=0 otherwise), count the number of knockout‐tournament brackets of minimal height (i.e. exactly ⌈log₂N⌉ rounds, with byes if needed) in which a designated player M wins the final. You must consider every arrangement of players (and byes) in the fixed‐height binary‐tree bracket, and output the total number of such brackets where M emerges champion.
+
+2. Detailed Editorial
+
+Overview  
+We want to count all full binary‐tree tournaments of height T=⌈log₂N⌉ in which player M wins. A binary‐tree tournament of height T has up to 2ᵀ leaves; since N need not be a power of two, some leaves are “byes.” Each internal node is a match: its two children are subbrackets, each producing one winner, and then they play; the winner propagates up.
+
+Brute‐forcing all labelings is infeasible—there are (2ᵀ)!/((2ᵀ−N)!·2ᵀ) ways to assign N players to 2ᵀ leaves. N≤16, T≤4, but still too many. Instead, we use a dynamic programming over subsets and sizes, merging two subbrackets at a time.
+
+State definition  
+Let dp[s][w][k][mask] = number of ways to form a subtree of height “step” s that uses exactly the set of players in `mask` (a bitmask of size N), has |mask|=k players, and whose winner is w (0≤w<N). Ultimately we want dp[S][M][N][full_mask], where S is the final step index for height T.
+
+We only allow s so that subtrees of size k can be formed in s levels—i.e. s≥⌊log₂(k−1)⌋+1. The maximum s we need is S = ⌊log₂(N−1)⌋+2 = T+1 in 1‐based indexing of levels.
+
+Transitions  
+At any step s>0, to form a subtree of size k with winner=w, we pick sizes k₁,k₂>0 with k₁+k₂=k. We must have formed:
+  – a left subtree of size k₁, winner x, at some step s₁<s  
+  – a right subtree of size k₂, winner y, at some step s₂<s  
+such that max(s₁,s₂)+1 = s, and R[x][y] decides the final winner w (if R[x][y]=1 then x wins, else y wins). We combine counts by convolution over masks:  
+  dp[s][w][k][mask] += Σ_{mask₁∪mask₂=mask, mask₁∩mask₂=∅} dp[s₁][x][k₁][mask₁] · dp[s₂][y][k₂][mask₂].
+
+Naïvely this is O(∑ₖ 2ᵏ · C(N,k)·C(N,k₁)) and blows up.  
+
+Fast Walsh–Hadamard Transform (FWT)  
+To speed up the convolution over subsets, notice that for a fixed pair of states (s₁,x,k₁) and (s₂,y,k₂), the sum over disjoint mask-pairs whose union is a given mask is exactly the subset convolution. One can embed this into a pointwise multiplication if we “lift” all 2ᴺ vectors by applying the binary‐XOR FWT. Under FWT, convolution over disjoint unions becomes pointwise multiplication (for XOR‐convolution), and summation over s₁,s₂ is just summing the products. We do:
+
+  1. For each base dp[0][i][1], we create a vector V of length 2ᴺ where V[1≪i]=1 and 0 elsewhere, then FWT‐transform V.
+  2. Whenever we need to combine dpₐ and dp_b (both already FWT’d) to form dp_c, we just do element‐wise multiply‐and‐add into dp_c’s vector in FWT‐domain.
+  3. At the end we inverse‐FWT the target vector and read off the coefficient of full_mask = (1≪N)−1.
+
+Complexity  
+Each dp‐entry is a length‐2ᴺ vector. There are O(T·N·N) of them, but we only allocate the ones that are reachable. Each FWT/ inverse‐FWT is O(N·2ᴺ). Each vector‐multiply pass is O(2ᴺ). Since N≤16, 2ᴺ=65 536. T≤5, so total work is on the order of a few hundred multiplies of length 65 536—feasible in optimized C++ with bit‐packing and OMP hints.
+
+3. Annotated C++ Solution
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Fast I/O and some GCC optimizations
+#pragma GCC optimize("O3,unroll-loops,tree-vectorize")
+#pragma GCC target("avx2")
+
+int n, m;                           // number of players, friend index (0-based)
+vector<vector<int>> R;             // result matrix R[i][j]=1 if i beats j
+
+// Compute best_size[k] = minimal steps to form a subtree with k players
+// i.e. best_size[k] = floor(log2(k-1)) + 1
+vector<int> best_size;
+
+// FWT transform (in-place); if inv=true, do inverse by dividing by n at end
+void xor_transform(vector<uint64_t> &a, bool inv=false) {
+    int N = a.size();
+    for(int len=1; len<N; len<<=1) {
+        for(int i=0; i<N; i += 2*len) {
+            for(int j=0; j<len; j++) {
+                uint64_t u = a[i+j];
+                uint64_t v = a[i+j+len];
+                a[i+j]   = u + v;
+                a[i+j+len] = u - v;
+            }
+        }
+    }
+    if(inv) {
+        for(auto &x: a) x /= N;
+    }
+}
+
+// Multiply‐and‐add two FWT-domain vectors: res += A * B (elementwise)
+void multiply_add(vector<uint64_t> &res,
+                  const vector<uint64_t> &A,
+                  const vector<uint64_t> &B) {
+    int N = res.size();
+    // unroll by 4 for speed
+    int i = 0, up = N - (N%4);
+    for(; i<up; i+=4) {
+        res[i]   += A[i]   * B[i];
+        res[i+1] += A[i+1] * B[i+1];
+        res[i+2] += A[i+2] * B[i+2];
+        res[i+3] += A[i+3] * B[i+3];
+    }
+    for(; i<N; i++) {
+        res[i] += A[i] * B[i];
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Input
+    cin >> n >> m;
+    m--; // zero-based
+    R.assign(n, vector<int>(n));
+    for(int i=0;i<n;i++)
+        for(int j=0;j<n;j++)
+            cin >> R[i][j];
+
+    // Precompute minimum steps for each size
+    best_size.assign(n+1, 0);
+    for(int i=1;i<=n;i++)
+        best_size[i] = best_size[i>>1] + 1;
+    int STEPS = best_size[n-1] + 1;  // final step index
+
+    // dp[step][winner][size] is a length-(1<<n) vector in FWT-domain
+    // We only allocate when needed, so use a 3D vector of vector<uint64_t>
+    vector<vector<vector<vector<uint64_t>>>> dp(
+        STEPS,
+        vector<vector<vector<uint64_t>>>(n, vector<vector<uint64_t>>(n+1))
+    );
+
+    // Base case: each single-player subtree
+    for(int i=0; i<n; i++) {
+        auto &V = dp[0][i][1];
+        V.assign(1<<n, 0);
+        V[1<<i] = 1;               // mask containing only player i
+        xor_transform(V, false);   // FWT it
+    }
+
+    // Prepare all (sizeA, sizeB) pairs
+    vector<pair<int,int>> splits;
+    for(int a=1; a<=n; a++) 
+      for(int b=1; b<=n; b++)
+        if(a+b <= n)
+          splits.emplace_back(a,b);
+    // sort by max(a,b) so we build small subtrees first
+    sort(splits.begin(), splits.end(),
+        [](auto &A, auto &B){
+            return max(A.first,A.second) < max(B.first,B.second);
+        });
+
+    // Build DP by merging two subtrees
+    for(auto [sa,sb]: splits) {
+        for(int s1=0; s1+1<STEPS; s1++){
+            if(s1 < best_size[sa-1]) continue;  // cannot form size sa in s1
+            for(int s2=0; s2+1<STEPS; s2++){
+                if(s2 < best_size[sb-1]) continue;
+                int s_new = max(s1,s2) + 1;
+                if(s_new >= STEPS) continue;
+                for(int x=0; x<n; x++){
+                    auto &VA = dp[s1][x][sa];
+                    if(VA.empty()) continue;
+                    for(int y=0; y<n; y++){
+                        if(x==y) continue;
+                        auto &VB = dp[s2][y][sb];
+                        if(VB.empty()) continue;
+                        // winner of the match x vs y:
+                        int w = R[x][y] ? x : y;
+                        auto &VC = dp[s_new][w][sa+sb];
+                        if(VC.empty())
+                            VC.assign(1<<n, 0);
+                        // accumulate elementwise products
+                        multiply_add(VC, VA, VB);
+                    }
+                }
+            }
+        }
+    }
+
+    // If the final vector is empty, answer is 0
+    auto &ANS_FWT = dp[STEPS-1][m][n];
+    if(ANS_FWT.empty()) {
+        cout << 0 << "\n";
+        return 0;
+    }
+    // Inverse-FWT to get real counts
+    xor_transform(ANS_FWT, true);
+
+    // The full mask is (1<<n)-1
+    cout << ANS_FWT[(1<<n)-1] << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def xor_fwt(a, inv=False):
+    """ In-place Walsh–Hadamard transform for XOR-convolution. """
+    n = len(a)
+    h = 1
+    while h < n:
+        for i in range(0, n, h*2):
+            for j in range(i, i+h):
+                x = a[j]
+                y = a[j+h]
+                a[j] = x + y
+                a[j+h] = x - y
+        h <<= 1
+    if inv:
+        # divide by n to invert
+        for i in range(n):
+            a[i] //= n
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it)) - 1
+    R = [list(map(int, [next(it) for _ in range(n)])) for __ in range(n)]
+
+    # Precompute min steps to build k-player subtree
+    best = [0]*(n+1)
+    for i in range(1, n+1):
+        best[i] = best[i>>1] + 1
+    STEPS = best[n-1] + 1
+
+    # dp[step][winner][size] -> vector of length 2^n in FWT-domain
+    dp = [[[[] for _ in range(n+1)] for __ in range(n)] for ___ in range(STEPS)]
+
+    FULL = 1<<n
+
+    # Base: singletons
+    for i in range(n):
+        vec = [0]*FULL
+        vec[1<<i] = 1
+        xor_fwt(vec, inv=False)
+        dp[0][i][1] = vec
+
+    # all possible (sizeA, sizeB) splits
+    splits = [(a,b) for a in range(1,n+1) for b in range(1,n+1) if a+b<=n]
+    splits.sort(key=lambda x: max(x))
+
+    for sa,sb in splits:
+        for s1 in range(STEPS):
+            if s1 < best[sa-1]: continue
+            for s2 in range(STEPS):
+                if s2 < best[sb-1]: continue
+                s_new = max(s1, s2) + 1
+                if s_new >= STEPS: continue
+                for x in range(n):
+                    VA = dp[s1][x][sa]
+                    if not VA: continue
+                    for y in range(n):
+                        if x==y: continue
+                        VB = dp[s2][y][sb]
+                        if not VB: continue
+                        w = x if R[x][y] else y
+                        if not dp[s_new][w][sa+sb]:
+                            dp[s_new][w][sa+sb] = [0]*FULL
+                        VC = dp[s_new][w][sa+sb]
+                        # elementwise multiply-add in FWT domain
+                        for i in range(FULL):
+                            VC[i] += VA[i] * VB[i]
+
+    res_vec = dp[STEPS-1][m][n]
+    if not res_vec:
+        print(0)
+        return
+    xor_fwt(res_vec, inv=True)
+    print(res_vec[FULL-1])
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+
+We do a DP over subtree sizes and winners, counting how many ways to form each subtree‐“mask” in minimal rounds. To combine two subtrees, we convolve over disjoint mask‐pairs; using the Walsh–Hadamard (XOR) transform turns that convolution into fast pointwise multiplications. Finally, inverse‐transform and read the coefficient of the full set.

@@ -1,0 +1,301 @@
+1. Abridged Problem Statement  
+Given an undirected graph G with v vertices and e edges (v≤100), decide if G can arise from the following 3-SAT→clique reduction:  
+- Start with a 3-CNF formula of n clauses (3 literals per clause).  
+- Create 3n vertices, one per literal tji in clause i.  
+- For any two vertices from different clauses, add an edge if and only if the two literals are not contradictory (i.e. they are either the same sign of the same variable or they mention different variables).  
+- Finally, vertices are arbitrarily permuted.  
+
+Output “YES” if the given G matches a graph produced by this construction; otherwise “NO.”
+
+2. Detailed Editorial  
+
+Overview  
+We must detect whether the input graph G=(V,E) encodes some 3-CNF in the special reduction.  Key facts of the reduction:  
+- |V| must be a multiple of 3 (there are exactly 3 literals per clause).  
+- Vertices are partitioned into n=|V|/3 independent triples (no edges inside each triple)—those represent the three literals of each clause.  
+- Between different triples (clauses), edges connect exactly those pairs of literals that are non-contradictory.  Thus missing cross-clause edges signal a contradiction pair: same variable, opposite signs.  
+- Finally, an assignment of boolean values to variables corresponds to choosing one literal per clause forming an n-clique; its existence is not required by our test, only the structural pattern.
+
+Step 1: Check |V|≡0 mod 3.  If not, reject.  
+Step 2: Find all size-3 independent sets in G.  For every triple {i,j,k} with no internal edges, record it as a candidate clause.  We then require each vertex to belong to exactly one such triple.  If any vertex lies in zero or multiple triples, output NO.  This yields a unique partition of V into n clause-triples.  
+
+Step 3: “Complete” each triple by inserting the three missing edges among its vertices.  After this augmentation, any remaining non-edges must lie strictly between different triples, each signaling a contradiction pair.  
+
+Step 4: Model literals and variable identities via 2-SAT style DSU over 2n nodes.  Number your vertices 0…v−1.  Build a DSU on 2v elements: for each literal i we interpret “i+n” as the negation of i.  For every non-edge (u,v) in the augmented graph (u<v), we know u and v come from different clauses and must contradict.  Thus u⇒¬v and v⇒¬u, which in DSU means unify(u, v+n) and unify(u+n, v).  
+
+Step 5: Check consistency of negations.  If for any i, find(i)==find(i+n), there is a variable forced equal to its negation—reject.  
+
+Step 6: Validate that every contradiction class is complete: in the reduction, each pair of contradictory literals (across all clauses) are exactly the missing edges between the two opposite-sign classes.  Concretely, for each i, let A be all literals in the DSU‐component of i, and B those in the component of i+n.  Compute deg[x] = number of non-edges incident to x.  All non-edges must go between A and B, and must form a complete bipartite graph K|A|,|B|.  Summing deg over A∪B counts each cross-edge twice, so we require  
+   sum_{x in A∪B} deg[x] == 2·|A|·|B|  
+If this holds for every i, accept (“YES”); else reject.
+
+3. Annotated C++ Solution  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Simple Disjoint Set Union supporting union-by-size and path compression.
+class DSU {
+public:
+    int n;
+    vector<int> par, sz;
+    DSU(int _n = 0) { init(_n); }
+    void init(int _n) {
+        n = _n;
+        par.resize(n);
+        sz.assign(n, 1);
+        iota(par.begin(), par.end(), 0);
+    }
+    int root(int x) {
+        // Path compression
+        return par[x] == x ? x : par[x] = root(par[x]);
+    }
+    bool connected(int a, int b) {
+        return root(a) == root(b);
+    }
+    int unite(int a, int b) {
+        a = root(a); b = root(b);
+        if (a == b) return a;
+        if (sz[a] > sz[b]) swap(a, b);
+        par[a] = b;
+        sz[b] += sz[a];
+        return b;
+    }
+};
+
+int n, m;
+vector<vector<char>> adj;  // adjacency matrix
+
+void read_input() {
+    cin >> n >> m;
+    adj.assign(n, vector<char>(n, 0));
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        --u; --v;
+        adj[u][v] = adj[v][u] = 1;
+    }
+}
+
+void solve() {
+    // Must have 3 literals per clause
+    if (n % 3 != 0) {
+        cout << "NO\n";
+        return;
+    }
+
+    // For each vertex, record which independent triples include it.
+    vector<vector<array<int,3>>> triples_at(n);
+    // Enumerate all independent triples i<j<k
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) if (!adj[i][j]) {
+            for (int k = j + 1; k < n; k++) {
+                if (!adj[i][k] && !adj[j][k]) {
+                    // record triple {i,j,k} for each member
+                    triples_at[i].push_back({i,j,k});
+                    triples_at[j].push_back({i,j,k});
+                    triples_at[k].push_back({i,j,k});
+                }
+            }
+        }
+    }
+    // Each vertex must belong to exactly one clause-triple
+    for (int i = 0; i < n; i++) {
+        if (triples_at[i].size() != 1) {
+            cout << "NO\n";
+            return;
+        }
+    }
+    // “Complete” each triple by adding missing edges
+    for (int i = 0; i < n; i++) {
+        auto &t = triples_at[i][0];
+        for (int x = 0; x < 3; x++)
+            for (int y = x+1; y < 3; y++) {
+                int u = t[x], v = t[y];
+                adj[u][v] = adj[v][u] = 1;
+            }
+    }
+
+    // Build DSU on 2n: nodes i and i+n are literal/negation
+    DSU dsu(2*n);
+    // For every non-edge (u,v), they are contradictory, so u⇒¬v, v⇒¬u
+    for (int u = 0; u < n; u++) {
+        for (int v = u+1; v < n; v++) {
+            if (!adj[u][v]) {
+                dsu.unite(u, v + n);
+                dsu.unite(u + n, v);
+            }
+        }
+    }
+    // Check for any literal == its own negation
+    for (int i = 0; i < n; i++) {
+        if (dsu.connected(i, i + n)) {
+            cout << "NO\n";
+            return;
+        }
+    }
+    // Compute deg[i] = number of non-edges incident to i
+    vector<int> deg(n, 0);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            if (!adj[i][j]) deg[i]++;
+
+    // For each literal i, gather its true-component A and false-component B,
+    // and check the complete bipartiteness of missing edges between A and B.
+    vector<char> seen(2*n, 0);
+    for (int i = 0; i < n; i++) {
+        int ri = dsu.root(i), rni = dsu.root(i + n);
+        if (seen[ri]) continue;  // already checked this variable
+        seen[ri] = seen[rni] = 1;
+
+        int cntA = 0, cntB = 0, sumDeg = 0;
+        // scan all literals
+        for (int x = 0; x < n; x++) {
+            int rx = dsu.root(x);
+            if (rx == ri) {
+                cntA++;
+                sumDeg += deg[x];
+            } else if (rx == rni) {
+                cntB++;
+                sumDeg += deg[x];
+            }
+        }
+        // sumDeg should equal twice the number of cross pairs
+        if (sumDeg != 2 * cntA * cntB) {
+            cout << "NO\n";
+            return;
+        }
+    }
+    cout << "YES\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+class DSU:
+    def __init__(self, n):
+        self.p = list(range(n))
+        self.sz = [1]*n
+    def find(self, x):
+        if self.p[x] != x:
+            self.p[x] = self.find(self.p[x])
+        return self.p[x]
+    def union(self, a, b):
+        a = self.find(a); b = self.find(b)
+        if a == b: return
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.p[a] = b
+        self.sz[b] += self.sz[a]
+    def same(self, a, b):
+        return self.find(a) == self.find(b)
+
+def main():
+    data = sys.stdin.read().split()
+    n, m = map(int, data[:2])
+    edges = data[2:]
+    # Build adjacency matrix
+    adj = [[False]*n for _ in range(n)]
+    ptr = 0
+    for _ in range(m):
+        u = int(edges[ptr]) - 1
+        v = int(edges[ptr+1]) - 1
+        ptr += 2
+        adj[u][v] = adj[v][u] = True
+
+    # Must have 3 literals per clause
+    if n % 3 != 0:
+        print("NO"); return
+
+    # Find all independent triples
+    triples_at = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i+1, n):
+            if not adj[i][j]:
+                for k in range(j+1, n):
+                    if not adj[i][k] and not adj[j][k]:
+                        # record for i,j,k
+                        triple = (i,j,k)
+                        triples_at[i].append(triple)
+                        triples_at[j].append(triple)
+                        triples_at[k].append(triple)
+
+    # Each vertex must appear in exactly one triple
+    for lst in triples_at:
+        if len(lst) != 1:
+            print("NO"); return
+
+    # Complete each triple by adding its 3 missing edges
+    for i in range(n):
+        i,j,k = triples_at[i][0]
+        for a,b in [(i,j),(i,k),(j,k)]:
+            adj[a][b] = adj[b][a] = True
+
+    # Build 2-SAT style DSU on 2n nodes
+    dsu = DSU(2*n)
+    for u in range(n):
+        for v in range(u+1, n):
+            if not adj[u][v]:
+                # u contradicts v => u=>¬v, v=>¬u
+                dsu.union(u, v + n)
+                dsu.union(u + n, v)
+
+    # Check no literal is unified with its negation
+    for i in range(n):
+        if dsu.same(i, i+n):
+            print("NO"); return
+
+    # deg[x] = count of non-edges incident to x
+    deg = [0]*n
+    for i in range(n):
+        deg[i] = adj[i].count(False)
+
+    seen = [False]*(2*n)
+    # For each variable (component pair), verify cross bipartiteness
+    for i in range(n):
+        ri, rni = dsu.find(i), dsu.find(i+n)
+        if seen[ri]: 
+            continue
+        seen[ri] = seen[rni] = True
+
+        cntA = cntB = sumDeg = 0
+        for x in range(n):
+            rx = dsu.find(x)
+            if rx == ri:
+                cntA += 1
+                sumDeg += deg[x]
+            elif rx == rni:
+                cntB += 1
+                sumDeg += deg[x]
+        # Missing edges should form a complete bipartite graph
+        if sumDeg != 2*cntA*cntB:
+            print("NO"); return
+
+    print("YES")
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Verify v%3==0.  
+- Enumerate all independent triples; demand each vertex belongs to exactly one → unique 3-partition.  
+- Fill in missing edges inside each triple (turn each into a clique).  
+- On the augmented graph, every remaining non-edge is across clauses and marks a contradiction.  
+- Build a 2n-element DSU (literal vs. negation).  For each non-edge (u,v), `union(u, v+n)` and `union(u+n, v)`.  
+- Reject if any i is unified with i+n.  
+- Compute deg[i]=#non-edges at i; for each DSU-component pair (true vs. false), verify sum deg = 2·|A|·|B|, ensuring a complete bipartite pattern of contradictions.  
+- If all checks pass, answer YES; otherwise NO.

@@ -1,0 +1,226 @@
+1. Concise Problem Statement  
+You have a heap of N matches. Two players alternate removing matches, where on each move a player may take exactly 1 or one of the values P₁,…,Pₘ (each between 2 and 9). The player who takes the last match **loses**. Given N (up to 10⁹) and the set {P₁,…,Pₘ}, determine which player has a forced win under perfect play.
+
+2. Detailed Editorial  
+
+Game reformulation  
+- This is a subtraction (take-away) game under **misère** rule: the player taking the last object loses.  
+- Let S = {1, P₁, P₂, …, Pₘ}. Moves from a heap of size i are to i − s for any s∈S with s ≤ i.
+
+Dynamic programming  
+- Define dp[i] = 1 if the position with i matches is winning for the player to move, and dp[i] = 0 if it is losing.  
+- Base: dp[0] = 1, because if there are 0 matches on your turn, your opponent just took the last one and lost—so you “win” by default.  
+- dp[i] = 1 if there exists an s∈S, s ≤ i, such that transitioning to i−s yields a losing position dp[i−s] = 0. Otherwise dp[i] = 0.
+
+Misère subtlety  
+- In normal play you win by taking the last object; in misère play you lose by taking the last object. However, because we include move of size 1 and the heap is never left with a “poisoned” last object except at size 0, the simple DP above with dp[0]=1 and dp[1]=0 handles the misère condition correctly.
+
+Periodicity for large N  
+- Since all allowed moves are at most 9, dp[i] depends only on the previous 9 values. Therefore the sequence dp[0], dp[1], … is eventually periodic with period at most 2¹⁰ (the number of distinct bit-patterns of length 10).  
+- We compute dp[i] and maintain a 10-bit “state” encoding which of dp[i],dp[i−1],…,dp[i−9] are winning. As soon as a state repeats at two different i’s, we detect a cycle.  
+- Let i₁ < i₂ be the two occurrences of the same state; cycle_length = i₂ − i₁. For any N ≥ i₂, dp[N] = dp[i₁ + ((N−i₁) mod cycle_length)].
+
+Complexity  
+- We only need to compute up to when a cycle is found, which is at most a few thousand steps (≤ around 1024 states). Each step checks up to m+1 moves (≤9). Overall O(1024·9) per test case.  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pairs to ease debugging/printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pairs to read them easily.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload << for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n, m;             // n = number of matches, m = count of extra allowed moves
+vector<int> p;        // stores the moves {P1, P2, ..., Pm}
+
+// Read one test case
+void read() {
+    cin >> n >> m;
+    p.resize(m);
+    for (int i = 0; i < m; i++) {
+        cin >> p[i];
+    }
+    // Always allow taking 1 match
+    p.push_back(1);
+}
+
+// Solve one test case
+void solve() {
+    // Sort moves and deduplicate
+    sort(p.begin(), p.end());
+    p.erase(unique(p.begin(), p.end()), p.end());
+
+    // pos_of_state[state] = smallest i at which the 10-bit state first appeared
+    vector<int> pos_of_state(1 << 10, -1);
+
+    // dp[i] = 1 if heap-size i is winning; 0 if losing.
+    // We only store up to min(n+1, 1<<13) to have a small buffer in case no cycle is found early.
+    int limit = min((long long)1 << 13, (long long)n + 1);
+    vector<int> dp(limit, 0);
+
+    // Base cases for misère subtraction:
+    // dp[0] = 1: with 0 matches your opponent took last and lost ⇒ you "win"
+    // dp[1] = 0: if you take the 1 match, you lose immediately.
+    dp[0] = 1;
+    if (limit > 1) dp[1] = 0;
+
+    int ans = -1;  // will hold the final dp[n] (1=first wins, 0=second wins)
+
+    // Build dp from i=2 upward until we detect a cycle or reach n
+    for (int i = 2; i <= n && i < limit; i++) {
+        // Compute dp[i] by checking all moves s in p
+        for (int s: p) {
+            if (s > i) break;           // cannot take more matches than available
+            if (dp[i - s] == 0) {       // found a move to a losing position
+                dp[i] = 1;              // so current is winning
+                break;
+            }
+        }
+
+        // Build a 10-bit signature of (dp[i], dp[i-1], …, dp[i-9])
+        int state = 0;
+        for (int b = 0; b < 10; b++) {
+            // If we’re out-of-range (i-b<0) or dp[i-b] == 1, set that bit
+            if (i - b < 0 || dp[i - b] == 1) {
+                state |= (1 << b);
+            }
+        }
+
+        // If unseen, record the index i; otherwise we found a cycle
+        if (pos_of_state[state] == -1) {
+            pos_of_state[state] = i;
+        } else {
+            int first_i = pos_of_state[state];
+            int cycle_len = i - first_i;
+            // Map N down into the cycle
+            int offset = (n - first_i) % cycle_len;
+            ans = dp[first_i + offset];
+            break;
+        }
+    }
+
+    // If no cycle found within our limit, just take dp[n]
+    if (ans == -1) {
+        ans = dp[n];
+    }
+
+    // Output final result
+    cout << (ans ? "FIRST PLAYER MUST WIN" : "SECOND PLAYER MUST WIN") << '\n';
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T;
+    cin >> T;                   // number of test cases
+    while (T--) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+
+def winner(n, moves):
+    # moves: sorted list of allowed removal sizes, including 1
+    # We store dp up to detection of cycle in a dict of states.
+    # dp[i] = 1 if winning, 0 if losing for the player to move at size i.
+    # Base: dp[0] = 1 (opponent just lost by taking last), dp[1] = 0 (only move loses).
+    
+    # Maximum window for cycle detection: 10 bits → at most 1024 distinct states
+    pos_of_state = {}   # state_mask -> first index i
+    dp = [1, 0]         # initial dp[0], dp[1]
+    
+    # If n <= 1, we already know the answer
+    if n <= 1:
+        return dp[n]
+    
+    limit = min(n, (1 << 13) - 1)  # some safe upper limit to compute until cycle
+    for i in range(2, limit + 1):
+        # Compute dp[i]
+        win = 0
+        for s in moves:
+            if s > i:
+                break
+            if dp[i - s] == 0:
+                win = 1
+                break
+        dp.append(win)
+        
+        # Build 10-bit signature of dp[i], dp[i-1], …, dp[i-9]
+        st = 0
+        for b in range(10):
+            if i - b < 0 or dp[i - b] == 1:
+                st |= 1 << b
+        
+        if st not in pos_of_state:
+            pos_of_state[st] = i
+        else:
+            # Cycle detected
+            first_i = pos_of_state[st]
+            cycle_len = i - first_i
+            # Map n into the cycle
+            idx = first_i + ((n - first_i) % cycle_len)
+            return dp[idx]
+    
+    # If no cycle up to our limit, then dp[n] is known directly
+    return dp[n]
+
+def main():
+    data = sys.stdin.read().strip().split()
+    t = int(data[0])
+    ptr = 1
+    out = []
+    for _ in range(t):
+        n = int(data[ptr]); ptr += 1
+        m = int(data[ptr]); ptr += 1
+        p = list(map(int, data[ptr:ptr+m]))
+        ptr += m
+        # Always include removal of 1
+        moves = sorted(set(p + [1]))
+        w = winner(n, moves)
+        out.append("FIRST PLAYER MUST WIN" if w else "SECOND PLAYER MUST WIN")
+    print("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Model the game as a misère subtraction game with moves S = {1, P₁,…,Pₘ}.  
+- dp[i] = winning iff ∃s∈S s.t. dp[i−s] is losing; dp[0]=1, dp[1]=0.  
+- Because S’s maximum is ≤9, the sequence dp is eventually periodic with period ≤2¹⁰.  
+- Detect the cycle by hashing the last 10 dp bits into a state, record first occurrence, and when repeated, use modular arithmetic to find dp[N].

@@ -1,0 +1,358 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+194. Reactor Cooling
+time limit per test: 0.5 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+The terrorist group leaded by a well known international terrorist Ben Bladen is buliding a nuclear reactor to produce plutonium for the nuclear bomb they are planning to create. Being the wicked computer genius of this group, you are responsible for developing the cooling system for the reactor.
+
+The cooling system of the reactor consists of the number of pipes that special cooling liquid flows by. Pipes are connected at special points, called nodes, each pipe has the starting node and the end point. The liquid must flow by the pipe from its start point to its end point and not in the opposite direction.
+
+Let the nodes be numbered from 1 to N. The cooling system must be designed so that the liquid is circulating by the pipes and the amount of the liquid coming to each node (in the unit of time) is equal to the amount of liquid leaving the node. That is, if we designate the amount of liquid going by the pipe from i-th node to j-th as fij, (put fij = 0 if there is no pipe from node i to node j), for each i the following condition must hold:
+
+
+sum(j=1..N, fij) = sum(j=1..N, fji)
+
+
+Each pipe has some finite capacity, therefore for each i and j connected by the pipe must be fij ≤ cij where cij is the capacity of the pipe. To provide sufficient cooling, the amount of the liquid flowing by the pipe going from i-th to j-th nodes must be at least lij, thus it must be fij ≥ lij.
+
+Given cij and lij for all pipes, find the amount fij, satisfying the conditions specified above.
+
+Input
+
+The first line of the input file contains the number N (1 ≤ N ≤ 200) - the number of nodes and and M — the number of pipes. The following M lines contain four integer number each - i, j, lij and cij each. There is at most one pipe connecting any two nodes and 0 ≤ lij ≤ cij ≤ 105 for all pipes. No pipe connects a node to itself. If there is a pipe from i-th node to j-th, there is no pipe from j-th node to i-th.
+
+Output
+
+On the first line of the output file print YES if there is the way to carry out reactor cooling and NO if there is none. In the first case M integers must follow, k-th number being the amount of liquid flowing by the k-th pipe. Pipes are numbered as they are given in the input file.
+
+Sample test(s)
+
+Input
+Test #1
+
+4 6
+1 2 1 2
+2 3 1 2
+3 4 1 2
+4 1 1 2
+1 3 1 2
+4 2 1 2
+
+Test #2
+
+4 6
+1 2 1 3
+2 3 1 3
+3 4 1 3
+4 1 1 3
+1 3 1 3
+4 2 1 3
+
+Output
+Test #1
+
+NO
+
+Test #2
+
+YES
+1
+2
+3
+2
+1
+1
+
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Winter Trainings 2003
+Date:	2003-02-06
+
+<|response|>
+1. Abridged problem statement  
+You are given a directed graph with N nodes and M edges. Each edge k goes from uₖ to vₖ, has a lower bound lₖ and an upper bound cₖ on the flow. Find a circulation fₖ on every edge such that for each edge lₖ ≤ fₖ ≤ cₖ and at every node, total inflow equals total outflow. If such a circulation exists, output YES and one valid assignment f₁…fₘ; otherwise output NO.
+
+2. Key observations  
+- A flow with lower bounds can be reduced to a standard max‐flow problem by “shifting” each edge’s flow by its lower bound.  
+- Once you send lₖ units by default on edge k, you only have to decide the extra flow f′ₖ = fₖ − lₖ within capacity cₖ−lₖ.  
+- The mandatory lower‐bound flows create imbalances at the nodes: some nodes have a net surplus, others a net demand. To fix them, we introduce a super‐source S and super‐sink T, connect S to each node with net demand, and each node with net surplus to T.  
+- If the max‐flow from S to T exactly matches the total demand, a feasible circulation exists; otherwise it does not.  
+- Recover the true flow on each original edge as fₖ = f′ₖ + lₖ.
+
+3. Full solution approach  
+Step 1. Read N, M and the list of edges (u, v, l, c).  
+Step 2. Initialize an array balance[1..N] to zero.  
+Step 3. Build a flow network with N+2 nodes (0…N−1 for original, S=N, T=N+1).  
+Step 4. For each original edge k from u to v with lower bound l and capacity c:  
+  • Add an edge u→v with capacity (c−l) to the flow network, storing the edge index k for later.  
+  • Do balance[u] -= l and balance[v] += l.  
+Step 5. Compute the total demand D = sum of all positive balance[i].  
+Step 6. For i = 0…N−1:  
+  • If balance[i] > 0, add edge S→i with capacity = balance[i].  
+  • If balance[i] < 0, add edge i→T with capacity = −balance[i].  
+Step 7. Run a max‐flow from S to T. Let F be the achieved flow.  
+Step 8. If F < D, output NO and stop. Otherwise output YES.  
+Step 9. Recover each original flow: for edge k, let f′ be the flow on the reduced‐cap edge; then f = f′ + l. Print these in the order of input.
+
+Overall complexity is dominated by one max‐flow on up to N+2 nodes and O(N+M) edges, which is efficient for N≤200, M up to O(N²).
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Dinic max‐flow implementation
+struct Dinic {
+    struct Edge {
+        int to, rev;
+        long long cap, flow;
+    };
+    int n, S, T;
+    vector<vector<Edge>> adj;
+    vector<int> level, ptr;
+    Dinic(int n_): n(n_), adj(n_), level(n_), ptr(n_) {}
+    // add directed edge u->v with capacity c
+    void addEdge(int u, int v, long long c) {
+        adj[u].push_back({v, (int)adj[v].size(), c, 0});
+        adj[v].push_back({u, (int)adj[u].size()-1, 0, 0});
+    }
+    bool bfs() {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[S] = 0; q.push(S);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e: adj[u]) {
+                if (level[e.to] < 0 && e.flow < e.cap) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[T] >= 0;
+    }
+    long long dfs(int u, long long pushed) {
+        if (u == T || pushed == 0) return pushed;
+        for (int &cid = ptr[u]; cid < (int)adj[u].size(); cid++) {
+            auto &e = adj[u][cid];
+            if (level[e.to] != level[u] + 1 || e.flow == e.cap) continue;
+            long long tr = dfs(e.to, min(pushed, e.cap - e.flow));
+            if (tr > 0) {
+                e.flow += tr;
+                adj[e.to][e.rev].flow -= tr;
+                return tr;
+            }
+        }
+        return 0;
+    }
+    // compute max‐flow from s to t
+    long long maxFlow(int s, int t) {
+        S = s; T = t;
+        long long flow = 0;
+        while (bfs()) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (long long pushed = dfs(S, LLONG_MAX)) {
+                flow += pushed;
+            }
+        }
+        return flow;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    cin >> N >> M;
+
+    struct E { int u, v; int l, c; };
+    vector<E> edges(M);
+    for(int i = 0; i < M; i++){
+        cin >> edges[i].u >> edges[i].v 
+            >> edges[i].l >> edges[i].c;
+        edges[i].u--; edges[i].v--;
+    }
+
+    int S = N, T = N+1;
+    Dinic dinic(N + 2);
+
+    // balance[i]: net demand after accounting for lower bounds
+    vector<long long> balance(N, 0);
+
+    // Step A & B: subtract lower bounds and build reduced‐cap edges
+    for(int i = 0; i < M; i++){
+        int u = edges[i].u;
+        int v = edges[i].v;
+        int l = edges[i].l;
+        int c = edges[i].c;
+        dinic.addEdge(u, v, c - l);
+        balance[u] -= l;
+        balance[v] += l;
+    }
+
+    // Step C: connect super‐source and super‐sink
+    long long demandSum = 0;
+    for(int i = 0; i < N; i++){
+        if (balance[i] > 0) {
+            // node i needs to send out balance[i]
+            dinic.addEdge(S, i, balance[i]);
+            demandSum += balance[i];
+        } else if (balance[i] < 0) {
+            // node i must absorb -balance[i]
+            dinic.addEdge(i, T, -balance[i]);
+        }
+    }
+
+    // Step D: run max‐flow and check feasibility
+    long long flowed = dinic.maxFlow(S, T);
+    if (flowed < demandSum) {
+        cout << "NO\n";
+        return 0;
+    }
+
+    // Step E: recover actual flows and output
+    cout << "YES\n";
+    // for each original edge in input order, find the flow on u->v
+    for(int i = 0; i < M; i++){
+        int u = edges[i].u;
+        int v = edges[i].v;
+        int l = edges[i].l;
+        // find the adjacency entry from u to v with capacity c-l
+        for (auto &e: dinic.adj[u]) {
+            if (e.to == v && e.cap + l == edges[i].c) {
+                long long fprime = e.flow; 
+                cout << (fprime + l) << "\n";
+                break;
+            }
+        }
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    class Edge:
+        __slots__ = ('to','rev','cap','flow')
+        def __init__(self, to, rev, cap):
+            self.to = to
+            self.rev = rev
+            self.cap = cap
+            self.flow = 0
+
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+        self.level = [0]*n
+        self.ptr = [0]*n
+
+    def add_edge(self, u, v, cap):
+        # forward edge
+        self.adj[u].append(Dinic.Edge(v, len(self.adj[v]), cap))
+        # reverse edge
+        self.adj[v].append(Dinic.Edge(u, len(self.adj[u])-1, 0))
+
+    def bfs(self, S, T):
+        for i in range(self.n):
+            self.level[i] = -1
+        self.level[S] = 0
+        dq = deque([S])
+        while dq:
+            u = dq.popleft()
+            for e in self.adj[u]:
+                if self.level[e.to] < 0 and e.flow < e.cap:
+                    self.level[e.to] = self.level[u] + 1
+                    dq.append(e.to)
+        return self.level[T] >= 0
+
+    def dfs(self, u, T, pushed):
+        if u == T or pushed == 0:
+            return pushed
+        for cid in range(self.ptr[u], len(self.adj[u])):
+            e = self.adj[u][cid]
+            if self.level[e.to] == self.level[u] + 1 and e.flow < e.cap:
+                tr = self.dfs(e.to, T, min(pushed, e.cap - e.flow))
+                if tr > 0:
+                    e.flow += tr
+                    self.adj[e.to][e.rev].flow -= tr
+                    return tr
+            self.ptr[u] += 1
+        return 0
+
+    def max_flow(self, S, T):
+        flow = 0
+        INF = 10**18
+        while self.bfs(S, T):
+            self.ptr = [0]*self.n
+            while True:
+                pushed = self.dfs(S, T, INF)
+                if pushed == 0:
+                    break
+                flow += pushed
+        return flow
+
+def main():
+    input = sys.stdin.readline
+    N, M = map(int, input().split())
+    edges = []
+    balance = [0]*N
+
+    # read edges and adjust balances
+    for _ in range(M):
+        u, v, l, c = map(int, input().split())
+        u -= 1; v -= 1
+        edges.append((u, v, l, c))
+        balance[u] -= l
+        balance[v] += l
+
+    S, T = N, N+1
+    dinic = Dinic(N+2)
+
+    # add reduced‐capacity edges
+    for (u, v, l, c) in edges:
+        dinic.add_edge(u, v, c - l)
+
+    # connect super‐source/sink according to balance
+    total_demand = 0
+    for i in range(N):
+        if balance[i] > 0:
+            dinic.add_edge(S, i, balance[i])
+            total_demand += balance[i]
+        elif balance[i] < 0:
+            dinic.add_edge(i, T, -balance[i])
+
+    # run max‐flow
+    flow = dinic.max_flow(S, T)
+    if flow < total_demand:
+        print("NO")
+        return
+
+    # feasible circulation found
+    print("YES")
+    # recover original flows in input order
+    # we scan the adjacency of each u looking for the v
+    ptr = [0]*N
+    for (u, v, l, c) in edges:
+        # find the edge in adj[u] going to v
+        while True:
+            e = dinic.adj[u][ptr[u]]
+            ptr[u] += 1
+            # the original reduced cap was c−l
+            if e.to == v and e.cap == c - l:
+                # e.flow = f' = f − l
+                print(e.flow + l)
+                break
+
+if __name__ == "__main__":
+    main()
+```

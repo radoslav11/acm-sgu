@@ -1,0 +1,376 @@
+1. Abridged Problem Statement  
+Given an undirected graph of \(N\) junctions and \(M\) roads. Each junction \(i\) has a traffic light that alternates between blue (duration \(t_{i,B}\)) and purple (duration \(t_{i,P}\)), starting initially in color \(C_i\) with \(r_i\) time units remaining in that color. A vehicle may depart along an edge \((u,v)\) at time \(T\) only if both junction lights at \(u\) and \(v\) share the same color at the instant of departure. Vehicles may wait arbitrarily at any junction. Travel time along edge \((u,v)\) is a fixed integer \(w_{uv}\). Find the minimum arrival time and one corresponding path from source \(S\) to destination \(D\); if none exists, output 0.
+
+2. Detailed Editorial  
+
+Overview  
+We must find a time-dependent shortest‐travel path. Standard Dijkstra cannot be applied directly because edge availability depends on departure time through the lights’ phases. However, if at time \(t\) we are at junction \(u\), for each neighbor \(v\) we can compute the earliest time \(\tau \ge t\) at which \(u\) and \(v\) share the same light color, then depart, arriving at time \(\tau + w_{uv}\). We plug those “time‐adjusted” edges into a modified Dijkstra.
+
+Key Tasks  
+1. **Modeling Light Phases**  
+   Each junction has an initial phase: color \(C\in\{\text{B,P}\}\), time remaining \(r\), then it alternates indefinitely:  
+   - If initial \(C=\text{B}\), it stays blue for another \(r\), then purple for \(t_P\), then blue for \(t_B\), purple for \(t_P\), …  
+   - If initial \(C=\text{P}\), similarly with roles swapped.
+
+2. **Querying Color at Time \(t\)**  
+   To decide if \(u\) and \(v\) both blue (or both purple) at time \(t\), we write a function  
+   `get_color(u,t)` returning \(0\) for purple, \(1\) for blue.  
+   Internally, we handle the “initial remaining segment” separately, then compute \((t - \text{phaseStart}) \bmod (t_B + t_P)\) to see where in the cycle \(t\) lies.
+
+3. **Next-Switch Times**  
+   We need, when colors differ at \(t\), to find the next time either \(u\) or \(v\) switches. We write `time_to_next_change(u,t)` that returns how many time units from \(t\) until junction \(u\) changes color next. We compute that by inspecting the current phase segment and remaining time in it.
+
+4. **Synchronizing Two Lights**  
+   Starting at \(t\), we test if `get_color(u,t)==get_color(v,t)`. If yes, \(\tau=t\). If not, we compute \(\Delta_u=time\_to\_next\_change(u,t)\) and \(\Delta_v=time\_to\_next\_change(v,t)\), advance \(t\) by \(\min(\Delta_u,\Delta_v)\), and retry.  In the worst case it takes at most a few switches (we cap at 3) to either find a match or conclude that these two never sync “soon enough” during one full combined period.
+
+5. **Dijkstra with Departure Wait**  
+   - Distances `dist[i]` = earliest known arrival time at \(i\).  
+   - PQ of \((\text{arrival\_time},\; \text{node})\).  
+   - Relax an edge \(u\to v\) at current time \(t=dist[u]\) by computing \(\tau=\) first‐sync‐time\((u,v,t)\). If \(\tau\)≥0, new arrival time is \(\tau + w_{uv}\). Standard Dijkstra updates if smaller.
+
+6. **Path Reconstruction**  
+   Track `parent[v]` = predecessor on the best path. After Dijkstra, walk from destination back to source, then reverse.
+
+Complexities  
+- Each edge relaxation may advance time by up to 3 phase‐change steps, constant work.  
+- Standard Dijkstra is \(O((N+M)\log N)\). With \(N\le300\), \(M\le14\,000\), this easily fits.
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload output for pair<T1,T2>, to print "first second".
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pair<T1,T2>.
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vector<T>.
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) in >> x;
+    return in;
+}
+
+// Overload output for vector<T>, prints elements separated by spaces.
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto &x: a) out << x << ' ';
+    return out;
+}
+
+int n, m;                      // number of junctions, roads
+int source, destination;       // 0-based indices of start/end
+// For each junction: (initialIsBlue, remainingInitial, durationBlue, durationPurple)
+vector<tuple<bool,int,int,int>> junctions;
+// Adjacency list: for each u, list of (v, travel_time)
+vector<vector<pair<int,int>>> adj;
+
+// Read input, convert 1-based to 0-based.
+void read() {
+    cin >> source >> destination;
+    source--; destination--;
+    cin >> n >> m;
+    junctions.resize(n);
+    // For each junction i
+    for(int i = 0; i < n; ++i) {
+        char Ci;        // 'B' or 'P'
+        int riC, tB, tP;
+        cin >> Ci >> riC >> tB >> tP;
+        // Store Ci=='B' as boolean, and the three ints
+        junctions[i] = make_tuple(Ci=='B', riC, tB, tP);
+    }
+    adj.assign(n, {});
+    // Read M roads
+    for(int i = 0; i < m; ++i) {
+        int u,v,w;
+        cin >> u >> v >> w;
+        u--; v--;
+        adj[u].push_back({v,w});
+        adj[v].push_back({u,w});
+    }
+}
+
+// Returns 1 if junction u is blue at global time t, else 0 for purple.
+function<int(int,int)> get_color;
+// Returns how many time units from t until junction u next changes color.
+function<int(int,int)> time_to_next_change;
+// Returns earliest time >= t when u and v share the same color;
+// or -1 if they do not sync within a few switches.
+function<int(int,int,int)> first_sync_time;
+
+void solve() {
+    // Lambda to compute current color at (u, t).
+    get_color = [&](int u, int t) -> int {
+        auto &[isBlue0, rem0, durB, durP] = junctions[u];
+        // If we're still in the initial segment
+        if (t < rem0) {
+            return isBlue0 ? 1 : 0;
+        }
+        // Otherwise subtract that initial block
+        t -= rem0;
+        // Build a normalized cycle: if initial was blue, we next do purple first
+        bool startPurple = isBlue0;
+        int cycle = durB + durP;
+        // t mod cycle
+        int tt = t % cycle;
+        if (startPurple) {
+            // first durP is purple
+            if (tt < durP) return 0;
+            tt -= durP;
+            // next durB is blue
+            return (tt < durB ? 1 : 0);
+        } else {
+            // first durB is blue
+            if (tt < durB) return 1;
+            tt -= durB;
+            // next durP is purple
+            return (tt < durP ? 0 : 1);
+        }
+    };
+
+    // Lambda to compute time until next change at (u, t).
+    time_to_next_change = [&](int u, int t) -> int {
+        auto &[isBlue0, rem0, durB, durP] = junctions[u];
+        if (t < rem0) {
+            // Still in the initial block
+            return rem0 - t;
+        }
+        t -= rem0;
+        int cycle = durB + durP;
+        bool startPurple = isBlue0;
+        int tt = t % cycle;
+        if (startPurple) {
+            // initial purple block
+            if (tt < durP) {
+                return durP - tt;            // end of purple
+            }
+            tt -= durP;
+            // then blue block
+            if (tt < durB) {
+                return durB - tt;            // end of blue
+            }
+            // Shouldn't happen: tt < cycle
+        } else {
+            // initial blue block
+            if (tt < durB) {
+                return durB - tt;
+            }
+            tt -= durB;
+            // then purple block
+            if (tt < durP) {
+                return durP - tt;
+            }
+        }
+        // Fallback to full cycle
+        return cycle - tt;
+    };
+
+    // Find the first time >= t when u and v have same color, or -1.
+    first_sync_time = [&](int u, int v, int t) -> int {
+        // Try a few switches
+        for(int step = 0; step < 3; ++step) {
+            if (get_color(u,t) == get_color(v,t)) {
+                return t;
+            }
+            // Otherwise, wait until the next switch at u or v
+            int du = time_to_next_change(u,t);
+            int dv = time_to_next_change(v,t);
+            int d = min(du, dv);
+            t += d;
+        }
+        // If after a few changes they still never matched, give up
+        return -1;
+    };
+
+    // Dijkstra
+    const int INF = INT_MAX;
+    vector<int> dist(n, INF), parent(n, -1);
+    dist[source] = 0;
+    // Min-heap of (current_arrival_time, node)
+    priority_queue<pair<int,int>, vector<pair<int,int>>, greater<>> pq;
+    pq.push({0, source});
+
+    while(!pq.empty()) {
+        auto [t, u] = pq.top();
+        pq.pop();
+        if (t > dist[u]) continue;  // stale entry
+        // Relax all edges out of u
+        for(auto &[v, w] : adj[u]) {
+            // Compute earliest departure time from u to v
+            int depart = first_sync_time(u, v, t);
+            if (depart < 0) continue;        // never sync
+            int arrive = depart + w;         // arrival time at v
+            if (arrive < dist[v]) {
+                dist[v] = arrive;
+                parent[v] = u;
+                pq.push({arrive, v});
+            }
+        }
+    }
+
+    // If unreachable
+    if (dist[destination] == INF) {
+        cout << 0 << "\n";
+        return;
+    }
+    // Reconstruct path by backtracking parents
+    vector<int> path;
+    for(int cur = destination; cur != -1; cur = parent[cur]) {
+        path.push_back(cur+1);  // convert to 1-based ID
+    }
+    reverse(path.begin(), path.end());
+
+    // Output minimum time and the path
+    cout << dist[destination] << "\n";
+    cout << path << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import heapq
+
+def read_input():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    s = int(next(it)) - 1
+    d = int(next(it)) - 1
+    n = int(next(it))
+    m = int(next(it))
+    # junctions[i] = (is_blue_initial, rem_initial, dur_blue, dur_purple)
+    junctions = []
+    for _ in range(n):
+        C = next(it)
+        r = int(next(it))
+        tB = int(next(it))
+        tP = int(next(it))
+        junctions.append((C == 'B', r, tB, tP))
+    adj = [[] for _ in range(n)]
+    for _ in range(m):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        w = int(next(it))
+        adj[u].append((v,w))
+        adj[v].append((u,w))
+    return s, d, n, adj, junctions
+
+def get_color(u, t, junctions):
+    is_blue0, rem0, tB, tP = junctions[u]
+    # if before initial switch
+    if t < rem0:
+        return 1 if is_blue0 else 0
+    t -= rem0
+    cycle = tB + tP
+    tt = t % cycle
+    # if initial was blue, next block is purple
+    if is_blue0:
+        if tt < tP:      # in initial purple
+            return 0
+        tt -= tP
+        return 1 if tt < tB else 0
+    else:
+        if tt < tB:      # in initial blue
+            return 1
+        tt -= tB
+        return 0 if tt < tP else 1
+
+def time_to_next_change(u, t, junctions):
+    is_blue0, rem0, tB, tP = junctions[u]
+    if t < rem0:
+        return rem0 - t
+    t -= rem0
+    cycle = tB + tP
+    tt = t % cycle
+    if is_blue0:
+        # purple block
+        if tt < tP:
+            return tP - tt
+        tt -= tP
+        # blue block
+        if tt < tB:
+            return tB - tt
+    else:
+        # blue block
+        if tt < tB:
+            return tB - tt
+        tt -= tB
+        # purple block
+        if tt < tP:
+            return tP - tt
+    # fallback
+    return cycle - tt
+
+def first_sync_time(u, v, t, junctions):
+    # at most 3 trials
+    for _ in range(3):
+        if get_color(u, t, junctions) == get_color(v, t, junctions):
+            return t
+        # wait for next change at u or v
+        du = time_to_next_change(u, t, junctions)
+        dv = time_to_next_change(v, t, junctions)
+        t += min(du, dv)
+    return -1
+
+def dijkstra(s, d, n, adj, junctions):
+    INF = 10**18
+    dist = [INF]*n
+    parent = [-1]*n
+    dist[s] = 0
+    pq = [(0, s)]
+    while pq:
+        t, u = heapq.heappop(pq)
+        if t > dist[u]:
+            continue
+        for v, w in adj[u]:
+            depart = first_sync_time(u, v, t, junctions)
+            if depart < 0:
+                continue
+            arrive = depart + w
+            if arrive < dist[v]:
+                dist[v] = arrive
+                parent[v] = u
+                heapq.heappush(pq, (arrive, v))
+    return dist, parent
+
+def main():
+    s, d, n, adj, junctions = read_input()
+    dist, parent = dijkstra(s, d, n, adj, junctions)
+    if dist[d] == 10**18:
+        print(0)
+        return
+    # reconstruct path
+    path = []
+    cur = d
+    while cur != -1:
+        path.append(cur+1)  # 1-based
+        cur = parent[cur]
+    path.reverse()
+    print(dist[d])
+    print(*path)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Treat the problem as a time‐dependent shortest‐path. For each junction you can query its color at time \(t\) and when it next switches. When at node \(u\) at time \(t\), for each neighbor \(v\) compute the earliest \(t'\ge t\) when both lights match (by stepping to the next switch of \(u\) or \(v\) up to a few times). Then relax with cost \(t' + w_{uv}\). Run Dijkstra, track predecessors. If dest unreachable, print 0; otherwise print min‐time and the path.

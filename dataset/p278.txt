@@ -1,0 +1,241 @@
+1. Abridged Problem Statement  
+Given N fuel types, each with density aᵢ, cost bᵢ, intensity cᵢ, you may buy any nonnegative real mass mᵢ of each type so that total volume ∑(aᵢ·mᵢ)≤A and total cost ∑(bᵢ·mᵢ)≤B. Find the maximum total intensity ∑(cᵢ·mᵢ).
+
+2. Detailed Editorial  
+We must solve a two-constraint linear program in continuous variables mᵢ≥0:
+ maximize ∑cᵢmᵢ  
+ subject to ∑aᵢmᵢ≤A,  ∑bᵢmᵢ≤B.  
+Because the objective and constraints are linear, the optimum lies either at a single fuel type or at a mixture of two fuels.  
+
+Reparameterize by total intensity M=∑cᵢmᵢ, and let xᵢ be the fraction of intensity from fuel i: xᵢ = (cᵢmᵢ)/M, so ∑xᵢ=1, xᵢ≥0. Then mᵢ = M·xᵢ/cᵢ, and the constraints become:  
+ M·∑(aᵢ·xᵢ/cᵢ) ≤ A  ⇒  ∑(aᵢ/cᵢ)·xᵢ ≤ A/M  
+ M·∑(bᵢ·xᵢ/cᵢ) ≤ B  ⇒  ∑(bᵢ/cᵢ)·xᵢ ≤ B/M  
+
+Define point pᵢ = (Xᵢ, Yᵢ) = (aᵢ/cᵢ, bᵢ/cᵢ) in the plane. Any convex combination ∑xᵢpᵢ is also feasible as a weighted average. Let P = ∑xᵢpᵢ = (X, Y). The constraints read X ≤ A/M and Y ≤ B/M, so M ≤ min(A/X, B/Y). To maximize M we must minimize max(X/A, Y/B). Geometrically that is the smallest t such that (t·A, t·B) lies in the convex hull of the points {pᵢ}. Equivalently, scale the target point T=(A,B) by the factor t so that the ray from the origin through T first hits the convex hull. That intersection point Q yields t = Q·x/A = Q·y/B, and the maximum intensity is M = 1/t = min(A/Q·x, B/Q·y).
+
+Algorithm steps:  
+1. Compute for each fuel pᵢ=(aᵢ/cᵢ, bᵢ/cᵢ) and track the best single-fuel answer Mᵢ = min(A/Xᵢ, B/Yᵢ).  
+2. Build the convex hull of all pᵢ (excluding duplicates) in O(N log N).  
+3. Walk through hull edges; for each edge between p₁ and p₂, compute intersection of line O→T with the line p₁→p₂. If the intersection lies on the segment, update M = max(M, min(A/X_int, B/Y_int)).  
+4. Print M.
+
+This runs in O(N log N) and handles up to N=75 000.
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A 2D point with basic operations and geometry helpers.
+using coord_t = long double;
+struct Point {
+    coord_t x, y;
+    static constexpr coord_t eps = 1e-9;
+    Point(coord_t x = 0, coord_t y = 0): x(x), y(y) {}
+    // Vector addition, subtraction, scalar multiplication, division
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+    // Dot and cross products
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+    // Norm squared
+    coord_t norm2() const { return x*x + y*y; }
+    // Check if three points are collinear / orientation
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if (fabsl(v) <= eps) return 0;           // collinear
+        return v > 0 ? 1 : -1;                   // left or right turn
+    }
+    // Check if p lies on segment [a,b]
+    friend bool point_on_segment(const Point& a, const Point& b, const Point& p) {
+        return ccw(a,b,p)==0
+            && p.x >= min(a.x,b.x)-eps && p.x <= max(a.x,b.x)+eps
+            && p.y >= min(a.y,b.y)-eps && p.y <= max(a.y,b.y)+eps;
+    }
+    // Intersection of two (infinite) lines a1->b1 and a2->b2
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1,
+        const Point& a2, const Point& b2)
+    {
+        // Solve a1 + t*(b1-a1) intersects a2 + u*(b2-a2)
+        coord_t num = (a2 - a1) ^ (b2 - a2);
+        coord_t den = (b1 - a1) ^ (b2 - a2);
+        // t = num/den
+        return a1 + (b1 - a1) * (num / den);
+    }
+};
+
+// Convex hull (Monotone chain) storing the hull in counterclockwise order.
+class ConvexHull {
+public:
+    vector<Point> pts;
+    ConvexHull(const vector<Point>& input) {
+        pts = input;
+        sort(pts.begin(), pts.end(), [](auto &a, auto &b){
+            if (fabsl(a.x-b.x)>Point::eps) return a.x<b.x;
+            return a.y<b.y;
+        });
+        // Remove duplicates
+        pts.erase(unique(pts.begin(), pts.end(), [](auto &a, auto &b){
+            return fabsl(a.x-b.x)<=Point::eps && fabsl(a.y-b.y)<=Point::eps;
+        }), pts.end());
+        int m = pts.size();
+        if (m <= 1) return;
+        vector<Point> H(2*m);
+        int sz=0;
+        // Lower hull
+        for(int i=0;i<m;i++){
+            while(sz>=2 && ccw(H[sz-2], H[sz-1], pts[i])<=0) sz--;
+            H[sz++] = pts[i];
+        }
+        // Upper hull
+        for(int i=m-2, t=sz+1; i>=0; i--){
+            while(sz>=t && ccw(H[sz-2], H[sz-1], pts[i])<=0) sz--;
+            H[sz++] = pts[i];
+        }
+        H.resize(sz-1);
+        pts = move(H);
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    coord_t A, B;
+    cin >> N >> A >> B;
+    vector<Point> fuels;
+    fuels.reserve(N);
+
+    // Read each fuel, convert to point (a_i/c_i, b_i/c_i)
+    // Track best single-fuel solution as ans.
+    coord_t ans = 0;
+    for(int i=0;i<N;i++){
+        coord_t a,b,c;
+        cin >> a >> b >> c;
+        // Point coordinates are cost-per-intensity (volume and dollar)
+        Point p(a/c, b/c);
+        fuels.push_back(p);
+        // If using only this fuel, M = min(A/(a/c), B/(b/c))
+        coord_t M = min(A/p.x, B/p.y);
+        ans = max(ans, M);
+    }
+
+    // Build convex hull of all points
+    ConvexHull CH(fuels);
+    Point O(0,0), T(A,B);
+
+    // For each hull edge, find intersection with ray O->T
+    int Hn = CH.pts.size();
+    for(int i=0;i<Hn;i++){
+        Point p1 = CH.pts[i];
+        Point p2 = CH.pts[(i+1)%Hn];
+        // Skip parallel segments
+        if (fabsl((T-O) ^ (p1-p2)) <= Point::eps) continue;
+        // Compute intersection
+        Point I = line_line_intersection(O, T, p1, p2);
+        // If I is on segment p1->p2, update ans
+        if (point_on_segment(p1, p2, I)) {
+            coord_t M = min(A/I.x, B/I.y);
+            ans = max(ans, M);
+        }
+    }
+
+    cout << fixed << setprecision(6) << ans << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+import threading
+
+def main():
+    import math
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    A = float(next(it))
+    B = float(next(it))
+    pts = []
+    ans = 0.0
+
+    # Read fuels, convert to (a/c, b/c), track single-fuel best
+    for _ in range(N):
+        a = float(next(it)); b = float(next(it)); c = float(next(it))
+        x = a / c
+        y = b / c
+        pts.append((x,y))
+        # pure fuel intensity = min(A/x, B/y)
+        M = min(A/x, B/y)
+        if M > ans: ans = M
+
+    # Convex hull via monotone chain
+    pts = sorted(set(pts))
+    if len(pts) > 1:
+        def cross(o, a, b):
+            return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+        lower = []
+        for p in pts:
+            while len(lower)>=2 and cross(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+        upper = []
+        for p in reversed(pts):
+            while len(upper)>=2 and cross(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+        hull = lower[:-1] + upper[:-1]
+    else:
+        hull = pts
+
+    # Ray from origin through T = (A,B)
+    # For each hull edge, find intersection with this ray
+    def intersect(o, t, p, q):
+        # Solve o + α*(t-o) = p + β*(q-p)
+        # Use cross products to find α
+        otx, oty = t[0]-o[0], t[1]-o[1]
+        pqx, pqy = q[0]-p[0], q[1]-p[1]
+        num = ((p[0]-o[0])*pqy - (p[1]-o[1])*pqx)
+        den = (otx*pqy - oty*pqx)
+        if abs(den) < 1e-12:
+            return None
+        alpha = num/den
+        return (o[0] + alpha*otx, o[1] + alpha*oty)
+
+    def on_seg(p, q, r):
+        # Is r on segment p->q?
+        return (min(p[0],q[0]) - 1e-9 <= r[0] <= max(p[0],q[0]) + 1e-9
+                and min(p[1],q[1]) - 1e-9 <= r[1] <= max(p[1],q[1]) + 1e-9)
+
+    O = (0.0,0.0)
+    T = (A,B)
+    Hn = len(hull)
+    for i in range(Hn):
+        p1 = hull[i]
+        p2 = hull[(i+1)%Hn]
+        # skip parallel
+        if abs((T[0]-O[0])*(p1[1]-p2[1]) - (T[1]-O[1])*(p1[0]-p2[0])) < 1e-12:
+            continue
+        I = intersect(O, T, p1, p2)
+        if I and on_seg(p1, p2, I):
+            M = min(A/I[0], B/I[1])
+            if M > ans:
+                ans = M
+
+    print(f"{ans:.6f}")
+
+if __name__ == "__main__":
+    threading.Thread(target=main).start()
+```
+
+5. Compressed Editorial  
+- Reformulate LP in intensity space: mᵢ = M·xᵢ/cᵢ, ∑xᵢ=1.  
+- Constraints ⇒ ∑(aᵢ/cᵢ)xᵢ ≤ A/M, ∑(bᵢ/cᵢ)xᵢ ≤ B/M.  
+- Points pᵢ=(aᵢ/cᵢ,bᵢ/cᵢ). Need minimal t with (tA,tB) in conv{pᵢ}.  
+- Build convex hull of pᵢ, intersect ray O→(A,B) with hull edges, derive M=min(A/x_int,B/y_int).  
+- Compare with single-fuel cases and output the maximum.

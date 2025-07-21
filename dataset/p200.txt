@@ -1,0 +1,246 @@
+1. Abridged Problem Statement  
+Given two integers t (≤100) and m (≤100), and a list of m positive integers b₁,…,bₘ whose prime divisors lie among the first t primes, count how many non-empty subsets S⊆{1…m} have the property that ∏_{i∈S} bᵢ is a perfect square. Output the exact count.
+
+2. Detailed Editorial  
+
+Overview  
+We need to count subsets whose product is a square.  A positive integer is a perfect square iff each prime in its factorization has an even exponent.  Since every bᵢ factors over the first t primes, we can record for each bᵢ a t-dimensional 0/1 vector of exponent parities (mod 2).  A subset S yields a square product exactly when the bitwise XOR (sum in GF(2)) of its vectors is the zero vector.
+
+Rephrase in linear-algebra terms  
+Let v₁,…,vₘ ∈ GF(2)ᵗ be those exponent‐parity vectors.  We ask: how many non-empty binary combinations x₁,…,xₘ (xᵢ∈{0,1}) satisfy  
+   x₁·v₁ ⊕ x₂·v₂ ⊕ … ⊕ xₘ·vₘ = 0 ?  
+This homogeneous system A·x = 0 over GF(2) has dimension of the null space equal to m – rank(A).  Therefore the total number of solutions x is 2^(m−rank).  Excluding the trivial solution x=0 (empty subset) gives 2^(m−rank) − 1.
+
+Steps  
+
+1. Generate the first t primes by trial division.  
+2. For each input bᵢ, factor out each prime pⱼ and record the parity of the exponent in a length-t vector vᵢ.  
+3. Perform Gaussian elimination on the m×t matrix of these vectors (or treat them as m rows of length t) over GF(2) to compute its rank r.  
+4. The answer is (2^(m−r)) − 1.  Since m−r≤100, compute this exactly by repeated doubling of a decimal‐string big integer.  
+
+Time Complexity  
+– Generating t primes: roughly O(t·√P) but t≤100, P≈541 → negligible.  
+– Factoring m numbers by t primes: O(m·t).  
+– Gaussian elimination over GF(2): O(t·m²).  
+All comfortably within constraints.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Add two non-negative decimal strings a and b
+string addStrings(const string &a, const string &b) {
+    int i = a.size() - 1, j = b.size() - 1, carry = 0;
+    string res;
+    while (i >= 0 || j >= 0 || carry) {
+        int da = (i >= 0 ? a[i--] - '0' : 0);
+        int db = (j >= 0 ? b[j--] - '0' : 0);
+        int sum = da + db + carry;
+        res.push_back(char('0' + (sum % 10)));
+        carry = sum / 10;
+    }
+    reverse(res.begin(), res.end());
+    // remove leading zeros
+    int pos = 0;
+    while (pos + 1 < (int)res.size() && res[pos] == '0') pos++;
+    return res.substr(pos);
+}
+
+// Subtract decimal string b from a (assuming a >= b >= "0")
+string subStrings(const string &a, const string &b) {
+    int i = a.size() - 1, j = b.size() - 1, borrow = 0;
+    string res;
+    while (i >= 0) {
+        int da = a[i] - '0';
+        int db = (j >= 0 ? b[j] - '0' : 0) + borrow;
+        if (da < db) {
+            da += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        res.push_back(char('0' + (da - db)));
+        i--; j--;
+    }
+    // trim and reverse
+    while (res.size() > 1 && res.back() == '0') res.pop_back();
+    reverse(res.begin(), res.end());
+    return res;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(NULL);
+
+    int t, m;
+    cin >> t >> m;
+
+    vector<long long> b(m);
+    for(int i = 0; i < m; i++) {
+        cin >> b[i];
+    }
+
+    // 1) Generate the first t primes by simple trial division
+    vector<int> primes;
+    int candidate = 2;
+    while ((int)primes.size() < t) {
+        bool isP = true;
+        for (int p : primes) {
+            if ((long long)p * p > candidate) break;
+            if (candidate % p == 0) {
+                isP = false;
+                break;
+            }
+        }
+        if (isP) primes.push_back(candidate);
+        candidate = (candidate == 2 ? 3 : candidate + 2);
+    }
+
+    // 2) Build the exponent-parity matrix over GF(2)
+    //    Each row i is a vector of size t for b[i]
+    vector<vector<int>> mat(m, vector<int>(t, 0));
+    for (int i = 0; i < m; i++) {
+        long long x = b[i];
+        for (int j = 0; j < t; j++) {
+            int p = primes[j];
+            // Count how many times p divides x, mod 2
+            while (x % p == 0) {
+                mat[i][j] ^= 1;  // flip parity
+                x /= p;
+            }
+            if (x == 1) break;
+        }
+        // By problem statement, after factoring all t primes, x must be 1
+    }
+
+    // 3) Gaussian elimination over GF(2) to compute rank r
+    int rank = 0;
+    for (int col = 0; col < t && rank < m; col++) {
+        // Find a row >= rank with a 1 in this column
+        int sel = -1;
+        for (int row = rank; row < m; row++) {
+            if (mat[row][col] == 1) {
+                sel = row;
+                break;
+            }
+        }
+        if (sel == -1) continue; // no pivot in this column
+
+        // Swap to bring pivot into 'rank'-th row
+        swap(mat[rank], mat[sel]);
+
+        // Eliminate this column from all other rows
+        for (int row = 0; row < m; row++) {
+            if (row != rank && mat[row][col] == 1) {
+                // row_i ^= pivot_row
+                for (int c = col; c < t; c++) {
+                    mat[row][c] ^= mat[rank][c];
+                }
+            }
+        }
+        rank++;
+    }
+
+    // 4) Number of solutions = 2^(m - rank) - 1
+    int freeVars = m - rank;
+    // Compute power of two as decimal string by repeated doubling
+    string ans = "1";
+    for (int i = 0; i < freeVars; i++) {
+        ans = addStrings(ans, ans);
+    }
+    // subtract 1 to exclude the empty subset
+    ans = subStrings(ans, "1");
+
+    cout << ans << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+def first_primes(t):
+    """
+    Generate the first t prime numbers via simple trial division.
+    Returns a list of length t.
+    """
+    p = 2
+    primes = []
+    while len(primes) < t:
+        is_prime = True
+        # check divisibility by known smaller primes
+        for x in primes:
+            if x * x > p:
+                break
+            if p % x == 0:
+                is_prime = False
+                break
+        if is_prime:
+            primes.append(p)
+        # increment: from 2 go to 3, then skip evens
+        p += 1 if p == 2 else 2
+    return primes
+
+def rank_gf2(vectors, t):
+    """
+    Compute the rank of a list of binary vectors (length t) over GF(2).
+    Performs in-place Gaussian elimination and returns the rank.
+    """
+    r = 0  # current pivot row
+    m = len(vectors)
+    for col in range(t):
+        # find a vector with a 1 in the current column among rows >= r
+        pivot = -1
+        for row in range(r, m):
+            if vectors[row][col] == 1:
+                pivot = row
+                break
+        if pivot < 0:
+            # no pivot in this column, move to next
+            continue
+        # swap the pivot row into position r
+        vectors[r], vectors[pivot] = vectors[pivot], vectors[r]
+        # eliminate this bit from all other rows
+        for row in range(m):
+            if row != r and vectors[row][col] == 1:
+                # row_i ^= pivot_row
+                vectors[row] = [a ^ b for a, b in zip(vectors[row], vectors[r])]
+        r += 1
+    return r
+
+# --- Main ---
+t, m = map(int, input().split())
+b_list = list(map(int, input().split()))
+
+# 1) list of first t primes
+primes = first_primes(t)
+
+# 2) build exponent‐parity vectors for each b_i
+vectors = []
+for num in b_list:
+    x = num
+    exps = [0]*t
+    for j, p in enumerate(primes):
+        # factor out p and record parity
+        while x % p == 0:
+            exps[j] ^= 1
+            x //= p
+        if x == 1:
+            break
+    vectors.append(exps)
+
+# 3) find rank of the m×t matrix
+r = rank_gf2(vectors, t)
+
+# 4) number of non-empty square‐product subsets
+#    = 2^(m - r) - 1
+# Python supports big ints directly
+result = (1 << (m - r)) - 1
+print(result)
+```
+
+5. Compressed Editorial  
+- Factor each bᵢ over the first t primes, record exponent parity ⇒ vector vᵢ∈GF(2)ᵗ.  
+- A subset’s product is a square ⇔ XOR of its vᵢ’s is zero.  
+- Solve A·x=0 over GF(2): null‐space dimension = m−rank(A) ⇒ 2^(m−rank) solutions.  
+- Exclude empty subset ⇒ answer = 2^(m−rank) − 1.

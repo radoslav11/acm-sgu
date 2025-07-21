@@ -1,0 +1,286 @@
+1. Abridged Problem Statement  
+Given N sons (1≤N≤400), each son i has a “love weight” A_i and a list of liked girls (girls are numbered 1…N). We wish to marry some sons to distinct girls they like (others stay unmarried) so as to maximize  
+   sqrt( ∑ A_i² over married sons ).  
+Output, for each son i, the girl’s index he marries (or 0 if he remains unmarried).  
+
+2. Detailed Editorial  
+
+Modeling as a Bipartite Matching Problem  
+-----------------------------------------  
+- We have a bipartite graph with N “son” vertices on the left and N “girl” vertices on the right.  
+- If son i likes girl j, we may match i–j at profit A_i². Otherwise profit = 0 (or disallowed).  
+- Selecting any matching yields total happiness ∑ A_i² over matched sons; taking the square root is monotonic, so we simply maximize ∑ A_i².  
+
+Reduction to the Assignment Problem  
+------------------------------------  
+- The classical assignment (Hungarian) algorithm solves the problem of perfectly matching N left to N right vertices to minimize total cost on a complete bipartite graph.  
+- We convert profits to costs by defining cost[i][j] = –A_j² if son j likes girl i, else cost[i][j] = 0.  
+- Then a minimum-cost perfect matching on this N×N matrix will pick as many large negative costs as possible, i.e. maximize the sum of A_j².  
+- Sons who cannot or should not marry any liked girl simply get matched via zero‐cost edges; we detect these afterwards and output 0.  
+
+Hungarian Algorithm Outline  
+----------------------------  
+1. Build an (N+1)×(N+1) cost matrix `cost`, 0-indexed but with an extra dummy row/column for algorithmic convenience.  
+2. Maintain dual potentials `u[0..n]` (for rows) and `v[0..m]` (for columns), and an array `p[0..m]` where `p[j]` is the index of the row currently matched to column j.  
+3. For each row i (0…n–1), “augment” the partial matching by finding the cheapest way to assign it, updating potentials to maintain reduced costs ≥0, and then tracing back the “way” pointers to fix the matching.  
+4. The resulting `p[j]` for j=0..m–1 gives the matching row for each column; invert that to get for each son (column) which girl (row) he matches to.  
+
+Complexity  
+----------  
+- Hungarian runs in O(N³). With N≤400, that is ≈64·10^6 operations, which is feasible in optimized C++ (0.25 s).  
+
+Output Reconstruction  
+----------------------  
+- Let `assignment[j] = i` mean that column j (son j) is assigned to row i (girl i).  
+- If (i) is in son j’s liked list, output i+1; otherwise output 0.  
+
+3. The Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Hungarian algorithm for finding minimum-cost perfect matching
+// in a complete bipartite graph with cost matrix 'cost'.
+// We will store costs in cost[0..n-1][0..n-1], and add an extra dummy
+// row and column inside the class for convenience.
+
+template<class T>
+class Hungarian {
+private:
+    const T INF = numeric_limits<T>::max() / 2;
+    int n; // number of rows (and columns)
+    vector<vector<T>> cost; // 1-based inside: cost[1..n][1..n]
+
+public:
+    vector<int> assignment; // assignment[j]=i means col j matched to row i
+
+    // Constructor: a is zero-based n×n cost matrix
+    Hungarian(const vector<vector<T>>& a) {
+        n = (int)a.size();
+        // build an (n+1)x(n+1) matrix; we ignore row/col 0 for simplicity
+        cost.assign(n+1, vector<T>(n+1, 0));
+        for(int i = 0; i < n; i++)
+            for(int j = 0; j < n; j++)
+                cost[i+1][j+1] = a[i][j];
+
+        vector<T> u(n+1, 0), v(n+1, 0);     // potentials for rows (u) and cols (v)
+        vector<int> p(n+1, 0), way(n+1, 0);// p[j]=row matched to col j; way[] for backtrace
+
+        // For each row i, we add it to the matching
+        for(int i = 1; i <= n; ++i) {
+            p[0] = i;            // we will try to match row i
+            int j0 = 0;          // current column we're expanding from
+            vector<T> minv(n+1, INF);  // min reduced cost to each column
+            vector<bool> used(n+1, false);
+
+            // Scan columns until we find an unmatched column
+            do {
+                used[j0] = true;
+                int i0 = p[j0];  // row currently matched to j0
+                T delta = INF;
+                int j1 = 0;
+                // Try all columns j=1..n to improve the matching
+                for(int j = 1; j <= n; ++j) {
+                    if(!used[j]) {
+                        // reduced cost
+                        T cur = cost[i0][j] - u[i0] - v[j];
+                        if(cur < minv[j]) {
+                            minv[j] = cur;
+                            way[j] = j0; // remember where we came from
+                        }
+                        if(minv[j] < delta) {
+                            delta = minv[j];
+                            j1 = j;
+                        }
+                    }
+                }
+                // Update potentials by delta
+                for(int j = 0; j <= n; ++j) {
+                    if(used[j]) {
+                        u[p[j]] += delta;
+                        v[j] -= delta;
+                    } else {
+                        minv[j] -= delta;
+                    }
+                }
+                j0 = j1; // move to new column
+            } while(p[j0] != 0); // until we reach a free column
+
+            // Augment along the path found
+            do {
+                int j1 = way[j0];
+                p[j0] = p[j1];
+                j0 = j1;
+            } while(j0 != 0);
+        }
+
+        // Build the assignment for columns 1..n
+        assignment.assign(n, -1);
+        for(int j = 1; j <= n; ++j) {
+            assignment[j-1] = p[j] - 1; // zero-based row index
+        }
+    }
+
+    // Total cost of the found matching
+    T get_cost() const {
+        T total = 0;
+        for(int j = 0; j < n; ++j) {
+            int i = assignment[j];
+            total += cost[i+1][j+1];
+        }
+        return total;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<long long> A(n);
+    for(int i = 0; i < n; i++) {
+        cin >> A[i];
+    }
+
+    // Read each son's preference list
+    vector<vector<int>> likes(n);
+    for(int i = 0; i < n; i++){
+        int k; cin >> k;
+        likes[i].resize(k);
+        for(int j = 0; j < k; j++){
+            cin >> likes[i][j];
+            --likes[i][j]; // zero‐based
+        }
+    }
+
+    // Build cost matrix: cost_rows = girls, cost_cols = sons
+    // cost[g][s] = -A[s]^2 if son s likes girl g; else 0
+    vector<vector<long long>> cost(n, vector<long long>(n, 0));
+    for(int s = 0; s < n; s++){
+        long long w = A[s] * A[s];
+        for(int g : likes[s]){
+            cost[g][s] = -w;
+        }
+    }
+
+    // Solve assignment
+    Hungarian<long long> hung(cost);
+    auto assign = hung.assignment;  // assign[s] = g
+
+    // Output result: if assigned girl is in son's liked list, print it+1; else 0
+    for(int s = 0; s < n; s++){
+        int g = assign[s];
+        // check if g is actually liked
+        bool ok = binary_search(likes[s].begin(), likes[s].end(), g)
+                  || find(likes[s].begin(), likes[s].end(), g) != likes[s].end();
+        if(ok) cout << (g+1) << ' ';
+        else  cout << 0 << ' ';
+    }
+    cout << "\n";
+    return 0;
+}
+```
+
+4. A Python Solution with Detailed Comments  
+
+```python
+import sys
+def hungarian(cost):
+    # cost is an n×n matrix, 0-based
+    n = len(cost)
+    INF = 10**30
+    # We use 1-based indexing internally
+    u = [0]*(n+1)
+    v = [0]*(n+1)
+    p = [0]*(n+1)
+    way = [0]*(n+1)
+
+    for i in range(1, n+1):
+        p[0] = i
+        j0 = 0
+        minv = [INF]*(n+1)
+        used = [False]*(n+1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = INF
+            j1 = 0
+            # try to improve all columns not yet used
+            for j in range(1, n+1):
+                if not used[j]:
+                    cur = cost[i0-1][j-1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta = minv[j]
+                        j1 = j
+            # update potentials
+            for j in range(n+1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j]   -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            # found free column?
+            if p[j0] == 0:
+                break
+
+        # augmenting
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+
+    # build assignment: for each column j, row = p[j]
+    assign = [0]*n
+    for j in range(1, n+1):
+        assign[j-1] = p[j]-1
+    # total cost can be computed if needed
+    # cost_value = sum(cost[assign[j]][j] for j in range(n))
+    return assign
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    A = [int(next(it)) for _ in range(n)]
+    likes = []
+    for _ in range(n):
+        k = int(next(it))
+        arr = [int(next(it)) - 1 for __ in range(k)]
+        likes.append(arr)
+
+    # build cost matrix: rows=girls, cols=sons
+    # Windows where son s likes girl g get cost = -A[s]^2
+    cost = [[0]*n for _ in range(n)]
+    for s in range(n):
+        w = A[s]*A[s]
+        for g in likes[s]:
+            cost[g][s] = -w
+
+    assign = hungarian(cost)
+
+    # for each son s, if assigned girl is in his list, print it+1; else 0
+    # convert each likes[s] to a set for O(1) checks
+    lsets = [set(lst) for lst in likes]
+    out = []
+    for s in range(n):
+        g = assign[s]
+        if g in lsets[s]:
+            out.append(str(g+1))
+        else:
+            out.append('0')
+    sys.stdout.write(" ".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Reduce to maximum‐weight bipartite matching with weight A_i² on edges where son i likes girl j. Use the Hungarian algorithm on an N×N cost matrix with cost[j][i] = –A_i² (and 0 elsewhere) to find a minimum-cost perfect matching in O(N³). Extract each son’s assigned girl; if it wasn’t liked, output 0.

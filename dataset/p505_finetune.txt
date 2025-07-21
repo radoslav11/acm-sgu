@@ -1,0 +1,300 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+505. Prefixes and suffixes
+Time limit per test: 0.75 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+Andrew has just made a breakthrough in biology: he realized that most of genome's characteristics are determined by the absence or presence of certain prefixes and suffixes. So he needs to quickly test large arrays of genomes for that. More formally, we represent the genome as a string of lowercase English letters. We are given several genomes, and need to answer the following type of question: how many genomes from the given set have the given string p as prefix  the given string s as suffix.
+Input
+The first line of the input file contains an integer n — the number of genomes. The next n lines contain a non-empty string of lowercase English letters each, representing the given genomes. The total length of all given genomes doesn't exceed . The next line contains an integer m — the number of questions to answer. The next m lines contain two non-empty strings of lowercase English letters each, the first denoting the prefix and the second denoting the suffix. The prefix and suffix are separated with a single space. The total length of all given prefixes plus the total length of all given suffixes doesn't exceed .
+Output
+Output m integers one per line. i-th output line should contain the number of genomes that have i-th given prefix and i-th given suffix.
+Example(s)
+sample input
+sample output
+3
+aaaaa
+abacabaa
+avtobus
+6
+a a
+a aa
+aa a
+aaaaa aaaa
+abac caba
+abac a
+2
+2
+1
+1
+0
+1
+
+<|response|>
+1. Abridged Problem Statement  
+Given a collection of n genome strings (total length ≤10^6), answer m queries (total query-string length ≤10^6). Each query gives two strings p (prefix) and s (suffix); output how many genomes start with p and end with s.
+
+2. Key Observations  
+• We need sub-linear query time after preprocessing.  
+• Rolling hashes let us compare any prefix or suffix in O(1) after O(L) preprocessing per string.  
+• If we treat every genome uniformly, per query checking all n genomes is too slow (O(n) per query).  
+• However, if a genome string is “small” (length < B), then the number of its (prefix, suffix) pairs is O(B^2). Summed over all small strings this can be affordable if B is chosen moderately (e.g. B=50). We can enumerate all such pairs once and store them in a big array or hash-map with counts.  
+• “Large” genomes (length ≥ B) are few—at most (total_length)/B—and we can check each of them in O(1) per query using hash comparisons.  
+
+3. Full Solution Approach  
+1. Choose a threshold B (e.g. B = 50).  
+2. Precompute a rolling-hash base and powers up to the maximum total string length (~10^6).  
+3. For each genome string sᵢ:  
+   a. Build its prefix-hash array Hᵢ.  
+   b. If |sᵢ| < B (small string), enumerate all pairs (prefix_end, suffix_start) and compute the hash of sᵢ[0..prefix_end] and sᵢ[suffix_start..|sᵢ|−1], then store the pair of hashes in a vector `small_pairs`.  
+   c. Otherwise (large string), record its index in `large_indices` for on-the-fly checking.  
+4. Sort the vector `small_pairs`. This lets us, for any given (hp, hs), count how many small-string pairs match in O(log N) via binary search.  
+5. For each query (p, s):  
+   a. Compute hash hp of p and hash hs of s.  
+   b. Count matches among small strings by finding the range of equal (hp, hs) in `small_pairs`.  
+   c. For each large string index j in `large_indices`, verify in O(1) that its first |p| characters hash to hp and its last |s| characters hash to hs. Add these matches.  
+6. Output the total count.
+
+Time & Memory Complexity  
+- Preprocessing small strings: ∑_{|sᵢ|<B} O(|sᵢ|^2) ≤ O(total_length·B).  
+- Sorting small_pairs: O(K log K), K≈∑|sᵢ|^2 for small strings.  
+- Query time: O(log K + (#large_strings)). #large_strings ≤ total_length/B.  
+Choosing B≈50 balances these terms under the given constraints.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// 61-bit Mersenne prime rolling hash
+struct RollingHash {
+    static constexpr uint64_t MOD = (1ULL<<61) - 1;
+    uint64_t base;
+    vector<uint64_t> power;  // base^i mod MOD
+
+    // Modular addition
+    static uint64_t add(uint64_t a, uint64_t b) {
+        a += b + 1;
+        a = (a & MOD) + (a >> 61);
+        return a - 1;
+    }
+    // Modular multiplication (split 64-bit into high/low)
+    static uint64_t mul(uint64_t a, uint64_t b) {
+        __uint128_t z = ( __uint128_t )a * b;
+        uint64_t lo = (uint64_t)z & MOD;
+        uint64_t hi = (uint64_t)(z >> 61);
+        uint64_t res = lo + hi;
+        if(res >= MOD) res -= MOD;
+        return res;
+    }
+
+    // Initialize with random base and precompute powers up to n
+    void init(size_t n) {
+        std::mt19937_64 rng(chrono::high_resolution_clock::now().time_since_epoch().count());
+        base = uniform_int_distribution<uint64_t>(1, MOD-1)(rng);
+        power.resize(n+1);
+        power[0] = 1;
+        for(size_t i = 1; i <= n; i++)
+            power[i] = mul(power[i-1], base);
+    }
+
+    // Build prefix-hash array H, where H[i] = hash(s[0..i-1])
+    vector<uint64_t> build(const string &s) {
+        int L = s.size();
+        vector<uint64_t> H(L+1, 0);
+        for(int i = 0; i < L; i++) {
+            H[i+1] = add(mul(H[i], base), (uint8_t)s[i]);
+        }
+        return H;
+    }
+
+    // Get hash of substring s[l..r] (0-based, inclusive)
+    uint64_t get(int l, int r, const vector<uint64_t> &H) {
+        uint64_t res = H[r+1];
+        uint64_t sub = mul(H[l], power[r-l+1]);
+        // subtraction mod
+        if(res < sub) res += MOD;
+        res -= sub;
+        return res;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    const int B = 50;  // threshold for small vs large
+    int n;
+    cin >> n;
+    vector<string> dict(n);
+    for(int i = 0; i < n; i++) cin >> dict[i];
+
+    // 1e6 is upper bound on total length + queries
+    RollingHash RH;
+    RH.init(1000000);
+
+    // Precompute hashes for each genome
+    vector<vector<uint64_t>> H(n);
+    for(int i = 0; i < n; i++) {
+        H[i] = RH.build(dict[i]);
+    }
+
+    // Collect all (prefix_hash, suffix_hash) pairs from small strings
+    vector<pair<uint64_t,uint64_t>> small_pairs;
+    vector<int> large_indices;
+    for(int i = 0; i < n; i++) {
+        int L = dict[i].size();
+        if(L < B) {
+            // Enumerate all prefix/suffix splits
+            for(int pre_end = 0; pre_end < L; pre_end++) {
+                uint64_t hp = RH.get(0, pre_end, H[i]);
+                for(int suf_start = 0; suf_start < L; suf_start++) {
+                    uint64_t hs = RH.get(suf_start, L-1, H[i]);
+                    small_pairs.emplace_back(hp, hs);
+                }
+            }
+        } else {
+            large_indices.push_back(i);
+        }
+    }
+
+    // Sort to enable binary search
+    sort(small_pairs.begin(), small_pairs.end());
+
+    int m;
+    cin >> m;
+    while(m--) {
+        string p, s;
+        cin >> p >> s;
+        // Compute hash of full p and s
+        auto Hp = RH.build(p);
+        auto Hs = RH.build(s);
+        uint64_t hp = Hp[p.size()];
+        uint64_t hs = Hs[s.size()];
+
+        // Count matches among small strings
+        auto range = equal_range(
+            small_pairs.begin(), small_pairs.end(),
+            make_pair(hp, hs)
+        );
+        int answer = range.second - range.first;
+
+        // Check large strings individually
+        for(int idx : large_indices) {
+            int L = dict[idx].size();
+            if((int)p.size() > L || (int)s.size() > L) continue;
+            // compare prefix
+            if(RH.get(0, p.size()-1, H[idx]) != hp) continue;
+            // compare suffix
+            if(RH.get(L - s.size(), L-1, H[idx]) != hs) continue;
+            answer++;
+        }
+
+        cout << answer << "\n";
+    }
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+input = sys.stdin.readline
+
+# Double hashing parameters
+MOD1, MOD2 = 10**9+7, 10**9+9
+BASE1, BASE2 = 91138233, 97266353
+B = 50  # threshold
+
+def build_hashes(s):
+    """Return prefix-hash arrays H1, H2 for string s, length n+1 each."""
+    n = len(s)
+    H1 = [0]*(n+1)
+    H2 = [0]*(n+1)
+    for i,ch in enumerate(s):
+        v = ord(ch) - ord('a') + 1
+        H1[i+1] = (H1[i]*BASE1 + v) % MOD1
+        H2[i+1] = (H2[i]*BASE2 + v) % MOD2
+    return H1, H2
+
+def get_hash(H, P, l, r, MOD):
+    """Get hash of substring [l..r] using prefix array H and power array P."""
+    x = (H[r+1] - H[l]*P[r-l+1]) % MOD
+    return x + MOD if x < 0 else x
+
+def main():
+    n = int(input())
+    dict_str = [input().strip() for _ in range(n)]
+    # Precompute powers up to max length ~1e6
+    MAXL = 10**6 + 5
+    P1 = [1]*MAXL
+    P2 = [1]*MAXL
+    for i in range(1, MAXL):
+        P1[i] = (P1[i-1]*BASE1) % MOD1
+        P2[i] = (P2[i-1]*BASE2) % MOD2
+
+    # Precompute hashes for each genome
+    genome_hashes = [build_hashes(s) for s in dict_str]
+
+    # small_map: (hp1,hp2, hs1,hs2) -> count
+    small_map = {}
+    large_list = []  # store (length, H1, H2)
+
+    # Separate small vs large
+    for idx, s in enumerate(dict_str):
+        L = len(s)
+        H1, H2 = genome_hashes[idx]
+        if L < B:
+            # enumerate all prefix-suffix pairs
+            for pre_end in range(L):
+                hp1 = get_hash(H1, P1, 0, pre_end, MOD1)
+                hp2 = get_hash(H2, P2, 0, pre_end, MOD2)
+                for suf_start in range(L):
+                    hs1 = get_hash(H1, P1, suf_start, L-1, MOD1)
+                    hs2 = get_hash(H2, P2, suf_start, L-1, MOD2)
+                    key = (hp1, hp2, hs1, hs2)
+                    small_map[key] = small_map.get(key, 0) + 1
+        else:
+            # keep for on-the-fly checking
+            large_list.append((L, H1, H2))
+
+    # Process queries
+    m = int(input())
+    out = []
+    for _ in range(m):
+        p, s = input().split()
+        lp, ls = len(p), len(s)
+        Hp1, Hp2 = build_hashes(p)
+        Hs1, Hs2 = build_hashes(s)
+        key = (Hp1[lp], Hp2[lp], Hs1[ls], Hs2[ls])
+
+        # count small-string matches
+        ans = small_map.get(key, 0)
+
+        # check large strings
+        for L, GH1, GH2 in large_list:
+            if lp > L or ls > L: continue
+            # prefix compare
+            if get_hash(GH1, P1, 0, lp-1, MOD1) != Hp1[lp]: continue
+            if get_hash(GH2, P2, 0, lp-1, MOD2) != Hp2[lp]: continue
+            # suffix compare
+            if get_hash(GH1, P1, L-ls, L-1, MOD1) != Hs1[ls]: continue
+            if get_hash(GH2, P2, L-ls, L-1, MOD2) != Hs2[ls]: continue
+            ans += 1
+
+        out.append(str(ans))
+
+    print("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of Steps  
+- We use rolling hashes so that any prefix or suffix hash can be obtained in O(1).  
+- We split strings by length B to trade preprocessing for query speed.  
+- All short-string (prefix, suffix) pairs are pre-enumerated and counted.  
+- Large strings are few, so checking them per query is still efficient. This achieves an overall fast solution under the input size constraints.

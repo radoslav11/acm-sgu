@@ -1,0 +1,349 @@
+1. Concise Problem Statement  
+Given N domino pieces, each marked with two numbers (0–6), arrange all pieces in a single line so that adjacent ends match. You may flip (rotate) any piece, swapping its two numbers. If such an arrangement exists, output a valid ordering: for each piece, print its original index (1-based) and “+” if kept as given or “-” if flipped. If no arrangement uses all pieces in one chain, print “No solution.”
+
+2. Detailed Editorial  
+
+Overview  
+This is the classic problem of finding an Eulerian trail (or circuit) in a multigraph. Represent each domino side number (0–6) as a vertex, and each domino piece as an undirected edge between its two numbers. A valid domino chain that uses every piece exactly once corresponds to an Eulerian trail in this graph.  
+
+Key Observations  
+- A connected undirected graph has an Eulerian trail that uses every edge exactly once if and only if it has either 0 or 2 vertices of odd degree.  
+- If there are 0 odd‐degree vertices, there exists an Eulerian circuit (starts and ends at the same vertex).  
+- If there are exactly 2 odd‐degree vertices, there is an Eulerian path starting at one odd vertex and ending at the other.  
+- If more than 2 vertices have odd degree, no solution exists.  
+
+Algorithm Steps  
+1. Build the graph: 7 vertices (0–6), N undirected edges for the dominoes; track degrees.  
+2. Collect all vertices of odd degree.  
+   - If their count > 2, output “No solution.”  
+3. (Optional) To unify the treatment of trail vs. circuit, pair up odd vertices arbitrarily and add “fake” edges between each pair. This makes all vertex degrees even, so the augmented graph has an Eulerian circuit that can be found by Hierholzer’s algorithm.  
+4. Run Hierholzer’s algorithm to decompose the augmented graph into cycles:  
+   - Maintain adjacency lists of “half‐edges” (directed representations), each identified by a unique integer.  
+   - Traverse unused half‐edges recursively (or with a stack), marking edges used and appending them to the current path.  
+5. Extract the single sequence of original domino edges from the found cycles by cutting at fake edges; this yields one or more trails in the original graph.  
+6. If exactly one trail uses all original edges, translate half‐edge identifiers back to domino indices and orientations (“+” or “–”) and output them in order. Otherwise, print “No solution.”  
+
+Complexities  
+- N ≤ 100 edges, vertices = 7.  
+- Building the graph, pairing odd vertices, and Hierholzer’s algorithm all run in O(N).  
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << and >> for convenience with pairs and vectors
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// Class to find Eulerian paths/circuits in an undirected multigraph
+class EulerianPaths {
+  private:
+    int n;                                 // Number of vertices
+    int m;                                 // Number of original edges
+    vector<vector<pair<int,int>>> adj;     // adj[u] = list of (neighbor, half-edge id)
+    vector<pair<int,int>> edges;           // Original edges: edges[i] = (u,v)
+    vector<int> deg;                       // Degree of each vertex
+
+    // Recursive DFS for Hierholzer's algorithm
+    // u = current vertex
+    // path = collects half-edge ids in reverse order
+    // used = marks original edges (by index) as used
+    // po = position pointers in each adj[u] to avoid revisiting
+    void dfs(int u, vector<int>& path, vector<bool>& used, vector<int>& po) {
+        // Explore all remaining half-edges from u
+        while (po[u] < (int)adj[u].size()) {
+            auto [v, heid] = adj[u][po[u]++];       // get next neighbor and half-edge id
+            int eidx = heid >> 1;                  // original edge index = heid/2
+            if (!used[eidx]) {
+                used[eidx] = true;                 // mark this undirected edge used
+                dfs(v, path, used, po);            // continue from v
+                path.push_back(heid);              // record the traversed half-edge
+            }
+        }
+    }
+
+  public:
+    // Initialize for n vertices, 0...n
+    EulerianPaths(int _n) : n(_n), m(0) {
+        adj.assign(n + 1, {});
+        deg.assign(n + 1, 0);
+    }
+
+    // Add an undirected edge between u and v
+    void add_edge(int u, int v) {
+        // Each undirected edge becomes two half-edges: id = 2*m and 2*m+1
+        adj[u].push_back({v, 2*m});
+        adj[v].push_back({u, 2*m+1});
+        edges.push_back({u, v});
+        deg[u]++; deg[v]++;
+        m++;
+    }
+
+    // Find all maximal trails after pairing odd vertices
+    vector<vector<int>> find_paths() {
+        vector<bool> used(m, false);            // track used original edges
+        vector<int> po(n + 1, 0);               // current adjacency pointer for each vertex
+
+        // 1) Identify odd-degree vertices
+        vector<int> odd;
+        for(int u = 0; u <= n; u++)
+            if (deg[u] % 2 == 1)
+                odd.push_back(u);
+
+        // 2) Pair up odd vertices and add fake edges to make all degrees even
+        int tot = m;
+        for(int i = 0; i < (int)odd.size()/2; i++) {
+            int u = odd[2*i], v = odd[2*i + 1];
+            adj[u].push_back({v, 2*tot});
+            adj[v].push_back({u, 2*tot + 1});
+            edges.push_back({u, v});          // store fake edge
+            used.push_back(false);            // extend used[] for fake edges
+            tot++;
+        }
+
+        // 3) Run Hierholzer to extract cycles/trails
+        vector<vector<int>> paths;
+        for(int u = 0; u <= n; u++) {
+            if (adj[u].empty()) continue;
+            vector<int> cycle;
+            dfs(u, cycle, used, po);
+            if (cycle.empty()) continue;
+
+            // 4) Rotate cycle so that a fake edge (if any) is first
+            auto it = find_if(cycle.begin(), cycle.end(),
+                              [&](int x){ return x >= 2*m; }); 
+            if (it != cycle.end())
+                rotate(cycle.begin(), it, cycle.end());
+
+            // 5) Split at fake edges to form maximal original-edge trails
+            vector<int> curr;
+            for(int heid : cycle) {
+                if (heid < 2*m) {
+                    curr.push_back(heid);
+                } else {
+                    if (!curr.empty()) {
+                        paths.push_back(curr);
+                        curr.clear();
+                    }
+                }
+            }
+            if (!curr.empty())
+                paths.push_back(curr);
+        }
+        return paths;
+    }
+
+    // Given half-edge id, recover the oriented edge (u->v)
+    pair<int,int> get_edge(int heid) {
+        int idx = heid >> 1;                     // original edge index
+        auto [u,v] = edges[idx];
+        // if heid is even, direction is u->v; if odd, v->u
+        return (heid & 1) ? make_pair(v,u) : make_pair(u,v);
+    }
+};
+
+// Globals for input
+int m;
+vector<pair<int,int>> dominos;
+
+// Read input
+void read() {
+    cin >> m;
+    dominos.resize(m);
+    cin >> dominos;
+}
+
+// Solve one test case
+void solve() {
+    // Build EulerianPaths on vertices 0..6
+    EulerianPaths ep(6);
+    for(int i = 0; i < m; i++) {
+        ep.add_edge(dominos[i].first, dominos[i].second);
+    }
+
+    // Extract trails
+    auto paths = ep.find_paths();
+    // We need exactly one trail that uses all m edges
+    if (paths.size() == 1 && (int)paths[0].size() == m) {
+        // Output each half-edge in the trail
+        for(int heid : paths[0]) {
+            int idx = (heid >> 1) + 1;                      // domino index (1-based)
+            // Determine if orientation matches original or reversed
+            auto e = ep.get_edge(heid);
+            bool forward = (e == dominos[heid >> 1]);
+            cout << idx << ' ' << (forward ? '+' : '-') << '\n';
+        }
+    } else {
+        cout << "No solution\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_input():
+    """Read N and the list of dominoes."""
+    N = int(sys.stdin.readline().strip())
+    dominos = [tuple(map(int, sys.stdin.readline().split())) for _ in range(N)]
+    return N, dominos
+
+class Eulerian:
+    def __init__(self, max_vertex):
+        self.n = max_vertex
+        self.adj = [[] for _ in range(self.n+1)]
+        self.edges = []     # list of (u,v)
+        self.deg = [0]*(self.n+1)
+        self.m = 0
+
+    def add_edge(self, u, v):
+        """Add an undirected edge as two half-edges with IDs 2*m, 2*m+1."""
+        heid1 = 2*self.m
+        heid2 = 2*self.m+1
+        self.adj[u].append((v, heid1))
+        self.adj[v].append((u, heid2))
+        self.edges.append((u, v))
+        self.deg[u] += 1
+        self.deg[v] += 1
+        self.m += 1
+
+    def find_trails(self):
+        """Pair odd vertices, run Hierholzer, and extract trails."""
+        used = [False]*self.m
+        # Find odd-degree vertices
+        odd = [v for v in range(self.n+1) if self.deg[v] % 2 == 1]
+        # If >2 odd vertices, no solution
+        if len(odd) > 2:
+            return None
+
+        # Pair odd vertices (if 2) by adding a fake edge
+        tot = self.m
+        if len(odd) == 2:
+            u, v = odd
+            # Fake half-edges IDs: 2*tot, 2*tot+1
+            self.adj[u].append((v, 2*tot))
+            self.adj[v].append((u, 2*tot+1))
+            self.edges.append((u, v))
+            used.append(False)
+            tot += 1
+
+        # Prepare for Hierholzer
+        ptr = [0]*(self.n+1)
+        trails = []
+
+        def dfs(u, path):
+            """Recursively follow unused halves to build a cycle."""
+            while ptr[u] < len(self.adj[u]):
+                v, heid = self.adj[u][ptr[u]]
+                ptr[u] += 1
+                idx = heid >> 1
+                if not used[idx]:
+                    used[idx] = True
+                    dfs(v, path)
+                    path.append(heid)
+
+        # Run DFS from every vertex that has edges
+        for start in range(self.n+1):
+            if ptr[start] < len(self.adj[start]):
+                cycle = []
+                dfs(start, cycle)
+                if not cycle:
+                    continue
+                # If we added a fake edge, rotate so fake is first
+                fake_id = 2*self.m
+                for i, he in enumerate(cycle):
+                    if he >= fake_id:
+                        cycle = cycle[i:] + cycle[:i]
+                        break
+                # Split at fake edges (if any) to form actual trails
+                cur = []
+                for he in cycle:
+                    if he < 2*self.m:
+                        cur.append(he)
+                    else:
+                        if cur:
+                            trails.append(cur)
+                            cur = []
+                if cur:
+                    trails.append(cur)
+
+        # We need exactly one trail using all original edges
+        if len(trails) == 1 and len(trails[0]) == self.m:
+            return trails[0]
+        else:
+            return None
+
+    def oriented_edge(self, heid):
+        """Given half-edge ID, return oriented (u,v)."""
+        idx = heid >> 1
+        u, v = self.edges[idx]
+        # if heid is even, direction is u->v; if odd, v->u
+        if heid & 1:
+            return (v, u)
+        else:
+            return (u, v)
+
+
+def main():
+    N, dominos = read_input()
+    E = Eulerian(6)
+    for u, v in dominos:
+        E.add_edge(u, v)
+
+    trail = E.find_trails()
+    if trail is None:
+        print("No solution")
+        return
+
+    # Output each edge's index and orientation
+    for heid in trail:
+        idx = (heid >> 1) + 1          # 1-based domino index
+        u,v = E.oriented_edge(heid)
+        # Check if this matches the original orientation
+        if (u, v) == dominos[heid >> 1]:
+            print(idx, '+')
+        else:
+            print(idx, '-')
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Model numbers 0–6 as vertices, dominoes as edges.  
+- An arrangement is an Eulerian trail/circuit in this multigraph.  
+- Only 0 or 2 vertices of odd degree allow a trail; otherwise, no solution.  
+- Pair odd vertices (if any) with a fake edge to make all degrees even.  
+- Use Hierholzer’s algorithm on the augmented graph to find a circuit.  
+- Split at fake edges to recover the single required trail of original dominoes.  
+- Output edge indices with “+” or “–” depending on orientation; if impossible, print “No solution.”

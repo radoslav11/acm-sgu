@@ -1,0 +1,398 @@
+1. Abridged problem statement  
+Given an initial sequence [1, 2, …, N], perform M operations of the form “reverse the subarray from positions l to r” and output the final sequence. Constraints: N≤130 000, M≤2000.
+
+2. Detailed editorial  
+We need a data structure that supports reversing arbitrary contiguous subranges in a sequence of size up to 130 000, M up to 2000, and finally outputting the sequence. Doing each reverse in O(r−l+1) time on an array could be as bad as O(N × M)=2.6×10^8 element moves, which may be too slow in low-level languages.
+
+An implicit treap (a randomized balanced binary search tree keyed by position) with lazy propagation of “reverse” flags handles this in O((N + M) log N) time:
+
+1. Representation  
+   - Each node stores:  
+     · its value (1…N),  
+     · its subtree size,  
+     · a random priority,  
+     · boolean rev flag,  
+     · pointers left, right.  
+
+2. Invariants  
+   - In-order traversal yields the sequence in current order.  
+   - The tree is heap-ordered by priority (max-heap or min-heap).  
+   - The implicit “key” is the in-order index; we never store it explicitly.
+
+3. Operations  
+   - `push(node)`: if node→rev is true, swap left/right, push rev flag to children, clear node→rev.  
+   - `pull(node)`: recalculate node→size = 1 + size(left) + size(right).  
+   - `split(t, k)`: split tree t into (L, R) so that L contains the first k elements in in-order, R the rest. Implementation: push(t), let Lsize = size(t.left). If k ≤ Lsize, recurse left; else recurse right with k−Lsize−1.  
+   - `merge(A, B)`: push both, compare priorities: the root is whichever has higher priority; merge its right (or left) child appropriately; then pull.  
+
+4. Reversing a range [l, r]:  
+   - Split root into (A, BC) at l−1.  
+   - Split BC into (B, C) at (r−l+1).  
+   - Toggle B→rev flag.  
+   - Merge back: root = merge(A, merge(B, C)).  
+
+5. Final output  
+   - In-order traversal of the treap.  
+
+Time per split/merge is O(log N), so total O((N + M) log N) with very high probability.
+
+3. Provided C++ solution with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Empty monoid type since we only need to store keys, not any extra data.
+struct EmptyMonoid {
+    static EmptyMonoid merge(EmptyMonoid a, EmptyMonoid b) {
+        return EmptyMonoid();
+    }
+};
+
+// Lazy tag for reversing a subtree.
+template<class T>
+struct ReverseLazy {
+    bool should_reverse;     // if true, this subtree needs to be reversed
+    ReverseLazy() : should_reverse(false) {}
+
+    // Apply the lazy flag to a node
+    template<class KeyT, class MergeFunc, uint64_t (*rng)()>
+    void apply_lazy(struct TreapNode<KeyT, T, MergeFunc, ReverseLazy, rng>* node) {
+        if (!node || !should_reverse) return;
+        // swap children
+        swap(node->left, node->right);
+        // propagate flag to children
+        if (node->left)  node->left->lazy.should_reverse  ^= true;
+        if (node->right) node->right->lazy.should_reverse ^= true;
+        // clear this node's flag
+        should_reverse = false;
+    }
+};
+
+template<
+    class KeyT,
+    class T,
+    T (*merge_func)(T, T),
+    class LazyT,
+    uint64_t (*rng)()
+>
+struct TreapNode {
+    KeyT key;               // the “value” stored in this node
+    T data;                 // monoid data for this node (unused)
+    T subtree;              // merged data of the subtree
+    uint64_t prior;         // random priority
+    size_t size;            // size of subtree
+    TreapNode *left, *right;
+    LazyT lazy;             // lazy propagation tag
+
+    // constructor
+    TreapNode(KeyT _key, T _data)
+        : key(_key), data(_data), subtree(_data),
+          prior(rng()), size(1),
+          left(nullptr), right(nullptr), lazy() {}
+
+    // recalc subtree data & size from children
+    void pull() {
+        subtree = data;
+        size = 1;
+        if (left) {
+            left->push();                              // ensure child's lazy applied
+            subtree = merge_func(left->subtree, subtree);
+            size += left->size;
+        }
+        if (right) {
+            right->push();
+            subtree = merge_func(subtree, right->subtree);
+            size += right->size;
+        }
+    }
+    // apply this node's lazy tag
+    void push() {
+        lazy.apply_lazy(this);
+    }
+    // helper
+    friend void push_lazy(TreapNode* t) {
+        if (t) t->push();
+    }
+
+    // split by in-order size: left part has first 'cnt' elements
+    friend pair<TreapNode*, TreapNode*> split_by_size(TreapNode* t, size_t cnt) {
+        if (!t) return {nullptr, nullptr};
+        t->push();  // apply pending reversal if any
+        size_t left_sz = t->left ? t->left->size : 0;
+        if (left_sz >= cnt) {
+            // we want all of the split in the left subtree
+            auto [L, R] = split_by_size(t->left, cnt);
+            t->left = R;
+            t->pull();
+            return {L, t};
+        } else {
+            // some goes to left, some to right
+            auto [L, R] = split_by_size(t->right, cnt - left_sz - 1);
+            t->right = L;
+            t->pull();
+            return {t, R};
+        }
+    }
+
+    // merge two treaps, all keys in l precede those in r
+    friend TreapNode* merge(TreapNode* l, TreapNode* r) {
+        push_lazy(l);
+        push_lazy(r);
+        if (!l || !r) return l ? l : r;
+        if (l->prior > r->prior) {
+            l->right = merge(l->right, r);
+            l->pull();
+            return l;
+        } else {
+            r->left = merge(l, r->left);
+            r->pull();
+            return r;
+        }
+    }
+};
+
+// wrapper treap type with our merge & lazy
+template<class KeyT, class T, T (*merge_func)(T, T), class LazyT>
+class Treap {
+  public:
+    using Node = TreapNode<KeyT, T, merge_func, LazyT, Treap::rng>;
+
+    Node* root;
+
+    Treap(): root(nullptr) {}
+
+    Treap(const vector<pair<KeyT,T>>& arr) {
+        build_cartesian_tree(arr);
+    }
+
+    // builds treap in O(N) from sorted-by-key array using a stack
+    void build_cartesian_tree(const vector<pair<KeyT,T>>& a) {
+        vector<Node*> st;
+        // helper to pop stack and link
+        auto recycle = [&](Node* tail) {
+            Node* top = st.back(); st.pop_back();
+            top->right = tail;
+            return top;
+        };
+        for (auto &p : a) {
+            Node* cur = new Node(p.first, p.second);
+            Node* last = nullptr;
+            while (!st.empty() && st.back()->prior < cur->prior) {
+                last = recycle(last);
+            }
+            cur->left = last;
+            st.push_back(cur);
+        }
+        root = nullptr;
+        while (!st.empty()) {
+            root = recycle(root);
+        }
+        pull_all(root);
+    }
+
+    // ensure all sizes/subtrees are correct
+    void pull_all(Node* t) {
+        if (!t) return;
+        t->push();
+        pull_all(t->left);
+        pull_all(t->right);
+        t->pull();
+    }
+
+    // single insert by key and data
+    void insert(KeyT key, T data) {
+        Node* nd = new Node(key, data);
+        insert_in(root, nd);
+    }
+
+    // merges two treaps by in-order
+    friend Treap merge_treaps(Treap l, Treap r) {
+        Treap res;
+        res.root = merge(l.root, r.root);
+        return res;
+    }
+
+  private:
+    // standard randomized insert
+    static void insert_in(Node*& t, Node* it) {
+        if (!t) {
+            t = it;
+        } else {
+            t->push();
+            if (it->prior > t->prior) {
+                auto [L, R] = split_by_size(t, /*rank of it->key*/ it->key - 1);
+                it->left = L;
+                it->right = R;
+                t = it;
+            } else {
+                insert_in(it->key < t->key ? t->left : t->right, it);
+            }
+        }
+        if (t) t->pull();
+    }
+};
+
+using MyTreap = Treap<int, EmptyMonoid, EmptyMonoid::merge, ReverseLazy<EmptyMonoid>>;
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    cin >> N >> M;
+
+    // build initial array [(1,empty), (2,empty), ... , (N,empty)]
+    vector<pair<int,EmptyMonoid>> init;
+    init.reserve(N);
+    for(int i = 1; i <= N; i++){
+        init.emplace_back(i, EmptyMonoid());
+    }
+    MyTreap treap(init);
+
+    // process M reversals
+    for(int i = 0; i < M; i++){
+        int l, r;
+        cin >> l >> r;
+        // split at l-1: [1..l-1] and [l..N]
+        auto [A, BC] = TreapNode<int,EmptyMonoid,EmptyMonoid::merge,ReverseLazy<EmptyMonoid>,MyTreap::rng>
+                        ::split_by_size(treap.root, l-1);
+        // split BC at (r-l+1): B=[l..r], C=[r+1..N]
+        auto [B, C]  = TreapNode<int,EmptyMonoid,EmptyMonoid::merge,ReverseLazy<EmptyMonoid>,MyTreap::rng>
+                        ::split_by_size(BC, r-l+1);
+        // mark B for reversal
+        if(B) B->lazy.should_reverse ^= true;
+        // reassemble
+        treap.root = merge(A, merge(B, C));
+    }
+
+    // output by in-order traversal
+    vector<int> ans;
+    ans.reserve(N);
+    function<void(MyTreap::Node*)> dfs = [&](MyTreap::Node* t){
+        if (!t) return;
+        t->push();
+        dfs(t->left);
+        ans.push_back(t->key);
+        dfs(t->right);
+    };
+    dfs(treap.root);
+
+    for (int x : ans) cout << x << ' ';
+    cout << '\n';
+    return 0;
+}
+```
+
+4. Python solution with detailed comments  
+```python
+import sys
+import threading
+import random
+sys.setrecursionlimit(10**7)
+
+def main():
+    input_data = sys.stdin.read().split()
+    it = iter(input_data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Node of an implicit treap
+    class Node:
+        __slots__ = ('val','prio','left','right','size','rev')
+        def __init__(self, v):
+            self.val = v
+            self.prio = random.randrange(1<<30)
+            self.left = None
+            self.right = None
+            self.size = 1
+            self.rev = False
+
+    # recalc size
+    def pull(t):
+        if not t: return
+        t.size = 1
+        if t.left:  t.size += t.left.size
+        if t.right: t.size += t.right.size
+
+    # push down lazy reverse flag
+    def push(t):
+        if t and t.rev:
+            t.rev = False
+            # swap children
+            t.left, t.right = t.right, t.left
+            # toggle children flags
+            if t.left:  t.left.rev  ^= True
+            if t.right: t.right.rev ^= True
+
+    # split treap t into (L, R),
+    # where L has first k elements
+    def split(t, k):
+        if not t:
+            return (None, None)
+        push(t)
+        left_size = t.left.size if t.left else 0
+        if k <= left_size:
+            # all desired in left subtree
+            L, R = split(t.left, k)
+            t.left = R
+            pull(t)
+            return (L, t)
+        else:
+            # some in left, current, some in right
+            L, R = split(t.right, k - left_size - 1)
+            t.right = L
+            pull(t)
+            return (t, R)
+
+    # merge two treaps L and R
+    def merge(L, R):
+        if not L or not R:
+            return L or R
+        # push flags before comparing
+        push(L); push(R)
+        if L.prio > R.prio:
+            L.right = merge(L.right, R)
+            pull(L)
+            return L
+        else:
+            R.left = merge(L, R.left)
+            pull(R)
+            return R
+
+    # build initial treap by successive merges
+    root = None
+    for x in range(1, n+1):
+        node = Node(x)
+        root = merge(root, node)
+
+    # process reversals
+    for _ in range(m):
+        l = int(next(it))
+        r = int(next(it))
+        # split into A=[1..l-1], BC=[l..n]
+        A, BC = split(root, l-1)
+        # split BC into B=[l..r], C=[r+1..n]
+        B, C  = split(BC, r-l+1)
+        # toggle reverse flag on B
+        if B:
+            B.rev ^= True
+        # reassemble
+        root = merge(merge(A, B), C)
+
+    # in-order traversal to collect result
+    res = []
+    def inorder(t):
+        if not t: return
+        push(t)
+        inorder(t.left)
+        res.append(t.val)
+        inorder(t.right)
+    inorder(root)
+    print(' '.join(map(str, res)))
+
+if __name__ == "__main__":
+    threading.Thread(target=main).start()
+```
+
+5. Compressed editorial  
+Use an implicit treap with random priorities, storing subtree sizes and a lazy “reverse” bit. To reverse [l,r], split at l−1 and at r, toggle the lazy bit on the middle treap, then merge back. Each operation costs O(log N), total O((N+M) log N).

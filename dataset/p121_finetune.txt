@@ -1,0 +1,412 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+121. Bridges painting
+
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+
+
+New Berland consists of N (1£ N£ 100) islands, some of them are connected by bridges. There can be no more than one bridge between any pair of islands. Mr. President issued a law to paint all bridges. A bridge can be painted white or black. Any island must have at least one white bridge and at least one black (of course if an island has more than one bridge).
+
+
+Input
+
+There is N on the fisrt line of input. Next N lines contain a list of islands connected with given island. Every list is finished by 0.
+
+
+Output
+
+If needed painting exists then write N lines. Write “1” and “2” in each line. Write “1” if bridge is painted white and “2” in other case. Write 0 at the end of any list. If needed painting does not exist then write “No solution”.
+
+
+Sample Input
+
+6
+2 3 0
+1 3 0
+1 2 5 0
+5 0
+4 6 3 0
+5 0
+Sample Output
+
+1 2 0
+1 2 0
+2 2 1 0
+2 0
+2 2 1 0
+2 0
+Author	: Michael R. Mirzayanov
+Resource	: PhTL #1 Training Contests
+Date	: Fall 2001
+
+<|response|>
+1. Abridged problem statement  
+Given an undirected simple graph on N islands (vertices) and bridges (edges), paint each bridge either color 1 (white) or color 2 (black) so that every island of degree ≥ 2 has at least one incident bridge of each color. Islands of degree 0 or 1 have no additional requirement. If such a coloring exists, output for each island the colors of its incident bridges in the same order as the input (ending the list with 0). Otherwise, output “No solution”.
+
+2. Key observations  
+- If you take a trail (a walk without repeating edges) and color edges alternately 1,2,1,2,… then every interior vertex of that trail sees both colors on its two incident trail-edges.  
+- To cover all edges in a connected component, one would like an Eulerian trail or circuit. A connected graph has an Eulerian circuit exactly when every vertex has even degree.  
+- If some vertices have odd degree, we can pair them arbitrarily by adding “fake” edges. This makes all degrees even and allows extraction of an Eulerian circuit on the augmented graph.  
+- Once we have such a circuit, we split it at fake edges into maximal sub-trails consisting only of real edges, and then color each sub-trail alternately.  
+- Interior vertices of each sub-trail get both colors. Endpoints of sub-trails coincide with fake-edge incidences (or real degree-1 vertices), which is acceptable. Finally, verify that every original vertex of degree ≥ 2 indeed sees both colors.
+
+3. Full solution approach  
+a. Read N and build the graph:  
+   - Assign each undirected bridge a unique ID `e` in [0, m–1].  
+   - Maintain for each island a list of incident edge IDs in the order given by input so we can reproduce the required output order.  
+   - Build an adjacency list of “oriented edges”: for real edge e=(u,v), store two entries  
+       (u → v, code = 2·e) and (v → u, code = 2·e+1).  
+
+b. Find all vertices of odd degree (in the real graph). Pair them arbitrarily and add a fake edge for each pair:  
+   - If the real edges count is m, assign fake edges IDs m, m+1, …  
+   - In oriented form their codes are ≥ 2·m.  
+
+c. On the augmented graph (real + fake edges), run Hierholzer’s algorithm to decompose each component into Eulerian circuits:  
+   - Keep an index pointer `ptr[u]` into the adjacency list of u.  
+   - Maintain a `used` array of size = number of edges (real+fake) to mark which edges are already traversed.  
+   - For each vertex with unused incident edges, do a DFS-style peel (the standard recursive Hierholzer) to extract a circuit as a list of oriented-edge codes.  
+
+d. For each Eulerian circuit, rotate it (cyclically) so that if there is any fake edge in it, the circuit starts at a fake edge. Then split the circuit at each fake edge into segments of consecutive real edges. Each segment is a maximal real-only trail.
+
+e. Color each real-only trail alternately: edges in even positions (0,2,4,…) get color 1, odd positions get color 2. As you assign a color to an oriented edge code, record on both endpoints that they have seen this color (using a bitmask per vertex).
+
+f. After coloring all trails, verify that every vertex whose original degree ≥ 2 has seen both colors (bitmask == 0b110). If any fails, print “No solution” and exit.
+
+g. Otherwise, for each island u (in order 1…N), print the colors of its incident real-edges (in the same order as input) followed by 0.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// We will store each bridge with an integer ID e in [0..m-1].
+// Oriented-edge code eid2 = 2*e + dir, where dir=0 means forward, dir=1 means reverse.
+// Fake edges get IDs ≥ m, so their codes eid2 ≥ 2*m.
+
+struct EulerianDecomposition {
+    int n;                                // number of vertices
+    int real_edges;                       // count of real edges
+    vector<vector<pair<int,int>>> adj;    // adj[u] = list of (v, eid2)
+    vector<int> degree;                   // real-degree of each vertex
+    vector<pair<int,int>> edge_ends;      // edge_ends[e] = {u,v} for real or fake edges
+
+    EulerianDecomposition(int _n = 0) {
+        init(_n);
+    }
+
+    void init(int _n) {
+        n = _n;
+        real_edges = 0;
+        adj.assign(n, {});
+        degree.assign(n, 0);
+        edge_ends.clear();
+    }
+
+    // Add a real undirected edge (bridge) between u and v.
+    // Returns the new edge ID e.
+    int add_real_edge(int u, int v) {
+        int e = real_edges++;
+        // forward orientation code = 2*e, reverse = 2*e+1
+        adj[u].push_back({v, 2*e});
+        adj[v].push_back({u, 2*e+1});
+        degree[u]++; 
+        degree[v]++;
+        edge_ends.emplace_back(u, v);
+        return e;
+    }
+
+    // After all real edges are added, this builds an Eulerian decomposition:
+    // 1) Pair odd-degree vertices, add fake edges to make all degrees even.
+    // 2) Run Hierholzer to extract circuits.
+    // 3) Split circuits at fake edges into real-only trails.
+    vector<vector<int>> extract_real_trails() {
+        int m = real_edges;
+        // Collect odd-degree vertices
+        vector<int> odds;
+        for (int u = 0; u < n; u++)
+            if (degree[u] % 2 == 1)
+                odds.push_back(u);
+
+        // Add fake edges to pair up odds
+        int total_edges = m;
+        for (int i = 0; i + 1 < (int)odds.size(); i += 2) {
+            int u = odds[i], v = odds[i+1];
+            // fake edge ID = total_edges, codes ≥ 2*m
+            adj[u].push_back({v, 2*total_edges});
+            adj[v].push_back({u, 2*total_edges + 1});
+            edge_ends.emplace_back(u, v);
+            total_edges++;
+        }
+
+        // Prepare for Hierholzer
+        vector<bool> used(total_edges, false);
+        vector<int> ptr(n, 0);
+        vector<vector<int>> real_trails;
+
+        // Recursive DFS to peel off one Eulerian circuit or trail
+        function<void(int, vector<int>&)> dfs = [&](int u, vector<int>& path) {
+            while (ptr[u] < (int)adj[u].size()) {
+                auto [v, eid2] = adj[u][ptr[u]++];
+                int e = eid2 >> 1;
+                if (!used[e]) {
+                    used[e] = true;
+                    dfs(v, path);
+                    path.push_back(eid2);
+                }
+            }
+        };
+
+        // For every vertex that still has unused edges, extract a circuit
+        for (int u = 0; u < n; u++) {
+            if (ptr[u] < (int)adj[u].size()) {
+                vector<int> circuit;
+                dfs(u, circuit);
+                if (circuit.empty()) continue;
+
+                // Rotate so it starts at a fake edge if there is one
+                auto it = find_if(circuit.begin(), circuit.end(),
+                                  [&](int eid2){ return (eid2>>1) >= m; });
+                if (it != circuit.end()) {
+                    rotate(circuit.begin(), it, circuit.end());
+                }
+
+                // Split the circuit at fake edges into real-only trails
+                vector<int> curr;
+                for (int eid2 : circuit) {
+                    int e = eid2 >> 1;
+                    if (e < m) {
+                        curr.push_back(eid2);
+                    } else if (!curr.empty()) {
+                        real_trails.push_back(curr);
+                        curr.clear();
+                    }
+                }
+                if (!curr.empty())
+                    real_trails.push_back(curr);
+            }
+        }
+        return real_trails;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    // input_order[u] = list of real-edge IDs in the order they appear in input
+    vector<vector<int>> input_order(N);
+
+    // map (u,v) → edge ID, to avoid duplicating undirected edges
+    map<pair<int,int>,int> edge_map;
+    EulerianDecomposition solver(N);
+
+    // Read adjacency lists
+    for (int u = 0; u < N; u++) {
+        while (true) {
+            int v; 
+            cin >> v;
+            if (v == 0) break;
+            --v;
+            auto key = make_pair(min(u,v), max(u,v));
+            int e;
+            if (edge_map.count(key)) {
+                e = edge_map[key];
+            } else {
+                e = solver.add_real_edge(u, v);
+                edge_map[key] = e;
+            }
+            input_order[u].push_back(e);
+        }
+    }
+
+    // Extract all maximal real-only trails after making graph Eulerian
+    auto trails = solver.extract_real_trails();
+
+    // state[e] = color (1 or 2) of real edge e
+    vector<int> state(solver.real_edges, -1);
+    // mask[u] accumulates which colors vertex u has seen (bit1 for color1, bit2 for color2)
+    vector<int> mask(N, 0);
+
+    // Color each trail alternately
+    for (auto &trail : trails) {
+        int color = 1;
+        for (int eid2 : trail) {
+            int e = eid2 >> 1;
+            state[e] = color;
+            // determine the oriented endpoints of eid2
+            auto [u0, v0] = solver.edge_ends[e];
+            int u = (eid2 & 1) ? v0 : u0;
+            int v = (eid2 & 1) ? u0 : v0;
+            mask[u] |= 1 << color;
+            mask[v] |= 1 << color;
+            color = 3 - color;
+        }
+    }
+
+    // Verify: every vertex of real-degree ≥2 must have seen both colors (mask == 0b110 = 6)
+    for (int u = 0; u < N; u++) {
+        if (solver.degree[u] >= 2 && mask[u] != 6) {
+            cout << "No solution\n";
+            return 0;
+        }
+    }
+
+    // Output per-vertex in original order
+    for (int u = 0; u < N; u++) {
+        for (int e : input_order[u]) {
+            cout << state[e] << ' ';
+        }
+        cout << "0\n";
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_graph():
+    """Read input, assign a unique ID to each undirected bridge, 
+       return N, edge list, degrees, and per-vertex input order."""
+    N = int(sys.stdin.readline())
+    edge_id = {}            # map sorted (u,v)->eid
+    edges = []              # edges[e] = (u,v)
+    degree = [0]*N
+    input_order = [[] for _ in range(N)]
+
+    for u in range(N):
+        for tok in sys.stdin.readline().split():
+            v = int(tok)
+            if v == 0:
+                break
+            v -= 1
+            a, b = min(u,v), max(u,v)
+            if (a,b) in edge_id:
+                e = edge_id[(a,b)]
+            else:
+                e = len(edges)
+                edges.append((u,v))
+                edge_id[(a,b)] = e
+                degree[u] += 1
+                degree[v] += 1
+            input_order[u].append(e)
+    return N, edges, degree, input_order
+
+def build_augmented_adj(N, edges, degree):
+    """Build adjacency with real edges oriented as eid2 = 2*e or 2*e+1.
+       Then pair odd-degree vertices with fake edges."""
+    m = len(edges)
+    adj = [[] for _ in range(N)]
+    # real edges
+    for e, (u,v) in enumerate(edges):
+        adj[u].append((v, 2*e))
+        adj[v].append((u, 2*e+1))
+    # pair odd vertices
+    odds = [u for u in range(N) if degree[u] % 2 == 1]
+    fake_e = m
+    for i in range(0, len(odds), 2):
+        u, v = odds[i], odds[i+1]
+        adj[u].append((v, 2*fake_e))
+        adj[v].append((u, 2*fake_e+1))
+        fake_e += 1
+    return adj, fake_e
+
+def extract_trails(adj, total_e):
+    """Run Hierholzer on the augmented graph of total_e edges (real+fake),
+       return a list of real-only trails (each is a list of eid2 codes)."""
+    used = [False]*total_e
+    ptr = [0]*len(adj)
+    trails = []
+
+    def dfs(u, path):
+        while ptr[u] < len(adj[u]):
+            v, eid2 = adj[u][ptr[u]]
+            ptr[u] += 1
+            e = eid2 >> 1
+            if not used[e]:
+                used[e] = True
+                dfs(v, path)
+                path.append(eid2)
+
+    for u in range(len(adj)):
+        if ptr[u] < len(adj[u]):
+            path = []
+            dfs(u, path)
+            if not path:
+                continue
+            # rotate so that if there is a fake edge, we start there
+            first_fake = next((i for i,x in enumerate(path) if (x>>1) >= total_e//2), None)
+            if first_fake is not None:
+                path = path[first_fake:] + path[:first_fake]
+            # split at fake edges
+            cur = []
+            for eid2 in path:
+                e = eid2 >> 1
+                if e < total_e//2:
+                    cur.append(eid2)
+                elif cur:
+                    trails.append(cur)
+                    cur = []
+            if cur:
+                trails.append(cur)
+    return trails
+
+def solve():
+    N, edges, degree, input_order = read_graph()
+    adj, fake_end = build_augmented_adj(N, edges, degree)
+    total_edges = fake_end  # real edges = len(edges), fake_end = real + fake
+
+    # get all real-only trails
+    trails = extract_trails(adj, total_edges)
+
+    m = len(edges)
+    color = [-1]*m           # final color of each real edge
+    mask = [0]*N             # bitmask of colors seen at each vertex
+
+    # color each trail alternately
+    for trail in trails:
+        c = 1
+        for eid2 in trail:
+            e = eid2 >> 1
+            if e >= m:
+                # shouldn't happen in a real-only trail
+                continue
+            color[e] = c
+            u,v = edges[e]
+            # if eid2&1==1 then orientation was reversed
+            if eid2 & 1:
+                u, v = v, u
+            mask[u] |= 1<<c
+            mask[v] |= 1<<c
+            c = 3 - c
+
+    # verify all high-degree vertices saw both colors
+    for u in range(N):
+        if degree[u] >= 2 and mask[u] != (1<<1)|(1<<2):
+            print("No solution")
+            return
+
+    # output in input order
+    out = []
+    for u in range(N):
+        line = [str(color[e]) for e in input_order[u]]
+        line.append('0')
+        out.append(' '.join(line))
+    print('\n'.join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+Explanation of the main steps:  
+- We make the graph Eulerian by pairing odd vertices with fake edges.  
+- We run Hierholzer’s algorithm to get circuits covering all edges.  
+- Rotating and splitting at fake edges gives us real-only trails.  
+- Alternating coloring on each trail guarantees interior vertices see both colors.  
+- A final check ensures every original high-degree vertex indeed has both colors.

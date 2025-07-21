@@ -1,0 +1,189 @@
+1. Abridged Problem Statement  
+Given an n×m grid (n,m≤25) with some cells marked ‘*’ (rocks) and ‘.’ (empty), you may drop a bomb at any cell (i,j). A bomb clears all rocks in row i and in column j. Compute the minimum number of bombs needed to destroy every rock.
+
+2. Detailed Editorial  
+
+We need to choose some bombs (each picks one row and one column) so that every rock at (i,j) lies either in a chosen row or in a chosen column.  If we drop k bombs, they involve at most k distinct rows and at most k distinct columns (you can reuse a row or column across bombs).  Conversely, any choice of R rows and C columns can be realized with max(|R|,|C|) bombs by pairing up rows and columns (if one side is smaller, reuse arbitrary entries on the larger side).
+
+Thus the problem reduces to this covering problem:
+  • Select a subset R⊆{0…n−1} of rows and C⊆{0…m−1} of columns  
+  • For every rock at (i,j), we require i∈R or j∈C  
+  • The cost is max(|R|,|C|), and we want to minimize that.
+
+We can optimize by only enumerating subsets of rows R.  For a fixed R, any rock in a row of R is already covered; the only remaining rocks lie in rows outside R.  To cover them, we must include in C every column that contains at least one uncovered rock.  Thus
+  C = { j | ∃ i∉R with grid[i][j]=='*' }  
+and cost(R)=max(|R|, |C|).  We try all 2^n subsets R, compute C by OR’ing bitmasks of the rows in the complement of R, and track the minimum cost.
+
+Time & memory:  
+  • There are 2^n subsets, n≤25 ⇒ ∼33 million.  
+  • For each subset, we do a few integer bit‐operations (very fast).  
+  • Memory to store an array of size 2^n of ints is about 4×33M≈132 MB, within the 512 MB limit.
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+// Overload >> for pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+// Overload >> for vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+// Overload << for vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n, m;
+vector<string> tbl;
+
+// Read input: n, m, then n strings
+void read() {
+    cin >> n >> m;
+    tbl.resize(n);
+    cin >> tbl;
+}
+
+void solve() {
+    // mask_single[i] will hold a bitmask of length m,
+    // with bits set where row i has a rock.
+    vector<int> mask_single(n, 0);
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            if(tbl[i][j] == '*') {
+                mask_single[i] |= (1 << j);
+            }
+        }
+    }
+
+    // We build mask[subset_of_rows]: the OR of mask_single over those rows.
+    // To save memory/access overhead, we actually build it over all 1<<n subsets.
+    int N = 1 << n;
+    vector<int> mask(N, 0);
+    // First fill in the single‐row subsets
+    for(int i = 0; i < n; i++) {
+        mask[1 << i] = mask_single[i];
+    }
+    // Then use the standard trick: for any mask i, pick its lowest set bit l,
+    // and combine mask[l] with mask[i^l].
+    for(int i = 1; i < N; i++) {
+        int lowbit = i & -i;            // extracts the lowest bit
+        mask[i] = mask[lowbit] | mask[i ^ lowbit];
+    }
+
+    int ans = n + m;  // worst‐case upper bound
+    int full = N - 1; // bitmask with all n bits set
+    // Enumerate every choice of rows R as bitmask i
+    for(int i = 0; i < N; i++) {
+        int rows_chosen = __builtin_popcount(i);
+        // The complement set of rows is full^i; rocks in those rows need columns.
+        int needed_cols_mask = mask[full ^ i];
+        int cols_needed = __builtin_popcount(needed_cols_mask);
+        int cost = max(rows_chosen, cols_needed);
+        ans = min(ans, cost);
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+input = sys.stdin.readline
+
+def main():
+    n, m = map(int, input().split())
+    tbl = [input().strip() for _ in range(n)]
+
+    # If there are no rocks, answer is 0.
+    any_rock = any('*' in row for row in tbl)
+    if not any_rock:
+        print(0)
+        return
+
+    # To speed up, we enumerate on the smaller dimension (rows vs. columns).
+    # If columns are fewer, we transpose the grid.
+    transpose = False
+    if m < n:
+        transpose = True
+        # Transpose tbl into size m x n
+        new_tbl = [''.join(tbl[i][j] for i in range(n)) for j in range(m)]
+        tbl = new_tbl
+        n, m = m, n
+
+    # Build single‐row rock masks
+    row_masks = []
+    for i in range(n):
+        mask = 0
+        for j, ch in enumerate(tbl[i]):
+            if ch == '*':
+                mask |= 1 << j
+        row_masks.append(mask)
+
+    FULL = (1 << n) - 1
+    # Precompute mask_union[s] = OR of row_masks over rows in subset s
+    mask_union = [0] * (1 << n)
+    # Initialize single‐bit subsets
+    for i in range(n):
+        mask_union[1 << i] = row_masks[i]
+    # Build up all subsets by lowbit trick
+    for s in range(1, 1 << n):
+        lowbit = s & -s
+        if s != lowbit:
+            mask_union[s] = mask_union[lowbit] | mask_union[s ^ lowbit]
+
+    best = n + m
+    # Enumerate all subsets of rows R (bitmask s)
+    for s in range(1 << n):
+        rows = s.bit_count()
+        # Rocks not covered by these rows lie in rows in complement: FULL^s
+        needed_cols = mask_union[FULL ^ s].bit_count()
+        # cost = max(rows, needed_cols)
+        cost = rows if rows >= needed_cols else needed_cols
+        if cost < best:
+            best = cost
+
+    print(best)
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of key points in the Python code:  
+- We optionally transpose if m<n so we always choose the smaller dimension for the 2^d enumeration.  
+- We represent each row by an integer bitmask of length m.  
+- We build a DP array `mask_union` of size 2^n, where `mask_union[s]` is the OR of all row‐masks for rows in subset s.  We do this with the “lowbit” trick in O(2^n) time.  
+- For each subset s of rows, uncovered rocks lie in rows not in s ⇒ columns needed = bitcount of `mask_union[complement]`.  The answer is min over s of max(|s|, columns_needed).
+
+5. Compressed Editorial  
+
+We want to cover all stars by choosing some rows R and columns C, minimizing max(|R|,|C|).  For any R, let C be the set of columns that still contain rocks in rows ∉R.  Then cost=max(|R|,|C|).  Enumerate all 2^n subsets of rows, precompute per‐subset column‐masks by DP on bitmasks, and take the minimum cost. This runs in O(2^n·n) time and O(2^n) space, which is fine for n≤25.

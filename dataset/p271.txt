@@ -1,0 +1,367 @@
+1. Abridged Problem Statement  
+You have a stack (“pile”) of books, initially containing N books (given top to bottom). You perform M operations of two types:  
+- ADD(S): place a book named S on top of the pile.  
+- ROTATE: reverse the order of the top K books (or the entire pile if it has fewer than K).  
+After all operations, output the pile from top to bottom.
+
+Constraints:  
+• 0 ≤ N ≤ 40 000, 0 ≤ M ≤ 100 000, 0 ≤ K ≤ 40 000  
+• Book names are 1–3 uppercase letters; duplicates allowed.  
+
+2. Detailed Editorial  
+
+We need to support two operations on a sequence:  
+- **push front** (ADD),  
+- **reverse prefix of fixed length K** (ROTATE).  
+
+Naïve array or list reversal on each ROTATE would be O(K) per operation, which in the worst case (M up to 10^5, K up to 4·10^4) is too slow. We aim for amortized O(1) per operation.
+
+Key idea: **maintain the first K elements separately** from the rest, so that reversing them or inserting at the front takes O(1). Concretely:
+
+  A. Split the pile logically into two deques:
+     - `prefix`: the top min(current_size, K) books,
+     - `suffix`: the remaining books below.
+
+  B. Keep a boolean flag `rev` for `prefix` that indicates whether the prefix is logically reversed.
+
+Operations:
+
+  1. **Initial setup**  
+     - Read the N initial books into a deque `all_books`.  
+     - Move all but the first K elements into `suffix` by repeatedly popping from the right of `all_books` and pushing to the left of `suffix`.  
+     - Let `prefix = all_books`; set `rev = false`.
+
+  2. **ADD(S)**  
+     - We want to insert S at the front of the pile (top). This may increase `prefix` size beyond K.  
+     - To “push front” on `prefix` under our `rev` flag:
+         if not `rev`: `prefix.appendleft(S)`
+         else:         `prefix.append(S)`  
+     - If after insertion the size of `prefix` exceeds K, pop the “last” element of `prefix` (under `rev`) and push it to the front of `suffix`. This keeps `prefix` at size K.
+
+  3. **ROTATE**  
+     - We simply toggle `rev = !rev`. A single boolean flip reverses our logical view of the prefix in O(1).
+
+  4. **Output**  
+     - Print the `prefix` in the correct order (if `rev` is true, traverse it in reverse), then the `suffix` in normal order.
+
+This achieves O(1) per operation and O(N+M) overall.
+
+An alternative is an **implicit treap (or splay tree)** with lazy-propagated reversal on any subtree, splitting by size. The provided C++ solution uses exactly that:  
+- Build an implicit treap of size N.  
+- On ADD, merge a single-node treap to the left.  
+- On ROTATE, split the treap into [0..K−1] and [K..end], flip the reverse-lazy flag on the first part, then re-merge.
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair to print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pair to read "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vector<T>
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload << for vector<T> (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// A node of an implicit treap supporting lazy reversal
+template<
+    class KeyT,             // payload type (here: string)
+    class T,                // monoid type (empty in our case)
+    T (*merge_func)(T, T),  // how to merge monoids
+    class LazyT,            // lazy tag type (here: reverse flag)
+    uint64_t (*rng)()       // random generator for priorities
+>
+struct TreapNode {
+    KeyT key;              // the actual book name
+    T data;                // node’s own monoid value
+    T subtree;             // aggregated monoid over subtree
+    uint64_t prior;        // heap-priority
+    size_t size;           // size of subtree
+    TreapNode *left, *right;
+    LazyT lazy;            // lazy tag for this node
+
+    // Constructor: set key/data, random priority, no children
+    TreapNode(KeyT key_, T data_)
+        : key(key_), data(data_), left(nullptr), right(nullptr), size(1) {
+        prior = rng();
+        lazy = LazyT();
+    }
+
+    // Recompute size and subtree-aggregate from children
+    void pull() {
+        subtree = data;
+        size = 1;
+        if(left) {
+            left->push();                       // ensure left is up-to-date
+            subtree = merge_func(left->subtree, subtree);
+            size    += left->size;
+        }
+        if(right) {
+            right->push();
+            subtree = merge_func(subtree, right->subtree);
+            size    += right->size;
+        }
+    }
+
+    // Push lazy tags down before accessing children
+    void push() {
+        lazy.apply_lazy(this);
+    }
+
+    // Helper to push at a possibly-null node
+    friend void push_lazy(TreapNode* t) {
+        if(t) t->push();
+    }
+
+    // Split by key (NOT used in this problem) – splits into <key, ≥key
+    friend pair<TreapNode*,TreapNode*> split(TreapNode* t, KeyT key) {
+        if(!t) return {nullptr,nullptr};
+        t->push();
+        if(key < t->key) {
+            auto [l, r] = split(t->left, key);
+            t->left = r; t->pull();
+            return {l, t};
+        } else {
+            auto [l, r] = split(t->right, key);
+            t->right = l; t->pull();
+            return {t, r};
+        }
+    }
+
+    // Split by subtree size: first 'size' nodes go left, rest go right
+    friend pair<TreapNode*, TreapNode*> split_by_size(TreapNode* t, size_t size) {
+        if(!t) return {nullptr,nullptr};
+        t->push();
+        size_t left_sz = t->left ? t->left->size : 0;
+        if(left_sz >= size) {
+            auto [l, r] = split_by_size(t->left, size);
+            t->left = r; t->pull();
+            return {l, t};
+        } else {
+            auto [l, r] = split_by_size(t->right, size - 1 - left_sz);
+            t->right = l; t->pull();
+            return {t, r};
+        }
+    }
+
+    // Merge two treaps assuming all nodes in l come before nodes in r
+    friend TreapNode* merge(TreapNode* l, TreapNode* r) {
+        push_lazy(l); push_lazy(r);
+        if(!l || !r) return l ? l : r;
+        if(l->prior > r->prior) {
+            l->right = merge(l->right, r);
+            l->pull();
+            return l;
+        } else {
+            r->left = merge(l, r->left);
+            r->pull();
+            return r;
+        }
+    }
+};
+
+// A simple empty monoid (we don't need any aggregated data here)
+struct EmptyMonoid {
+    static EmptyMonoid merge(EmptyMonoid a, EmptyMonoid b) {
+        return EmptyMonoid();
+    }
+};
+
+// Lazy tag to reverse a subtree
+template<class T>
+struct ReverseLazy {
+    bool should_reverse;
+    ReverseLazy() : should_reverse(false) {}
+
+    // If should_reverse is set, we swap children and propagate the flag
+    template<class G, uint64_t (*rng)(), T (*merge_func)(T,T)>
+    void apply_lazy(TreapNode<G, T, merge_func, ReverseLazy, rng>* node) {
+        if(!node || !should_reverse) return;
+        swap(node->left, node->right);
+        if(node->left)  node->left->lazy.should_reverse  ^= true;
+        if(node->right) node->right->lazy.should_reverse ^= true;
+        should_reverse = false;
+    }
+};
+
+// Type alias for our implicit treap storing string keys
+using TreapWithReverse =
+    TreapNode<string, EmptyMonoid, EmptyMonoid::merge, ReverseLazy<EmptyMonoid>, 
+              /*rng=*/[](){ static mt19937_64 gen(42); return gen(); }>;
+
+// Globals for input
+int n, m, k;
+vector<string> names;
+
+// Read N, M, K and the initial stack of book names
+void read() {
+    cin >> n >> m >> k;
+    names.resize(n);
+    for(int i = 0; i < n; i++){
+        cin >> names[i];
+    }
+}
+
+// Solve using implicit treap + lazy reversal
+void solve() {
+    // 1) Build initial treap from the N names
+    TreapNode<string,EmptyMonoid,EmptyMonoid::merge,ReverseLazy<EmptyMonoid>,decltype(&TreapWithReverse::prior)>* root = nullptr;
+    for(auto &s: names) {
+        // Create a node and merge it to the right end
+        auto *node = new TreapWithReverse::Node(s, EmptyMonoid());
+        root = merge(node, root);
+    }
+
+    // Process M operations
+    while(m--) {
+        string op;
+        cin >> op;
+        if(op.rfind("ADD(", 0) == 0) {
+            // Extract the name inside ADD(...)
+            string name = op.substr(4, op.size() - 5);
+            auto *node = new TreapWithReverse::Node(name, EmptyMonoid());
+            // Merge the new node to the front
+            root = merge(node, root);
+
+        } else { // "ROTATE"
+            // Split off the first k elements
+            auto [t1, t2] = split_by_size(root, k);
+            // Toggle the reverse flag on that prefix
+            if(t1) t1->lazy.should_reverse ^= true;
+            // Re-merge
+            root = merge(t1, t2);
+        }
+    }
+
+    // In-order traversal to print final stack (left -> self -> right)
+    function<void(TreapWithReverse::Node*)> dfs = [&](auto *node) {
+        if(!node) return;
+        node->push();          // ensure children correct
+        dfs(node->left);       // first the left subtree
+        cout << node->key << "\n"; // then this book
+        dfs(node->right);      // then the right subtree
+    };
+    dfs(root);
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+from sys import stdin
+from collections import deque
+
+def main():
+    data = stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+    K = int(next(it))
+
+    # Read the initial pile, top at the front of this deque
+    all_books = deque()
+    for _ in range(n):
+        all_books.append(next(it))
+
+    # Split into prefix (first K) and suffix (rest)
+    prefix = all_books
+    suffix = deque()
+    while len(prefix) > K:
+        # Move the bottom of prefix to the top of suffix
+        suffix.appendleft(prefix.pop())
+
+    # rev=False means prefix is in "normal" order; True means logically reversed
+    rev = False
+
+    # Helpers to push_front and pop_back on prefix under rev-flag
+    def prefix_push_front(book):
+        # if not reversed, push to left; else push to right
+        if not rev:
+            prefix.appendleft(book)
+        else:
+            prefix.append(book)
+
+    def prefix_pop_back():
+        # if not reversed, pop rightmost; else pop leftmost
+        return prefix.pop() if not rev else prefix.popleft()
+
+    # Process operations
+    for _ in range(m):
+        op = next(it)
+        if op.startswith("ADD"):
+            # Extract name inside ADD(...)
+            name = op[4:-1]
+            # Insert at pile front => prefix front
+            prefix_push_front(name)
+            # If prefix got too big, move one book to suffix front
+            if len(prefix) > K:
+                moved = prefix_pop_back()
+                suffix.appendleft(moved)
+
+        else:  # ROTATE
+            # Just toggle the reverse flag on prefix
+            rev = not rev
+
+    # Output the final pile: prefix then suffix
+    out = []
+
+    # Print prefix in correct order
+    if rev:
+        # If reversed, we iterate prefix from right to left
+        for book in reversed(prefix):
+            out.append(book)
+    else:
+        # Normal: left to right
+        for book in prefix:
+            out.append(book)
+
+    # Then the suffix is always in normal order
+    for book in suffix:
+        out.append(book)
+
+    # Print each on its own line
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Maintain the top K books separately from the rest, storing the prefix in a deque with a boolean “reversed” flag.  
+- **ADD**: push into the logical front of the prefix; if it grows beyond K, pop its logical back into the front of the suffix.  
+- **ROTATE**: flip the reverse flag (O(1)).  
+Finally, output prefix (respecting the reverse flag) followed by suffix. This runs in O(N+M) time and O(N) space.

@@ -1,0 +1,354 @@
+1. Abridged Problem Statement  
+Given an n×n matrix of unsafety values a[i][j], assign exactly one program to each of the n computers (i.e. find a perfect matching) so as to minimize the maximum unsafety value among the chosen assignments. Output that minimal maximum value and one corresponding assignment of programs to computers.
+
+2. Detailed Editorial  
+
+Problem restatement  
+• We have n computers and n programs. Each cell a[i][j] is the unsafety of running program j on computer i.  
+• We seek a permutation p of {1…n} so that max_{1≤i≤n} a[i][p(i)] is as small as possible.  
+
+Observations  
+• This is the classic “bottleneck assignment” problem.  
+• Equivalently, we ask: what is the smallest threshold T such that we can pick one edge in each row and each column with weight ≤ T?  
+
+Solution approach  
+1. Flatten and sort all n² entries by weight, yielding an array edges of (weight, row, col).  
+2. Binary search on the index mid in this sorted array: define threshold = edges[mid].weight.  
+3. Build a bipartite graph G(mid) with left side = computers (0…n−1), right side = programs (0…n−1), and include an edge (i→j) whenever a[i][j] ≤ threshold.  
+4. Use Hopcroft–Karp to check if G(mid) has a perfect matching of size n.  
+   – If yes, we can lower the threshold (move high = mid−1).  
+   – Otherwise, raise the threshold (move low = mid+1).  
+5. After binary search, low points to the smallest mid where perfect matching exists. Rebuild the graph at that mid, compute one maximum matching, and output the threshold and the matching.  
+
+Complexity  
+• Sorting: O(n² log n²) = O(n² log n).  
+• Each bipartite matching test: Hopcroft–Karp runs in O(E √V) = O((n²) √n).  
+• We perform O(log(n²)) = O(log n) matching tests.  
+• Total ≃ O(n² log n + n² √n log n), safe for n up to 500.  
+
+3. C++ Solution with Detailed Comments  
+
+#include <bits/stdc++.h>  
+using namespace std;
+
+// Overload << for pair so we can print pairs directly  
+template<typename T1, typename T2>  
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {  
+    return out << x.first << ' ' << x.second;  
+}  
+
+// Overload >> for pair so we can read pairs directly  
+template<typename T1, typename T2>  
+istream &operator>>(istream &in, pair<T1, T2> &x) {  
+    return in >> x.first >> x.second;  
+}  
+
+// Read a vector of items from input  
+template<typename T>  
+istream &operator>>(istream &in, vector<T> &a) {  
+    for(auto &x: a)  
+        in >> x;  
+    return in;  
+}  
+
+// Print a vector of items to output  
+template<typename T>  
+ostream &operator<<(ostream &out, const vector<T> &a) {  
+    for(auto &x: a)  
+        out << x << ' ';  
+    return out;  
+}  
+
+// Implementation of Hopcroft–Karp for bipartite matching  
+class HopcroftKarp {  
+  private:  
+    int n, m;                      // sizes of left (n) and right (m) partitions  
+    vector<vector<int>> adj;       // adjacency: for each u in [0..n), list of v in [0..m)  
+    vector<int> dist;              // distances used by BFS  
+
+    // Build level graph and check if there is an augmenting path  
+    bool bfs() {  
+        queue<int> q;  
+        dist.assign(n, -1);            // start all distances as unvisited  
+        // Enqueue all free (unmatched) left nodes at distance 0  
+        for(int u = 0; u < n; ++u) {  
+            if(inv_match[u] == -1) {  
+                dist[u] = 0;  
+                q.push(u);  
+            }  
+        }  
+
+        bool foundAugmenting = false;  
+        while(!q.empty()) {  
+            int u = q.front();  
+            q.pop();  
+            // Try all edges u→v  
+            for(int v: adj[u]) {  
+                int mu = match[v];         // the left node currently matched to v (or -1)  
+                if(mu == -1) {             // if v is free, we found an augmenting path  
+                    foundAugmenting = true;  
+                } else if(dist[mu] == -1) {  
+                    // Otherwise, set distance of that left node and enqueue  
+                    dist[mu] = dist[u] + 1;  
+                    q.push(mu);  
+                }  
+            }  
+        }  
+        return foundAugmenting;  
+    }  
+
+    // DFS to actually find augmenting paths in the level graph  
+    bool dfs(int u) {  
+        for(int v: adj[u]) {  
+            int mu = match[v];  
+            // If v is free, or we can advance recursively along the level graph  
+            if(mu == -1 || (dist[mu] == dist[u] + 1 && dfs(mu))) {  
+                inv_match[u] = v;  
+                match[v] = u;  
+                return true;  
+            }  
+        }  
+        dist[u] = -1;  // mark u as dead end  
+        return false;  
+    }  
+
+  public:  
+    vector<int> match;       // match[v] = u matched to v, or -1  
+    vector<int> inv_match;   // inv_match[u] = v matched to u, or -1  
+
+    // Constructor: n left nodes, m right nodes (if m==-1, use n)  
+    HopcroftKarp(int _n, int _m = -1) : n(_n), m(_m < 0 ? _n : _m) {  
+        adj.assign(n, {});  
+        clear(false);  
+    }  
+
+    // Reset matching arrays; optionally clear adjacency too  
+    void clear(bool clear_adj = true) {  
+        match.assign(m, -1);  
+        inv_match.assign(n, -1);  
+        if(clear_adj)  
+            adj.assign(n, {});  
+    }  
+
+    // Add bipartite edge u→v  
+    void add_edge(int u, int v) {  
+        adj[u].push_back(v);  
+    }  
+
+    // Compute maximum matching; returns size of matching  
+    int max_matching(bool shuffle_edges = false) {  
+        // Optionally shuffle edges to avoid worst-case  
+        if(shuffle_edges) {  
+            mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());  
+            for(int i = 0; i < n; i++)  
+                shuffle(adj[i].begin(), adj[i].end(), rng);  
+        }  
+
+        int result = 0;  
+        // While there is some augmenting path  
+        while(bfs()) {  
+            for(int u = 0; u < n; ++u) {  
+                if(inv_match[u] == -1 && dfs(u))  
+                    result++;  
+            }  
+        }  
+        return result;  
+    }  
+
+    // Collect the matching as pairs (u,v)  
+    vector<pair<int,int>> get_matching() {  
+        vector<pair<int,int>> res;  
+        for(int u = 0; u < n; ++u)  
+            if(inv_match[u] != -1)  
+                res.emplace_back(u, inv_match[u]);  
+        return res;  
+    }  
+};  
+
+using BipartiteMatching = HopcroftKarp;
+
+// Global input  
+int n;  
+vector<vector<int>> a;  
+
+// Read n and the n×n matrix  
+void read_input() {  
+    cin >> n;  
+    a.assign(n, vector<int>(n));  
+    for(int i = 0; i < n; i++)  
+        for(int j = 0; j < n; j++)  
+            cin >> a[i][j];  
+}  
+
+// Build a matching object using only the first mid+1 smallest edges  
+BipartiteMatching build_matching(int mid,  
+    const vector<array<int,3>> &edges_sorted)  
+{  
+    BipartiteMatching bm(n, n);  
+    // Add all edges whose sorted index ≤ mid  
+    for(int i = 0; i <= mid; i++) {  
+        auto &e = edges_sorted[i];  
+        int w = e[0], u = e[1], v = e[2];  
+        bm.add_edge(u, v);  
+    }  
+    return bm;  
+}  
+
+void solve() {  
+    // Flatten all edges (weight, row, col)  
+    vector<array<int,3>> edges;  
+    edges.reserve(n * n);  
+    for(int i = 0; i < n; i++)  
+        for(int j = 0; j < n; j++)  
+            edges.push_back({a[i][j], i, j});  
+
+    // Sort by weight ascending  
+    sort(edges.begin(), edges.end(),  
+         [](auto &A, auto &B){ return A[0] < B[0]; });  
+
+    // Binary search on the sorted edge index  
+    int low = 0, high = n*n - 1, answer = high;  
+    while(low <= high) {  
+        int mid = (low + high) / 2;  
+        auto bm = build_matching(mid, edges);  
+        // If we can match all n pairs with threshold = edges[mid][0]  
+        if(bm.max_matching(true) == n) {  
+            answer = mid;  
+            high = mid - 1;  
+        } else {  
+            low = mid + 1;  
+        }  
+    }  
+
+    // Rebuild the final matching at the minimal index = answer  
+    auto final_bm = build_matching(answer, edges);  
+    final_bm.max_matching(false);  // compute it (no need to shuffle)  
+
+    int best_threshold = edges[answer][0];  
+    cout << best_threshold << '\n';  
+
+    // Output pairs, converting to 1-based indexing  
+    for(auto &pr : final_bm.get_matching()) {  
+        int u = pr.first, v = pr.second;  
+        cout << (u+1) << ' ' << (v+1) << '\n';  
+    }  
+}  
+
+int main(){  
+    ios::sync_with_stdio(false);  
+    cin.tie(nullptr);  
+
+    read_input();  
+    solve();  
+    return 0;  
+}  
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import threading
+def main():
+    import sys
+    sys.setrecursionlimit(10000)
+    input = sys.stdin.readline
+
+    n = int(input())
+    a = [list(map(int, input().split())) for _ in range(n)]
+
+    # Build a list of all edges: (weight, row, col)
+    edges = []
+    for i in range(n):
+        for j in range(n):
+            edges.append((a[i][j], i, j))
+    edges.sort(key=lambda x: x[0])
+
+    # Hopcroft-Karp implementation
+    from collections import deque
+    INF = 10**9
+
+    def hopcroft_karp(adj, N, M):
+        pairU = [-1]*N   # pairU[u] = matched v for u, or -1
+        pairV = [-1]*M   # pairV[v] = matched u for v, or -1
+        dist = [0]*N
+
+        def bfs():
+            queue = deque()
+            for u in range(N):
+                if pairU[u] < 0:
+                    dist[u] = 0
+                    queue.append(u)
+                else:
+                    dist[u] = INF
+            found = False
+            while queue:
+                u = queue.popleft()
+                for v in adj[u]:
+                    pu = pairV[v]
+                    if pu < 0:
+                        found = True
+                    elif dist[pu] == INF:
+                        dist[pu] = dist[u] + 1
+                        queue.append(pu)
+            return found
+
+        def dfs(u):
+            for v in adj[u]:
+                pu = pairV[v]
+                if pu < 0 or (dist[pu] == dist[u] + 1 and dfs(pu)):
+                    pairU[u] = v
+                    pairV[v] = u
+                    return True
+            dist[u] = INF
+            return False
+
+        matching = 0
+        while bfs():
+            for u in range(N):
+                if pairU[u] < 0 and dfs(u):
+                    matching += 1
+        return matching, pairU
+
+    # Build adjacency up to index mid
+    def build_adj(mid):
+        adj = [[] for _ in range(n)]
+        for i in range(mid+1):
+            _, u, v = edges[i]
+            adj[u].append(v)
+        return adj
+
+    # Binary search for minimal mid that allows perfect matching
+    low, high, ans = 0, n*n-1, n*n-1
+    while low <= high:
+        mid = (low + high)//2
+        adj = build_adj(mid)
+        match_sz, _ = hopcroft_karp(adj, n, n)
+        if match_sz == n:
+            ans = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+
+    # Rebuild final matching
+    adj = build_adj(ans)
+    _, pairU = hopcroft_karp(adj, n, n)
+
+    # Output result
+    threshold = edges[ans][0]
+    out = [str(threshold)]
+    for i in range(n):
+        # pairU[i] is the column matched to row i
+        out.append(f"{i+1} {pairU[i]+1}")
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+Comments in the code explain each part: reading input, sorting edges, binary search on threshold, Hopcroft–Karp algorithm (BFS for layers, DFS for augmenting), rebuilding final matching, and printing.
+
+5. Compressed Editorial  
+• This is the bottleneck assignment: minimize the max edge in a perfect matching of an n×n weight matrix.  
+• Sort all edges and binary search on the largest allowed weight.  
+• For each threshold, build a bipartite graph including edges up to that weight and check for a perfect matching via Hopcroft–Karp in O(E√V).  
+• Total complexity O(n² log n + n²√n log n), fine for n=500.

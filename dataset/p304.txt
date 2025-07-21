@@ -1,0 +1,234 @@
+1. Abridged Problem Statement  
+Kate has N teeth distributed over K gums. Treating the i-th tooth costs Aᵢ, and if she treats ≥1 tooth on gum j she must pay a fixed anesthesia cost Bⱼ. Given a total budget P, choose a subset of teeth to maximize the number of treated teeth. Output that maximum count and any valid list of tooth indices.
+
+2. Detailed Editorial  
+
+Problem Reformulation  
+- You have K groups (gums).  
+- In group j there are nⱼ teeth, each with treatment cost aᵢ.  
+- If you take at least one item from group j you pay a group‐fixed cost Bⱼ once.  
+- You have a total budget P. Maximize the total items selected.  
+
+This is a “grouped knapsack” where each group carries:  
+ • A fixed setup cost Bⱼ if you pick ≥1 from that group.  
+ • Individual costs aᵢ for each picked item in the group.  
+ • We want to maximize total picked items under budget P.  
+
+DP State  
+Let dp[g][t] = minimal total cost to select exactly t teeth from the first g gums.  
+We will maintain dp as an array of size (K+1)×(N+1), initialized to ∞ except dp[0][0] = 0.  
+
+Transitions  
+For gum index g from 0 to K−1, consider two options for each achievable t:  
+1. Take zero teeth from gum g+1:  
+   dp[g+1][t] = min(dp[g+1][t], dp[g][t])  
+2. Take p ≥1 teeth (up to min(n_g, N−t)) from this gum:  
+   - First sort that gum’s teeth by ascending aᵢ.  
+   - Precompute prefix sums of those sorted costs.  
+   - The incremental cost of taking p teeth is B[g] + prefix_sum[p].  
+   - Update dp[g+1][t+p] = min(dp[g+1][t+p], dp[g][t] + incremental_cost).  
+
+After filling all K groups, scan t from 0…N to find the maximum t such that dp[K][t] ≤ P. That t is your answer.  
+
+Reconstruction  
+To reconstruct which teeth were taken:  
+- Store for each dp[g+1][…] the value p of how many teeth you picked from gum g (or −1 if 0).  
+- Starting from (g=K, t=best_t), step g→g−1, read p = choice[g][t], if p>0 add the first p sorted tooth indices of gum g to the solution list, and set t := t−p.  
+
+Complexity  
+- Sorting each gum’s teeth total O(N log N).  
+- DP has K stages, each stage loops t=0..N and p up to n_g. So overall O(∑₍g₌1₎^K (N·n_g)) = O(N²). With N≤600 this is ~360K operations, easily within time.
+
+3. Provided C++ Solution with Detailed Comments  
+#include <bits/stdc++.h>  
+using namespace std;
+
+// Overload output for pair  
+template<typename T1, typename T2>  
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {  
+    return out << x.first << ' ' << x.second;  
+}
+
+// Overload input for pair  
+template<typename T1, typename T2>  
+istream& operator>>(istream& in, pair<T1, T2>& x) {  
+    return in >> x.first >> x.second;  
+}
+
+// Overload input for vector  
+template<typename T>  
+istream& operator>>(istream& in, vector<T>& a) {  
+    for(auto& x: a) in >> x;  
+    return in;  
+}
+
+// Overload output for vector  
+template<typename T>  
+ostream& operator<<(ostream& out, const vector<T>& a) {  
+    for(auto x: a) out << x << ' ';  
+    return out;  
+}
+
+int N, K, P;                           // N teeth, K gums, budget P  
+vector<int> B;                         // Anesthesia cost for each gum  
+vector<vector<pair<int,int>>> gums;    // For each gum: list of (tooth cost, tooth index)
+
+void read() {
+    // Read input values  
+    cin >> N >> K >> P;
+    B.resize(K);
+    cin >> B;                        // Read anesthesia costs B[0..K-1]
+    gums.assign(K, {});              // Initialize K empty groups
+    for(int i = 0; i < N; i++){
+        int cost, gumIndex;
+        cin >> cost >> gumIndex;
+        // Store (cost, original tooth ID) in that gum’s vector
+        gums[gumIndex - 1].push_back({cost, i + 1});
+    }
+    // Sort each gum’s teeth by ascending cost
+    for(auto& g: gums){
+        sort(g.begin(), g.end());
+    }
+}
+
+void solve() {
+    // dp[g][t] = {min_cost, taken_count_from_this_gum} for first g gums picking t teeth
+    const int INF = INT_MAX;
+    vector<vector<pair<int,int>>> dp(K+1, vector<pair<int,int>>(N+1, {INF, 0}));
+    dp[0][0] = {0, 0};  // Base: 0 gums, 0 teeth costs 0
+
+    // DP over gums
+    for(int g = 0; g < K; ++g) {
+        for(int t = 0; t <= N; ++t) {
+            if(dp[g][t].first == INF) continue;  // Not reachable
+            int currentCost = dp[g][t].first;
+
+            // Option 1: take 0 teeth from gum g → no anesthesia cost
+            if(currentCost < dp[g+1][t].first) {
+                dp[g+1][t] = {currentCost, -1};  // -1 marks “took 0”
+            }
+
+            // Option 2: take p>=1 teeth: accumulate anesthesia + prefix sums
+            int sumCost = B[g];  // anesthesia cost once we take ≥1
+            int maxTake = min((int)gums[g].size(), N - t);
+            for(int p = 0; p < maxTake; ++p) {
+                sumCost += gums[g][p].first;  // add cost of the p-th cheapest tooth
+                int newCost = currentCost + sumCost;
+                int newT = t + (p + 1);
+                if(newCost < dp[g+1][newT].first) {
+                    dp[g+1][newT] = {newCost, p + 1};
+                }
+            }
+        }
+    }
+
+    // Find maximum t achievable within budget P
+    int best = 0;
+    while(best + 1 <= N && dp[K][best+1].first <= P) {
+        best++;
+    }
+    cout << best << "\n";
+
+    // Reconstruct which teeth were chosen
+    vector<int> answer;
+    int t = best;
+    for(int g = K; g > 0; --g) {
+        int took = dp[g][t].second;  // how many from gum g-1
+        if(took > 0) {
+            // add the first 'took' teeth (they were sorted) by their original index
+            for(int i = 0; i < took; ++i) {
+                answer.push_back(gums[g-1][i].second);
+            }
+            t -= took;
+        }
+    }
+    sort(answer.begin(), answer.end());
+    // Output tooth indices
+    cout << answer << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+input = sys.stdin.readline
+
+def main():
+    N, K, P = map(int, input().split())
+    B = list(map(int, input().split()))  # anesthesia costs
+    gums = [[] for _ in range(K)]        # list of lists for each gum
+
+    # Read each tooth and append to its gum: (cost, index)
+    for idx in range(1, N+1):
+        a, c = map(int, input().split())
+        gums[c-1].append((a, idx))
+
+    # Sort each gum by ascending tooth cost
+    for g in range(K):
+        gums[g].sort()
+
+    INF = 10**18
+    # dp[g][t] = minimal cost to treat t teeth using first g gums
+    # choice[g][t] = how many we took from gum g-1 (or -1 if zero)
+    dp = [[INF]*(N+1) for _ in range(K+1)]
+    choice = [[0]*(N+1) for _ in range(K+1)]
+    dp[0][0] = 0
+
+    # DP transitions
+    for g in range(K):
+        for t in range(N+1):
+            if dp[g][t] == INF:
+                continue
+            base = dp[g][t]
+            # Option 1: take 0
+            if base < dp[g+1][t]:
+                dp[g+1][t] = base
+                choice[g+1][t] = -1
+            # Option 2: take p >= 1
+            cost_acc = B[g]
+            max_p = min(len(gums[g]), N - t)
+            for p in range(max_p):
+                cost_acc += gums[g][p][0]   # add p-th cheapest tooth cost
+                nt = t + p + 1
+                nc = base + cost_acc
+                if nc < dp[g+1][nt]:
+                    dp[g+1][nt] = nc
+                    choice[g+1][nt] = p + 1
+
+    # Find the max teeth count within P
+    best = 0
+    for t in range(N+1):
+        if dp[K][t] <= P:
+            best = t
+    print(best)
+
+    # Reconstruct solution
+    res = []
+    t = best
+    for g in range(K, 0, -1):
+        took = choice[g][t]
+        if took > 0:
+            # collect the first 'took' indices from gums[g-1]
+            for i in range(took):
+                res.append(gums[g-1][i][1])
+            t -= took
+
+    res.sort()
+    print(*res)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Group teeth by gum, sort each group’s costs.  
+- Use dp[g][t] = minimal cost to pick t teeth from first g gums.  
+- Transition by either skipping a gum or paying B[g]+prefix_sum of p smallest in that gum.  
+- Scan dp[K][t] for largest t ≤ P. Reconstruct via stored pick counts.

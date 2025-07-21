@@ -1,0 +1,216 @@
+1. Abridged Problem Statement  
+Given a rooted tree with n nodes (node 1 is the root), and m leaves (nodes numbered n–m+1 to n), each leaf holding an integer value. For every internal (non-leaf) node v, compute the minimum absolute difference between any two leaf values in v’s subtree. If v’s subtree contains only one leaf, output 2³¹–1 (2147483647). Report answers for nodes 1 through n–m.
+
+2. Detailed Editorial  
+We need, for each internal node, the minimum |x−y| over all pairs of leaf-values x,y in its subtree. A brute-force pairwise check per subtree is O(m²) per node—prohibitively large. Instead, we use a “small-to-large” merging technique with balanced BSTs (C++ std::set):
+
+- We do a DFS from the root.  
+- At each node u, we gather all leaf-values under u in a set S_u.  
+- If u is a leaf, S_u = {its value}, and answer[u] = ∞.  
+- Otherwise, for each child v of u we recursively compute S_v and answer[v].  
+- We maintain answer[u] = min(answer over children).  
+- We merge the children’s sets into one: always merge the smaller set into the larger set (so each element moves O(log n) times total).  
+- While inserting each element x from the smaller set into the larger set S, we locate its neighbors in S (using set.lower_bound) to update the local minimal difference |x – neighbor|. We also update answer[u] accordingly.  
+- After processing all children, the combined set is S_u, and answer[u] is correct.  
+
+Complexity: Each tree edge is involved in at most O(log n) insertions (small-to-large), and each insertion/search in set is O(log n), so overall O(n log² n). In practice, that meets the 0.25 s limit for n up to a few 10⁵.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for outputting pairs
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for reading pairs
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for reading vectors
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload << for outputting vectors
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int INF = 2147483647;  // 2^31 - 1, default for single-leaf subtrees
+
+int n, m;                     // n = total nodes, m = number of leaves
+vector<int> a;                // to hold leaf values at positions [n-m .. n-1]
+vector<vector<int>> adj;      // adjacency list of the tree
+
+// Reads input: n, m, tree structure, then m leaf values
+void read() {
+    cin >> n >> m;
+    a.resize(n);
+    adj.assign(n, {});
+    // Read parents for nodes 2..n
+    for(int i = 1; i < n; i++) {
+        int par;
+        cin >> par;
+        adj[par - 1].push_back(i);
+    }
+    // Read leaf values into a[n-m]..a[n-1]
+    for(int i = 0; i < m; i++) {
+        cin >> a[n - m + i];
+    }
+}
+
+// DFS returns a set of all leaf-values in subtree u,
+// and fills answer[u] with the min absolute difference found
+set<int> dfs(int u, vector<int> &answer) {
+    // If u is a leaf, return a singleton set
+    if(adj[u].empty()) {
+        return {a[u]};
+    }
+
+    set<int> s;  // this will become the merged set for u
+    // Initialize answer[u] to INF
+    answer[u] = INF;
+
+    // Process each child
+    for(int v: adj[u]) {
+        // Get child's multiset and child answer
+        set<int> t = dfs(v, answer);
+        // Propagate the best answer from child up to u
+        answer[u] = min(answer[u], answer[v]);
+
+        // Ensure we always insert smaller set t into larger set s
+        if(s.size() < t.size()) {
+            swap(s, t);
+        }
+
+        // Insert each element x in t into s
+        for(int x: t) {
+            // Find first element >= x
+            auto it = s.lower_bound(x);
+            if(it != s.end()) {
+                // Update answer if we found a closer upper neighbor
+                answer[u] = min(answer[u], *it - x);
+            }
+            if(it != s.begin()) {
+                // Check the predecessor for a closer lower neighbor
+                answer[u] = min(answer[u], x - *prev(it));
+            }
+            // Insert x so s gains this element
+            s.insert(x);
+        }
+    }
+
+    return s;
+}
+
+// Runs DFS and prints answer[0..n-m-1]
+void solve() {
+    vector<int> answer(n, INF);
+    dfs(0, answer);
+    // Output for all internal nodes 1..n-m
+    for(int i = 0; i < n - m; i++) {
+        cout << answer[i] << ' ';
+    }
+    cout << '\n';
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+from bisect import bisect_left, insort
+
+INF = 2147483647
+
+def read_input():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n, m = map(int, (next(it), next(it)))
+    # Build adjacency list
+    adj = [[] for _ in range(n)]
+    # Parents of nodes 2..n
+    for child in range(1, n):
+        p = int(next(it)) - 1
+        adj[p].append(child)
+    # Leaf values go into a[n-m..n-1]
+    a = [0]*n
+    for i in range(n-m, n):
+        a[i] = int(next(it))
+    return n, m, adj, a
+
+def dfs(u, adj, a, answer):
+    """
+    Returns a sorted list of all leaf-values in u's subtree,
+    and sets answer[u] to the minimal absolute difference found.
+    """
+    # If leaf, return its single-element list
+    if not adj[u]:
+        answer[u] = INF
+        return [a[u]]
+
+    # We'll merge children's lists into 'big'
+    big = []
+    answer[u] = INF
+
+    for v in adj[u]:
+        small = dfs(v, adj, a, answer)
+        # Propagate child's answer
+        answer[u] = min(answer[u], answer[v])
+
+        # Ensure big is the larger list
+        if len(big) < len(small):
+            big, small = small, big
+
+        # Merge small into big, updating answer[u]
+        for x in small:
+            # Locate insertion point in big
+            idx = bisect_left(big, x)
+            # Check right neighbor
+            if idx < len(big):
+                answer[u] = min(answer[u], big[idx] - x)
+            # Check left neighbor
+            if idx > 0:
+                answer[u] = min(answer[u], x - big[idx-1])
+            # Insert x into big, keeping it sorted
+            insort(big, x)
+
+    return big
+
+def main():
+    n, m, adj, a = read_input()
+    answer = [INF]*n
+    dfs(0, adj, a, answer)
+    # Print answers for nodes 1..n-m
+    out = ' '.join(str(answer[i]) for i in range(n-m))
+    print(out)
+
+if __name__ == '__main__':
+    main()
+```
+
+5. Compressed Editorial  
+Perform a DFS returning a balanced‐BST (set) of leaf values per subtree. Merge children by always inserting the smaller set into the larger (small-to-large), and on each insertion check the nearest neighbors to update the minimal absolute difference. This achieves O(n log² n) overall.

@@ -1,0 +1,286 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+278. Fuel
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+A fuel station has infinite amount of each of N kinds of fuel. Each kind of fuel has density ai, cost bi and intensity ci. m kilograms of such fuel has volume mai, intensity mci and costs mbi dollars. Your car can store any mixture of different kinds of fuel such that the overall volume does not exceed A. You have B dollars. Your task is to determine the maximal overall intensity of the fuel you can buy. Note that you can buy any nonnegative amount of any kind of fuel, not necessarily an integer number of kilograms.
+
+Input
+The first line of the input contains three integers N, A, B (1≤ N≤ 75000, 1≤ A,B≤ 1000). Each of the next N lines describes one kind of fuel. i+1-st line contains three integers ai, bi, ci (0i,bi,ci≤ 100).
+
+Output
+The only line of the output must contain single number with at least 6 digits after the decimal point, being the maximal overall intensity.
+
+Example(s)
+sample input
+sample output
+2 1 1 
+1 2 6
+2 1 6
+4.000000
+
+
+
+Novosibirsk SU Contest #2, by Novosibirsk Team #1
+
+<|response|>
+1. Abridged Problem Statement  
+You have N types of fuel. Fuel i has density aᵢ, cost bᵢ, and intensity cᵢ per kilogram. If you buy mᵢ kilograms of fuel i, it occupies volume aᵢ·mᵢ, costs bᵢ·mᵢ dollars, and contributes intensity cᵢ·mᵢ. You have two resource limits: total volume ≤ A and total money ≤ B, and you may choose real (non‐integer) quantities mᵢ ≥ 0. Maximize the total intensity ∑ cᵢ·mᵢ.
+
+2. Key Observations  
+- This is a linear program with two constraints (volume and cost) and nonnegative variables mᵢ. By standard LP theory, an optimal solution lies at a vertex of the feasible polyhedron—here that means you either use exactly one fuel type, or mix exactly two types.  
+- Define M = total intensity = ∑ cᵢ·mᵢ. Introduce weights xᵢ ≥ 0 with ∑xᵢ=1, and set mᵢ = (M·xᵢ)/cᵢ. Then the resource constraints become  
+    ∑ aᵢ·mᵢ = M·∑(aᵢ/cᵢ)·xᵢ ≤ A  
+    ∑ bᵢ·mᵢ = M·∑(bᵢ/cᵢ)·xᵢ ≤ B  
+  Denote points pᵢ = (Xᵢ, Yᵢ) = (aᵢ/cᵢ, bᵢ/cᵢ). Any convex combination P = ∑xᵢpᵢ lies in the convex hull of {pᵢ}. The inequalities become  
+    M·P.x ≤ A, M·P.y ≤ B  ⇒  M ≤ min(A/P.x, B/P.y).  
+  To maximize M we want to minimize t = max(P.x/A, P.y/B) over P in the convex hull. Geometrically, that is the scaling factor t so that the ray from the origin through (A,B) first touches the convex hull of the pᵢ.  
+- Therefore:  
+  1. Check each single point pᵢ alone: Mᵢ = min(A/(aᵢ/cᵢ), B/(bᵢ/cᵢ)).  
+  2. Build the convex hull of all pᵢ in the plane.  
+  3. For each edge [pⱼ,pₖ] of the hull, compute its intersection I with the ray from (0,0) towards (A,B). If I lies on the segment, evaluate M = min(A/I.x, B/I.y).  
+  4. The maximum over all these candidates is the answer.
+
+3. Full Solution Approach  
+1. Read N, A, B.  
+2. For each fuel i:  
+   - Compute Xᵢ = aᵢ/cᵢ and Yᵢ = bᵢ/cᵢ.  
+   - Track answer = max(answer, min(A/Xᵢ, B/Yᵢ)).  
+   - Store point pᵢ = (Xᵢ, Yᵢ).  
+3. Sort the points by (x,y), remove duplicates (within an eps).  
+4. Build the convex hull by the monotone‐chain algorithm in O(N log N).  
+5. Let O = (0,0), T = (A,B). For each consecutive hull vertices pⱼ, pₖ:  
+   - If the line OT is not parallel to line pⱼpₖ, compute their intersection I by solving two‐line intersection.  
+   - If I lies between pⱼ and pₖ (within an eps), compute M = min(A/I.x, B/I.y) and update answer.  
+6. Print answer with six decimal places.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// We use long double for safety on intersections and comparisons
+using ld = long double;
+const ld EPS = 1e-12L;
+
+// 2D point or vector
+struct Point {
+    ld x, y;
+    Point(ld _x=0, ld _y=0): x(_x), y(_y) {}
+    // vector ops
+    Point operator+(const Point& p) const { return Point(x+p.x, y+p.y); }
+    Point operator-(const Point& p) const { return Point(x-p.x, y-p.y); }
+    Point operator*(ld s)       const { return Point(x*s, y*s); }
+};
+
+// cross product
+ld cross(const Point& a, const Point& b) {
+    return a.x*b.y - a.y*b.x;
+}
+
+// cross of (b - a) x (c - a)
+ld cross(const Point& a, const Point& b, const Point& c) {
+    return cross(b - a, c - a);
+}
+
+// Check if three points are collinear within EPS
+bool collinear(const Point& a, const Point& b, const Point& c) {
+    return fabsl(cross(a,b,c)) <= EPS;
+}
+
+// Check if P lies on segment AB (assuming collinearity)
+bool onSegment(const Point& A, const Point& B, const Point& P) {
+    return min(A.x, B.x) - EPS <= P.x && P.x <= max(A.x, B.x) + EPS
+        && min(A.y, B.y) - EPS <= P.y && P.y <= max(A.y, B.y) + EPS;
+}
+
+// Intersection of two infinite lines A1->B1 and A2->B2
+// Returns the intersection point; caller must ensure lines are not parallel
+Point lineIntersection(const Point& A1, const Point& B1,
+                       const Point& A2, const Point& B2) {
+    // solve A1 + t*(B1-A1) = A2 + u*(B2-A2)
+    Point v1 = B1 - A1;
+    Point v2 = B2 - A2;
+    ld num = cross(A2 - A1, v2);
+    ld den = cross(v1, v2);
+    // t = num/den
+    return A1 + v1 * (num / den);
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    ld A, B;
+    cin >> N >> A >> B;
+
+    vector<Point> pts;
+    pts.reserve(N);
+
+    // 1) Read fuels, compute (a/c, b/c), track single-fuel best
+    ld answer = 0.0L;
+    for(int i = 0; i < N; i++){
+        ld a, b, c;
+        cin >> a >> b >> c;
+        // coordinates in (volume-per-intensity, cost-per-intensity)
+        ld X = a / c;
+        ld Y = b / c;
+        // single fuel intensity if used alone
+        if (X > EPS && Y > EPS) {
+            ld M = min(A / X, B / Y);
+            answer = max(answer, M);
+        }
+        pts.emplace_back(X, Y);
+    }
+
+    // 2) Sort and deduplicate points
+    sort(pts.begin(), pts.end(), [&](auto &p, auto &q){
+        if (fabsl(p.x - q.x) > EPS) return p.x < q.x;
+        return p.y < q.y;
+    });
+    pts.erase(unique(pts.begin(), pts.end(),
+        [&](auto &p, auto &q){
+            return fabsl(p.x - q.x) <= EPS && fabsl(p.y - q.y) <= EPS;
+        }), pts.end());
+
+    // 3) Build convex hull (monotone chain)
+    int M = pts.size();
+    if (M < 2) {
+        // Already handled single point case, just print result
+        cout << fixed << setprecision(6) << (double)answer << "\n";
+        return 0;
+    }
+    vector<Point> hull(2*M);
+    int sz = 0;
+    // lower hull
+    for(int i = 0; i < M; i++){
+        while(sz >= 2 && cross(hull[sz-2], hull[sz-1], pts[i]) <= EPS) sz--;
+        hull[sz++] = pts[i];
+    }
+    // upper hull
+    for(int i = M-2, t=sz+1; i >= 0; i--){
+        while(sz >= t && cross(hull[sz-2], hull[sz-1], pts[i]) <= EPS) sz--;
+        hull[sz++] = pts[i];
+    }
+    hull.resize(sz-1);  // last point = first point
+
+    // 4) For each edge, intersect with ray O->T
+    Point O(0,0), T(A,B);
+    int H = hull.size();
+    for(int i = 0; i < H; i++){
+        Point P1 = hull[i];
+        Point P2 = hull[(i+1)%H];
+        // skip if OT is parallel to P1P2
+        if (fabsl(cross(T - O, P1 - P2)) <= EPS) continue;
+        // find intersection
+        Point I = lineIntersection(O, T, P1, P2);
+        if (onSegment(P1, P2, I) && I.x > EPS && I.y > EPS) {
+            ld Mval = min(A / I.x, B / I.y);
+            answer = max(answer, Mval);
+        }
+    }
+
+    // 5) Output
+    cout << fixed << setprecision(6) << (double)answer << "\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    A = float(next(it))
+    B = float(next(it))
+
+    pts = []
+    answer = 0.0
+
+    # 1) Read fuels, compute (a/c, b/c), track single-fuel best
+    for _ in range(N):
+        a = float(next(it))
+        b = float(next(it))
+        c = float(next(it))
+        X = a / c
+        Y = b / c
+        if X > 0 and Y > 0:
+            M0 = min(A/X, B/Y)
+            if M0 > answer:
+                answer = M0
+        pts.append((X, Y))
+
+    # 2) Sort and remove duplicates
+    pts = sorted(set(pts))
+    # 3) Convex hull (monotone chain)
+    def cross(o, a, b):
+        return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+
+    if len(pts) > 1:
+        lower = []
+        for p in pts:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+        upper = []
+        for p in reversed(pts):
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+        hull = lower[:-1] + upper[:-1]
+    else:
+        hull = pts
+
+    O = (0.0, 0.0)
+    T = (A, B)
+
+    # 4) For each hull edge, find intersection with ray O->T
+    def intersect(O, T, P, Q):
+        # Solve O + t*(T-O) = P + u*(Q-P)
+        ox, oy = O; tx, ty = T
+        px, py = P; qx, qy = Q
+        dx1 = tx - ox; dy1 = ty - oy
+        dx2 = qx - px; dy2 = qy - py
+        denom = dx1*dy2 - dy1*dx2
+        if abs(denom) < 1e-15:
+            return None
+        num   = (px - ox)*dy2 - (py - oy)*dx2
+        t     = num / denom
+        return (ox + t*dx1, oy + t*dy1)
+
+    def on_segment(P, Q, R):
+        return min(P[0],Q[0]) - 1e-9 <= R[0] <= max(P[0],Q[0]) + 1e-9 \
+           and min(P[1],Q[1]) - 1e-9 <= R[1] <= max(P[1],Q[1]) + 1e-9
+
+    H = len(hull)
+    for i in range(H):
+        P1 = hull[i]
+        P2 = hull[(i+1)%H]
+        I = intersect(O, T, P1, P2)
+        if I and on_segment(P1, P2, I) and I[0] > 0 and I[1] > 0:
+            M1 = min(A/I[0], B/I[1])
+            if M1 > answer:
+                answer = M1
+
+    # 5) Output with six decimals
+    print(f"{answer:.6f}")
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of Key Steps:  
+- We map each fuel to a 2D point (volume‐per‐intensity, cost‐per‐intensity).  
+- Any mixture corresponds to a convex combination of these points, and the maximum intensity M is the reciprocal of the minimal scaling needed to fit that convex combination under both resource limits.  
+- Geometric intersection with the ray from the origin through (A,B) finds the critical mixture of two fuels.  
+- We also test pure fuels directly. This yields an O(N log N) solution, efficient for N up to 75 000.

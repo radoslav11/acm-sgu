@@ -1,0 +1,357 @@
+1. Abridged Problem Statement
+
+We have an undirected graph of N cities and M roads. Roads 1 through N–1 form a spanning tree (the “stoned” roads). Each road i has a true maintenance cost cᵢ. We must report fake costs dᵢ so that, in the graph with weights dᵢ, the unique minimum spanning tree (ties allowed) is exactly the original tree of roads 1…N–1. Among all such choices of d, we want to minimize ∑|cᵢ–dᵢ|.
+
+2. Detailed Editorial
+
+We want to adjust each tree edge’s cost upward (by xᵢ ≥ 0) and each non-tree edge’s cost downward (by yⱼ ≥ 0), so that no non-tree edge can replace a tree edge in the MST. Concretely, if a non-tree edge j (with true cost cⱼ) connects vertices u and v, its path in the tree goes through some tree edges i. We require for every such pair (i, j):
+
+  cᵢ + xᵢ  ≤  cⱼ – yⱼ.
+
+Equivalently,
+
+  xᵢ + yⱼ  ≤  cⱼ – cᵢ.
+
+Our goal is to choose nonnegative xᵢ, yⱼ to satisfy these constraints and to minimize
+
+  ∑_{i in tree} xᵢ  +  ∑_{j not in tree} yⱼ.
+
+This is a classic linear program with a totally unimodular constraint matrix, whose dual is a maximum‐weight feasible potential problem on a complete bipartite graph between “tree edges” and “all edges.” We can solve it by the Hungarian algorithm (Kuhn–Munkres) on an (n–1)×M cost matrix A where
+
+  A[i][j] = (cⱼ – cᵢ)   if tree edge i lies on the path of edge j,
+            0           otherwise.
+
+The Hungarian algorithm computes dual potentials u[i] (for tree edges) and v[j] (for all edges) that maximize ∑u[i] + ∑v[j] subject to
+
+  u[i] + v[j]  ≤  A[i][j]   for all i,j.
+
+It turns out that the optimal u[i], v[j] exactly equal the chosen increments xᵢ = u[i] and decrements yⱼ = v[j]. Finally we report
+
+  dᵢ = cᵢ + xᵢ   for i in tree (1…N–1),
+  dⱼ = cⱼ – yⱼ   for j not in tree (N…M).
+
+Overall complexity is O(N·M·(N + M)) which is fine for N≤60, M≤400.
+
+3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload output for pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload output for vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// Hungarian algorithm for rectangular cost matrix of size n×m, n ≤ m.
+// Finds a matching of size n minimizing total cost, and returns
+// dual potentials pot_left[1..n], pot_right[1..m] satisfying
+// pot_left[i] + pot_right[j] ≤ cost[i][j].
+template<class T>
+class HungarianAlgorithm {
+  private:
+    const T INF = numeric_limits<T>::max() / 2;
+    vector<int> way;               // For tracing augmenting path
+
+  public:
+    int n, m;                      // n rows (left), m cols (right)
+    vector<vector<T>> cost;        // 0-based cost matrix
+    vector<int> assignment;        // assignment[j] = matched i for column j
+    vector<T> pot_left, pot_right; // dual potentials
+
+    HungarianAlgorithm(const vector<vector<T>>& a) {
+        n = a.size();
+        m = a[0].size();
+        assert(n <= m);
+
+        // Build 1-based arrays by padding
+        cost.assign(n+1, vector<T>(m+1));
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < m; j++)
+                cost[i+1][j+1] = a[i][j];
+
+        pot_left.assign(n+1, 0);
+        pot_right.assign(m+1, 0);
+        assignment.assign(m+1, 0);
+        way.assign(m+1, 0);
+
+        // For each left vertex i, find an augmenting path
+        for (int i = 1; i <= n; i++) {
+            assignment[0] = i;
+            int j0 = 0;                               // Current column
+            vector<T> minv(m+1, INF);                // Minimal reduced cost
+            vector<bool> used(m+1, false);
+            do {
+                used[j0] = true;
+                int i0 = assignment[j0], j1 = 0;
+                T delta = INF;
+                // Try to extend matching from i0
+                for (int j = 1; j <= m; j++) {
+                    if (!used[j]) {
+                        T cur = cost[i0][j] - pot_left[i0] - pot_right[j];
+                        if (cur < minv[j]) {
+                            minv[j] = cur;
+                            way[j] = j0;
+                        }
+                        if (minv[j] < delta) {
+                            delta = minv[j];
+                            j1 = j;
+                        }
+                    }
+                }
+                // Update potentials
+                for (int j = 0; j <= m; j++) {
+                    if (used[j]) {
+                        pot_left[assignment[j]] += delta;
+                        pot_right[j] -= delta;
+                    } else {
+                        minv[j] -= delta;
+                    }
+                }
+                j0 = j1;
+            } while (assignment[j0] != 0);
+
+            // Augment along the path
+            do {
+                int j1 = way[j0];
+                assignment[j0] = assignment[j1];
+                j0 = j1;
+            } while (j0 != 0);
+        }
+        // Now pot_left and pot_right are the dual solutions
+    }
+
+    // Returns total cost of the found matching
+    T get_cost() {
+        T ans = 0;
+        for (int j = 1; j <= m; j++) {
+            int i = assignment[j];
+            if (i != 0) ans += cost[i][j];
+        }
+        return ans;
+    }
+};
+
+int n, m;
+// Adjacency list for the tree (first n-1 edges)
+vector<vector<pair<int,int>>> tree_adj;
+// All edges: (u, v, w)
+vector<tuple<int,int,int>> edges;
+
+// Read input
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    for (int i = 0; i < m; i++) {
+        int u, v, w;
+        cin >> u >> v >> w;
+        edges[i] = make_tuple(u-1, v-1, w);
+    }
+}
+
+// DFS to mark which tree edges lie on the path from u to target.
+// When returning true, we update matrix[tree_edge_idx][j_edge].
+bool add_on_path(int u, int parent, int target, int j_edge,
+                 vector<vector<int64_t>>& matrix) {
+    if (u == target) return true;
+    for (auto& e: tree_adj[u]) {
+        int v = e.first, idx = e.second;
+        if (v == parent) continue;
+        if (add_on_path(v, u, target, j_edge, matrix)) {
+            // idx is a tree-edge on the path
+            auto& [u2,v2,w2] = edges[j_edge];
+            auto& [u1,v1,w1] = edges[idx];
+            matrix[idx][j_edge] = min<int64_t>(
+                matrix[idx][j_edge],
+                w2 - w1
+            );
+            return true;
+        }
+    }
+    return false;
+}
+
+void solve() {
+    // Build cost matrix of size (n-1)×m, initialized to +∞ but we cap at w_j - w_i
+    const int64_t INF = (int64_t)1e15;
+    vector<vector<int64_t>> matrix(n-1, vector<int64_t>(m, INF));
+
+    // Build the tree adjacency from first n-1 edges
+    tree_adj.assign(n, {});
+    for (int i = 0; i < n-1; i++) {
+        auto& [u, v, w] = edges[i];
+        tree_adj[u].push_back({v, i});
+        tree_adj[v].push_back({u, i});
+    }
+
+    // For each non-tree edge j, walk the tree path and fill matrix entries
+    for (int j = n-1; j < m; j++) {
+        auto& [u, v, w] = edges[j];
+        add_on_path(u, -1, v, j, matrix);
+    }
+
+    // Run Hungarian on the matrix
+    HungarianAlgorithm<int64_t> hung(matrix);
+
+    // The dual potentials are the increments x[i] = pot_left[i+1] for tree edges
+    // and y[j] = -pot_right[j+1] for non-tree edges
+    for (int i = 0; i < n-1; i++) {
+        auto& [u, v, w] = edges[i];
+        int64_t di = w + hung.pot_left[i+1];
+        cout << di << "\n";
+    }
+    for (int j = n-1; j < m; j++) {
+        auto& [u, v, w] = edges[j];
+        int64_t dj = w - hung.pot_right[j+1];
+        cout << dj << "\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+sys.setrecursionlimit(10000)
+
+def hungarian(cost):
+    # cost: list of lists, size n x m, with n <= m
+    n, m = len(cost), len(cost[0])
+    INF = 10**15
+    # potL: u[0..n], potR: v[0..m], p: match for right side, way: back-pointer
+    u = [0]*(n+1)
+    v = [0]*(m+1)
+    p = [0]*(m+1)
+    way = [0]*(m+1)
+    for i in range(1, n+1):
+        p[0] = i
+        j0 = 0
+        minv = [INF]*(m+1)
+        used = [False]*(m+1)
+        # Find augmenting path for row i
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = INF
+            j1 = 0
+            # Try all columns j
+            for j in range(1, m+1):
+                if not used[j]:
+                    cur = cost[i0-1][j-1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta = minv[j]
+                        j1 = j
+            # Update potentials
+            for j in range(m+1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        # Augment matching
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+    # p[j] = matched row for column j; duals in u[1..n], v[1..m]
+    return u, v, p
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n, m = int(next(it)), int(next(it))
+    edges = []
+    for _ in range(m):
+        u = int(next(it))-1
+        v = int(next(it))-1
+        w = int(next(it))
+        edges.append((u, v, w))
+    # Build tree adjacency (first n-1 edges)
+    tree_adj = [[] for _ in range(n)]
+    for i in range(n-1):
+        u,v,_ = edges[i]
+        tree_adj[u].append((v,i))
+        tree_adj[v].append((u,i))
+    # Prepare cost matrix (n-1) x m
+    INF = 10**12
+    matrix = [[INF]*m for _ in range(n-1)]
+    # DFS to mark path
+    def dfs(u, parent, target, j_edge):
+        if u == target:
+            return True
+        for v, idx in tree_adj[u]:
+            if v == parent: continue
+            if dfs(v, u, target, j_edge):
+                _,_,wj = edges[j_edge]
+                _,_,wi = edges[idx]
+                matrix[idx][j_edge] = min(matrix[idx][j_edge], wj - wi)
+                return True
+        return False
+    # Fill matrix for each non-tree edge
+    for j in range(n-1, m):
+        u, v, _ = edges[j]
+        dfs(u, -1, v, j)
+    # Run Hungarian to get dual potentials
+    u_pot, v_pot, match = hungarian(matrix)
+    # Output results
+    out = []
+    # For tree edges, increase by u_pot[i+1]
+    for i in range(n-1):
+        u,v,w = edges[i]
+        d = w + u_pot[i+1]
+        out.append(str(d))
+    # For non-tree edges, decrease by v_pot[j+1]
+    for j in range(n-1, m):
+        u,v,w = edges[j]
+        d = w - v_pot[j+1]
+        out.append(str(d))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+
+Define nonnegative increases xᵢ for each tree edge and decreases yⱼ for each non-tree edge. Constraints xᵢ + yⱼ ≤ cⱼ – cᵢ for every tree-edge i on the path of non-tree-edge j ensure the given tree stays the MST. Minimize ∑xᵢ + ∑yⱼ is a linear program whose dual is a maximum‐weight feasible potential problem on an (n–1)×M bipartite graph. Running the Hungarian algorithm on cost[i][j] = cⱼ–cᵢ when i lies on j’s path (∞ otherwise) yields optimal duals xᵢ, yⱼ. Finally set dᵢ = cᵢ+xᵢ for tree edges and dⱼ = cⱼ–yⱼ for others.

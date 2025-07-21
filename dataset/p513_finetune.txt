@@ -1,0 +1,351 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+513. Maximal Clique
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+This is the moment you've been waiting for all your life: you've invented a way to quickly solve the Maximal Clique problem: given an undirected graph find the size of the maximal subset of its vertices that form a clique (are pairwise connected). This problem is NP-hard, meaning you've got a proof that P=NP!
+
+Unfortunately, the scientific community is not so eager to listen to you. Your papers on the subject are being rejected because of "solving an obviously unsolvable problem". Your phone number is already on the ignore list of all Computer Science professors you know. The world seems to hate you.
+
+So you've decided to create a solver for the Maximal Clique problem and put it online, so that everyone can check for himself that you're right. You've already implemented the solver and almost launched the website, but then you've realized that this is not a very good idea: if you make the solver available, everyone will be able to solve every problem from NP by reducing it to the Maximal Clique problem. What if people will just silently use it instead of bringing you fame and respect?
+
+Luckily, the only proof of NP-hardness of the Maximal Clique problem you know works by reducing the 3-SAT problem to it in a very specific way. So you've decided to check if the input graph given to your solver could be obtained from this reduction, and if yes, refuse to solve the problem. That way, nobody will be able to get quick solutions for all problems from NP, but everyone will still be able to verify your solver by feeding other graphs to it.
+
+3-SAT problem statement is: given a formula of form , where each term tji is either some boolean variable or its negation (more formally, either xk or ), check whether there exists some assignment of true/false values to each variable so that the formula evaluates to true. All three terms in one clause must represent different variables.
+
+The reduction works in the following manner. From the above formula, we create a graph with 3n vertices, one for each variable of each clause. Two vertices corresponding to terms tji and tsr are connected when i ≠ r (so the terms belong to different clauses) and those terms are non-contradictory (they are either equal or represent different variables).
+
+The following picture shows the resulting graph for the formula :
+
+
+Now a clique of size n corresponds to a valid true/false assignment that satisfies at least one term in each clause. The edges highlighted on the above picture form a clique of size 3 and show that setting x1 to false and x2 to true satisfies all clauses, irrespective of the values of x3 and x4.
+
+Given a graph, you need to check if it could be created by the above reduction. The vertices are permuted arbitrarily.
+
+Input
+The first line of the input file contains two integers v and e, 1 ≤ v ≤ 100, denoting the number of vertices and edges in the graph. The next e lines contain two integers each, denoting the numbers of vertices connected by an edge. Each pair of vertices are connected at most once, no edge connects a vertex to itself.
+
+Output
+Output "YES" when the given graph could be obtained by the given reduction, or "NO" otherwise.
+
+Example(s)
+sample input
+sample output
+9 22
+1 3
+1 6
+7 1
+8 9
+9 1
+2 3
+2 4
+2 5
+2 6
+2 8
+3 4
+3 5
+3 7
+4 8
+4 9
+5 6
+5 7
+5 8
+5 9
+6 7
+6 9
+7 8
+YES
+
+<|response|>
+1. Abridged Problem Statement  
+Given an undirected graph G with v vertices and e edges (v ≤ 100), determine whether G could come from the following 3-SAT→max-clique reduction:  
+- Start from a 3-CNF formula with n clauses (3 literals per clause).  
+- Create 3n vertices (one per literal).  
+- For any two vertices from different clauses, add an edge iff the two literals are not opposite occurrences of the same variable.  
+- Finally permute the vertices arbitrarily.  
+
+Output “YES” if G matches some graph produced by this procedure; otherwise “NO.”
+
+2. Key Observations  
+- In the reduction v = 3n exactly, and the 3 literals of each clause form an independent triple (no internal edges).  
+- Every vertex belongs to exactly one such independent triple; this partitions V into n triples.  
+- After “completing” each triple into a K₃, all remaining non-edges are between different triples and correspond to literal contradictions.  
+- Each non-edge (u,v) forces u ⇒ ¬v and v ⇒ ¬u; modeling literals & negations as a 2SAT DSU on 2v nodes must be consistent (no variable equated with its negation).  
+- Finally, for each variable, the set of all positive-side literals A and negative-side literals B must have exactly the non-edges of a complete bipartite graph K|A|,|B|; equivalently ∑deg_nonedge over A∪B = 2·|A|·|B|.
+
+3. Full Solution Approach  
+Step 1: Check that v%3==0. If not, answer NO. Let n = v/3.  
+Step 2: Build an adjacency matrix adj[0..v-1][0..v-1].  
+Step 3: Find all independent triples {i,j,k} (i<j<k with no edges among them). For each vertex x record every triple that contains x.  
+Step 4: If any vertex x belongs to zero or more than one independent triple, answer NO (we need a unique partition).  
+Step 5: For each of the n triples, add the three missing edges among its members in adj (so each triple becomes a K₃).  
+Step 6: Build a DSU on 2v elements: for each literal x (0≤x<v) we treat x+v as ¬x.  
+Step 7: For every pair u<v with adj[u][v]==0, they must be contradictory: union(u, v+v) and union(u+v, v).  
+Step 8: If for any x we find that x and x+v are in the same DSU component, answer NO.  
+Step 9: Compute deg_nonedge[x] = number of j with adj[x][j]==0.  
+Step 10: For each representative component pair (r, r_neg), gather counts |A| and |B| and the sum of deg_nonedge over those vertices. Check sum_deg == 2·|A|·|B|. If any fails, answer NO.  
+Otherwise answer YES.
+
+4. C++ Implementation with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Disjoint Set Union with path compression and union by size
+struct DSU {
+    int n;
+    vector<int> parent, sz;
+    DSU(int _n): n(_n), parent(_n), sz(_n,1) {
+        iota(parent.begin(), parent.end(), 0);
+    }
+    int find(int x) {
+        return parent[x]==x ? x : parent[x]=find(parent[x]);
+    }
+    bool unite(int a, int b) {
+        a = find(a); b = find(b);
+        if (a==b) return false;
+        if (sz[a] > sz[b]) swap(a,b);
+        parent[a] = b;
+        sz[b] += sz[a];
+        return true;
+    }
+    bool same(int a, int b) {
+        return find(a)==find(b);
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int v, e;
+    cin >> v >> e;
+    // Must have 3 literals per clause
+    if (v % 3 != 0) {
+        cout << "NO\n";
+        return 0;
+    }
+    int n = v/3;
+
+    // Build adjacency matrix
+    vector<vector<bool>> adj(v, vector<bool>(v, false));
+    for(int i=0; i<e; i++){
+        int a,b;
+        cin >> a >> b;
+        --a; --b;
+        adj[a][b] = adj[b][a] = true;
+    }
+
+    // Step 3: find all independent triples
+    // triples_of[x] will hold all triples containing x
+    vector<vector<array<int,3>>> triples_of(v);
+    for(int i=0; i<v; i++){
+        for(int j=i+1; j<v; j++){
+            if (adj[i][j]) continue;       // they must be non-adjacent
+            for(int k=j+1; k<v; k++){
+                if (!adj[i][k] && !adj[j][k]) {
+                    // (i,j,k) is an independent triple
+                    triples_of[i].push_back({i,j,k});
+                    triples_of[j].push_back({i,j,k});
+                    triples_of[k].push_back({i,j,k});
+                }
+            }
+        }
+    }
+
+    // Step 4: each vertex must appear in exactly one triple
+    for(int x=0; x<v; x++){
+        if (triples_of[x].size() != 1) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // Step 5: complete each triple into a clique
+    for(int x=0; x<v; x++){
+        auto &t = triples_of[x][0];
+        int a=t[0], b=t[1], c=t[2];
+        adj[a][b] = adj[b][a] = true;
+        adj[a][c] = adj[c][a] = true;
+        adj[b][c] = adj[c][b] = true;
+    }
+
+    // Step 6: build DSU on 2*v elements (literals + negations)
+    DSU dsu(2*v);
+
+    // Step 7: for every remaining non-edge (u,v), they must contradict
+    for(int u=0; u<v; u++){
+        for(int w=u+1; w<v; w++){
+            if (!adj[u][w]) {
+                // u ⇒ ¬w  and  w ⇒ ¬u
+                dsu.unite(u,   w + v);
+                dsu.unite(u+v, w);
+            }
+        }
+    }
+
+    // Step 8: check no variable is equated with its negation
+    for(int x=0; x<v; x++){
+        if (dsu.same(x, x+v)) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // Step 9: compute non-edge degree of each vertex
+    vector<int> deg(v, 0);
+    for(int i=0; i<v; i++){
+        for(int j=0; j<v; j++){
+            if (!adj[i][j]) deg[i]++;
+        }
+    }
+
+    // Step 10: verify complete bipartiteness of contradiction classes
+    vector<bool> checked(2*v, false);
+    for(int x=0; x<v; x++){
+        int r_pos = dsu.find(x);
+        int r_neg = dsu.find(x + v);
+        if (checked[r_pos]) continue;
+        checked[r_pos] = checked[r_neg] = true;
+
+        // count sizes and sum of degrees
+        int cntA=0, cntB=0, sumDeg=0;
+        for(int y=0; y<v; y++){
+            int ry = dsu.find(y);
+            if (ry==r_pos)  { cntA++; sumDeg += deg[y]; }
+            else if (ry==r_neg) { cntB++; sumDeg += deg[y]; }
+        }
+        // sumDeg should equal 2*cntA*cntB
+        if (sumDeg != 2*cntA*cntB) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // All checks passed
+    cout << "YES\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+class DSU:
+    def __init__(self, n):
+        self.p = list(range(n))
+        self.sz = [1]*n
+    def find(self, x):
+        if self.p[x] != x:
+            self.p[x] = self.find(self.p[x])
+        return self.p[x]
+    def union(self, a, b):
+        a = self.find(a); b = self.find(b)
+        if a == b: return
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.p[a] = b
+        self.sz[b] += self.sz[a]
+    def same(self, a, b):
+        return self.find(a) == self.find(b)
+
+def main():
+    data = sys.stdin.read().split()
+    v, e = map(int, data[:2])
+    # 1) v must be multiple of 3
+    if v % 3 != 0:
+        print("NO")
+        return
+
+    # 2) build adjacency matrix
+    it = iter(data[2:])
+    adj = [[False]*v for _ in range(v)]
+    for a,b in zip(it, it):
+        u = int(a)-1; w = int(b)-1
+        adj[u][w] = adj[w][u] = True
+
+    # 3) find independent triples
+    triples_of = [[] for _ in range(v)]
+    for i in range(v):
+        for j in range(i+1, v):
+            if adj[i][j]: continue
+            for k in range(j+1, v):
+                if not adj[i][k] and not adj[j][k]:
+                    triples_of[i].append((i,j,k))
+                    triples_of[j].append((i,j,k))
+                    triples_of[k].append((i,j,k))
+
+    # 4) check unique partition
+    for lst in triples_of:
+        if len(lst) != 1:
+            print("NO")
+            return
+
+    # 5) complete each triple into a K3
+    for lst in triples_of:
+        a, b, c = lst[0]
+        adj[a][b] = adj[b][a] = True
+        adj[a][c] = adj[c][a] = True
+        adj[b][c] = adj[c][b] = True
+
+    # 6) DSU on 2*v for 2-SAT style
+    dsu = DSU(2*v)
+
+    # 7) for each non-edge across augmented graph, enforce contradiction
+    for u in range(v):
+        for w in range(u+1, v):
+            if not adj[u][w]:
+                # u ⇒ ¬w  and  w ⇒ ¬u
+                dsu.union(u,   w + v)
+                dsu.union(u+v, w)
+
+    # 8) no x == ¬x
+    for x in range(v):
+        if dsu.same(x, x+v):
+            print("NO")
+            return
+
+    # 9) compute non-edge degrees
+    deg = [sum(1 for y in range(v) if not adj[x][y]) for x in range(v)]
+
+    # 10) verify each variable's contradiction bipartite graph is complete
+    seen = [False]*(2*v)
+    for x in range(v):
+        rp = dsu.find(x)
+        rn = dsu.find(x+v)
+        if seen[rp]: continue
+        seen[rp] = seen[rn] = True
+
+        cntA = cntB = sumDeg = 0
+        for y in range(v):
+            ry = dsu.find(y)
+            if ry == rp:
+                cntA += 1
+                sumDeg += deg[y]
+            elif ry == rn:
+                cntB += 1
+                sumDeg += deg[y]
+        # sumDeg must equal 2*cntA*cntB for a complete bipartite pattern
+        if sumDeg != 2*cntA*cntB:
+            print("NO")
+            return
+
+    print("YES")
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of the critical parts:  
+- We detect the underlying clause-partition by looking for independent triples and insisting on uniqueness.  
+- Completing each triple enforces that all remaining non-edges must correspond to contradictory literals across clauses.  
+- The 2SAT-style DSU encodes u⇒¬v for each such non-edge, and we check no variable is forced to equal its negation.  
+- Finally we ensure that for each variable, its positive/negative occurrence sets form a complete bipartite pattern of non-edges, as in the original reduction.

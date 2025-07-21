@@ -1,0 +1,279 @@
+1. Abridged Problem Statement  
+Given n houses and n offices located at integer stations on a circular railway of length L (stations numbered 1…L, distance between adjacent stations is 1), match each house to a unique office so as to minimize the total of shortest-circle distances traveled by all employees. Output the minimal total travel time and for each house (in input order) the 1-based index of its assigned office.  
+
+2. Detailed Editorial  
+
+Overview  
+We want a minimum‐cost perfect matching between two equal-size point sets on a circle, cost = circular distance. A classical trick is to “cut” the circle at some point, turn it into a line of length L, and match greedily by sorting—but the best cut must be chosen. One can show the cost as a function of cut position along the circle is piecewise linear, and its minima occur when the cut passes a point. We can evaluate the total cost for one cut in O(n) and then update it for all 2n event‐positions in O(n log n) by sorting events by the change in the cumulative balance of (houses minus offices). Finally, we reconstruct the matching by a simple stack sweep around the chosen cut.
+
+Detailed Steps  
+
+1. Model Points and Types  
+   - Create 2n “points”: each house contributes (position, index, +1), each office (position, index, –1).  
+   - +1 means “one more house waiting,” –1 means “one more office waiting.”  
+
+2. Sort on the Circle  
+   - Sort points by position x; tie-break by type (offices before houses) and by index.  
+   - Duplicate the first point with x+L to close the circle, so we have a circular list of length 2n.  
+
+3. Compute Gaps and Balances  
+   - For i=0…2n–1, define  
+       gap[i] = x[i+1]–x[i],  
+       balance[i] = sum of types for j=0…i (net waiting houses).  
+   - The full circle length = sum of gap[i] = L.  
+
+4. Initial Cost at Cut=point[0]  
+   - If we cut just to the left of point[0], then each gap[i] is crossed by exactly balance[i] employees.  
+   - Initial cost = Σ gap[i] * balance[i].  
+
+5. Sweep Cuts Efficiently  
+   - As we move the cut forward along the circle, when the cut crosses gap[i], all those balance[i] employees flip from going “across that gap” to not going, changing total cost.  
+   - One can show that ordering the 2n events by balance[i] allows us to update the cost in O(1) per event:  
+       When balance increases by Δ, cost += len · Δ – (L–len) · Δ,  
+       where len = total length of gaps already crossed by the moving cut.  
+   - Track the minimum cost and record which gap index achieves it.  
+
+6. Reconstruct Matching  
+   - Starting just after the optimal cut index, sweep along the sorted points in circle order.  
+   - Maintain a stack; for each point:  
+       • If stack is empty or top.type == point.type, push(point).  
+       • Else pop() gives a partner of opposite type; if point is a house (type=+1), match it with office=top; else match top.house with point.office.  
+   - This greedy stack‐pairing works because on a line the sorted order of endpoints yields the minimum total distance matching.  
+
+Complexities  
+- Sorting 2n points: O(n log n).  
+- Computing gaps, balances: O(n).  
+- Sorting events by balance: O(n log n).  
+- Sweep to find best cut: O(n).  
+- Reconstruction: O(n).  
+Overall O(n log n), suitable for n up to 50 000.  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// We will store 2n points: houses (+1) and offices (–1).
+struct Point {
+    int x;       // position on [1..L]
+    int idx;     // original index in its array
+    int type;    // +1 for house, -1 for office
+    Point(int _x, int _idx, int _type): x(_x), idx(_idx), type(_type) {}
+    // Sort primarily by x, then by type (offices first), then by idx
+    bool operator<(const Point& o) const {
+        if (x != o.x) return x < o.x;
+        if (type != o.type) return type < o.type;
+        return idx < o.idx;
+    }
+};
+
+int n;
+long long L;
+vector<int> A, B;   // input house positions (A) and office positions (B)
+
+// Read n, L, then A[0..n-1], B[0..n-1]
+void readInput(){
+    cin >> n >> L;
+    A.resize(n);
+    B.resize(n);
+    for(int i = 0; i < n; i++) cin >> A[i];
+    for(int i = 0; i < n; i++) cin >> B[i];
+}
+
+void solve(){
+    // Build the 2n points
+    vector<Point> pts;
+    pts.reserve(2*n);
+    for(int i = 0; i < n; i++){
+        pts.emplace_back(A[i], i, +1);  // house
+        pts.emplace_back(B[i], i, -1);  // office
+    }
+
+    // Sort along the circle
+    sort(pts.begin(), pts.end());
+    // Append a sentinel: the first point shifted by +L to close the circle
+    pts.emplace_back(pts[0].x + L, pts[0].idx, pts[0].type);
+
+    // Precompute gap[i] = distance from pts[i] to pts[i+1],
+    // balance[i] = net houses minus offices up to and including i
+    vector<long long> gap(2*n);
+    vector<int> balance(2*n);
+    long long sumLen = 0;    // will accumulate to L
+    int bal = 0;
+    long long initialCost = 0;
+    for(int i = 0; i < 2*n; i++){
+        bal += pts[i].type;
+        balance[i] = bal;
+        gap[i] = (long long)pts[i+1].x - pts[i].x;
+        sumLen += gap[i];
+        // Each gap is crossed by exactly balance[i] employees initially
+        initialCost += gap[i] * 1LL * balance[i];
+    }
+    // sumLen should equal L
+    // Now we want to sweep the cut position to minimize cost
+    
+    // Prepare event indices [0..2n-1], sort by balance[i]
+    vector<int> order(2*n);
+    iota(order.begin(), order.end(), 0);
+    sort(order.begin(), order.end(),
+         [&](int i, int j){ return balance[i] < balance[j]; });
+
+    long long bestCost = initialCost;
+    long long curCost  = initialCost;
+    long long prefLen  = 0;   // length of gaps cut so far
+    int lastBal = 0;
+    int bestPos = 0;          // which gap index to cut at for bestCost
+
+    // Process events in ascending balance order
+    for(int idx : order){
+        int d = balance[idx] - lastBal;
+        // As we move the cut across gap idx, the cost shifts by:
+        // +prefLen * d  (these d new crossings each add prefLen)
+        // - (sumLen - prefLen)* d (previous crossings drop off the other side)
+        curCost += prefLen * d - (sumLen - prefLen) * d;
+        // Check for minimum
+        if(curCost < bestCost){
+            bestCost = curCost;
+            bestPos = idx;
+        }
+        // Advance the cut past this gap
+        prefLen += gap[idx];
+        lastBal = balance[idx];
+    }
+
+    // Output the minimal cost
+    cout << bestCost << "\n";
+
+    // Reconstruct the matching by scanning from bestPos+1 around the circle
+    vector<int> ans(n, -1);    // ans[house_index] = office_index+1
+    stack<Point> st;
+    int pos = (bestPos + 1) % (2*n);
+    for(int steps = 0; steps < 2*n; steps++){
+        const Point &p = pts[pos];
+        if(st.empty() || st.top().type == p.type){
+            // No match yet, push this endpoint
+            st.push(p);
+        } else {
+            // Opposite types: pop and match
+            Point q = st.top(); st.pop();
+            if(p.type == +1){
+                // p is a house, q was an office
+                ans[p.idx] = q.idx + 1;
+            } else {
+                // q is a house, p is an office
+                ans[q.idx] = p.idx + 1;
+            }
+        }
+        pos = (pos + 1) % (2*n);
+    }
+
+    // Print the matching for each house in input order
+    for(int i = 0; i < n; i++){
+        cout << ans[i] << (i+1<n? ' ' : '\n');
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    readInput();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    L = int(next(it))
+    A = [int(next(it)) for _ in range(n)]
+    B = [int(next(it)) for _ in range(n)]
+
+    # Build 2n points: (position, index, type)
+    # type = +1 for house, -1 for office.
+    pts = []
+    for i, x in enumerate(A):
+        pts.append((x, i, +1))
+    for i, x in enumerate(B):
+        pts.append((x, i, -1))
+
+    # Sort by position, then type, then index
+    pts.sort(key=lambda p: (p[0], p[2], p[1]))
+    # Close the circle by repeating the first point at +L
+    pts.append((pts[0][0] + L, pts[0][1], pts[0][2]))
+
+    # Compute gap[i] and balance[i], and the initial cost
+    gap = [0]*(2*n)
+    bal = [0]*(2*n)
+    total_len = 0
+    cur_bal = 0
+    cost = 0
+    for i in range(2*n):
+        cur_bal += pts[i][2]
+        bal[i] = cur_bal
+        gap[i] = pts[i+1][0] - pts[i][0]
+        total_len += gap[i]
+        cost += gap[i] * cur_bal
+
+    # Prepare events sorted by balance
+    order = list(range(2*n))
+    order.sort(key=lambda i: bal[i])
+
+    best_cost = cost
+    best_idx = 0
+    prefix_len = 0
+    last_bal = 0
+
+    # Sweep the cut along the circle across each gap in balance order
+    for idx in order:
+        d = bal[idx] - last_bal
+        # Update cost for crossing this gap
+        cost += prefix_len * d - (total_len - prefix_len) * d
+        if cost < best_cost:
+            best_cost = cost
+            best_idx = idx
+        prefix_len += gap[idx]
+        last_bal = bal[idx]
+
+    # Output minimal cost
+    out = [str(best_cost)]
+
+    # Reconstruct the matching
+    ans = [-1]*n
+    st = []
+    pos = (best_idx + 1) % (2*n)
+    for _ in range(2*n):
+        x, i, t = pts[pos]
+        if not st or st[-1][2] == t:
+            # push unmatched endpoint
+            st.append((x, i, t))
+        else:
+            # pop and match
+            x2, j, t2 = st.pop()
+            if t == +1:
+                # current is house, popped was office
+                ans[i] = j+1
+            else:
+                # popped was house, current is office
+                ans[j] = i+1
+        pos = (pos + 1) % (2*n)
+
+    # Append matching
+    out.append(" ".join(map(str, ans)))
+    print("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+- Represent each house as +1, each office as –1 on the circle.  
+- Sort 2n endpoints; close the loop by appending the first at +L.  
+- Compute gaps and prefix balances; initial cost = Σ gap[i]*balance[i].  
+- Events: crossing gap[i] at balance[i] changes cost by prefix_len*Δ – (L–prefix_len)*Δ.  
+- Sort events by balance and sweep to find minimal cost & cut position.  
+- Reconstruct matching with a stack in O(n) by pairing opposite endpoints in order.

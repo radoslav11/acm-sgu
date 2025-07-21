@@ -1,0 +1,314 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+132. Another Chocolate Maniac
+
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+
+
+Bob really LOVES chocolate. He thinks he never gets enough. Imagine his joy when his parents told him that they would buy him many rectangular chocolate pieces for his birthday. A piece of chocolate is a 2x1 or 1x2 rectangle. Bob's parents also bought him a nice birthday cake, which can be imagined as a matrix having M rows and N columns. Some positions on the cake are occupied by candles, the others are empty. Bob's parents asked their son to place as many chocolate pieces as he can on the empty squares on the cake, in such a manner that no two chocolate pieces overlap. However, he would like to keep the chocolate pieces to himself. That's why, he wants to place only a minimal amount of them on the cake and keep the rest. In order not to make Mon and Dad suspicious, Bob wants to place the chocolate pieces in such a way, that no other piece may be placed on the cake (that is, there won't exist any two adjacent empty squares). Find the minimal number of pieces which need to be placed on the cake, so that they do not overlap and no extra piece may be added.
+
+
+Input
+
+The first line of the input contains 2 integers: M (1<=M<=70) and N (1<=N<=7). Next, M lines will follow, each of them containing N characters, describing the cake. The character on row i and column j of the cake may be either a '*' (ASCII code 42), representing a candle, or a '.' (ASCII code 46), representing an empty square.
+
+
+Output
+
+You should output one integer: the minimal amount of pieces of chocolate which need to be placed on the cake.
+
+
+Sample Input
+
+5 5
+.*..*
+*....
+..**.
+**.*.
+.**..
+Sample Output
+
+4
+Author  : Mugurel Ionut Andreica
+Resource    : SSU::Online Contester Fall Contest #2
+Date    : Fall 2002
+
+<|response|>
+1. Abridged Problem Statement  
+Given an M×N grid (1≤M≤70, 1≤N≤7) of cells, some blocked (‘*’) and some empty (‘.’). We wish to place the fewest 1×2 or 2×1 dominoes on empty cells so that  
+  • no two dominoes overlap, and  
+  • after placement there is no pair of adjacent empty cells left (i.e. you cannot add another domino).  
+Output the minimum number of dominoes needed.
+
+2. Key Observations  
+- We want a minimum-size *maximal* matching on the grid graph of empty cells (adjacent cells form edges).  
+- Maximum bipartite‐matching plus greedy enlargement does not guarantee minimal maximal matching.  
+- However, N≤7 is small. We can sweep the grid row by row in row-major order, maintaining a bitmask of size 2×N (up to 14 bits) that records which of the last two rows’ cells are already unavailable (either blocked by a candle or covered by a placed domino).  
+- At each cell we update the mask by shifting it (dropping the oldest bit, bringing in a bit for the current cell), then consider three actions on an empty cell:  
+  1) leave it free,  
+  2) place a vertical domino with the cell above,  
+  3) place a horizontal domino with the cell to the left.  
+  For a blocked cell, we simply mark it unavailable.  
+- To enforce maximality (no adjacent free pair can “escape” out of our 2-row window unseen), whenever we shift the window we check if the bit that was dropped and its neighbor (either to the right in the same row or below in the next row) were both free. If so, that branch is invalid.  
+- At the end we inspect all masks that survive, and we only accept masks in which there is no remaining adjacent free pair in the final 2 rows. We take the minimum cost among those.
+
+Time complexity: O(M·N·2^(2N)) ≈ 70·7·2^14 ≃ 8·10^6, which fits in 0.25 s.
+
+3. Full Solution Approach  
+1. Let W = 2·N. We index bits 0…W−1 in a mask. We keep a DP array dp[mask] = minimum dominoes used to reach this mask after processing some prefix of cells.  
+2. We process cells in row-major order (i from 0 to M−1, j from 0 to N−1). For each cell:  
+   a. We prepare next_dp[mask] = INF for all masks.  
+   b. For each old mask with finite cost, we shift it left by 1: new_mask_base = (mask<<1) & ((1<<W)−1). This drops the bit at position W and makes room in bit 0 for the current cell.  
+   c. If the cell is blocked (‘*’), we force-bit0=1: new_mask = new_mask_base | 1. We then check the “escape” condition (see below). If OK, update next_dp[new_mask] = min(next_dp[new_mask], old_cost).  
+   d. If the cell is empty (‘.’), we try three cases:  
+      i. leave it free (bit0=0): new_mask = new_mask_base.  
+      ii. vertical domino with above cell: possible if i>0 and in the old mask the bit corresponding to the cell above was 0; we set that bit and bit0 to 1, cost+1.  
+      iii. horizontal domino with left cell: possible if j>0 and in the old mask bit0 of the *old* mask was 0; we set bit0 and the bit that just shifted into bit1 to 1, cost+1.  
+   e. After forming each candidate new_mask, run the escape check. If it passes, update next_dp.  
+   f. Swap dp and next_dp.  
+3. The *escape check* at position (i,j) on a shifted mask M′: if we have already processed ≥W cells, then a bit has just been dropped from position W in the 1-based shift. Let that dropped bit be d=(old_mask>>(W−1))&1. Its two potential neighbors when it was in the window were:  
+   – horizontally: the bit at position W−1 (the cell to its right in the same row), valid only if j≠N−1 in the scan.  
+   – vertically: the bit at position W−N (the cell below it).  
+  If d==0 and either neighbor==0, then an uncovered adjacent pair escaped and we must reject this transition.  
+4. After all cells, among dp[mask] still <INF, we scan each mask and verify no two adjacent free cells remain in those last two rows (check all horizontal and vertical pairs). We take the minimum cost.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A large infinity value
+static const int INF = 1000000000;
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int M, N;
+    cin >> M >> N;
+    vector<string> cake(M);
+    for(int i = 0; i < M; i++){
+        cin >> cake[i];
+    }
+
+    int W = 2 * N;                    // window size in bits
+    int FULL = (1 << W) - 1;          // bitmask with W ones
+
+    // dp[mask] = minimal dominoes used so far. Start with mask=0 -> cost=0.
+    vector<int> dp(1<<W, INF), next_dp(1<<W, INF);
+    dp[0] = 0;
+
+    // Helper to check if an uncovered adjacent pair escaped when shifting
+    auto escaped = [&](int i, int j, int old_mask){
+        // We only start escaping checks once we've processed >= W cells
+        int cells_done = i * N + j;
+        if(cells_done < W) return false;
+        // The bit that was at position W-1 in old_mask is dropped now
+        int dropped = (old_mask >> (W-1)) & 1;
+        // Its horizontal neighbor (same row) was at position W-2
+        if(j != N-1){
+            int right_nb = (old_mask >> (W-2)) & 1;
+            if(dropped==0 && right_nb==0) return true;
+        }
+        // Its vertical neighbor (row below) was at position W-1-N
+        int down_nb = (old_mask >> (W-1-N)) & 1;
+        if(dropped==0 && down_nb==0) return true;
+        return false;
+    };
+
+    // Process all cells in row-major order
+    for(int i = 0; i < M; i++){
+        for(int j = 0; j < N; j++){
+            // reset next_dp
+            fill(next_dp.begin(), next_dp.end(), INF);
+
+            // Try transitions from every old mask
+            for(int mask = 0; mask < (1<<W); mask++){
+                int cost = dp[mask];
+                if(cost == INF) continue;
+
+                // Prepare the base shifted mask (drop MSB, shift left)
+                int base = ( (mask << 1) & FULL );
+
+                if(cake[i][j] == '*'){
+                    // Blocked cell: we must mark bit0 = 1
+                    int nm = base | 1;
+                    if(!escaped(i, j, mask)){
+                        next_dp[nm] = min(next_dp[nm], cost);
+                    }
+                } else {
+                    // Case 1: leave it free (bit0 = 0)
+                    {
+                        int nm = base;
+                        if(!escaped(i, j, mask)){
+                            next_dp[nm] = min(next_dp[nm], cost);
+                        }
+                    }
+                    // Case 2: place vertical domino with cell above
+                    if(i > 0){
+                        // The above-cell was at bit index (N-1) in old mask
+                        if( ((mask >> (N-1)) & 1) == 0 ){
+                            int nm = base | 1;                // bit0=1
+                            // also mark the above cell as covered
+                            nm |= (1 << N);                  // because after shift, that bit moves to index N
+                            if(!escaped(i, j, mask)){
+                                next_dp[nm] = min(next_dp[nm], cost+1);
+                            }
+                        }
+                    }
+                    // Case 3: place horizontal domino with cell to the left
+                    if(j > 0){
+                        // The left-cell was the old bit0 of mask
+                        if((mask & 1) == 0){
+                            int nm = base | 3; // set bit0=1 and bit1=1
+                            if(!escaped(i, j, mask)){
+                                next_dp[nm] = min(next_dp[nm], cost+1);
+                            }
+                        }
+                    }
+                }
+            }
+            // move next_dp into dp
+            dp.swap(next_dp);
+        }
+    }
+
+    // Final check: no adjacent free cells remain in the last two rows
+    int answer = INF;
+    for(int mask = 0; mask < (1<<W); mask++){
+        int cost = dp[mask];
+        if(cost == INF) continue;
+
+        bool bad = false;
+        // For each column, test vertical and horizontal adjacencies
+        for(int c = 0; c < N && !bad; c++){
+            int top    = (mask >> c) & 1;
+            int bottom = (mask >> (c + N)) & 1;
+            // vertical
+            if(top==0 && bottom==0) bad = true;
+            // horizontal on top row
+            if(c+1 < N){
+                int a = (mask >> c) & 1;
+                int b = (mask >> (c+1)) & 1;
+                if(a==0 && b==0) bad = true;
+            }
+            // horizontal on bottom row
+            if(c+1 < N){
+                int a = (mask >> (c+N)) & 1;
+                int b = (mask >> (c+N+1)) & 1;
+                if(a==0 && b==0) bad = true;
+            }
+        }
+        if(!bad){
+            answer = min(answer, cost);
+        }
+    }
+
+    // Output the result
+    cout << answer << "\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+def main():
+    data = sys.stdin.read().split()
+    M, N = map(int, data[:2])
+    cake = data[2:]
+
+    W = 2 * N
+    FULL = (1 << W) - 1
+    INF = 10**9
+
+    # dp[mask] = minimal dominoes so far
+    dp = [INF] * (1 << W)
+    dp[0] = 0
+
+    # Check if an uncovered adjacent pair escaped when shifting
+    def escaped(i, j, old_mask):
+        cells_done = i * N + j
+        if cells_done < W:
+            return False
+        dropped = (old_mask >> (W-1)) & 1
+        # horizontal neighbor (same row)
+        if j != N-1:
+            right_nb = (old_mask >> (W-2)) & 1
+            if dropped==0 and right_nb==0:
+                return True
+        # vertical neighbor (row below)
+        down_nb = (old_mask >> (W-1-N)) & 1
+        if dropped==0 and down_nb==0:
+            return True
+        return False
+
+    # Process cells
+    for i in range(M):
+        for j in range(N):
+            next_dp = [INF] * (1 << W)
+            for mask in range(1 << W):
+                cost = dp[mask]
+                if cost == INF:
+                    continue
+                base = ((mask << 1) & FULL)
+
+                if cake[i][j] == '*':
+                    # blocked cell
+                    nm = base | 1
+                    if not escaped(i, j, mask):
+                        next_dp[nm] = min(next_dp[nm], cost)
+                else:
+                    # 1) leave free
+                    nm = base
+                    if not escaped(i, j, mask):
+                        next_dp[nm] = min(next_dp[nm], cost)
+
+                    # 2) vertical domino with above
+                    if i > 0:
+                        # above cell old bit was at index N-1
+                        if ((mask >> (N-1)) & 1) == 0:
+                            nm2 = base | 1
+                            # after shift, the above cell maps to bit (N)
+                            nm2 |= (1 << N)
+                            if not escaped(i, j, mask):
+                                next_dp[nm2] = min(next_dp[nm2], cost+1)
+
+                    # 3) horizontal domino with left
+                    if j > 0:
+                        if (mask & 1) == 0:
+                            nm3 = base | 3
+                            if not escaped(i, j, mask):
+                                next_dp[nm3] = min(next_dp[nm3], cost+1)
+
+            dp = next_dp
+
+    # Final check: no adjacent free cells remain
+    ans = INF
+    for mask in range(1 << W):
+        cost = dp[mask]
+        if cost == INF:
+            continue
+        bad = False
+        for c in range(N):
+            top    = (mask >> c) & 1
+            bottom = (mask >> (c+N)) & 1
+            if top==0 and bottom==0:
+                bad = True; break
+            if c+1 < N:
+                if ((mask >> c)&1)==0 and ((mask>>(c+1))&1)==0:
+                    bad = True; break
+                if ((mask>>(c+N))&1)==0 and ((mask>>(c+N+1))&1)==0:
+                    bad = True; break
+        if not bad:
+            ans = min(ans, cost)
+
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of major steps is in the comments. This rolling‐window DP over 2×N with escape checks enforces both correctness (no overlaps, no two adjacent free cells at any stage) and minimality of the number of dominoes.

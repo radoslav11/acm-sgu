@@ -1,0 +1,341 @@
+1. Abridged Problem Statement  
+You have n genome strings (lowercase letters, total length up to ~10^6). Then m queries follow; each query gives two strings p and s. For each query, count how many genomes start with p and end with s.
+
+2. Detailed Editorial  
+
+Goal  
+We need to answer queries of the form “how many strings in the dictionary have a given prefix p and suffix s?” quickly, after preprocessing.
+
+Challenges  
+• Total length of all genomes and queries is large (~10^6).  
+• Brute‐force per query (checking every string) is too slow if done naively.
+
+Key ideas  
+1. Rolling Hash (Rabin–Karp)  
+   – Precompute for each dictionary string an array of prefix hashes h[i] = hash(s[0..i]).  
+   – We also precompute base powers so that we can get hash(s[l..r]) in O(1).  
+
+2. Split strings into “small” and “large” by a threshold B (here B=50).  
+   – Small strings (length < B): there aren’t too many possible (prefix, suffix) pairs per string: O(B^2). We can enumerate all (prefix, suffix) pairs, compute their hash pairs, and store them in one big array or map. Sorting that array allows us to count occurrences of any (hash(p), hash(s)) in O(log N).  
+   – Large strings (length ≥ B): there can be at most total_length/B of them. For each query we simply check each large string in O(1) by comparing its precomputed prefix and suffix hashes to the query hashes.
+
+Complexities  
+• Preprocessing small strings: ∑L<B(L^2) ≤ n·B^2 but total L is bounded so this is manageable.  
+• Sorting small‐pair list: O(K log K) where K is total small-pairs (~2·10^7).  
+• Query time: O(log K + #large). #large ≤ total_length/B. For B=50 this is fast enough.
+
+3. Provided C++ Solution with Detailed Comments  
+
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << and >> for convenience on pairs and vectors
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// A 61-bit mod rolling hash implementation
+class HashMeta {
+  private:
+    static constexpr uint64_t mod = (1ull << 61) - 1; // Mersenne prime
+    
+    // Add modulo (mod = 2^61-1) trick
+    static constexpr uint64_t add(uint64_t a, uint64_t b) {
+        a += b + 1;
+        a = (a & mod) + (a >> 61);
+        return a - 1;
+    }
+    // Subtraction via add
+    static constexpr uint64_t sub(uint64_t a, uint64_t b) {
+        return add(a, mod - b);
+    }
+    // Multiply modulo mod using 128-bit trick split in halves
+    static constexpr uint64_t mul(uint64_t a, uint64_t b) {
+        uint64_t l1 = (uint32_t)a, h1 = a >> 32;
+        uint64_t l2 = (uint32_t)b, h2 = b >> 32;
+        uint64_t l = l1 * l2;
+        uint64_t m = l1 * h2 + l2 * h1;
+        uint64_t h = h1 * h2;
+        // Combine pieces with shifts, then apply modulo reduction
+        uint64_t ret = (l & mod) + (l >> 61)
+                    + (h << 3)
+                    + (m >> 29)
+                    + ((m << 35) >> 3)
+                    + 1;
+        ret = (ret & mod) + (ret >> 61);
+        ret = (ret & mod) + (ret >> 61);
+        return ret - 1;
+    }
+    
+    // Randomize the base to avoid hack
+    void set_random_base() {
+        seed_seq seed{
+            (uint32_t)chrono::high_resolution_clock::now()
+                          .time_since_epoch().count(),
+            (uint32_t)random_device()(),
+            (uint32_t)42
+        };
+        mt19937 rng(seed);
+        // base in [0, mod-1]
+        base = uniform_int_distribution<uint64_t>(0, mod - 1)(rng);
+    }
+    // Precompute base^i for i in [0..n-1]
+    void precompute_base_pow(size_t n) {
+        base_pow.resize(n);
+        base_pow[0] = 1;
+        for(size_t i = 1; i < n; i++)
+            base_pow[i] = mul(base_pow[i-1], base);
+    }
+
+  public:
+    uint64_t base;
+    vector<uint64_t> base_pow; // stored as raw uint64_t values
+    
+    // A thin wrapper on uint64_t to support operator overloading
+    struct hash_t {
+        uint64_t h;
+        hash_t() : h(0) {}
+        hash_t(uint64_t _h) : h(_h) {}
+        operator uint64_t() const { return h; }
+        hash_t& operator+=(const hash_t& o) { h = add(h,o.h); return *this; }
+        hash_t& operator-=(const hash_t& o) { h = sub(h,o.h); return *this; }
+        hash_t& operator*=(const hash_t& o) { h = mul(h,o.h); return *this; }
+        hash_t operator+(const hash_t& o) const { return hash_t(*this) += o; }
+        hash_t operator-(const hash_t& o) const { return hash_t(*this) -= o; }
+        hash_t operator*(const hash_t& o) const { return hash_t(*this) *= o; }
+        bool operator==(const hash_t& o) const { return h == o.h; }
+        bool operator<(const hash_t& o) const { return h < o.h; }
+    };
+
+    // Must call init before using. n = maximum total string length
+    void init(size_t n) {
+        set_random_base();
+        precompute_base_pow(n);
+    }
+
+    // Build prefix-hash array of string s
+    vector<hash_t> rabin_karp(const string& s) {
+        size_t L = s.size();
+        vector<hash_t> h(L);
+        for(size_t i = 0; i < L; i++) {
+            // h[i] = (i? h[i-1]:0)*base + s[i]
+            h[i] = hash_t((i? h[i-1].h:0)) * hash_t(base)
+                 + hash_t((uint8_t)s[i]);
+        }
+        return h;
+    }
+
+    // Get hash of substring s[l..r] in O(1)
+    hash_t hash_range(int l, int r, const vector<hash_t>& h) {
+        if(l == 0) return h[r];
+        // subtract h[l-1]*base^(r-l+1)
+        return h[r] - h[l-1] * hash_t(base_pow[r-l+1]);
+    }
+};
+
+HashMeta hash_meta;
+using hash_t = HashMeta::hash_t;
+
+static const int B = 50;        // threshold between “small” and “large”
+int n;
+vector<string> dictionary;
+
+// Read input
+void read() {
+    cin >> n;
+    dictionary.resize(n);
+    cin >> dictionary;
+}
+
+void solve() {
+    // Will hold all (prefix_hash, suffix_hash) for small strings
+    vector<pair<hash_t, hash_t>> small_hashes;
+
+    // Indices of large strings
+    vector<int> large_strings;
+    // Store prefix-hash arrays for all strings
+    vector<vector<hash_t>> hashes(n);
+
+    // Preprocess each dictionary string
+    for(int i = 0; i < n; i++) {
+        const string& s = dictionary[i];
+        int L = s.size();
+        // Compute prefix-hash array
+        hashes[i] = hash_meta.rabin_karp(s);
+        if(L >= B) {
+            // Mark as large
+            large_strings.push_back(i);
+        } else {
+            // Enumerate all possible (prefix, suffix) pairs
+            // prefix = s[0..i], suffix = s[j..L-1]
+            for(int pi = 0; pi < L; pi++) {
+                for(int sj = 0; sj < L; sj++) {
+                    hash_t ph = hash_meta.hash_range(0, pi, hashes[i]);
+                    hash_t sh = hash_meta.hash_range(sj, L-1, hashes[i]);
+                    small_hashes.emplace_back(ph, sh);
+                }
+            }
+        }
+    }
+
+    // Sort to allow binary search counts
+    sort(small_hashes.begin(), small_hashes.end());
+
+    int q; 
+    cin >> q;
+    while(q--) {
+        string p, s;
+        cin >> p >> s;
+        // Build hash for the query prefix and suffix
+        auto hpv = hash_meta.rabin_karp(p);
+        auto hsv = hash_meta.rabin_karp(s);
+        hash_t hp = hpv.back();  // full prefix hash
+        hash_t hs = hsv.back();  // full suffix hash
+
+        // Count among small strings via binary search
+        auto range = equal_range(
+            small_hashes.begin(),
+            small_hashes.end(),
+            make_pair(hp, hs)
+        );
+        int ans = range.second - range.first;
+
+        // Check large strings one by one
+        for(int idx: large_strings) {
+            const string& ds = dictionary[idx];
+            int L = ds.size();
+            if((int)p.size() > L || (int)s.size() > L) continue;
+            // hash of ds[0..|p|-1]
+            hash_t ph2 = hash_meta.hash_range(0, p.size()-1, hashes[idx]);
+            // hash of ds[L-|s|..L-1]
+            hash_t sh2 = hash_meta.hash_range(L - s.size(), L-1, hashes[idx]);
+            if(ph2 == hp && sh2 == hs) ans++;
+        }
+
+        cout << ans << "\n";
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // Initialize hash base and powers up to total length ~1e6
+    hash_meta.init(1000000);
+    read();
+    solve();
+    return 0;
+}
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+input = sys.stdin.readline
+
+# We'll use double hashing to reduce collision risk
+MOD1, MOD2 = 10**9+7, 10**9+9
+BASE1, BASE2 = 91138233, 97266353
+B = 50   # threshold between small and large
+
+def build_hashes(s):
+    """Return two prefix-hash arrays H1, H2 for string s."""
+    n = len(s)
+    H1 = [0]*(n+1)  # H1[i] = hash of s[:i]
+    H2 = [0]*(n+1)
+    for i,ch in enumerate(s):
+        v = ord(ch) - ord('a') + 1
+        H1[i+1] = (H1[i]*BASE1 + v) % MOD1
+        H2[i+1] = (H2[i]*BASE2 + v) % MOD2
+    return H1, H2
+
+def get_hash(H, power, l, r, mod):
+    """
+    Get hash of substring [l..r] from prefix array H and power array.
+    H has length n+1, power has length n+1.
+    """
+    return (H[r+1] - H[l]*power[r-l+1] % mod + mod) % mod
+
+def main():
+    n = int(input())
+    dict_str = [input().strip() for _ in range(n)]
+    # Precompute powers up to max total length (~1e6)
+    maxlen = 10**6 + 5
+    pow1 = [1]* (maxlen)
+    pow2 = [1]* (maxlen)
+    for i in range(1, maxlen):
+        pow1[i] = pow1[i-1]*BASE1 % MOD1
+        pow2[i] = pow2[i-1]*BASE2 % MOD2
+
+    # Separate small and large strings
+    small_map = {}  # map ((hp1,hp2),(hs1,hs2)) -> count
+    large = []      # list of tuples (len, H1, H2)
+
+    for s in dict_str:
+        L = len(s)
+        H1, H2 = build_hashes(s)
+        if L < B:
+            # enumerate all prefix-suffix pairs
+            for i in range(L):       # prefix ends at i
+                hp1 = get_hash(H1, pow1, 0, i, MOD1)
+                hp2 = get_hash(H2, pow2, 0, i, MOD2)
+                for j in range(L):   # suffix starts at j
+                    hs1 = get_hash(H1, pow1, j, L-1, MOD1)
+                    hs2 = get_hash(H2, pow2, j, L-1, MOD2)
+                    key = ((hp1,hp2),(hs1,hs2))
+                    small_map[key] = small_map.get(key, 0) + 1
+        else:
+            # store for on-the-fly checking
+            large.append((L, H1, H2))
+
+    # Process queries
+    m = int(input())
+    out = []
+    for _ in range(m):
+        p,suf = input().split()
+        lp, ls = len(p), len(suf)
+        # build hash of full p and full suf
+        Hp1, Hp2 = build_hashes(p)
+        Hs1, Hs2 = build_hashes(suf)
+        key = ((Hp1[-1],Hp2[-1]), (Hs1[-1],Hs2[-1]))
+        ans = small_map.get(key, 0)
+
+        # check each large string in O(1)
+        for L,H1_large,H2_large in large:
+            if lp > L or ls > L:
+                continue
+            # prefix check
+            ph1 = get_hash(H1_large, pow1, 0, lp-1, MOD1)
+            ph2 = get_hash(H2_large, pow2, 0, lp-1, MOD2)
+            if (ph1,ph2) != (Hp1[-1],Hp2[-1]):
+                continue
+            # suffix check
+            sh1 = get_hash(H1_large, pow1, L-ls, L-1, MOD1)
+            sh2 = get_hash(H2_large, pow2, L-ls, L-1, MOD2)
+            if (sh1,sh2) == (Hs1[-1],Hs2[-1]):
+                ans += 1
+        out.append(str(ans))
+
+    print('\n'.join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Use rolling hashes and split strings by length threshold B. For each short string (length < B), enumerate all prefix–suffix hash pairs and store counts in a map or sorted array. For each query compute its hash pair and look up in the small‐string data (binary search or hash‐map), then individually check each long string’s prefix and suffix in O(1).

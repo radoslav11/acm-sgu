@@ -1,0 +1,283 @@
+1. Abridged Problem Statement  
+Given two sets of n points in the plane representing the same constellation, up to a rigid translation and rotation, find the smallest non-negative rotation angle (in radians, ≤ π) that, after translating both sets to their centroids, aligns one set to the other.
+
+2. Detailed Editorial  
+We need to recover the relative rotation between two point‐clouds that are identical up to translation and rotation. The high-level steps are:
+
+ 1. Translation Invariance via Centroids  
+    – Compute the centroid (average of x’s, average of y’s) of each point set.  
+    – Subtract its centroid from each point to recenter each cloud at the origin.  
+
+ 2. Encoding Each Star by Polar Coordinates  
+    – For each centered point, compute its polar angle in [0,2π) and its distance from the origin.  
+    – Sort the points by (angle, distance).  
+      This produces two sorted sequences of 2D vectors, `A` and `B`, that correspond “in order” around the circle.
+
+ 3. Trying All Alignments  
+    – Imagine that vector `A[0]` must match some `B[i]` after rotation.  
+    – For each i=0…n−1:  
+       • Check that the lengths |A[0]| and |B[i]| agree (within EPS) or else skip.  
+       • Let Δ = angle(A[0]) − angle(B[i]), normalized to [0,2π).  
+       • Rotate all vectors of B by +Δ and cyclically shift so that B[i] aligns with A[0].  
+       • Check elementwise that A[j] ≈ rotated_B[(i+j)%n] for all j.  
+       • Also check the “flip” rotation 2π−Δ (sometimes the smallest positive rotation is the complement).  
+       • Keep the minimum valid rotation.
+
+ 4. Edge Cases  
+    – n=1: Any single point can only differ by translation; the rotation is defined as 0.  
+    – Guarantee: No two stars coincide, so angles and distances are well-defined.
+
+Complexity: O(n log n) for sorting + O(n^2) checks in the worst case, which is acceptable up to n=1000 in optimized C++.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Epsilon for floating-point comparisons
+const double EPS = 1e-9;
+const double PI  = acos(-1.0);
+
+// Normalize an angle to the range [0, 2*PI)
+double normalize_angle(double a) {
+    // fmod might return negative
+    a = fmod(a, 2*PI);
+    if (a < 0) a += 2*PI;
+    return a;
+}
+
+// Rotate a complex number (vector) by angle 'ang'
+complex<double> rotate_vec(const complex<double>& v, double ang) {
+    // exp(i*ang) = cos(angle) + i*sin(angle)
+    return v * polar(1.0, ang);
+}
+
+// Attempt to match A against B after rotating B by 'rot'
+// with a cyclic shift of 'offset'. Returns true if all match.
+bool match_with_rotation(
+    const vector<complex<double>>& A,
+    const vector<complex<double>>& B,
+    double rot,
+    int offset
+) {
+    int n = A.size();
+    for (int j = 0; j < n; ++j) {
+        // rotate B[ (offset + j) % n ]
+        complex<double> bv = rotate_vec(B[(offset+j) % n], rot);
+        // Compare real and imag parts to A[j]
+        if (fabs(bv.real() - A[j].real()) > EPS ||
+            fabs(bv.imag() - A[j].imag()) > EPS) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<complex<double>> P1(n), P2(n);
+
+    // Read first constellation
+    for(int i = 0; i < n; i++){
+        double x, y;
+        cin >> x >> y;
+        P1[i] = complex<double>(x, y);
+    }
+    // Read second constellation
+    for(int i = 0; i < n; i++){
+        double x, y;
+        cin >> x >> y;
+        P2[i] = complex<double>(x, y);
+    }
+
+    // If there's only one star, rotation is 0
+    if(n == 1){
+        cout << fixed << setprecision(11) << 0.0 << "\n";
+        return 0;
+    }
+
+    // Compute centroids
+    complex<double> c1(0,0), c2(0,0);
+    for(int i = 0; i < n; i++){
+        c1 += P1[i];
+        c2 += P2[i];
+    }
+    c1 /= double(n);
+    c2 /= double(n);
+
+    // Build (angle, distance, vector) tuples for each point set
+    auto build_data = [&](const vector<complex<double>>& P, complex<double> cent){
+        vector< tuple<double,double,complex<double>> > data;
+        for(auto& pt : P) {
+            complex<double> v = pt - cent; 
+            double dist = abs(v);
+            double ang  = (dist < EPS) ? 0.0 : normalize_angle(arg(v));
+            data.emplace_back(ang, dist, v);
+        }
+        // Sort by (angle asc, distance asc)
+        sort(data.begin(), data.end(),
+             [](auto &A, auto &B){
+                 if (get<0>(A) != get<0>(B))
+                     return get<0>(A) < get<0>(B);
+                 return get<1>(A) < get<1>(B);
+             });
+        return data;
+    };
+
+    auto D1 = build_data(P1, c1);
+    auto D2 = build_data(P2, c2);
+
+    // Extract only the sorted vectors
+    vector<complex<double>> A(n), B(n);
+    for(int i = 0; i < n; i++){
+        A[i] = get<2>(D1[i]);
+        B[i] = get<2>(D2[i]);
+    }
+
+    double best = 2*PI;  // we will minimize over [0, 2π)
+
+    // Try aligning A[0] with each B[i]
+    for(int i = 0; i < n; i++){
+        double lenA = abs(A[0]);
+        double lenB = abs(B[i]);
+        // lengths must match
+        if (fabs(lenA - lenB) > EPS) continue;
+        // compute candidate rotation Δ = angle(A[0]) - angle(B[i])
+        double angA = normalize_angle(arg(A[0]));
+        double angB = normalize_angle(arg(B[i]));
+        double delta = normalize_angle(angA - angB);
+
+        // Test both Δ and its complement 2π-Δ
+        for(int t = 0; t < 2; ++t) {
+            double rot = (t == 0 ? delta : normalize_angle(2*PI - delta));
+            // As we sorted, B[i] was at index i; after rotation we shift by -i
+            if (match_with_rotation(A, B, rot, i)) {
+                double cand = min(rot, 2*PI - rot);
+                if (cand < best) best = cand;
+            }
+        }
+    }
+
+    // Output result in [0, π]
+    if (best > PI) best = 2*PI - best;
+    cout << fixed << setprecision(11) << best << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import math
+
+# Tolerance for floating-point comparisons
+EPS = 1e-9
+
+def normalize_angle(a):
+    """Normalize angle a to [0, 2π)."""
+    a %= 2*math.pi
+    if a < 0:
+        a += 2*math.pi
+    return a
+
+def rotate_vector(v, ang):
+    """Rotate 2D vector v = (x,y) by angle ang."""
+    c, s = math.cos(ang), math.sin(ang)
+    return (v[0]*c - v[1]*s, v[0]*s + v[1]*c)
+
+def get_sorted_vectors(points):
+    """
+    Center points at their centroid, compute (angle, dist, vector),
+    sort by (angle, dist), and return the list of vectors only.
+    """
+    n = len(points)
+    # Find centroid
+    cx = sum(x for x,y in points) / n
+    cy = sum(y for x,y in points) / n
+
+    data = []
+    for (x,y) in points:
+        dx, dy = x - cx, y - cy
+        dist = math.hypot(dx, dy)
+        # If at centroid (should not happen if n>1), define angle=0
+        if dist < EPS:
+            ang = 0.0
+        else:
+            ang = normalize_angle(math.atan2(dy, dx))
+        data.append((ang, dist, (dx, dy)))
+
+    # Sort by angle, then by distance
+    data.sort(key=lambda t: (t[0], t[1]))
+    # Return just the shifted vectors in sorted order
+    return [vec for _,_,vec in data]
+
+def match_after_rotation(A, B, rot, offset):
+    """
+    Check if rotating B by rot and cyclically shifting by offset
+    makes it coincide with A elementwise.
+    """
+    n = len(A)
+    for i in range(n):
+        bx, by = B[(offset+i) % n]
+        rx, ry = rotate_vector((bx, by), rot)
+        ax, ay = A[i]
+        if abs(rx - ax) > EPS or abs(ry - ay) > EPS:
+            return False
+    return True
+
+def solve():
+    n = int(input())
+    pts1 = [tuple(map(float, input().split())) for _ in range(n)]
+    pts2 = [tuple(map(float, input().split())) for _ in range(n)]
+
+    # Single point ⇒ rotation = 0
+    if n == 1:
+        print("0.00000000000")
+        return
+
+    A = get_sorted_vectors(pts1)
+    B = get_sorted_vectors(pts2)
+
+    best = 2*math.pi
+
+    # Try matching A[0] to each B[i]
+    for i in range(n):
+        ax, ay = A[0]
+        bx, by = B[i]
+        lenA = math.hypot(ax, ay)
+        lenB = math.hypot(bx, by)
+        # lengths must agree
+        if abs(lenA - lenB) > EPS:
+            continue
+
+        # compute the rotation that aligns B[i]→A[0]
+        angA = math.atan2(ay, ax)
+        angB = math.atan2(by, bx)
+        delta = normalize_angle(angA - angB)
+
+        # Check both delta and its complement
+        for rot in (delta, normalize_angle(2*math.pi - delta)):
+            if match_after_rotation(A, B, rot, i):
+                cand = min(rot, 2*math.pi - rot)
+                best = min(best, cand)
+
+    # Ensure output ≤ π
+    if best > math.pi:
+        best = 2*math.pi - best
+
+    print(f"{best:.11f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+- Translate both clouds to their centroids for translation invariance.  
+- Convert each centered point to (angle in [0,2π), distance).  
+- Sort by angle then distance to get cyclically ordered vectors A, B.  
+- For each possible pairing A[0]↔B[i] with equal length, compute candidate rotation Δ = arg(A[0])−arg(B[i]) (mod 2π).  
+- Check if rotating B by Δ (or 2π−Δ) and shifting by i aligns all vectors to A.  
+- Keep the minimum non-negative rotation ≤ π.

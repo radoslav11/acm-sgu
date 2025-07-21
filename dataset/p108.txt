@@ -1,0 +1,219 @@
+1. Abridged Problem Statement  
+Given integers N (1 ≤ N ≤ 10^7) and K (1 ≤ K ≤ 5000), and a list of K positions s₁,…,sₖ, compute all “self-numbers” in the interval [1..N]. A self-number is an integer that cannot be written in the form m + sum_of_digits(m) for any positive m. Let a[i] be the i-th self-number in ascending order. Output:  
+• First line: the total count of self-numbers in [1..N].  
+• Second line: K numbers a[s₁], a[s₂], …, a[sₖ]. It is guaranteed that all these requested a[sᵢ] lie within [1..N].
+
+2. Detailed Editorial  
+Definition and goal  
+- Define d(m) = m + (sum of digits of m). A number x is called a generator of y if d(x) = y.  
+- A “self-number” is one that has no generator.  
+- We list all self-numbers a[1], a[2], … up to N, count how many there are, and answer K queries a[sᵢ].  
+
+Naïve vs. efficient approach  
+- Naïvely checking for each y whether any x < y satisfies d(x)=y is O(N²) in the worst case, too slow for N up to 10^7.  
+- Instead, we run a single pass for x = 1..N, compute y = d(x), and if y ≤ N, mark y as “has a generator.” Then unmarked numbers are self-numbers. This is O(N · cost(sum_of_digits)) = O(N · log₁₀N), which for N=10^7 is fine in optimized C++ or even Python with care.  
+
+Implementation details  
+1. Create a boolean array (or bitset) `is_generated[1..N]`, initially all false.  
+2. For x in 1..N:  
+   - Compute y = x + sum_of_digits(x).  
+   - If y ≤ N, set is_generated[y] = true.  
+3. Traverse i = 1..N in order, collect all i with is_generated[i] = false: these are the self-numbers. Keep a running count cnt.  
+4. While collecting, if cnt equals one of the queried positions sᵢ, record the current i as that query’s answer. Since queries can be up to K=5000, we can pre-mark which positions we need (e.g. in a second boolean array of size N or via sorting/lookup) to avoid storing the entire self-number list when memory is tight.  
+5. Finally, print the total cnt on the first line, then for each query sᵢ (in the original order) print its recorded a[sᵢ].  
+
+Time complexity  
+- O(N · digit_count) to mark generated numbers.  
+- O(N) to scan and count self-numbers.  
+- O(K · log K) or O(K + U) for query lookups, where U ≤ K is the number of unique queries.  
+Overall O(N) for N up to 10^7 is feasible in ≈0.2–0.3 s in C++.  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload operator<< for pairs to print "first second"
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pairs to read two values
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for vectors to read all elements
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload operator<< for vectors to print all elements separated by space
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n, k;            // n = upper bound, k = number of queries
+vector<int> a;       // stores the k query indices s1..sk
+
+// Read input: n, k, then the k query positions into vector a
+void read() {
+    cin >> n >> k;
+    a.resize(k);
+    cin >> a;
+}
+
+// Maximum allowed size for the bitset (slightly above 1e7)
+const int MAXLEN = (int)1e7 + 42;
+
+// We want a compile-time constant size bitset > n.
+// We use template recursion: starting from len=1, double until >n (up to MAXLEN).
+template<int len = 1>
+void solve_fixed_len() {
+    if (len <= n) {
+        // Not big enough yet; recurse with len*2 (capped by MAXLEN)
+        solve_fixed_len< min(len * 2, MAXLEN) >();
+        return;
+    }
+
+    // Function to compute d(x) = x + sum_of_digits(x)
+    function<int(int)> nxt = [&](int x) {
+        int res = x;
+        while (x) {
+            res += x % 10;
+            x /= 10;
+        }
+        return res;
+    };
+
+    // dp[i] = true if i has at least one generator
+    bitset<len> dp;
+    // useful_indices[j] = true if we need the j-th self-number (one of the queries)
+    bitset<len> useful_indices;
+    for (int idx : a) {
+        useful_indices[idx] = true;
+    }
+
+    // Mark generated numbers: for each x in [1..n], mark y=nxt(x) if ≤ n
+    for (int i = 1; i <= n; i++) {
+        int y = nxt(i);
+        if (y <= n) {
+            dp[y] = true;
+        }
+    }
+
+    vector<int> ans;            // will hold answers for queries, in sorted-query-order
+    vector<int> compressed = a; // we will sort & unique the query indices
+    sort(compressed.begin(), compressed.end());
+    compressed.erase(unique(compressed.begin(), compressed.end()),
+                     compressed.end());
+
+    int cnt = 0;  // running count of self-numbers seen so far
+    // Scan through [1..n]: whenever dp[i] is false, it's a self-number
+    for (int i = 1; i <= n; i++) {
+        if (!dp[i]) {
+            cnt++;
+            // If this self-number index cnt is in our queries, record i
+            if (useful_indices[cnt]) {
+                ans.push_back(i);
+            }
+        }
+    }
+
+    // Output total count of self-numbers
+    cout << cnt << "\n";
+
+    // Now print answers in the original order of queries
+    for (int original_query : a) {
+        // find its position in the sorted unique list
+        int pos = int(lower_bound(compressed.begin(), compressed.end(), original_query)
+                      - compressed.begin());
+        // print the precomputed answer at that position
+        cout << ans[pos] << ' ';
+    }
+    cout << "\n";
+}
+
+void solve() {
+    solve_fixed_len<>();
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+data = sys.stdin.read().split()
+# Parse inputs
+n, k = map(int, data[:2])
+queries = list(map(int, data[2:]))
+
+# Step 1: mark which numbers have at least one generator
+# We use a bytearray (faster than a list of bools)
+has_generator = bytearray(n+1)
+
+def d(x):
+    """Compute d(x) = x + sum of digits of x."""
+    s = x
+    while x:
+        s += x % 10
+        x //= 10
+    return s
+
+# Mark all generated numbers up to n
+for x in range(1, n+1):
+    y = d(x)
+    if y <= n:
+        has_generator[y] = 1
+
+# Step 2: collect self-numbers and answer queries
+# We only need to store answers for requested positions s_i
+# Precompute which positions we need
+needed = set(queries)
+answers_for_pos = {}
+count = 0
+
+# Go through each i, if has_generator[i]==0 it's a self-number
+for i in range(1, n+1):
+    if not has_generator[i]:
+        count += 1
+        # if this rank is requested, record it
+        if count in needed:
+            answers_for_pos[count] = i
+
+# Output total count
+out = [str(count)]
+# Output a[s1], a[s2], ..., a[sK] in original order
+out.append(" ".join(str(answers_for_pos[s]) for s in queries))
+
+sys.stdout.write("\n".join(out))
+
+# Explanation of complexity:
+# - The loop up to n does O(n · digit_count) ~ 10^7·7 ≈ 7·10^7 operations, OK in ~0.3s in PyPy/CPython optimized.
+# - Memory uses O(n) bytes ≈ 10 MB for has_generator.
+```
+
+5. Compressed Editorial  
+Compute self-numbers by a single sweep:  
+1. Create a boolean array `gen[1..N]`.  
+2. For x from 1 to N, compute y = x + sum_of_digits(x); if y≤N, set `gen[y]=true`.  
+3. Traverse i=1..N: if `gen[i]` is false, increment a counter `cnt` and, if `cnt` matches any query, store `i` as the answer for that query.  
+4. Print total `cnt` and the stored answers in query order.

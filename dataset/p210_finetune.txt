@@ -1,0 +1,309 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+210. Beloved Sons
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Once upon a time there lived a king and he had N sons. And the king wanted to marry his beloved sons on the girls that they did love. So one day the king asked his sons to come to his room and tell him whom do they love.
+
+But the sons of the king were all young men so they could not tell exactly whom they did love. Instead of that they just told him the names of the girls that seemed beautiful to them, but since they were all different, their choices of beautiful girls also did not match exactly.
+
+The king was wise. He did write down the information that the children have provided him with and called you, his main wizard.
+
+"I want all my kids to be happy, you know," he told you, "but since it might be impossible, I want at least some of them to marry the girl they like. So please, prepare the marriage list."
+
+Suddenly you recalled that not so long ago the king told you about each of his sons, so you knew how much he loves him. So you decided to please the king and make such a marriage list that the king would be most happy. You know that the happiness of the king will be proportional to the square root of the sum of the squares of his love to the sons that would marry the girls they like.
+
+So, go on, make a list to maximize the king's happiness.
+
+Input
+
+The first line of the input file contains N — the number of king's sons (1 ≤ N ≤ 400). The second line contains N integer numbers Ai ranging from 1 to 1000 — the measures of king's love to each of his sons.
+
+Next N lines contain lists of king's sons' preferences — first Ki — the number of the girls the i-th son of the king likes, and then Ki integer numbers — the girls he likes (all potentially beautiful girls in the kingdom were numbered from 1 to N, you know, beautiful girls were rare in those days).
+
+Output
+
+Output N numbers — for each son output the number of the beautiful girl he must marry or 0 if he must not marry the girl he likes.
+
+Denote the set of sons that marry a girl they like by L, then you must maximize the value of
+
+sqrt( sum(i from L, Ai2) )
+
+
+Sample test(s)
+
+Input
+4
+1 3 2 4
+4 1 2 3 4
+2 1 4
+2 1 4
+2 1 4
+
+Output
+2 1 0 4
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Summer Trainings 2003
+Date:	2003-08-30
+
+<|response|>
+1. Abridged problem statement  
+   We have N sons (numbered 1…N). Son i has a “love weight” A_i and a list of girls he likes (girls are also numbered 1…N). We want to match some sons to distinct girls they like (others remain unmarried) so as to maximize  
+     sqrt(∑ A_i² over all matched sons).  
+   Since sqrt is monotonic, we just maximize ∑ A_i².  Output for each son the index of the girl he marries (or 0 if he doesn’t marry anyone).
+
+2. Key observations  
+   • We need a matching in a bipartite graph (sons vs. girls).  
+   • If son i is matched, he contributes A_i² to the total. We want to pick a matching of maximum total weight.  
+   • The maximum-weight bipartite matching problem can be reduced to a minimum-cost perfect matching (assignment) by negating weights.  
+   • The Hungarian algorithm solves the assignment problem in O(N³), which is fine for N up to 400.
+
+3. Full solution approach  
+   a) Build an N×N cost matrix cost[girl][son]:  
+      – If son s likes girl g, set cost[g][s] = –(A_s)².  
+      – Otherwise set cost[g][s] = 0.  
+      This way, a minimum‐cost perfect matching picks as many large negative entries as possible, i.e. maximizes ∑ A_s².  
+   b) Run the Hungarian algorithm on this cost matrix to get a perfect matching of all N sons to N “slots” (girls or dummy).  
+   c) The Hungarian output is an array match_son_to_girl[s] = g. For each son s:  
+      – If g is in s’s liked‐girls list, output g+1.  
+      – Otherwise output 0.  
+
+4. C++ implementation with detailed comments  
+
+#include <bits/stdc++.h>
+using namespace std;
+
+// Hungarian algorithm (a.k.a. Kuhn–Munkres) for minimum-cost perfect matching
+// on a complete bipartite graph with N rows and N columns.
+// cost is a 1-based (N+1)x(N+1) matrix inside the class.
+
+template<typename T>
+struct Hungarian {
+    int N;
+    vector<vector<T>> cost;   // size (N+1)x(N+1), cost[i][j]
+    vector<T> u, v;           // potentials for rows (u) and columns (v)
+    vector<int> p, way;       // p[j]=row assigned to column j; way[j] for path backtracking
+
+    // Constructor takes a 0-based NxN cost matrix 'a'
+    Hungarian(const vector<vector<T>>& a) {
+        N = a.size();
+        const T INF = numeric_limits<T>::max() / 2;
+        cost.assign(N+1, vector<T>(N+1, 0));
+        for(int i = 0; i < N; i++)
+            for(int j = 0; j < N; j++)
+                cost[i+1][j+1] = a[i][j];
+
+        u.assign(N+1, 0);
+        v.assign(N+1, 0);
+        p.assign(N+1, 0);
+        way.assign(N+1, 0);
+
+        // For each row i=1..N, we add it into the matching
+        for(int i = 1; i <= N; i++) {
+            p[0] = i;               // we will try to match row i
+            int j0 = 0;             // current column being considered
+            vector<T> minv(N+1, INF);
+            vector<bool> used(N+1, false);
+
+            // Find augmenting path
+            do {
+                used[j0] = true;
+                int i0 = p[j0];     // the row currently matched to column j0
+                T delta = INF;
+                int j1 = 0;
+                // Try all columns j=1..N not yet used
+                for(int j = 1; j <= N; j++) {
+                    if(!used[j]) {
+                        // reduced cost
+                        T cur = cost[i0][j] - u[i0] - v[j];
+                        if(cur < minv[j]) {
+                            minv[j] = cur;
+                            way[j] = j0;  // remember predecessor
+                        }
+                        if(minv[j] < delta) {
+                            delta = minv[j];
+                            j1 = j;
+                        }
+                    }
+                }
+                // update potentials
+                for(int j = 0; j <= N; j++) {
+                    if(used[j]) {
+                        u[p[j]] += delta;
+                        v[j] -= delta;
+                    } else {
+                        minv[j] -= delta;
+                    }
+                }
+                j0 = j1;
+            } while(p[j0] != 0);
+
+            // Augment along the path found
+            do {
+                int j1 = way[j0];
+                p[j0] = p[j1];
+                j0 = j1;
+            } while(j0 != 0);
+        }
+    }
+
+    // Returns for each column j (0-based) the assigned row (0-based)
+    vector<int> get_assignment() {
+        // p[j] = row matched to column j, for j=1..N
+        vector<int> match(N, -1);
+        for(int j = 1; j <= N; j++) {
+            match[j-1] = p[j] - 1;
+        }
+        return match;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    vector<long long> A(N);
+    for(int i = 0; i < N; i++)
+        cin >> A[i];
+
+    // Read preference lists
+    vector<vector<int>> likes(N);
+    for(int i = 0; i < N; i++) {
+        int K;
+        cin >> K;
+        likes[i].resize(K);
+        for(int j = 0; j < K; j++) {
+            cin >> likes[i][j];
+            likes[i][j]--;  // zero‐based
+        }
+        sort(likes[i].begin(), likes[i].end());
+    }
+
+    // Build cost matrix: rows = girls, cols = sons
+    vector<vector<long long>> cost(N, vector<long long>(N, 0));
+    for(int s = 0; s < N; s++) {
+        long long w = A[s] * A[s];
+        for(int g : likes[s]) {
+            cost[g][s] = -w;  // negative for min-cost matching
+        }
+    }
+
+    // Solve assignment
+    Hungarian<long long> solver(cost);
+    vector<int> match_son_to_girl = solver.get_assignment();
+
+    // Output result
+    for(int s = 0; s < N; s++) {
+        int g = match_son_to_girl[s];
+        // check if this girl is actually liked
+        bool ok = binary_search(likes[s].begin(), likes[s].end(), g);
+        if(ok)
+            cout << (g + 1) << ' ';
+        else
+            cout << 0 << ' ';
+    }
+    cout << "\n";
+    return 0;
+}
+
+5. Python implementation with detailed comments  
+
+import sys
+def hungarian(cost):
+    # cost: n×n 0-based matrix
+    n = len(cost)
+    INF = 10**18
+    # potentials
+    u = [0]*(n+1)
+    v = [0]*(n+1)
+    # p[j]=row matched to column j; way[j] stores path
+    p = [0]*(n+1)
+    way = [0]*(n+1)
+
+    for i in range(1, n+1):
+        p[0] = i
+        j0 = 0
+        minv = [INF]*(n+1)
+        used = [False]*(n+1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = INF
+            j1 = 0
+            for j in range(1, n+1):
+                if not used[j]:
+                    # reduced cost
+                    cur = cost[i0-1][j-1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta = minv[j]
+                        j1 = j
+            # update potentials
+            for j in range(n+1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        # augment
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+
+    # build assignment: for each son (column) j=1..n, assign row p[j]
+    assignment = [p[j] - 1 for j in range(1, n+1)]
+    return assignment
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    A = [int(next(it)) for _ in range(n)]
+    likes = []
+    for _ in range(n):
+        k = int(next(it))
+        arr = [int(next(it)) - 1 for __ in range(k)]
+        arr.sort()
+        likes.append(arr)
+
+    # build cost matrix: rows=girls, cols=sons
+    cost = [[0]*n for _ in range(n)]
+    for s in range(n):
+        w = A[s]*A[s]
+        for g in likes[s]:
+            cost[g][s] = -w
+
+    match = hungarian(cost)
+    out = []
+    for s in range(n):
+        g = match[s]
+        # if g is in likes[s], print g+1; else 0
+        if g in likes[s]:
+            out.append(str(g+1))
+        else:
+            out.append('0')
+    print(" ".join(out))
+
+if __name__ == "__main__":
+    main()
+
+Explanation of key parts:  
+- We negate A_s² so that selecting that edge reduces total cost, and the algorithm seeks the minimum.  
+- Hungarian keeps dual potentials u,v and constructs an augmenting path in O(N²) per row, total O(N³).  
+- After matching, some sons may be “matched” by zero‐cost edges (i.e. they marry a non‐liked girl). We detect these by checking the liked list and output 0 for them.

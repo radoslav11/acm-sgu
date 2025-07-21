@@ -1,0 +1,213 @@
+1. Abridged problem statement  
+Given n objects, each with 1 to 4 distinct key=value properties, answer m queries of the form “how many objects contain at least these l distinct key=value pairs?” (extra properties on the object are allowed). Keys and values are short alphanumeric strings (length ≤5). n ≤ 50 000, m ≤ 100 000.  
+
+2. Detailed editorial  
+
+Overview  
+We need to answer many membership queries on a static set of objects. Each query asks for the count of objects that cover a given small set (size up to 4) of property constraints. A direct scan over all objects per query is too slow (n·m up to 5·10^9). Instead, we preprocess all objects by indexing counts of every possible subset of their properties.  
+
+Key observations  
+- Each object has at most 4 properties, so it has at most 2^4 = 16 subsets (including the empty set).  
+- A query is exactly one such subset; we need the total number of objects whose subsets include the query subset. Equivalently, for each object we enumerate all subsets of its properties and increment a counter for that subset representation. Then each query is a single lookup.  
+
+Preprocessing  
+- For object i with k properties, generate all masks from 0 to (1<<k)-1.  
+- For each mask, pick the corresponding subset of properties, sort them by key (to get a canonical form), serialize to a string (e.g. “key1=val1,key2=val2,”).  
+- Maintain a hash map from this string to the count of objects that produced it.  
+
+Querying  
+- Read the l key=value constraints, sort them by key, serialize to the same form, look up in the map, and output the stored count (defaulting to zero if not found).  
+
+Complexities  
+- Preprocessing time: sum over objects of 2^ki · ki · log ki ≤ n · 16 · 4 · log 4 = O(n). Numerically ~8·10^5 operations for n=5·10^4.  
+- Query time: O(l · log l) per query (sorting ≤4 items) plus hash lookup, overall ~m · 4 log 4 = O(m).  
+- Memory: one hash map entry per distinct subset; worst-case ≤n·16 ≈ 8·10^5 entries. Should fit in the limits.  
+
+3. Provided C++ solution with detailed comments  
+
+#include <bits/stdc++.h>  
+using namespace std;
+
+// Overload output operator for pair to print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pair to read two elements
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vector: read each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload output operator for vector: print elements separated by space
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n;  // number of objects
+// For each object, we store its sorted list of (key,value) pairs
+vector<vector<pair<string, string>>> objects;
+
+// Read exactly cnt key=value tokens and split into (key,value) pairs
+vector<pair<string, string>> get_object(int cnt) {
+    vector<pair<string, string>> obj;
+    while(cnt--) {
+        string s;
+        cin >> s;            // e.g. "width=5"
+        vector<string> xy = {""};
+        for(char c: s) {
+            if(c == '=') {
+                xy.push_back("");  // start collecting value after '='
+                continue;
+            }
+            xy.back().push_back(c);
+        }
+        // xy[0] is the key, xy[1] is the value
+        obj.push_back({xy[0], xy[1]});
+    }
+    return obj;
+}
+
+// Sort the key=value pairs by key to get a canonical order
+vector<pair<string, string>> canonize(vector<pair<string, string>> obj) {
+    sort(obj.begin(), obj.end());
+    return obj;
+}
+
+// Read input objects
+void read() {
+    cin >> n;
+    objects.resize(n);
+    for(int i = 0; i < n; i++) {
+        int cnt;
+        cin >> cnt;                                // number of props of object i
+        objects[i] = canonize(get_object(cnt));    // read and sort
+    }
+}
+
+// Turn a sorted list of pairs into a single string "k1=v1,k2=v2,"
+string total_canonize(vector<pair<string, string>> obj) {
+    string res;
+    for(auto &pr: obj) {
+        res += pr.first + '=' + pr.second + ',';
+    }
+    return res;
+}
+
+void solve() {
+    // Map from serialized subset to the number of objects containing that subset
+    unordered_map<string, int> cnt;
+    // For each object, enumerate all subsets of its properties
+    for(int i = 0; i < n; i++) {
+        int k = objects[i].size();
+        // mask from 0..(2^k - 1)
+        for(int mask = 0; mask < (1 << k); mask++) {
+            vector<pair<string, string>> subset;
+            // pick bits set in mask
+            for(int j = 0; j < k; j++) {
+                if(mask & (1 << j)) {
+                    subset.push_back(objects[i][j]);
+                }
+            }
+            // serialize and increment count
+            cnt[total_canonize(subset)]++;
+        }
+    }
+
+    // Process queries
+    int q;
+    cin >> q;
+    while(q--) {
+        int c;
+        cin >> c;
+        // read and sort the query's constraints
+        vector<pair<string, string>> query = get_object(c);
+        query = canonize(query);
+        // lookup the serialized form
+        cout << cnt[total_canonize(query)] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+
+4. Python solution with detailed comments  
+
+import sys
+from itertools import combinations
+
+def read_ints():
+    return list(map(int, sys.stdin.readline().split()))
+
+def read_props(k):
+    # read k tokens like "key=value" and split
+    props = []
+    for token in sys.stdin.readline().split():
+        key, val = token.split('=', 1)
+        props.append((key, val))
+    return props
+
+def serialize(pairs):
+    # sort by key, then join into "k1=v1,k2=v2,"
+    pairs_sorted = sorted(pairs)
+    return ",".join(f"{k}={v}" for k,v in pairs_sorted) + ("," if pairs_sorted else "")
+
+def main():
+    input = sys.stdin.readline
+    n = int(input())
+    all_props = []
+    for _ in range(n):
+        parts = input().split()
+        k = int(parts[0])
+        # parse k key=val tokens
+        props = [tuple(tok.split('=',1)) for tok in parts[1:1+k]]
+        all_props.append(props)
+
+    # Precompute counts of every subset
+    cnt = {}
+    for props in all_props:
+        k = len(props)
+        # for every subset size from 0..k
+        for sz in range(k+1):
+            # combinations from itertools
+            for comb in combinations(props, sz):
+                key = serialize(comb)
+                cnt[key] = cnt.get(key, 0) + 1
+
+    m = int(input())
+    out = []
+    for _ in range(m):
+        parts = input().split()
+        l = int(parts[0])
+        qprops = [tuple(tok.split('=',1)) for tok in parts[1:1+l]]
+        key = serialize(qprops)
+        out.append(str(cnt.get(key, 0)))
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+
+5. Compressed editorial  
+
+Precompute for each object all 2^k subsets of its up-to-4 properties, store a hash map from the sorted, serialized subset to how many objects produce it. Then each query (size l ≤4) is serialized in the same way and answered by a single hash lookup.

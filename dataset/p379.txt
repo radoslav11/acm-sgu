@@ -1,0 +1,240 @@
+1. Abridged Problem Statement  
+Given N floors numbered 1…N, with Ai people on floor i who all want to go down to the basement (parking) below floor 1. An elevator of capacity C starts in the basement. Moving the elevator up or down by one floor costs P seconds, and loading/unloading are instantaneous. Within a total time budget T, what is the maximum number of people the elevator can deliver to the basement?
+
+2. Detailed Editorial  
+
+Overall Approach  
+Since we need the maximum number of people deliverable within T seconds, but N and Ai can be large (Ai up to 1e9, though N ≤ 100), we cannot simply simulate every choice. Instead, we:  
+  - Binary‐search on the answer x = “can we deliver x people in ≤T seconds?”  
+  - Implement a check(x) routine that decides feasibility in O(N) time.  
+
+Key Observations  
+  1. If we commit to deliver exactly x people, we should take people from the *lowest* floors first (because they cost less time per trip) when *selecting* which x people to serve.  
+  2. Each elevator trip goes up from floor 0 (basement) to some highest floor h, collects up to C people (at any floors en route, up to total C), then returns to basement.  
+  3. The time cost of a trip that reaches floor h is 2·h·P seconds. Since loading is instant, we only care about how many trips we make and how high they go.  
+  4. To minimize total time for our chosen x people, we should:  
+     a. From each selected floor i, first bundle as many *full­-capacity* loads (C people) as possible—because each full load must be a separate trip to that floor—adding `(number_of_full_loads) · (2·i·P)` to time.  
+     b. For the remaining people (fewer than C on each floor), repeatedly make mixed trips: in each trip, fill the elevator up to C by picking from the *highest* floors first (so the trip height is as small as possible) and pay `2·(highest_floor)·P` time per such trip.  
+
+check(x) Implementation  
+  1. Build an array rem[i] = number of people we will serve from floor i, by scanning floors from 1 to N and taking min( Ai, x_remaining ) until we have assigned x in total. If sum Ai < x, we fail immediately.  
+  2. For each floor i (1…N), let full_i = rem[i] / C. These require full_i separate trips, each costing 2·i·P. Sum that into total_time. Subtract full_i·C from rem[i].  
+  3. Collect all the remaining rem[i] < C into a list (ordered by floor).  
+  4. While there are any leftovers:  
+       a. Start a new trip; its time cost is determined by the *highest* floor among the leftovers (that’s the last element in the list). Add 2·(that_floor)·P to total_time.  
+       b. “Fill” the elevator up to C by taking from the highest-floor leftovers first, removing floors whose rem[i] go to zero, or reducing them otherwise.  
+  5. If total_time ≤ T, return true; else false.  
+
+Binary Search  
+  - low = 0, high = sum of all Ai  
+  - While low ≤ high: mid = (low+high)/2  
+       if check(mid) is true, record answer = mid and set low = mid+1  
+       else set high = mid−1  
+  - Print the recorded answer.  
+
+Complexity  
+  - Each check(x) takes O(N + number_of_trips) = O(N + x/C). But since N≤100 and we stop early if time exceeds T, it’s efficient.  
+  - Binary search adds a log(sum Ai) factor ≤ 32. Overall very fast under 0.75s.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Maximum number of floors
+const int MAXN = 1 << 20;
+
+int n;             // Number of floors
+long long C, P, T; // Elevator capacity, per-floor time, total time limit
+long long A[105];  // A[i]: number of people on floor i (1-based)
+
+// Read input
+void read_input() {
+    cin >> n >> C >> P >> T;
+    for(int i = 1; i <= n; i++) {
+        cin >> A[i];
+    }
+}
+
+// Check if we can deliver exactly x people within time T
+bool check(long long x) {
+    // Step 1: pick people from lowest floors first
+    vector<pair<int,long long>> rem; // pairs of (floor, people_to_take)
+    long long need = x;
+    for(int i = 1; i <= n && need > 0; i++) {
+        long long take = min(need, A[i]);
+        if(take > 0) {
+            rem.emplace_back(i, take);
+            need -= take;
+        }
+    }
+    if(need > 0) {
+        // Not enough people in building
+        return false;
+    }
+
+    // Step 2: handle full-capacity trips for each floor separately
+    long long total_time = 0;
+    for(auto &pr : rem) {
+        int floor = pr.first;
+        long long cnt = pr.second;
+        // How many full loads of size C?
+        long long full_trips = cnt / C;
+        // Each such trip costs 2 * floor * P
+        total_time += full_trips * 2LL * floor * P;
+        if(total_time > T) return false;
+        // Leave only the leftover (<C) on this floor
+        pr.second = cnt % C;
+    }
+
+    // Step 3: build a list of the leftover demands, ordered by floor
+    // Only keep entries where rem[i].second > 0
+    vector<pair<int,long long>> leftover;
+    for(auto &pr : rem) {
+        if(pr.second > 0) leftover.push_back(pr);
+    }
+
+    // Step 4: do mixed trips to pack leftovers up to capacity C
+    while(!leftover.empty()) {
+        // Highest floor among leftovers is at the back
+        int top_floor = leftover.back().first;
+        // One trip to top_floor and back
+        total_time += 2LL * top_floor * P;
+        if(total_time > T) return false;
+
+        // Fill elevator up to C people, taking from highest floors first
+        long long cap = 0;
+        while(cap < C && !leftover.empty()) {
+            auto &pr = leftover.back();
+            long long take = min(C - cap, pr.second);
+            cap += take;
+            pr.second -= take;
+            if(pr.second == 0) {
+                leftover.pop_back(); // this floor is exhausted
+            }
+        }
+    }
+
+    return (total_time <= T);
+}
+
+// Solve via binary search on answer
+void solve() {
+    long long low = 0, high = 0;
+    for(int i = 1; i <= n; i++) high += A[i];
+
+    long long best = 0;
+    while(low <= high) {
+        long long mid = (low + high) >> 1;
+        if(check(mid)) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    cout << best << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_input():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    C = int(next(it))
+    P = int(next(it))
+    T = int(next(it))
+    A = [0] + [int(next(it)) for _ in range(n)]
+    return n, C, P, T, A
+
+def can_deliver(x, n, C, P, T, A):
+    # 1) Assign x people from the lowest floors upward
+    rem = []   # list of (floor, people_to_take)
+    need = x
+    for i in range(1, n+1):
+        if need <= 0:
+            break
+        take = min(need, A[i])
+        if take > 0:
+            rem.append([i, take])
+            need -= take
+    if need > 0:
+        return False  # not enough people
+
+    total_time = 0
+
+    # 2) Handle full-C loads separately per floor
+    for floor, cnt in rem:
+        full_trips = cnt // C
+        total_time += full_trips * 2 * floor * P
+        if total_time > T:
+            return False
+        # leftover fewer than C
+        cnt %= C
+        # overwrite
+        floor_cnt = (floor, cnt)
+        # store back
+        # but we'll rebuild leftovers list next
+
+    # rebuild leftover list filtering zeros
+    leftover = []
+    for floor, cnt in rem:
+        if cnt > 0:
+            leftover.append([floor, cnt])
+
+    # 3) Mixed trips for remainders
+    # Always pick from the highest floors first to minimize height
+    while leftover:
+        top_floor, _ = leftover[-1]
+        total_time += 2 * top_floor * P
+        if total_time > T:
+            return False
+
+        cap = 0
+        # fill up to C by taking from back
+        while cap < C and leftover:
+            floor, cnt = leftover[-1]
+            take = min(C - cap, cnt)
+            cap += take
+            cnt -= take
+            if cnt == 0:
+                leftover.pop()  # floor exhausted
+            else:
+                leftover[-1][1] = cnt
+
+    return total_time <= T
+
+def solve():
+    n, C, P, T, A = read_input()
+    # Binary search on x
+    low, high = 0, sum(A)
+    answer = 0
+    while low <= high:
+        mid = (low + high) // 2
+        if can_deliver(mid, n, C, P, T, A):
+            answer = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    print(answer)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+Use binary search on the number of people x. To test feasibility of delivering x within T seconds, first assign those x people greedily from the lowest floors. For each floor, make as many full-C trips as possible—each full trip to floor i costs 2∙i∙P time—and subtract them. Then collect all leftover (<C) demands into a list sorted by floor. While any remain, perform mixed trips: each trip goes up to the current highest pending floor (cost 2∙h∙P), and you fill the car up to C by taking people from the top floors downward. Sum times; if ≤T, x is feasible. Binary search determines the maximum x.

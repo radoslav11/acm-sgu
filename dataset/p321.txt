@@ -1,0 +1,190 @@
+1. Abridged Problem Statement  
+Given a directed tree of N spies (nodes) with unique paths from every spy to the root (spy 1). Each of the N−1 edges is either “protected” or “almost protected.” A path is safe if at least half of its edges are protected. You may upgrade some almost‐protected edges to protected. Find a minimum set of edges to upgrade so that every path from any spy to spy 1 is safe, and output their input indices.
+
+2. Detailed Editorial  
+
+• Root the tree at node 1 and do a DFS, keeping track of the current depth d (number of edges from root) and the set S of “almost‐protected” edges on the current root‐to‐u path.  
+• At any node u, there are d total edges on its path, of which |S| are almost. The safety condition is: number of protected ≥ number of almost ⇒ d−|S| ≥ |S| ⇒ 2|S| ≤ d.  
+• If 2|S| > d at node u, we must immediately upgrade one of the almost‐protected edges on the path. To maximize the benefit (so that future deeper nodes also have fewer almost edges), we choose the one closest to the root—that is, the almost edge with minimum depth. Remove it from S (meaning we treat it as protected hereafter), and record its index in the answer list.  
+• Continue DFS, inserting each almost edge (with its depth and index) when descending, and removing it when backtracking—unless it was already removed by an upgrade.  
+• This greedy is optimal because we only upgrade when strictly necessary, and each upgrade is placed to cover as many future violations as possible. Each edge is inserted/removed at most once, and each upgrade uses a set (or priority queue) operation, so total O(N log N).  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+// Overload output for pair<T1,T2>
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+// Overload input for pair<T1,T2>
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+// Overload input for vector<T>
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) {
+        in >> x;
+    }
+    return in;
+};
+// Overload output for vector<T>
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;  // Number of nodes
+// Adjacency: for each u, a list of (neighbor v, edge index or -1)
+vector<vector<pair<int, int>>> adj;
+
+// Read input and build an undirected representation of the directed tree.
+// We label edges in input order from 1 to n-1; protected→store idx, almost→store -1
+void read() {
+    cin >> n;
+    adj.assign(n, {});
+    // Read n-1 channels
+    for(int i = 1; i < n; i++) {
+        int u, v;
+        cin >> u >> v;
+        u--, v--;                     // zero‐based
+        string type;
+        getline(cin, type);           // read " protected" or " almost protected"
+        if(type[1] == 'a') {
+            // almost protected: mark with index = -1
+            adj[u].emplace_back(v, -1);
+            adj[v].emplace_back(u, -1);
+        } else {
+            // protected: mark with its input index i
+            adj[u].emplace_back(v, i);
+            adj[v].emplace_back(u, i);
+        }
+    }
+}
+
+void solve() {
+    vector<int> ans;  // stores indices of edges we upgrade
+
+    // A set of (depth, edge_index) of current almost‐protected edges along path
+    // We pick the smallest depth when we need to upgrade.
+    set<pair<int, int>> almost_protected;
+
+    // DFS from root = 0, p = parent, depth = number of edges from root
+    function<void(int,int,int)> dfs = [&](int u, int p, int depth) {
+        // Check safety: need 2*|almost| <= depth
+        if((int)almost_protected.size() * 2 > depth) {
+            // Violation: upgrade the earliest almost‐protected edge
+            auto it = almost_protected.begin();
+            ans.push_back(it->second);      // record its input index
+            almost_protected.erase(it);     // treat it henceforth as protected
+        }
+        // Visit children
+        for(auto [v, idx] : adj[u]) {
+            if(v == p) continue;  // don't go back to parent
+            // If this edge is almost (idx == -1), insert into the set
+            if(idx == -1) {
+                // store with its depth and a dummy unique tag i = depth
+                // but idx==-1 means “almost”; we only need depth to pick earliest
+                almost_protected.insert({depth, depth});
+            } else {
+                // protected edges are stored with their original index
+                // but since they’re protected, we do NOT insert them
+            }
+            dfs(v, u, depth + 1);
+            // When backtracking, if this edge was in the set, remove it
+            if(idx == -1) {
+                auto key = make_pair(depth, depth);
+                if(almost_protected.count(key))
+                    almost_protected.erase(key);
+            }
+        }
+    };
+
+    dfs(0, -1, 0);
+
+    // Output
+    cout << ans.size() << "\n";
+    for(int i = 0; i < (int)ans.size(); i++) {
+        cout << ans[i] << (i+1==(int)ans.size() ? "\n" : " ");
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(300000)
+input = sys.stdin.readline
+
+n = int(input())
+adj = [[] for _ in range(n)]
+# Read edges; index edges 1..n-1
+for idx in range(1, n):
+    u, v, *rest = input().split()
+    u, v = int(u)-1, int(v)-1
+    # rest is ['almost', 'protected'] or ['protected']
+    if rest[0][0] == 'a':  # "almost"
+        # mark almost edges with idx = -1
+        adj[u].append((v, -1))
+        adj[v].append((u, -1))
+    else:
+        # protected edges carry their input index
+        adj[u].append((v, idx))
+        adj[v].append((u, idx))
+
+import heapq
+alive = set()      # currently active almost‐protected edges: (depth, tag)
+heap = []          # min‐heap of (depth, tag)
+ans = []
+
+def dfs(u, p, depth):
+    # If too many almost edges → violation
+    if len(alive)*2 > depth:
+        # Extract the earliest (smallest depth) almost edge
+        while True:
+            d, tag = heap[0]
+            if (d, tag) in alive:
+                break
+            heapq.heappop(heap)  # discard stale entries
+        d, tag = heapq.heappop(heap)
+        alive.remove((d, tag))
+        ans.append(tag)  # record its index
+
+    for v, eidx in adj[u]:
+        if v == p: 
+            continue
+        if eidx == -1:
+            # For almost edges we invent a unique tag = current depth
+            tag = depth
+            alive.add((depth, tag))
+            heapq.heappush(heap, (depth, tag))
+        # Recurse
+        dfs(v, u, depth+1)
+        # On backtrack remove if still present
+        if eidx == -1 and (depth, depth) in alive:
+            alive.remove((depth, depth))
+
+dfs(0, -1, 0)
+
+# Output result
+print(len(ans))
+print(*ans)
+```
+
+5. Compressed Editorial  
+Perform a DFS from the root, tracking the multiset S of almost-protected edges on the current path by their depths. At each node of depth d, if 2|S|>d, greedily convert (remove from S and record) the almost-protected edge of minimum depth. This ensures all root‐to‐node paths satisfy protected≥almost, uses the fewest upgrades, and runs in O(N log N).

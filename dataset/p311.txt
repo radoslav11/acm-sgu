@@ -1,0 +1,217 @@
+1. Abridged Problem Statement  
+You manage an ice-cream inventory. There are two types of operations (up to 10^5 total):  
+• ARRIVE n c: add n pieces priced c each.  
+• BUY n t: a customer wants to buy the n cheapest pieces and has t total money. If the total cost of those pieces ≤ t, remove them from inventory and print HAPPY; otherwise leave inventory unchanged and print UNHAPPY.  
+
+2. Detailed Editorial  
+We need a data structure that supports:  
+- Inserting n copies of a value c.  
+- Given k, finding the sum of the k smallest values.  
+- If that sum ≤ t, removing exactly those k smallest.  
+
+Constraints: sum of all n over ARRIVE can be large (up to 10^11), but the number of distinct prices c is at most 10^6 and the number of queries is 10^5.  
+
+Key idea: maintain two Fenwick (BIT) arrays indexed by price c (1…C where C≈10^6):  
+• bitCount[c] = total count of pieces priced exactly c.  
+• bitSum[c]   = total revenue = c * bitCount[c].  
+
+Operations:  
+A. ARRIVE n c  
+   – bitCount.add(c, n)  
+   – bitSum.add(c, n*c)  
+
+B. BUY k t  
+   1. Check total pieces: if total count < k, output UNHAPPY.  
+   2. Otherwise find the smallest price p so that the cumulative count up to p ≥ k. This is a Fenwick “find‐by‐prefix‐sum” in bitCount.  
+   3. Let cntBelow = count of pieces with price < p; let needAtP = k − cntBelow.  
+   4. Compute costBelow = bitSum.query(p−1); totalCost = costBelow + needAtP * p.  
+   5. If totalCost > t, output UNHAPPY.  
+      Else:  
+        • Remove all pieces with price < p: for each price we’d zero them, but we can do a range‐deletion by iterating over the Fenwick tree structure or by point‐updates when we know exact counts. In practice we can remove in one sweep of distinct prices or maintain a pointer—but simpler is to do two point‐updates per distinct price removal, which is still O(log C) amortized over operations.  
+        • Remove needAtP from bitCount[p] and needAtP*p from bitSum[p].  
+        • Output HAPPY.  
+
+Time complexity: O(log C) per query, where C≈10^6.  
+
+3. Provided C++ Solution with Line-by-Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Binary Indexed Tree (Fenwick) for 64-bit values
+struct Fenwick {
+    int n;
+    vector<long long> f;
+    Fenwick(int _n): n(_n), f(n+1, 0) {}
+
+    // add value v at index i
+    void update(int i, long long v) {
+        for (; i <= n; i += i & -i)
+            f[i] += v;
+    }
+
+    // prefix sum [1..i]
+    long long query(int i) const {
+        long long s = 0;
+        for (; i > 0; i -= i & -i)
+            s += f[i];
+        return s;
+    }
+
+    // find smallest idx such that query(idx) >= target
+    // assumes all values non-negative and target >= 1
+    int lower_bound(long long target) const {
+        int pos = 0;
+        // do a binary lift over bits of n
+        for (int pw = 1 << 20; pw > 0; pw >>= 1) {
+            int nxt = pos + pw;
+            if (nxt <= n && f[nxt] < target) {
+                target -= f[nxt];
+                pos = nxt;
+            }
+        }
+        return pos + 1;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    const int CMAX = 1000000;   // maximum price
+    Fenwick bitCount(CMAX), bitSum(CMAX);
+
+    string op;
+    long long n, x;
+    while (cin >> op >> n >> x) {
+        if (op == "ARRIVE") {
+            // insert n pieces at price x
+            bitCount.update((int)x, n);
+            bitSum.update((int)x, n * x);
+        } else {
+            // BUY n pieces with budget x
+            long long totalPieces = bitCount.query(CMAX);
+            if (totalPieces < n) {
+                // not enough pieces
+                cout << "UNHAPPY\n";
+                continue;
+            }
+            // find smallest price p where cumulative count >= n
+            int p = bitCount.lower_bound(n);
+            long long cntBelow = bitCount.query(p - 1);
+            long long needAtP = n - cntBelow;
+            long long costBelow = bitSum.query(p - 1);
+            long long totalCost = costBelow + needAtP * p;
+
+            if (totalCost > x) {
+                // too expensive
+                cout << "UNHAPPY\n";
+            } else {
+                // we can sell: remove the pieces
+                // 1) remove all at prices < p
+                // We know for each price < p, the count = bitCount.query(i)-bitCount.query(i-1).
+                // Instead of iterating all, we can repeatedly remove by descending the tree.
+                // For simplicity: remove via a loop over distinct prices:
+                long long toRemove = cntBelow;
+                // We'll remove them in a loop: find highest price < p with non-zero count,
+                // subtract that count, repeat. Complexity: O(#distinct_removed * log C).
+                // But total distinct over all queries ≤ total ARRIVE operations.
+                while (toRemove > 0) {
+                    // find price q with cumulative count = toRemove
+                    int q = bitCount.lower_bound(toRemove);
+                    long long cntAtQ = bitCount.query(q) - bitCount.query(q - 1);
+                    long long r = min(cntAtQ, toRemove);
+                    bitCount.update(q, -r);
+                    bitSum.update(q, -r * q);
+                    toRemove -= r;
+                }
+                // 2) remove needAtP at price p
+                bitCount.update(p, -needAtP);
+                bitSum.update(p, -needAtP * p);
+                cout << "HAPPY\n";
+            }
+        }
+    }
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+input = sys.stdin.readline
+
+class Fenwick:
+    def __init__(self, n):
+        self.n = n
+        self.f = [0] * (n+1)
+    def update(self, i, v):
+        # add v at index i
+        while i <= self.n:
+            self.f[i] += v
+            i += i & -i
+    def query(self, i):
+        # prefix sum [1..i]
+        s = 0
+        while i > 0:
+            s += self.f[i]
+            i -= i & -i
+        return s
+    def lower_bound(self, target):
+        # smallest idx so that sum[1..idx] >= target
+        pos = 0
+        bit_mask = 1 << (self.n.bit_length())
+        while bit_mask:
+            nxt = pos + bit_mask
+            if nxt <= self.n and self.f[nxt] < target:
+                target -= self.f[nxt]
+                pos = nxt
+            bit_mask >>= 1
+        return pos + 1
+
+CMAX = 10**6
+bitCount = Fenwick(CMAX)
+bitSum   = Fenwick(CMAX)
+
+for line in sys.stdin:
+    parts = line.split()
+    if not parts: continue
+    op, a, b = parts[0], int(parts[1]), int(parts[2])
+    if op == "ARRIVE":
+        # add a pieces at price b
+        bitCount.update(b, a)
+        bitSum.update(b, a * b)
+    else:  # BUY a pieces with budget b
+        totalPieces = bitCount.query(CMAX)
+        if totalPieces < a:
+            print("UNHAPPY")
+            continue
+        # find price p where cumulative count >= a
+        p = bitCount.lower_bound(a)
+        cntBelow = bitCount.query(p-1)
+        needAtP = a - cntBelow
+        costBelow = bitSum.query(p-1)
+        totalCost = costBelow + needAtP * p
+        if totalCost > b:
+            print("UNHAPPY")
+        else:
+            # remove cntBelow from prices < p
+            rem = cntBelow
+            while rem > 0:
+                q = bitCount.lower_bound(rem)
+                cntAtQ = bitCount.query(q) - bitCount.query(q-1)
+                r = min(cntAtQ, rem)
+                bitCount.update(q, -r)
+                bitSum.update(q,   -r * q)
+                rem -= r
+            # remove needAtP at price p
+            bitCount.update(p, -needAtP)
+            bitSum.update(p, -needAtP * p)
+            print("HAPPY")
+```
+
+5. Compressed Editorial  
+Use two Fenwick trees over price 1…10^6: one for counts and one for sum of prices.  
+For ARRIVE, add count and price*count.  
+For BUY(k, t), if total pieces < k print UNHAPPY. Otherwise find price p = k-th smallest using BIT lower_bound, compute cost of k cheapest as prefix sum + partial at p, compare with t. If too big, UNHAPPY; else remove those k pieces via point-updates and print HAPPY.  
+Time: O(log C) per query.

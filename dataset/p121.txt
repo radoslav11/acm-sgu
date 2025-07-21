@@ -1,0 +1,388 @@
+1. Abridged Problem Statement  
+Given an undirected simple graph on N≤100 vertices (no parallel edges), assign each edge a color 1 or 2 so that every vertex of degree ≥2 is incident to at least one edge of color 1 and at least one of color 2. If no such coloring exists, print “No solution”. Otherwise, print for each vertex the colors of its incident edges in the same order as the input, ending each line with 0.
+
+2. Detailed Editorial  
+
+Goal  
+We must 2-color the edges so that at each vertex with deg≥2, both colors appear among its incident edges. Vertices of degree 0 or 1 have no requirement beyond receiving any valid coloring.
+
+Key Idea: Eulerian Decomposition + Alternation  
+If you take any trail (walk without repeating edges) and color its edges alternately 1,2,1,2,…, then at every internal vertex of that trail you are guaranteed to see one incoming color-1 edge and one incoming color-2 edge. Endpoints of the trail only see one edge, which is fine if their total degree is 1.  
+
+But in a general component some vertices may have odd degree, so the component has no single Eulerian trail covering all edges. We remedy this by pairing up odd-degree vertices arbitrarily, adding “fake” edges between each pair to make all degrees even. Now every component has an Eulerian circuit.  
+
+Algorithm Steps  
+1. Read input, build an undirected graph with an edge list, assigning each real edge a unique ID. Record per-vertex the list of edge IDs in input order.  
+2. Find all vertices of odd degree and pair them up arbitrarily, adding fake edges (marking them so we can later discard them).  
+3. On the modified graph, for each component, perform Hierholzer’s algorithm to extract an Eulerian circuit. We record the sequence of edge-instances (real and fake) in the order they are traversed.  
+4. Split each circuit at fake edges to obtain a collection of “real-only” trails. On each trail, color the real edges by alternating 1,2,1,2,… starting with 1.  
+5. As we color, track for each vertex which colors it has seen.  
+6. If any vertex of original degree ≥2 ends up missing color 1 or color 2, print “No solution”. Otherwise, output the colors per vertex in the original input order.
+
+Complexities  
+– N≤100, E≤4950. Hierholzer’s runs in O(N+E).  
+– Memory is O(N+E). Fits well under 0.25 s and 4 GB.
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload for printing pairs
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload for reading pairs
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload for reading vectors
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload for printing vectors
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto& x : a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// Class to build and find Eulerian paths/circuits
+class EulerianPaths {
+  private:
+    // Depth‐first traversal to extract a trail starting at u
+    // 'path' collects the edges in traversal order (edge‐instance codes)
+    // 'used' marks whether each edge‐ID (real or fake) has been visited
+    // 'po[u]' is the pointer into adjacency list of u
+    void dfs(int u, vector<int>& path, vector<bool>& used, vector<int>& po) {
+        // Explore until all edges from u are used
+        while (po[u] < (int)adj[u].size()) {
+            auto [v, eid2] = adj[u][po[u]++];
+            int edgeIndex = eid2 >> 1; // real edge index
+            if (!used[edgeIndex]) {
+                used[edgeIndex] = true;
+                dfs(v, path, used, po);
+                // Record the exact oriented edge‐instance after recursion
+                path.push_back(eid2);
+            }
+        }
+    }
+
+  public:
+    int n, m;                                       // vertices, real edges count
+    vector<int> deg;                                // degree of each vertex (real edges only)
+    vector<vector<pair<int,int>>> adj;              // adjacency: (neighbor, eid2)
+    vector<pair<int,int>> edges;                    // list of real edges as (u,v)
+
+    EulerianPaths(int _n = 0) { init(_n); }
+
+    // Initialize for n vertices, no edges
+    void init(int _n) {
+        n = _n;
+        m = 0;
+        adj.assign(n + 1, {});
+        deg.assign(n + 1, 0);
+        edges.clear();
+    }
+
+    // Add a real undirected edge between u,v
+    // We store two oriented entries: eid2 = m*2 for u→v, m*2+1 for v→u
+    int add_edge(int u, int v) {
+        adj[u].push_back({v, m*2});
+        adj[v].push_back({u, m*2+1});
+        edges.push_back({u, v});
+        deg[u]++; deg[v]++;
+        return m++;  // return the new edge’s index
+    }
+
+    // Find all maximal trails of real edges after pairing odd‐degree vertices
+    vector<vector<int>> find_paths() {
+        vector<bool> used(m, false);         // used[edgeIndex]
+        vector<int> po(n+1, 0);              // pointer into adjacency lists
+
+        // Collect odd‐degree vertices
+        vector<int> odd;
+        for (int i = 0; i <= n; i++) {
+            if (deg[i] % 2 == 1) odd.push_back(i);
+        }
+
+        int total_edges = m;
+        // Pair them up arbitrarily, creating fake edges
+        for (int i = 0; i < (int)odd.size()/2; i++) {
+            int u = odd[2*i], v = odd[2*i+1];
+            // Fake edge uses indices ≥ 2*m so we can detect it later
+            adj[u].push_back({v, 2*total_edges});
+            adj[v].push_back({u, 2*total_edges + 1});
+            total_edges++;
+            used.push_back(false);
+            edges.push_back({u, v});  // but we mark it logically as fake
+        }
+
+        vector<vector<int>> paths;
+        // For each vertex with any adjacency, run a dfs to peel off a circuit
+        for (int u = 0; u <= n; u++) {
+            if (adj[u].empty()) continue;
+            vector<int> path;
+            dfs(u, path, used, po);
+            if (path.empty()) continue;
+
+            // Rotate so that if there is any fake edge, the path starts with one
+            auto it = find_if(path.begin(), path.end(),
+                              [&](int eid2){ return eid2 >= 2*m; });
+            if (it != path.end()) {
+                rotate(path.begin(), it, path.end());
+            }
+
+            // Now split at fake edges: each segment is a real‐only trail
+            vector<int> cur;
+            for (int eid2 : path) {
+                if (eid2 < 2*m) {
+                    cur.push_back(eid2);
+                } else if (!cur.empty()) {
+                    paths.push_back(cur);
+                    cur.clear();
+                }
+            }
+            if (!cur.empty()) paths.push_back(cur);
+        }
+        return paths;
+    }
+
+    // Given an edge‐instance code eid2, return its oriented endpoints
+    pair<int,int> get_edge(int eid2) {
+        int idx = eid2 >> 1;  // real/fake edge index
+        bool rev = eid2 & 1;  // oriented flip
+        auto [u,v] = edges[idx];
+        return rev ? make_pair(v,u) : make_pair(u,v);
+    }
+};
+
+int n;
+map<pair<int,int>,int> edge_id;   // map undirected (u,v)→edgeIndex
+vector<vector<int>> input_adj;     // per‐vertex list of real edge indices (in input order)
+EulerianPaths ep;
+
+void read() {
+    cin >> n;
+    input_adj.assign(n, {});
+    ep.init(n);
+    // Read adjacency lists; assign a unique edge index for each undirected edge
+    for (int u = 0; u < n; u++) {
+        while (true) {
+            int v; 
+            cin >> v;
+            if (v == 0) break;
+            --v;
+            pair<int,int> key = {u,v};
+            if (edge_id.count(key)) {
+                // already added
+                input_adj[u].push_back(edge_id[key]);
+            } else {
+                int e = ep.add_edge(u, v);
+                edge_id[{u,v}] = edge_id[{v,u}] = e;
+                input_adj[u].push_back(e);
+            }
+        }
+    }
+}
+
+void solve() {
+    // state[e] = 1 or 2 depending on color, or -1 if uncolored
+    vector<int> state(ep.m, -1);
+    // mask[u] accumulates bits for which colors u sees:
+    // bit 1<<1 for color=1, bit 1<<2 for color=2
+    vector<int> mask(n, 0);
+
+    // Extract trails
+    auto trails = ep.find_paths();
+    for (auto &tr : trails) {
+        int color = 1;
+        for (int eid2 : tr) {
+            int e = eid2 >> 1;          // real edge index
+            state[e] = color;           // assign color
+            auto [u,v] = ep.get_edge(eid2);
+            mask[u] |= 1<<color;
+            mask[v] |= 1<<color;
+            color = 3 - color;          // alternate 1↔2
+        }
+    }
+
+    // Verify
+    const int need = (1<<1) | (1<<2); // 0b110
+    for (int u = 0; u < n; u++) {
+        if (ep.deg[u] >= 2 && mask[u] != need) {
+            cout << "No solution\n";
+            return;
+        }
+    }
+
+    // Output in original input order
+    for (int u = 0; u < n; u++) {
+        for (int e : input_adj[u]) {
+            cout << state[e] << ' ';
+        }
+        cout << "0\n";
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10000)
+
+def read_input():
+    """Reads N and adjacency lists, builds edge list and per-vertex input order."""
+    N = int(sys.stdin.readline())
+    input_order = [[] for _ in range(N)]
+    edge_id = {}      # map (u,v)->eid
+    edges = []        # list of (u,v)
+    deg = [0]*N
+
+    # Build the graph, assigning each undirected edge a unique eid
+    for u in range(N):
+        for x in map(int, sys.stdin.readline().split()):
+            if x == 0: break
+            v = x-1
+            key = (u,v)
+            if key in edge_id:
+                eid = edge_id[key]
+            else:
+                eid = len(edges)
+                edges.append((u,v))
+                edge_id[(u,v)] = edge_id[(v,u)] = eid
+                deg[u] += 1
+                deg[v] += 1
+            input_order[u].append(eid)
+    return N, edges, deg, input_order
+
+def build_euler(N, edges, deg):
+    """Construct adjacency with real edges, then add fake edges to pair odd vertices."""
+    m = len(edges)
+    adj = [[] for _ in range(N)]  # (neighbor, eid2)
+    # real edges
+    for eid, (u,v) in enumerate(edges):
+        adj[u].append((v, eid*2))
+        adj[v].append((u, eid*2+1))
+    # pair odd-degree vertices
+    odd = [u for u in range(N) if deg[u] % 2 == 1]
+    fake_start = m
+    for i in range(0, len(odd), 2):
+        u, v = odd[i], odd[i+1]
+        eid2a = 2*(fake_start)     # ≥ 2*m flags fake
+        eid2b = eid2a + 1
+        adj[u].append((v, eid2a))
+        adj[v].append((u, eid2b))
+        fake_start += 1
+    return adj, fake_start
+
+def hierholzer(adj, total_eid2):
+    """Extract Eulerian circuits; return list of trails (lists of eid2)."""
+    used = [False]* (total_eid2//2)
+    ptr = [0]*len(adj)
+    trails = []
+
+    def dfs(u, out):
+        while ptr[u] < len(adj[u]):
+            v, eid2 = adj[u][ptr[u]]
+            ptr[u] += 1
+            eid = eid2>>1
+            if not used[eid]:
+                used[eid] = True
+                dfs(v, out)
+                out.append(eid2)
+
+    # For each vertex with edges, peel off a circuit
+    for u in range(len(adj)):
+        if ptr[u] < len(adj[u]):
+            path = []
+            dfs(u, path)
+            if not path:
+                continue
+            # rotate so if fake edge exists we start there
+            m = total_eid2//2
+            for i, x in enumerate(path):
+                if x >= 2*m:
+                    path = path[i:]+path[:i]
+                    break
+            # split at fake edges
+            cur = []
+            for x in path:
+                if x < 2*m:
+                    cur.append(x)
+                elif cur:
+                    trails.append(cur)
+                    cur = []
+            if cur:
+                trails.append(cur)
+    return trails
+
+def solve():
+    N, edges, deg, input_order = read_input()
+    adj, fake_limit = build_euler(N, edges, deg)
+    trails = hierholzer(adj, fake_limit*2)
+
+    m = len(edges)
+    color = [-1]*m           # final color of each real edge
+    mask = [0]*N            # bitmask per vertex
+
+    # Color each trail alternately
+    for tr in trails:
+        c = 1
+        for eid2 in tr:
+            eid = eid2>>1
+            if eid < m:
+                color[eid] = c
+                u,v = edges[eid]
+                if (eid2 & 1)==1:
+                    u,v = v,u
+                mask[u] |= 1<<c
+                mask[v] |= 1<<c
+                c = 3-c
+
+    # Verify all vertices with deg>=2 have both colors
+    need = (1<<1)|(1<<2)
+    for u in range(N):
+        if deg[u]>=2 and mask[u]!=need:
+            print("No solution")
+            return
+
+    # Print in input order
+    out = []
+    for u in range(N):
+        line = []
+        for eid in input_order[u]:
+            line.append(str(color[eid]))
+        line.append('0')
+        out.append(' '.join(line))
+    print('\n'.join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+- We need every vertex of degree ≥2 to see both colors.  
+- Alternate-colors along trails guarantee the local property at interior vertices.  
+- To cover all edges in a component, pair odd-degree vertices via fake edges to make the graph Eulerian.  
+- Extract Eulerian circuits, split at fake edges into real-only trails.  
+- Color each trail 1,2,1,2,… and verify each original high-degree vertex saw both colors. If so, output; else “No solution.”

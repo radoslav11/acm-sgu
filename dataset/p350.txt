@@ -1,0 +1,193 @@
+1. Abridged Problem Statement  
+-----------------------------  
+You are given all pairwise XORs of an unknown set A of size n: B contains M = n·(n–1)/2 numbers, each equal to Ai⊕Aj for all 1≤i<j≤n, in arbitrary order. Moreover, A has no nontrivial subset (size≥2) whose XOR is 0 (equivalently, its elements are linearly independent over GF(2)). Recover any valid A (order doesn’t matter).
+
+2. Detailed Editorial  
+---------------------  
+Key observations:  
+- XOR is addition in the GF(2) vector space of 31-bit integers.  
+- “No subset XORs to zero” means the elements of A form a linearly independent set (a basis) in that vector space.  
+- The multiset B of all pairwise XORs then consists exactly of all Xi⊕Xj for basis elements Xi, Xj.  
+
+Our goal is to find a basis {X1,…,Xn} such that the set of pairwise XORs matches B. Since a basis always can be “shifted” by XORing every element with a fixed vector without changing pairwise XORs, we may WLOG include 0 in our reconstructed set: if we recover {0, X2⊕X1, X3⊕X1,…}, then XORing the entire set with X1 yields a valid solution containing X1.  
+
+Algorithm outline:  
+1. Read m and array B of size m. Compute n from m = n(n–1)/2 via n = (1 + √(1 + 8m)) / 2.  
+2. Build a hash set (or map) O marking all values in B for O(1) lookup.  
+3. We will grow our answer vector ans starting from {0}. Maintain:  
+   - pedo = all XORs of subsets of ans found so far (initially {0}).  
+   - L = a hash set of those reachable XORs (initially {0}).  
+4. Iterate through each b in B (in any order). If b is not yet in L, test whether adding b as a new basis element is valid: check that for every existing basis element y in ans, the xor b⊕y exists in O (i.e., that pairwise XORs are all present in B).  
+5. If valid, incorporate b: For each existing subset‐XOR s in pedo, compute t = b⊕s and add t to L and pedo. Then append b to ans as a new basis vector.  
+6. Continue until ans.size()==n. At that point ans = {0, X2, X3, …, Xn}. Print ans; it’s a valid set A′. If desired, XOR each by some a to shift off the 0, but that’s optional because 0 is allowed.  
+
+Complexity:  
+- n≤15 (because m≤100), B size m=O(n²).  
+- For each candidate b we test O(n) existing basis elements, each lookup O(1).  
+- Updating pedo costs O(2^k) where k is current basis size ≤n, so total ≈O(2^n·n) ≤ ~500k.  
+Under m=100, this easily runs within time/memory limits.
+
+3. The Provided C++ Solution With Detailed Comments  
+----------------------------------------------------  
+#include <bits/stdc++.h>  
+using namespace std;
+
+// Utility to update x = max(x, y)
+template<class T, class T2>
+inline void chkmax(T& x, const T2& y) {
+    if (x < y) {
+        x = y;
+    }
+}
+// Utility to update x = min(x, y)
+template<class T, class T2>
+inline void chkmin(T& x, const T2& y) {
+    if (x > y) {
+        x = y;
+    }
+}
+
+const int MAXN = (1 << 10);
+
+int m, n;            // m = size of B; n = size of A to recover
+int B[MAXN];         // array of pairwise XORs
+int a0;              
+
+// Read input, compute n from m = n(n-1)/2
+void read() {
+    cin >> m;
+    for (int i = 0; i < m; i++) {
+        cin >> B[i];
+    }
+    // Solve n^2 - n - 2m = 0  =>  n = (1 + sqrt(1+8m)) / 2
+    n = (1 + sqrt(1 + 8 * m)) / 2;
+}
+
+// L: keeps track of which XORs of chosen basis subsets we've generated  
+// O: marks which values are present in B
+map<int, bool> L, O;  
+
+void solve() {
+    // Mark all given pairwise XORs in O
+    for (int i = 0; i < m; i++) {
+        O[B[i]] = true;
+    }
+
+    vector<int> ans;   // will hold our basis, starting with 0
+    vector<int> pedo;  // holds all subset XORs of ans
+    ans.push_back(0);
+    pedo.push_back(0);
+    L[0] = true;
+
+    // Try each b in B as a new basis element
+    for (int i = 0; i < m; i++) {
+        int b = B[i];
+        if (L.count(b)) continue;  // Already representable by existing basis
+        // Check validity: for every existing basis y, we need b⊕y in B
+        bool ok = true;
+        for (int y : ans) {
+            if (!O.count(b ^ y)) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) continue;
+
+        // Accept b as a new basis element:
+        // Generate new subset XORs by XORing b with all previous subset XORs
+        int oldSize = pedo.size();
+        for (int idx = 0; idx < oldSize; idx++) {
+            int s = pedo[idx];
+            int t = b ^ s;
+            if (!L.count(t)) {
+                L[t] = true;
+                pedo.push_back(t);
+            }
+        }
+        ans.push_back(b);
+        if ((int)ans.size() == n) break;  // done
+    }
+
+    // Output the reconstructed set A (contains 0 as one element)
+    for (int x : ans) {
+        cout << x << " ";
+    }
+    cout << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+
+4. Python Solution With Detailed Comments  
+-----------------------------------------  
+```python
+import math
+import sys
+from collections import deque
+
+def main():
+    data = sys.stdin.read().split()
+    m = int(data[0])
+    Bs = list(map(int, data[1:]))
+
+    # Recover n from m = n*(n-1)/2
+    n = int((1 + math.isqrt(1 + 8*m)) // 2)
+
+    # O: set of all given pairwise XORs for fast lookup
+    O = set(Bs)
+
+    # ans: our basis, start with 0
+    ans = [0]
+    # pedo: all XORs of subsets of ans
+    pedo = [0]
+    # L: set of reachable XORs
+    L = {0}
+
+    # Try each b in Bs as candidate basis element
+    for b in Bs:
+        if b in L:
+            # Already spanned by current basis
+            continue
+
+        # Check that XOR with every existing basis element is in B
+        valid = True
+        for y in ans:
+            if (b ^ y) not in O:
+                valid = False
+                break
+        if not valid:
+            continue
+
+        # Accept b
+        # Update pedo and L by XORing b with all existing subset XORs
+        old_pedo = list(pedo)
+        for s in old_pedo:
+            t = b ^ s
+            if t not in L:
+                L.add(t)
+                pedo.append(t)
+
+        ans.append(b)
+        if len(ans) == n:
+            break
+
+    # Print the reconstructed set (contains 0)
+    print(" ".join(map(str, ans)))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+------------------------  
+- A’s elements are linearly independent vectors over GF(2). B lists all pairwise XORs Ai⊕Aj.  
+- We can WLOG include 0 in our reconstruction (shifting by any A-element preserves B).  
+- Algorithm: maintain a basis `ans` (starting with 0), a set `O` of all B-values, and track all subset XORs `pedo` plus a hash `L` of those XORs.  
+- For each candidate b in B not yet in L, if for every existing basis y we have (b⊕y)∈O, accept b: update pedo/L by XORing b with all existing subset XORs, and append b to ans.  
+- Stop once ans.size()==n. Output ans.

@@ -1,0 +1,384 @@
+1. Abridged problem statement  
+Given an N×M grid of nonnegative weights and an integer K, pick exactly K cells so that  
+- In each occupied row, the chosen cells form one contiguous segment [l,r].  
+- For any two occupied rows, their segments overlap in at least one column.  
+- Once the left boundary ever moves right you cannot later move it back left; similarly once the right boundary ever moves left you cannot later move it back right.  
+These conditions guarantee that between any two chosen cells you can walk using at most two directions.  Maximize the total weight of the K selected cells.  Output the maximum sum and one valid set of K positions.
+
+2. Detailed editorial  
+We exploit the fact that any valid shape can be described by, for each row i, a segment [lᵢ, rᵢ], with  
+  a) rᵢ ≥ lᵢ,  
+  b) [lᵢ, rᵢ] ∩ [lᵢ₋₁, rᵢ₋₁] ≠ ∅ when both rows are used (so the shape is row‐connected),  
+  c) the left endpoints {lᵢ} form a unimodal (never returning) sequence: once you shrink from the left (lᵢ > lᵢ₋₁), you may no longer expand to the left, and similarly for the right endpoints {rᵢ} forming a unimodal sequence on the other side.  
+
+We set up a DP over rows with state  
+  DP(row, l, r, rem, mask) = maximum extra oil obtainable from rows row…N−1,  
+if in row−1 we used segment [l, r], we still need rem cells in total, and mask tells which sides have already “locked” (bit0=1 means left is locked, bit1=1 means right is locked).  
+
+Transition: for the current row pick any new segment [l′, r′] that  
+  1. has positive overlap with [l, r],  
+  2. uses ≤ rem cells,  
+  3. does not violate locked‐side constraints (i.e. if left side is unlocked you may move l′ ≤ l; if locked you must l′ ≥ l; similarly for r),  
+  4. update new_mask by setting bit0 if you shrank from the left (l′ > l), bit1 if shrank from the right (r′ < r).  
+
+We precompute 2D prefix sums so that the sum of any row‐segment is O(1).  The overall DP size is O(N·M²·K·4), and each transition loops over M², so about O(N·M⁴·K) ≲ 15·(15⁴)·225 ≃ 34M operations, which fits in time.  
+
+Finally we take the best starting row and segment [l, r], run the DP to get the maximum sum, then retrace the choices to list all K cells.  
+
+3. Provided C++ solution with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload I/O for pairs and vectors to simplify code
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto &x : a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto &x : a) out << x << ' ';
+    return out;
+}
+
+const int INF = (int)1e9 + 42;
+
+// Input dimensions and K
+int n, m, k;
+// Original grid of oil
+vector<vector<int>> a;
+// 2D prefix sums of a
+vector<vector<int>> psum;
+
+// Compute sum of rectangle [x1..x2]×[y1..y2] in O(1)
+int get_sum(int x1, int y1, int x2, int y2) {
+    int res = psum[x2][y2];
+    if (x1 > 0) res -= psum[x1 - 1][y2];
+    if (y1 > 0) res -= psum[x2][y1 - 1];
+    if (x1 > 0 && y1 > 0) res += psum[x1 - 1][y1 - 1];
+    return res;
+}
+
+// DP memoization table
+// dp[row][l][r][rem][mask]: best sum from row..n-1,
+// given previous segment [l,r], rem cells left, and mask of locked sides
+vector<vector<vector<vector<vector<int>>>>> dp;
+
+// Recursive DP
+int rec(int row, int l, int r, int rem, int mask) {
+    // If we've used all rows:
+    if (row == n) {
+        return (rem == 0 ? 0 : -INF);
+    }
+    // If no cells remain to choose, no further oil can be added
+    if (rem == 0) {
+        return 0;
+    }
+    int &memo = dp[row][l][r][rem][mask];
+    if (memo != -1) return memo;
+    memo = -INF;
+
+    // Can we expand on the left or right?
+    bool canExpandLeft  = !(mask & 1);
+    bool canExpandRight = !(mask & 2);
+
+    // Try every possible new segment [L',R'] in this row
+    for (int Lprime = 0; Lprime < m; ++Lprime) {
+        for (int Rprime = Lprime; Rprime < m; ++Rprime) {
+            int len = Rprime - Lprime + 1;
+            if (len > rem) continue;  // too many cells
+
+            // Overlap with previous row's segment?
+            int overlap = min(r, Rprime) - max(l, Lprime) + 1;
+            if (overlap <= 0) continue;  // must overlap
+
+            // Check expansion rules
+            if (!canExpandLeft  && Lprime  < l) continue;
+            if (!canExpandRight && Rprime > r) continue;
+
+            // Compute new lock mask
+            int newMask = mask;
+            if (Lprime  > l) newMask |= 1;  // we shrank left
+            if (Rprime < r) newMask |= 2;  // we shrank right
+
+            // Sum of this row's segment
+            int s = get_sum(row, Lprime, row, Rprime);
+            // Recurse and take max
+            memo = max(memo, s + rec(row + 1, Lprime, Rprime, rem - len, newMask));
+        }
+    }
+    return memo;
+}
+
+void solve() {
+    cin >> n >> m >> k;
+    a.assign(n, vector<int>(m));
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < m; j++)
+            cin >> a[i][j];
+
+    // Special case: pick 0 cells
+    if (k == 0) {
+        cout << "Oil : 0\n";
+        return;
+    }
+
+    // Build 2D prefix sums
+    psum = a;
+    for (int i = 0; i < n; i++){
+        for (int j = 0; j < m; j++){
+            if (i > 0) psum[i][j] += psum[i-1][j];
+            if (j > 0) psum[i][j] += psum[i][j-1];
+            if (i > 0 && j > 0) psum[i][j] -= psum[i-1][j-1];
+        }
+    }
+
+    // Initialize DP table to -1
+    dp.assign(n,
+        vector<vector<vector<vector<int>>>>(
+            m,
+            vector<vector<vector<int>>>(
+                m,
+                vector<vector<int>>(k+1, vector<int>(4, -1))
+            )
+        )
+    );
+
+    // Try every possible starting row and segment
+    int best = -INF, bestRow=0, bestL=0, bestR=0;
+    for (int row = 0; row < n; ++row) {
+        for (int L = 0; L < m; ++L) {
+            for (int R = L; R < m; ++R) {
+                int len = R - L + 1;
+                if (len > k) continue;
+                int s = get_sum(row, L, row, R);
+                int val = s + rec(row+1, L, R, k - len, 0);
+                if (val > best) {
+                    best = val;
+                    bestRow = row;
+                    bestL = L;
+                    bestR = R;
+                }
+            }
+        }
+    }
+
+    // Output answer
+    cout << "Oil : " << best << "\n";
+
+    // Reconstruct the chosen cells
+    vector<pair<int,int>> ans;
+    int rem = k;
+    int row = bestRow, L = bestL, R = bestR, mask = 0;
+
+    // Take initial segment
+    for (int c = L; c <= R; ++c)
+        ans.emplace_back(row, c);
+    rem -= (R - L + 1);
+    best -= get_sum(row, L, row, R);
+    row++;
+
+    // Walk forward picking optimal segments
+    while (rem > 0) {
+        bool canExpandLeft  = !(mask & 1);
+        bool canExpandRight = !(mask & 2);
+        int target = best;  // remaining best sum
+        int chooseL=-1, chooseR=-1, chooseMask=-1;
+
+        for (int Lp = 0; Lp < m; ++Lp) {
+            for (int Rp = Lp; Rp < m; ++Rp) {
+                int len = Rp - Lp + 1;
+                if (len > rem) continue;
+                int overlap = min(R, Rp) - max(L, Lp) + 1;
+                if (overlap <= 0) continue;
+                if (!canExpandLeft  && Lp  < L) continue;
+                if (!canExpandRight && Rp > R) continue;
+
+                int newMask = mask;
+                if (Lp > L) newMask |= 1;
+                if (Rp < R) newMask |= 2;
+                int s = get_sum(row, Lp, row, Rp);
+                if (s + rec(row+1, Lp, Rp, rem-len, newMask) == target) {
+                    chooseL = Lp;
+                    chooseR = Rp;
+                    chooseMask = newMask;
+                }
+            }
+        }
+        // Record the chosen row‐segment
+        for (int c = chooseL; c <= chooseR; ++c)
+            ans.emplace_back(row, c);
+        rem -= (chooseR - chooseL + 1);
+        best -= get_sum(row, chooseL, row, chooseR);
+        // Move to next state
+        L = chooseL;  R = chooseR;  mask = chooseMask;  row++;
+    }
+
+    // Sort and output with 1-based indices
+    sort(ans.begin(), ans.end());
+    for (auto &p : ans)
+        cout << (p.first+1) << " " << (p.second+1) << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    solve();
+    return 0;
+}
+```
+
+4. Python solution with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+    n, m, K = map(int, (next(it), next(it), next(it)))
+    a = [[int(next(it)) for _ in range(m)] for __ in range(n)]
+
+    # Quick exit if K == 0
+    if K == 0:
+        print("Oil : 0")
+        return
+
+    # Build 2D prefix sums
+    ps = [[0]*m for _ in range(n)]
+    for i in range(n):
+        for j in range(m):
+            ps[i][j] = a[i][j]
+            if i>0: ps[i][j] += ps[i-1][j]
+            if j>0: ps[i][j] += ps[i][j-1]
+            if i>0 and j>0: ps[i][j] -= ps[i-1][j-1]
+
+    def rectsum(x1,y1,x2,y2):
+        """Sum of a[x1..x2][y1..y2] in O(1)."""
+        res = ps[x2][y2]
+        if x1>0: res -= ps[x1-1][y2]
+        if y1>0: res -= ps[x2][y1-1]
+        if x1>0 and y1>0: res += ps[x1-1][y1-1]
+        return res
+
+    from functools import lru_cache
+    INF = 10**12
+
+    @lru_cache(None)
+    def dp(row, L, R, rem, mask):
+        """
+        Max oil from rows row..n-1,
+        if previous row used segment [L,R],
+        rem cells still needed,
+        mask bits: 1=left locked, 2=right locked.
+        """
+        # If we've processed all rows
+        if row==n:
+            return 0 if rem==0 else -INF
+        # If no more cells to pick
+        if rem==0:
+            return 0
+        best = -INF
+        canL = not(mask & 1)
+        canR = not(mask & 2)
+        # Try all segments [l2..r2] in this row
+        for l2 in range(m):
+            for r2 in range(l2, m):
+                length = r2 - l2 + 1
+                if length>rem: continue
+                # Must overlap with [L,R]
+                if min(R,r2) < max(L,l2): continue
+                # Check locks
+                if (not canL) and l2 < L: continue
+                if (not canR) and r2 > R: continue
+                # Update mask
+                nm = mask
+                if l2 > L: nm |= 1
+                if r2 < R: nm |= 2
+                s = rectsum(row, l2, row, r2)
+                val = s + dp(row+1, l2, r2, rem-length, nm)
+                if val>best:
+                    best = val
+        return best
+
+    # Find best starting row and segment
+    ansVal = -INF
+    start = None
+    for row in range(n):
+        for L in range(m):
+            for R in range(L, m):
+                length = R-L+1
+                if length>K: continue
+                s = rectsum(row, L, row, R)
+                val = s + dp(row+1, L, R, K-length, 0)
+                if val>ansVal:
+                    ansVal = val
+                    start = (row, L, R)
+
+    # Output maximum
+    print("Oil : {}".format(ansVal))
+
+    # Reconstruct chosen cells
+    (row, L, R) = start
+    rem = K
+    mask = 0
+    cells = []
+
+    # Take initial segment
+    for c in range(L, R+1):
+        cells.append((row+1, c+1))
+    rem -= (R-L+1)
+    ansVal -= rectsum(row, L, row, R)
+    row += 1
+
+    # Walk forward until rem==0
+    while rem>0:
+        target = ansVal
+        canL = not(mask & 1)
+        canR = not(mask & 2)
+        found = None
+        for l2 in range(m):
+            for r2 in range(l2, m):
+                length = r2-l2+1
+                if length>rem: continue
+                if min(R,r2) < max(L,l2): continue
+                if (not canL) and l2<L: continue
+                if (not canR) and r2>R: continue
+                nm = mask
+                if l2>L: nm |= 1
+                if r2<R: nm |= 2
+                s = rectsum(row, l2, row, r2)
+                if s + dp(row+1, l2, r2, rem-length, nm) == target:
+                    found = (l2, r2, nm)
+                    break
+            if found: break
+        l2, r2, mask = found
+        # Add these cells
+        for c in range(l2, r2+1):
+            cells.append((row+1, c+1))
+        rem -= (r2-l2+1)
+        ansVal -= rectsum(row, l2, row, r2)
+        L, R = l2, r2
+        row += 1
+
+    # Sort and print
+    cells.sort()
+    for x,y in cells:
+        print(x, y)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed editorial  
+Use a 5-dimensional DP: state = (row, previous segment L..R, cells remaining, two-bit lock mask).  
+Transitions try every new segment in current row that overlaps the old, respects locks, and subtracts its size from rem.  
+Optimize sums with 2D prefix sums. Complexity O(N·M⁴·K). Reconstruct by replaying DP choices.

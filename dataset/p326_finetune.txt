@@ -1,0 +1,356 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+326. Perspective
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Breaking news! A Russian billionaire has bought a yet undisclosed NBA team. He's planning to invest huge effort and money into making that team the best. And in fact he's been very specific about the expected result: the first place.
+
+Being his advisor, you need to determine whether it's possible for your team to finish first in its division or not.
+
+More formally, the NBA regular season is organized as follows: all teams play some games, in each game one team wins and one team loses. Teams are grouped into divisions, some games are between the teams in the same division, and some are between the teams in different divisions.
+
+Given the current score and the total number of remaining games for each team of your division, and the number of remaining games between each pair of teams in your division, determine if it's possible for your team to score at least as much wins as any other team in your division.
+
+Input
+The first line of input contains N (2 ≤ N ≤ 20) — the number of teams in your division. They are numbered from 1 to N, your team has number 1.
+
+The second line of input contains N integers w1, w2,..., wN, where wi is the total number of games that ith team has won to the moment.
+
+The third line of input contains N integers r1, r2,..., rN, where ri is the total number of remaining games for the ith team (including the games inside the division).
+
+The next N lines contain N integers each. The jth integer in the ith line of those contains aij — the number of games remaining between teams i and j. It is always true that aij=aji and aii=0, for all i ai1 + ai2 +... + aiN ≤ ri.
+
+All the numbers in input are non-negative and don't exceed 10\,000.
+
+Output
+On the only line of output, print "YES" (without quotes) if it's possible for the team 1 to score at least as much wins as any other team of its division, and "NO" (without quotes) otherwise.
+
+Example(s)
+sample input
+sample output
+3
+1 2 2
+1 1 1
+0 0 0
+0 0 0
+0 0 0
+YES
+
+sample input
+sample output
+3
+1 2 2
+1 1 1
+0 0 0
+0 0 1
+0 1 0
+NO
+
+<|response|>
+1. Abridged Problem Statement  
+- There are N teams in a division, numbered 1…N. Your team is team 1.  
+- Team i currently has w[i] wins and has r[i] games remaining (some against division rivals, some outside).  
+- For each pair (i,j), a[i][j] is the number of remaining games between team i and team j (so a[i][j]=a[j][i], a[i][i]=0, and ∑ₖa[i][k] ≤ r[i]).  
+- Each remaining game produces exactly one win for one side.  
+- Question: Can we assign winners to all remaining games so that team 1’s final wins ≥ every other team’s final wins?  
+- Output “YES” if it’s possible, otherwise “NO.”
+
+2. Key Observations  
+- Team 1’s best‐case total wins is  
+    W1_max = w[1] + r[1],  
+  by imagining team 1 wins all its remaining games.  
+- If any other team i already has w[i] > W1_max, elimination is immediate → answer NO.  
+- We only need to worry about games among the other teams (2…N).  Games involving team 1 can all be “given” to team 1 in the best scenario.  
+- We must distribute the wins of the games among teams 2…N so that each of them ends up with at most W1_max wins.  
+- This is a classic “baseball elimination” setup reducible to a max‐flow feasibility check.
+
+3. Full Solution Approach  
+a) Compute W1_max = w[1] + r[1].  
+b) Early exit: if ∃ i ≥ 2 with w[i] > W1_max, print NO.  
+c) Enumerate all remaining games among teams 2…N.  Let G = list of tuples (i,j,g_ij) with g_ij = a[i][j] > 0 and 2 ≤ i < j ≤ N.  Let totalGames = ∑ g_ij.  
+d) Build a flow network:  
+   - Create a source node S and a sink node T.  
+   - For each game (i,j,g), create a “game node” p.  Add an edge S→p of capacity g, representing these g games must be assigned.  
+   - From p, add edges p→i and p→j, each of capacity g, meaning each of these g games gives one win to either i or j.  
+   - For each team node i = 2…N, add an edge i→T of capacity (W1_max − w[i]), limiting how many additional wins team i can collect without surpassing W1_max.  
+e) Compute max‐flow from S to T (e.g., with Dinic).  
+   - If max_flow == totalGames, we can assign all inter‐opponent games without any team exceeding W1_max → print YES.  
+   - Otherwise, print NO.  
+
+Complexities:  
+- Number of game nodes ≤ (N−1 choose 2) = O(N²).  
+- Edges O(N²).  
+- Dinic runs in O(E·√V) or better, easily fast for N ≤ 20.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Dinic max‐flow template (integer capacities)
+struct Dinic {
+    struct Edge {
+        int to, rev;
+        int cap;
+    };
+    int n;
+    vector<vector<Edge>> adj;
+    vector<int> level, ptr;
+
+    Dinic(int _n): n(_n), adj(n), level(n), ptr(n) {}
+
+    // add directed edge u->v with capacity c
+    void addEdge(int u, int v, int c) {
+        adj[u].push_back({v, (int)adj[v].size(), c});
+        adj[v].push_back({u, (int)adj[u].size()-1, 0});
+    }
+
+    // BFS to build level graph
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0;
+        q.push(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e : adj[u]) {
+                if (level[e.to] < 0 && e.cap > 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+
+    // DFS to send flow along the level graph
+    int dfs(int u, int t, int pushed) {
+        if (pushed == 0) return 0;
+        if (u == t) return pushed;
+        for (int &cid = ptr[u]; cid < (int)adj[u].size(); cid++) {
+            auto &e = adj[u][cid];
+            if (level[e.to] == level[u] + 1 && e.cap > 0) {
+                int tr = dfs(e.to, t, min(pushed, e.cap));
+                if (tr > 0) {
+                    e.cap -= tr;
+                    adj[e.to][e.rev].cap += tr;
+                    return tr;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // compute max‐flow from s to t
+    int maxFlow(int s, int t) {
+        int flow = 0;
+        while (bfs(s, t)) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (int pushed = dfs(s, t, INT_MAX)) {
+                flow += pushed;
+            }
+        }
+        return flow;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    vector<int> w(N), r(N);
+    for(int i = 0; i < N; i++) cin >> w[i];
+    for(int i = 0; i < N; i++) cin >> r[i];
+
+    vector<vector<int>> a(N, vector<int>(N));
+    for(int i = 0; i < N; i++)
+        for(int j = 0; j < N; j++)
+            cin >> a[i][j];
+
+    // 1) Compute team 1’s maximum possible wins
+    int W1_max = w[0] + r[0];
+
+    // 2) Immediate elimination check
+    for(int i = 1; i < N; i++) {
+        if (w[i] > W1_max) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // 3) Collect remaining games among opponents 2..N
+    struct Game { int i, j, g; };
+    vector<Game> games;
+    int totalGames = 0;
+    for(int i = 1; i < N; i++){
+        for(int j = i+1; j < N; j++){
+            int g = a[i][j];
+            if (g > 0) {
+                games.push_back({i, j, g});
+                totalGames += g;
+            }
+        }
+    }
+
+    // 4) Build flow network
+    // Nodes: 0..N-1 = team nodes
+    //       N..N+M-1 = game nodes
+    //       S = N+M, T = N+M+1
+    int M = games.size();
+    int S = N + M;
+    int T = N + M + 1;
+    Dinic dinic(N + M + 2);
+
+    // a) Source -> each game node
+    for(int idx = 0; idx < M; idx++) {
+        int gameNode = N + idx;
+        int i = games[idx].i;
+        int j = games[idx].j;
+        int g = games[idx].g;
+        dinic.addEdge(S, gameNode, g);
+        // game -> team i, game -> team j
+        dinic.addEdge(gameNode, i, g);
+        dinic.addEdge(gameNode, j, g);
+    }
+
+    // b) Each opponent team -> sink with capacity = W1_max - w[i]
+    for(int i = 1; i < N; i++){
+        int cap = W1_max - w[i];
+        dinic.addEdge(i, T, cap);
+    }
+
+    // 5) Compute max flow
+    int flow = dinic.maxFlow(S, T);
+
+    // 6) Check feasibility
+    cout << (flow == totalGames ? "YES\n" : "NO\n");
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+        self.level = [0]*n
+        self.it    = [0]*n
+
+    def add_edge(self, u, v, cap):
+        # forward edge: [to, cap, rev-index]
+        self.adj[u].append([v, cap, len(self.adj[v])])
+        # backward edge: cap=0 initially
+        self.adj[v].append([u, 0,   len(self.adj[u]) - 1])
+
+    def bfs(self, s, t):
+        for i in range(self.n):
+            self.level[i] = -1
+        queue = deque([s])
+        self.level[s] = 0
+        while queue:
+            u = queue.popleft()
+            for v, cap, rev in self.adj[u]:
+                if cap > 0 and self.level[v] < 0:
+                    self.level[v] = self.level[u] + 1
+                    queue.append(v)
+        return self.level[t] >= 0
+
+    def dfs(self, u, t, f):
+        if u == t:
+            return f
+        for i in range(self.it[u], len(self.adj[u])):
+            v, cap, rev = self.adj[u][i]
+            if cap > 0 and self.level[v] == self.level[u] + 1:
+                pushed = self.dfs(v, t, min(f, cap))
+                if pushed:
+                    # reduce forward
+                    self.adj[u][i][1] -= pushed
+                    # increase backward
+                    self.adj[v][rev][1] += pushed
+                    return pushed
+            self.it[u] += 1
+        return 0
+
+    def max_flow(self, s, t):
+        flow = 0
+        INF = 10**18
+        while self.bfs(s, t):
+            self.it = [0]*self.n
+            while True:
+                pushed = self.dfs(s, t, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    w = [int(next(it)) for _ in range(N)]
+    r = [int(next(it)) for _ in range(N)]
+    a = [[int(next(it)) for _ in range(N)] for __ in range(N)]
+
+    # 1) Max possible wins for team 1
+    W1_max = w[0] + r[0]
+
+    # 2) Immediate elimination
+    for i in range(1, N):
+        if w[i] > W1_max:
+            print("NO")
+            return
+
+    # 3) Collect games among opponents 2..N
+    games = []
+    totalGames = 0
+    for i in range(1, N):
+        for j in range(i+1, N):
+            g = a[i][j]
+            if g > 0:
+                games.append((i, j, g))
+                totalGames += g
+
+    # 4) Build flow network
+    M = len(games)
+    S = N + M
+    T = N + M + 1
+    dinic = Dinic(N + M + 2)
+
+    # a) Source -> game nodes
+    for idx, (i, j, g) in enumerate(games):
+        game_node = N + idx
+        dinic.add_edge(S, game_node, g)
+        dinic.add_edge(game_node, i,       g)
+        dinic.add_edge(game_node, j,       g)
+
+    # b) Team i -> sink
+    for i in range(1, N):
+        cap = W1_max - w[i]
+        dinic.add_edge(i, T, cap)
+
+    # 5) Compute max flow
+    flow = dinic.max_flow(S, T)
+
+    # 6) Check if we can assign all games
+    print("YES" if flow == totalGames else "NO")
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation Highlights:  
+- We never explicitly model games involving team 1; we assume team 1 wins them all to maximize its tally.  
+- All remaining inter‐opponent games must be “routed” through the flow from S to T. If every such game can be assigned without any opponent exceeding W1_max, team 1 can finish at least tied for first.  
+- The flow value must match the total number of those games for feasibility.

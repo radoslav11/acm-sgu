@@ -1,0 +1,230 @@
+1. Abridged Problem Statement  
+You have 3N integers. Partition them into three sequences A, B, C of length N each (each original number used exactly once) to maximize  
+   S = Σ_{i=1..N} (A_i – B_i) * C_i.  
+You may reorder A, B, C arbitrarily after choosing their elements. Given T test cases with the same N, output the maximum S for each.
+
+2. Detailed Editorial  
+
+Overview  
+1.  Sort all 3N numbers ascending; call them X[0..3N–1].  
+2.  It is always optimal to take the N smallest values as B (since they enter with a minus sign). Call these B[0..N–1], already sorted.  
+3.  Let AC = the remaining 2N numbers, sorted ascending. We must split AC into two size-N subsets: A and C.  After deciding which go to A and which to C, we sort A ascending and C ascending, then pair them in index order to form the sum  
+      Σ_{i=0..N–1} (A[i] – B[i]) * C[i].  
+
+Brute-forcing all ways to choose N out of 2N for A is O(C(2N,N)), too big for N up to 25.  
+Instead we use a 2^N-state DP that “slides” a window of width N along the sorted AC array and maintains which slots in the current window are already used by C.  A clever bitmask-shift trick reuses states across windows so we only ever need 2^N DP entries.
+
+Key DP idea (“mask rolling”)  
+- Let v = AC sorted ascending of size 2N.  
+- We will process v in decreasing order (from largest to smallest).  At each of 2N steps we either assign the current element to A or to C.  
+- We maintain a bitmask mask of length N.  The ones in mask mark which “C-slots” in the current sliding window have already been filled.  The zeros are still free to take a new C.  
+- The count of bits set in mask is cnt = how many C’s we have already chosen so far.  Equivalently we have N–cnt A’s chosen (out of the N slots) to pair with the C’s.  Each time we move to the next element (one position down in AC), we “shift” the window by one to reflect that now one new potential slot enters at the top.  We find that the only sensible place to put the new A is in the newest (top) slot, while the new C can go into any zero‐bit position i.  
+- We precompute popcnt[mask] for all masks.  We keep dp[mask] = max total so far when our current mask is mask.  
+- Transition from mask:  
+    1. Compute cnt = popcnt[mask].  
+    2. Shift mask left by 1 bit, drop the top; then flip exactly one zero‐bit in the new mask to one (this “recycles” the oldest A‐slot back into play).  
+    3. Call that intermediate state next_mask.  
+    4. For each i from 0..N–1 such that next_mask has bit i = 0, we can choose to put current element v[j] into C at slot i.  That slot i corresponds to pairing with A at slot top_zero (the one we fresh‐allocated).  
+    5. The contribution of pairing that A (call it A_val) with this C (call it C_val) is (A_val – B[cnt]) * C_val if we have already picked cnt B’s smaller than the current count of C’s.  
+    6. We set dp[next_mask | (1<<i)] = max(dp[next_mask | (1<<i)], dp[mask] + (A_val–B[cnt]) * C_val).  
+
+After processing all 2N elements, the answer is in dp[(1<<N)–1] (all bits = 1).  
+
+Complexities  
+- States: 2^N (N ≤ 25 ⇒ at most 2^25 ≈ 33 million states).  
+- Each state does O(N) work. In C++ with bit‐operations this runs in ~1–1.5 s for N=25.  
+
+3. C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload for easy IO of vector and pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto &x : a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x : a) out << x << ' ';
+    return out;
+}
+
+int n;                   // the N in 3N
+vector<int> vals;        // holds the 3N input numbers
+int dp[1 << 25];         // dp[mask] = best sum for this mask
+int8_t popcnt[1 << 25];  // precomputed popcount for masks up to 2^N
+
+// Read one test case (fills vals)
+void read_input() {
+    vals.resize(3 * n);
+    cin >> vals;
+}
+
+// Precompute popcount for all masks up to 2^n
+void precompute_popcount() {
+    popcnt[0] = 0;
+    int LIMIT = 1 << n;
+    for(int mask = 1; mask < LIMIT; mask++) {
+        popcnt[mask] = popcnt[mask >> 1] + (mask & 1);
+    }
+}
+
+void solve_one() {
+    // Pair each value with its original index (we sort just by value)
+    vector<pair<int,int>> V;
+    for(int i = 0; i < 3 * n; i++) {
+        V.emplace_back(vals[i], i);
+    }
+    sort(V.begin(), V.end()); 
+
+    // Pick B = the N smallest values
+    vector<pair<int,int>> B(V.begin(), V.begin() + n);
+    // AC = the other 2N values
+    vector<pair<int,int>> AC(V.begin() + n, V.end());
+
+    // We'll do a DP over masks of size N
+    int FULL = (1 << n) - 1;
+    int SZ2 = 2 * n;
+
+    // Initialize dp: no contributions yet
+    memset(dp, 0, sizeof(int) * (1 << n));
+
+    // top_zero will track the highest zero bit in the rolling mask
+    int top_zero = n;  
+
+    // Iterate over every mask in increasing order
+    // We interpret this enumeration as “processing the AC array from largest to smallest.”
+    for(int mask = 0; mask < (1 << n); mask++) {
+        int cnt = popcnt[mask];   // how many C’s we have chosen so far
+        // Build the “shifted” window mask
+        int next_mask = mask << 1;  
+
+        // If the bit we just shifted out was a 0, we decrement top_zero
+        if((next_mask >> top_zero) & 1) {
+            top_zero--;
+        }
+        // Mark exactly one zero position (the new top_zero) as 1
+        next_mask |= (1 << top_zero);
+        // Truncate mask to N bits
+        next_mask &= FULL;
+
+        // Try to assign the new element (the one at index j = SZ2 - cnt - 1 in AC)
+        // to be a C in any free slot i
+        for(int i = 0; i < n; i++) {
+            if((next_mask >> i) & 1) continue;  // slot i not free
+            // B[cnt] is the next B
+            int Bj = B[cnt].first;
+            // The A we are implicitly pairing with is the one at that recycled slot
+            // which is at AC index: (n - cnt + top_zero - 1)
+            int Aj = AC[n - cnt + top_zero - 1].first;
+            // The C value is from position: (n - cnt + i - 1)
+            int Cj = AC[n - cnt + i - 1].first;
+
+            int newmask = next_mask | (1 << i);
+            int gain = (Aj - Bj) * Cj;
+            dp[newmask] = max(dp[newmask], dp[mask] + gain);
+        }
+    }
+
+    // The full-mask (all N bits = 1) holds the answer
+    cout << dp[FULL] << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T;
+    cin >> T >> n;
+    precompute_popcount();
+    while(T--) {
+        read_input();
+        solve_one();
+    }
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+input = sys.stdin.readline
+
+def main():
+    T, n = map(int, input().split())
+    FULL = (1 << n) - 1
+
+    # Precompute popcounts for 0..2^n-1
+    popcnt = [0] * (1<<n)
+    for m in range(1, 1<<n):
+        popcnt[m] = popcnt[m>>1] + (m & 1)
+
+    for _ in range(T):
+        X = list(map(int, input().split()))
+        X.sort()
+        # Select B = N smallest
+        B = X[:n]
+        # The remaining 2N values
+        AC = X[n:]
+
+        # dp[mask] = best sum so far with this mask of chosen C-slots
+        dp = [0] * (1<<n)
+
+        # 'top_zero' is the index of the fresh slot to recycle each step
+        top_zero = n
+
+        # Process masks in ascending order => implicitly from largest AC to smallest
+        for mask in range(1<<n):
+            cnt = popcnt[mask]       # how many Cs chosen so far
+            # Shift window
+            next_mask = (mask << 1) & FULL
+
+            # If the bit we dropped was zero, update top_zero
+            if ((mask >> (n-1)) & 1) == 0:
+                top_zero -= 1
+            # Mark the recycled slot as occupied (will be used by an A)
+            next_mask |= (1 << top_zero)
+
+            # Try putting the new AC element into any free C-slot
+            # The new element in AC that we are placing is at index:
+            #    j = n - cnt + *something* - 1, but in mask ordering we simply
+            #    recompute Aj,Cj the same way as the C++ logic.
+            for i in range(n):
+                if (next_mask >> i) & 1:
+                    continue
+                # B[cnt] is the next B
+                Bj = B[cnt]
+                # A is from the recycled slot (complex index arithmetic)
+                Aj = AC[n - cnt + top_zero - 1]
+                # C is from slot i
+                Cj = AC[n - cnt + i - 1]
+                newmask = next_mask | (1 << i)
+                gain = (Aj - Bj) * Cj
+                if dp[mask] + gain > dp[newmask]:
+                    dp[newmask] = dp[mask] + gain
+
+        # answer in full mask
+        print(dp[FULL])
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Sort 3N numbers; take N smallest as B.  
+- Let AC be the other 2N sorted numbers. We must pick N of AC as A and N as C, then pair sorted A[i] with sorted C[i] to maximize Σ(A[i]–B[i])·C[i].  
+- Brute forcing C(2N,N) is too big. Instead use a 2^N‐state DP over a rolling window of width N on AC: a bitmask tracks which “C‐slots” are filled, shifting and “recycling” one slot per step to represent the next A.  
+- Transition in O(N) per mask, total O(N·2^N). The answer is dp[(1<<N)–1].

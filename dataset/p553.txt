@@ -1,0 +1,275 @@
+1. A concise, abridged version of the problem statement  
+----------------------------------------------------------------  
+We have a string of n pearls in a row; initially the first n–m pearls lie on a table, the last m pearls hang off the table. Pearl i has weight w[i] and value c[i]. Each day you may remove exactly one pearl—either from the hanging end (an “H” operation) or from the table end (a “T” operation). When you remove from the hanging end, you steal that pearl (gain its value) but then must slide the string so exactly m pearls still hang: one more pearl from the table side becomes hanging (that pearl is not stolen). When you remove from the table end, you simply steal that pearl (gain its value) and hanging pearls stay the same. After every operation, the configuration must satisfy  
+   (sum of weights of hanging pearls) ≤ k × (sum of weights of pearls on the table),  
+or else the string will slip. Maximize the total value stolen, and output the number of operations, that maximum total value, and any sequence of ‘H’/‘T’ operations achieving it.
+
+2. Detailed editorial  
+------------------------  
+Definitions and observations  
+  Let n, m, k be as given. Label pearls 0..n–1, where 0..n–m–1 lie on the table and n–m..n–1 hang.  
+  An “H” operation: remove pearl at index end (n–1), gain c[n–1], decrease n by 1; then slide: one pearl from the old table end (index n–m–1 before removal) becomes hanging, but is not stolen. Net effect on weights:  
+      H_weight_lost = w[n–1],  
+      Table_weight_lost = w[n–m–1],  
+      Hanging_weight_gained = –w[n–1] + w[n–m–1],  
+      Table_weight_gained = –w[n–m–1].  
+  A “T” operation: remove pearl at index 0, gain c[0], shift all indices down by one; hanging segment unaffected.  
+  The safety constraint only matters when you do an “H” operation, because taking from the table only reduces table weight (and doesn’t change hanging), so it cannot immediately break the inequality unless you later do another “H”. Hence:  
+      – If you plan t total “H” operations, you should do them all first (when your table weight is as large as possible), and only after those t operations do you do any number of “T” operations.  
+      – You only need to check the inequality for each prefix of those t hanging removals.  
+
+Prefix sums  
+  Compute two prefix‐sum arrays of length n:  
+      PrefW[i] = w[0] + w[1] + … + w[i],  
+      PrefC[i] = c[0] + c[1] + … + c[i].  
+  Define getW(l,r) = PrefW[r] – (l>0 ? PrefW[l–1] : 0), similarly getC(l,r).  
+
+Iterating over t = number of H’s  
+  For t = 0,1,2,… as long as it stays safe, compute:  
+    After t H’s, the remaining string has length n–t ; hanging pearls now occupy positions [(n–t)–m .. (n–1)–t]. Compute:  
+       W_hang(t) = getW((n–t)–m, (n–1)–t),  
+       W_table(t) = getW(0, (n–t)–m–1).  
+      Safety condition: W_hang(t) ≤ k × W_table(t).  
+    If unsafe, stop growing t further (further H’s only make table lighter).  
+  Within each feasible t, we can then steal from the table up to y pearls (all “T”’s come after all “H”’s). After stealing y from the front, the new table weight is getW(y, (n–t)–m–1), but no more H’s follow, so no further safety checks are needed. We choose the maximum y so that the hanging‐v‐table inequality still held just before we switch from H to T. That inequality involved W_table(t), not the reduced table after T’s, so y can be as large as possible: up to (n–t)–m, but we must guarantee that before we started taking T’s the last safety‐check after H’s was satisfied. In fact the maximal y is simply the largest y in [0..(n–t)–m] (we can binary‐search y) because the safety condition depends only on W_hang(t) and getW(y, (n–t)–m–1) ≥ W_hang(t)/k.  
+
+Scoring  
+  Score_H(t) = sum of values of the t stolen hanging pearls = c[n–1] + c[n–2] + … + c[n–t].  Precompute a suffix‐sum or accumulate as you go.  
+  Score_T(y) = getC(0,y–1).  
+  Total(t,y) = Score_H(t) + Score_T(y).  Track the maximal total and record (t,y).  
+
+Reconstruct  
+  Output p = t+y, s = best total, and sequence = string of t ‘H’ characters followed by y ‘T’ characters.  
+
+Time complexity O(n log n) for the binary searches over y, with O(n) enumeration of t.  
+
+3. The provided C++ solution with detailed comments  
+-------------------------------------------------------------  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << and >> for pairs and vectors to simplify I/O
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for (auto &x : a) in >> x;
+    return in;
+}
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for (auto &x : a) out << x << ' ';
+    return out;
+}
+
+int n, m, k;
+vector<pair<int,int>> a;   // a[i] = {weight w[i], cost c[i]}
+
+// Read input: n, m, k, then n lines of (w[i], c[i])
+void read() {
+    cin >> n >> m >> k;
+    a.resize(n);
+    cin >> a;
+}
+
+void solve() {
+    // Build prefix sums for weights and costs
+    vector<int> prefW(n), prefC(n);
+    for (int i = 0; i < n; i++) {
+        prefW[i] = a[i].first;
+        prefC[i] = a[i].second;
+        if (i > 0) {
+            prefW[i] += prefW[i-1];
+            prefC[i] += prefC[i-1];
+        }
+    }
+    // Helper lambdas: get sum of weights or costs on [l..r]
+    auto getW = [&](int l, int r) -> int {
+        if (l > r) return 0;
+        return prefW[r] - (l>0 ? prefW[l-1] : 0);
+    };
+    auto getC = [&](int l, int r) -> int {
+        if (l > r) return 0;
+        return prefC[r] - (l>0 ? prefC[l-1] : 0);
+    };
+
+    int bestTotal = 0;    // best total value
+    int bestTakes = 0;    // best number of operations t+y
+    int bestX = 0, bestY = 0; // best (x=t H's, y T's)
+
+    int scoreH = 0;       // running sum of the H picks
+    // We iterate x = number of 'H' operations (0,1,2,...) as long as safe
+    // String length remaining is L = n - x
+    for (int x = 0; x <= n - m; x++) {
+        int L = n - x;    // after x H's, length left
+        if (L < m) break; // must have at least m hanging pearls left
+
+        // Compute hanging and table weights after x H's
+        // hanging are indices [L-m .. L-1] in the original array
+        int W_hang = getW(L - m, L - 1);
+        int W_table = getW(0, L - m - 1);
+
+        // Safety check for the last H removal
+        if ((long long)W_hang > (long long)k * W_table) {
+            // no further x will be safe, since W_table only decreases
+            break;
+        }
+
+        // Now we can take T operations (steal from front) up to y pearls
+        // We want the maximum y in [0..L-m] so that
+        // getW(y, L-m-1)*k >= W_hang
+        // Binary search y
+        int low = 0, high = L - m, bestMid = 0;
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            int W_table_afterT = getW(mid, L - m - 1);
+            if ((long long)W_table_afterT * k >= W_hang) {
+                bestMid = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        int y = bestMid;
+
+        // Total score = score from x H-picks + score of y T-picks
+        int total = scoreH + getC(0, y - 1);
+        int ops = x + y;
+        if (total > bestTotal) {
+            bestTotal = total;
+            bestTakes = ops;
+            bestX = x;
+            bestY = y;
+        }
+
+        // Prepare scoreH for x+1: add the cost of next H pearl
+        if (x < n) {
+            scoreH += a[n - 1 - x].second;
+        }
+    }
+
+    // Output
+    if (bestTotal == 0) {
+        // Cannot take any pearl
+        cout << 0 << " " << 0 << "\n";
+        return;
+    }
+    cout << bestTakes << " " << bestTotal << "\n";
+    // Sequence: bestX times 'H', then bestY times 'T'
+    for (int i = 0; i < bestX; i++) cout << 'H';
+    for (int i = 0; i < bestY; i++) cout << 'T';
+    cout << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. A Python solution with detailed comments  
+---------------------------------------------
+```python
+import sys
+import threading
+def main():
+    data = sys.stdin.read().split()
+    if not data: 
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+    k = int(next(it))
+    w = [0]*n
+    c = [0]*n
+    for i in range(n):
+        w[i] = int(next(it))
+        c[i] = int(next(it))
+
+    # Build prefix sums
+    prefW = [0]*n
+    prefC = [0]*n
+    prefW[0] = w[0]
+    prefC[0] = c[0]
+    for i in range(1,n):
+        prefW[i] = prefW[i-1] + w[i]
+        prefC[i] = prefC[i-1] + c[i]
+
+    # Helpers: sum of w[l..r], sum of c[l..r]
+    def getW(l, r):
+        if l > r: 
+            return 0
+        return prefW[r] - (prefW[l-1] if l>0 else 0)
+    def getC(l, r):
+        if l > r: 
+            return 0
+        return prefC[r] - (prefC[l-1] if l>0 else 0)
+
+    best_total = 0
+    best_x = 0  # number of H's
+    best_y = 0  # number of T's
+
+    scoreH = 0  # cumulative sum of H-values stolen so far
+    # Try x = 0 .. up to n-m H-operations
+    for x in range(0, n-m+1):
+        L = n - x       # length of the remaining string
+        if L < m:
+            break
+
+        # compute weight of hanging and table
+        W_hang = getW(L-m, L-1)
+        W_table = getW(0, L-m-1)
+
+        # safety check for the last H we did
+        if W_hang > k * W_table:
+            break
+
+        # Binary search maximum y in [0..L-m] such that
+        # getW(y, L-m-1)*k >= W_hang
+        lo, hi = 0, L-m
+        best_mid = 0
+        while lo <= hi:
+            mid = (lo + hi)//2
+            if getW(mid, L-m-1) * k >= W_hang:
+                best_mid = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        y = best_mid
+
+        total = scoreH + getC(0, y-1)
+        if total > best_total:
+            best_total = total
+            best_x = x
+            best_y = y
+
+        # prepare scoreH for x+1 by adding the next H-pearl's value
+        if x < n:
+            scoreH += c[n-1-x]
+
+    # print answer
+    if best_total == 0:
+        print("0 0")
+        return
+    p = best_x + best_y
+    print(p, best_total)
+    # x times 'H' then y times 'T'
+    print("H"*best_x + "T"*best_y)
+
+if __name__ == "__main__":
+    threading.Thread(target=main).start()
+```
+
+5. Compressed editorial  
+-------------------------  
+We must steal pearls from either end of an array of n pearls so that after each hanging‐end removal, the hanging‐weight ≤ k × table‐weight. Show that an optimal sequence is: do all H‐(hang) removals first (as many as the safety constraint allows), then do as many T‐(table) removals as still possible. Precompute prefix sums of weights and values. For each t = number of H’s (0 upward until unsafe), in O(log n) binary‐search how many T’s you can do. Keep the best total value = sum of stolen hanging values + sum of first y table values. Reconstruct by printing t ‘H’s then y ‘T’s. Total time O(n log n).

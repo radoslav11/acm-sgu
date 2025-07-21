@@ -1,0 +1,275 @@
+1. Abridged Problem Statement  
+Given a connected undirected graph G with N vertices and M edges (3 ≤ N ≤ 10000, M ≤ 100000) that satisfies:  
+- Every vertex has degree ≥ 2.  
+- Any vertex of degree exactly 2 has its two neighbors non‐adjacent.  
+- Any vertex of degree > 2 has at least one neighbor of degree 2, and all its other neighbors form a clique.  
+Either find a Hamiltonian cycle (visit every vertex exactly once, returning to the start) or report –1 if none exists.
+
+2. Detailed Editorial  
+
+Overview  
+----------  
+Vertices split naturally into “chain” vertices (degree = 2) and “hub” vertices (degree > 2). Every hub is attached to exactly one chain‐vertex leading off to another hub (possibly itself) and has all its other hub‐neighbors directly connected, forming a clique. This gives G a “chain‐of‐cliques” structure. To build a Hamiltonian cycle, we need to:  
+ 1. Verify parity constraints among hubs.  
+ 2. Pick one chain-edge for each hub to serve as its “exit,” then perform a tailored DFS that stitches chain‐segments and clique‐edges into a single cycle.  
+
+Step 1: Match hubs and check parity  
+------------------------------------  
+- We ignore all degree‐2 vertices and explore the subgraph induced by hubs (degree>2).  
+- Whenever a hub v is visited, we record one of its degree‐2 neighbors as `next_node[v]`.  
+- We recursively count how many hubs lie in v’s connected component of the hub‐subgraph.  
+- If any component has an odd number of hubs, no Hamiltonian cycle can exist → print –1 and stop.  
+
+Step 2: Build the cycle via special DFS  
+----------------------------------------  
+We reset visited‐flags and do a DFS starting from vertex 0 with a Boolean flag `in_path=false`. At each vertex u:  
+ 1. Mark u visited.  
+ 2. If u is a hub and its recorded `next_node[u]` is unvisited, first DFS into that chain‐vertex.  
+ 3. Then for each unvisited neighbor v of u:  
+    – If u is a chain‐vertex (deg=2), simply DFS(v).  
+    – Else (u is a hub), only DFS(v) if it is a hub and `in_path==false`; that ensures we use the clique‐edges exactly once.  
+ 4. After exploring all, push u onto a stack.  
+
+At the end, the stack (reversed) is a Hamiltonian cycle if it contains all N vertices; otherwise –1.
+
+Why it works  
+-------------  
+- The parity check enforces that the multigraph of hubs (where hubs are connected whenever there is a chain‐path between them) is Eulerian, allowing us to pair up all “entry” and “exit” points.  
+- The DFS weaving chain‐edges (`next_node`) and clique‐edges ensures each vertex is visited exactly once, building a single cycle over all vertices.  
+
+Complexities  
+------------  
+O(N+M) time and memory, well within the given limits.
+
+3. Original C++ Code with Line‐by‐Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Stream operators for convenience
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, m;
+vector<vector<int>> adj;   // adjacency list
+vector<bool> visited;      // visited markers
+vector<int> next_node;     // for each hub, one chosen deg-2 neighbor
+vector<int> hcycle;        // stack to build the final cycle
+
+// helper to add an undirected edge
+void add_edge(int u, int v) {
+    adj[u].push_back(v);
+    adj[v].push_back(u);
+}
+
+// DFS over “hub” vertices only, to:
+// 1) mark them visited
+// 2) pick one deg-2 neighbor into next_node[u]
+// 3) count how many hubs in this component
+int match_nodes(int u, int /*root*/) {
+    int cnt = 1;
+    visited[u] = true;
+    for (int v : adj[u]) {
+        if (adj[v].size() == 2) {
+            // found a chain‐vertex neighbor; record it
+            next_node[u] = v;
+        }
+        else if (adj[v].size() > 2 && !visited[v]) {
+            // continue DFS among hubs
+            cnt += match_nodes(v, u);
+        }
+    }
+    return cnt;
+}
+
+// Main DFS weaving chain‐edges and clique‐edges
+// in_path==true means we’ve already used the “clique‐pivot” edge for this hub
+void dfs(int u, bool in_path) {
+    visited[u] = true;
+
+    // If u is a hub and we have not yet visited its selected chain‐neighbor,
+    // go that way first (to consume the long chain)
+    if (adj[u].size() > 2 && !visited[next_node[u]]) {
+        dfs(next_node[u], false);
+    }
+
+    // Then explore other neighbors
+    for (int v : adj[u]) {
+        if (!visited[v]) {
+            if (adj[u].size() == 2) {
+                // chain‐vertex: go straight
+                dfs(v, false);
+            } else if (!in_path && adj[v].size() > 2) {
+                // hub‐to‐hub via a clique‐edge, but only once per hub
+                dfs(v, true);
+            }
+        }
+    }
+
+    // post-order push
+    hcycle.push_back(u);
+}
+
+void read() {
+    cin >> n >> m;
+    adj.assign(n, {});
+    visited.assign(n, false);
+    next_node.assign(n, -1);
+
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        u--; v--;
+        add_edge(u, v);
+    }
+}
+
+void solve() {
+    // 1) Parity check on hub‐subgraph
+    for (int i = 0; i < n; i++) {
+        if (adj[i].size() > 2 && !visited[i]) {
+            int c = match_nodes(i, i);
+            if (c % 2 == 1) {
+                cout << "-1\n";
+                return;
+            }
+        }
+    }
+
+    // 2) Build the cycle
+    fill(visited.begin(), visited.end(), false);
+    hcycle.clear();
+    dfs(0, false);
+
+    // If we didn’t visit all vertices, no Hamiltonian cycle
+    if (hcycle.size() != (size_t)n) {
+        cout << "-1\n";
+    } else {
+        reverse(hcycle.begin(), hcycle.end());
+        for (int u : hcycle) {
+            cout << (u + 1) << ' ';
+        }
+        cout << "\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_input():
+    n, m = map(int, sys.stdin.readline().split())
+    adj = [[] for _ in range(n)]
+    for _ in range(m):
+        u, v = map(int, sys.stdin.readline().split())
+        u -= 1; v -= 1
+        adj[u].append(v)
+        adj[v].append(u)
+    return n, adj
+
+def match_nodes(u):
+    """
+    DFS only over hubs (deg>2). 
+    Mark visited_hub[u] = True, choose one deg-2 neighbor next_node[u].
+    Return count of hubs in this component.
+    """
+    visited_hub[u] = True
+    cnt = 1
+    for v in adj[u]:
+        if len(adj[v]) == 2:
+            # v is chain-vertex: record as exit for u
+            next_node[u] = v
+        elif len(adj[v]) > 2 and not visited_hub[v]:
+            cnt += match_nodes(v)
+    return cnt
+
+def dfs(u, in_path):
+    """
+    Main traversal weaving chain-edges and clique-edges.
+    in_path=True means we've already used the clique-edge out of u.
+    """
+    visited[u] = True
+
+    # If u is a hub and its chosen chain-vertex is unvisited, go there first
+    if len(adj[u]) > 2:
+        w = next_node[u]
+        if w != -1 and not visited[w]:
+            dfs(w, False)
+
+    # Explore remaining neighbors
+    for v in adj[u]:
+        if not visited[v]:
+            if len(adj[u]) == 2:
+                # chain-vertex: always go
+                dfs(v, False)
+            elif not in_path and len(adj[v]) > 2:
+                # hub->hub via clique-edge, only once
+                dfs(v, True)
+
+    # post-order push
+    hcycle.append(u)
+
+def main():
+    n, _adj = read_input()
+    global adj, visited_hub, visited, next_node, hcycle
+    adj = _adj
+
+    # Step 1: parity check among hubs
+    visited_hub = [False]*n
+    next_node = [-1]*n
+    for i in range(n):
+        if len(adj[i]) > 2 and not visited_hub[i]:
+            c = match_nodes(i)
+            if c % 2 == 1:
+                print(-1)
+                return
+
+    # Step 2: build the Hamiltonian cycle
+    visited = [False]*n
+    hcycle = []
+    dfs(0, False)
+
+    if len(hcycle) != n:
+        print(-1)
+    else:
+        # reverse the post-order to get the cycle
+        hcycle.reverse()
+        print(" ".join(str(u+1) for u in hcycle))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+We partition G into hubs (deg>2) and chains (deg=2). Each hub is linked via one chain-edge to another hub and has a clique among its other hub-neighbors. First, we DFS over hubs only, picking for each hub one chain‐neighbor and verifying each hub‐component has even size; odd → no cycle. Then we reset and perform a special DFS starting at node 0 that alternates:  
+  - At a hub, traverse its chosen chain‐neighbor first,  
+  - Then traverse exactly one clique‐edge to another hub,  
+  - At chain‐vertices, continue straightforwardly.  
+Post‐order collection of vertices (reversed) yields a Hamiltonian cycle if we visited all N vertices. Otherwise, output –1.

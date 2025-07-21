@@ -1,0 +1,236 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+482. Impudent Thief
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+For most people Halloween evening is a time of having fun. But Mr. X chose the night after Halloween to commit a crime. He wants to get some boards to build a shed. And he decided to stole it from the fence of the neighbouring factory. But he wants to do it in such a way that nobody will notice boards loss. The fence consists of several boards with width, equal to 1, and integer heights (see picture). Mr. X is going to take some boards from the fence and then put the remaining boards together without changing their order to form a new fence. To be sure that noboby will notice the change, the perimeter of resulting fence should not be less than a half of the perimeter of initial fence. See picure description to understand the way of calculating fence's perimeter. With such constraint, Mr. X wants to maximize total height of extracted boards.
+
+
+
+
+Perimeter of the fence is a perimeter of the figure, which is made by joining the rectangles corresponding to boards. For example, perimeter of the fence in the picture is marked bold and it's length is equal to 24.
+
+Input
+The first line contains integer number n (1 ≤ n ≤ 50) — number of boards in the fence. The second line contains n integer numbers hi — heights of the boards (1 ≤ hi ≤ 100). Boards are given from the leftmost one to the rightmost one.
+
+Output
+In the first line output s — maximal total height of some subset of the boards, which can be taken without violating the described rule. In the second line output k — number of boards in such subset. In the third line output k numbers of the boards which should be stolen. Boards are numbered starting from 1 as they appear in the input. Print numbers in any order. If there are multiple solutions, output any.
+
+Example(s)
+sample input
+sample output
+6
+3 4 2 4 3 1
+12
+4
+1 3 4 5
+
+<|response|>
+1. Abridged Problem Statement  
+You have n fence boards of width 1 and integer heights h₁…hₙ. The perimeter P of the assembled fence (all boards in order) is  
+ P = 2 + ∑_{i=1 to n−1}(2 + |hᵢ − hᵢ₊₁|) + h₁ + hₙ.  
+You may remove (steal) some boards and reattach the rest in the same relative order to form a new fence with perimeter P′. You must ensure P′ ≥ ⌈P/2⌉. Under that constraint, maximize the total height of boards stolen. Output that maximum sum, the count of stolen boards, and any valid set of their indices.
+
+2. Key Observations  
+• Removing a board does not directly change the stolen‐height sum, but it can decrease the perimeter of the remaining fence.  
+• The contribution to perimeter when you keep a board of height h after a previously kept board of height last is Δ = 2 + |last − h|, plus at the end you add the last board’s height for the final vertical side and at the start you add h₁ for the first side.  
+• We want to choose which boards to keep so that the kept‐fence perimeter ≥ ⌈P/2⌉, while maximizing the sum of heights of stolen boards.  
+• This is a classical 0/1‐sequence DP: iterate boards in order, maintain (last_kept_height, current_perimeter) and track the maximum stolen‐height sum.
+
+3. Full Solution Approach  
+Let initP = original perimeter, target = ⌈initP/2⌉.  
+Define DP[pos][last][per] = maximum stolen‐height sum after processing boards 1…pos, where the last kept board has height = last (0 means “none kept yet”), and the accumulated perimeter from the first kept up through pos (excluding the final right side) = per. Impossible states store −∞.  
+Initialization: DP[0][0][0] = 0.  
+Transitions for board i (height = h):  
+  a) Steal it:  
+     DP[i][last][per] → DP[i+1][last][per] with stolen_sum + h (perimeter unchanged).  
+  b) Keep it:  
+     newPer = per + 2 + |last − h|  
+     DP[i][last][per] → DP[i+1][h][newPer] with same stolen_sum.  
+After filling to pos = n, scan all states DP[n][last][per] where per + last ≥ target (add the last vertical side). Pick the state with maximum stolen_sum.  
+Reconstruct which boards were stolen by storing back‐pointers (or by re‐checking transitions in reverse).
+
+Time and memory: n ≤ 50, heights ≤ 100, initP ≤ ~5300 ⇒ DP size ~50×101×5300 = ~27M states, two transitions each, fits in 0.25 s in optimized C++.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Maximum possible height + 1 and an upper bound on perimeter
+const int MAXH = 101;
+const int MAXP = 5300;
+
+// DP array and back-pointers
+// dp[i][last][p] = max stolen-height sum after i boards,
+// last = height of the last kept board (0..100), p = perimeter so far (0..MAXP-1)
+// parent choice: store whether we stole board i or kept it, and previous state.
+struct Parent {
+    int prev_last, prev_p;
+    bool stole;
+};
+
+int dp[51][MAXH][MAXP];
+Parent parent_choice[51][MAXH][MAXP];
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n; 
+    cin >> n;
+    vector<int> h(n);
+    for(int i = 0; i < n; i++) 
+        cin >> h[i];
+
+    // 1. Compute original perimeter
+    int initP = 2;
+    for(int i = 0; i + 1 < n; i++)
+        initP += 2 + abs(h[i] - h[i+1]);
+    initP += h[0] + h[n-1];
+    int target = (initP + 1) / 2;
+
+    // 2. Initialize DP to -1 (impossible)
+    for(int i = 0; i <= n; i++)
+      for(int last = 0; last < MAXH; last++)
+        for(int p = 0; p < MAXP; p++)
+          dp[i][last][p] = -1;
+    dp[0][0][0] = 0;  // no boards processed, no perimeter, sum=0
+
+    // 3. Fill DP
+    for(int i = 0; i < n; i++){
+        int height = h[i];
+        for(int last = 0; last < MAXH; last++){
+          for(int p = 0; p < MAXP; p++){
+            int cur = dp[i][last][p];
+            if(cur < 0) continue; // skip impossible
+
+            // a) Steal board i
+            // state remains (last, p), stolen_sum = cur + height
+            if(dp[i+1][last][p] < cur + height){
+              dp[i+1][last][p] = cur + height;
+              parent_choice[i+1][last][p] = {last, p, true};
+            }
+            // b) Keep board i
+            int newP = p + 2 + abs(last - height);
+            if(newP < MAXP && dp[i+1][height][newP] < cur){
+              dp[i+1][height][newP] = cur;
+              parent_choice[i+1][height][newP] = {last, p, false};
+            }
+          }
+        }
+    }
+
+    // 4. Find best end state
+    int bestSum = -1, bestLast = 0, bestP = 0;
+    for(int last = 0; last < MAXH; last++){
+      for(int p = 0; p < MAXP; p++){
+        int val = dp[n][last][p];
+        if(val >= 0 && p + last >= target && val > bestSum){
+          bestSum = val;
+          bestLast = last;
+          bestP = p;
+        }
+      }
+    }
+
+    // 5. Reconstruct stolen boards by walking parents backward
+    vector<int> stolen_indices;
+    int curLast = bestLast, curP = bestP;
+    for(int i = n; i > 0; i--){
+        Parent par = parent_choice[i][curLast][curP];
+        if(par.stole){
+            // board i was stolen
+            stolen_indices.push_back(i);
+        }
+        // move to previous state
+        curLast = par.prev_last;
+        curP    = par.prev_p;
+    }
+    reverse(stolen_indices.begin(), stolen_indices.end());
+
+    // 6. Output result
+    cout << bestSum << "\n";
+    cout << stolen_indices.size() << "\n";
+    for(int idx : stolen_indices)
+        cout << idx << " ";
+    cout << "\n";
+
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+def main():
+    data = sys.stdin.read().split()
+    n = int(data[0])
+    h = list(map(int, data[1:]))
+
+    # 1. Compute original perimeter
+    initP = 2
+    for i in range(n-1):
+        initP += 2 + abs(h[i] - h[i+1])
+    initP += h[0] + h[-1]
+    target = (initP + 1) // 2
+
+    # 2. DP: dp maps (last_height, perimeter) -> max stolen_sum
+    # back stores back-pointers: key = (i, last, p) -> (prev_last, prev_p, stole)
+    dp = {(0,0): 0}
+    back = {}
+
+    for i in range(1, n+1):
+        hi = h[i-1]
+        dp_next = {}
+        for (last, p), stolen_sum in dp.items():
+            # a) Steal this board
+            key = (last, p)
+            val = stolen_sum + hi
+            if dp_next.get(key, -1) < val:
+                dp_next[key] = val
+                back[(i, key)] = (last, p, True)
+
+            # b) Keep this board
+            newP = p + 2 + abs(last - hi)
+            key2 = (hi, newP)
+            if dp_next.get(key2, -1) < stolen_sum:
+                dp_next[key2] = stolen_sum
+                back[(i, key2)] = (last, p, False)
+
+        dp = dp_next
+
+    # 3. Select best end state
+    best_sum = -1
+    best_state = None
+    for (last, p), stolen_sum in dp.items():
+        if p + last >= target and stolen_sum > best_sum:
+            best_sum = stolen_sum
+            best_state = (last, p)
+
+    # 4. Reconstruct stolen board indices
+    stolen = []
+    last, p = best_state
+    i = n
+    while i > 0:
+        prev_last, prev_p, did_steal = back[(i, (last,p))]
+        if did_steal:
+            stolen.append(i)  # 1-based
+        last, p = prev_last, prev_p
+        i -= 1
+    stolen.reverse()
+
+    # 5. Output
+    print(best_sum)
+    print(len(stolen))
+    print(*stolen)
+
+if __name__ == "__main__":
+    main()
+```

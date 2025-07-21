@@ -1,0 +1,284 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+313. Circular Railway
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+There are L stations along a circular railway, numbered 1 through L. Trains travel in both directions, and take 1 minute to get from a station to the neighbouring one (i.e., between 1st and 2nd, between 2nd and 3rd,..., between (L-1)-th and L-th and between L-th and 1-st).
+
+There are n employee's houses along the railway, and n offices, each house or office located near a railway station. You are to establish a one-to-one correspondence between houses and offices in such a way that total travel time (sum of travel times of each employee) is minimized.
+
+Input
+The first line of the input file contains two integer numbers, n and L (1 ≤ n ≤ 50000, 2 ≤ L ≤ 109). The second line contains n locations of the employee's houses, and the third line contains n locations of the offices. Each location is an integer number between 1 and L. Some houses or offices or both can be located at the same railway station.
+
+Output
+Output the minimal total travel time followed by the description of the one-to-one correspondence. The description should be represented by n numbers (one for each employee, ordered as in the input), denoting the 1-based index of the office assigned to the corresponding employee.
+
+Example(s)
+sample input
+sample output
+3 15
+1 2 10
+11 12 13
+9
+2 3 1
+
+sample input
+sample output
+4 12
+2 5 8 11
+6 9 12 3
+4
+4 1 2 3
+
+<|response|>
+1. Abridged Problem Statement  
+Given n houses and n offices located at integer stations on a circular railway of length L, match each house to a unique office so that the sum of the shortest circular distances is minimized. Output the minimal total travel time and for each house (in input order) the 1-based index of its assigned office.
+
+2. Key Observations  
+• On a circle, matching by sorting points on a line works if we choose where to “cut” the circle.  
+• If we cut at position C and unwrap the circle into a segment [C, C+L), then a minimum‐cost matching pairs sorted houses to sorted offices.  
+• The total cost as a function of C is piecewise linear; its slopes change only when C passes an endpoint (house or office).  
+• We can compute the cost and its changes efficiently by:  
+  – Sorting all 2n points by position, duplicating the first at +L.  
+  – Computing gaps between consecutive points and a prefix “balance” = (#houses – #offices) up to each point.  
+  – The initial cost at C just before the first point is ∑ gap[i] * balance[i].  
+  – When the cut moves past gap[i], the cost changes by Δ = balance[i] times (distance already cut – distance remaining).  
+  – Sorting events (i from 0 to 2n–1) by balance[i] lets us sweep all cuts in O(n log n).  
+• Once we know the best cut index, we reconstruct the matching on the unwrapped line in O(n) using a stack: scan points in order, push same‐type endpoints, pop and match when types differ.
+
+3. Full Solution Approach  
+Step A. Read n, L, arrays H[ ], O[ ] for house and office positions.  
+Step B. Build an array P of 2n points: for each house i, P.emplace_back(position=H[i], index=i, type=+1); for each office j, P.emplace_back(O[j], j, –1).  
+Step C. Sort P by (position, type) with offices (–1) before houses (+1) on ties. Append P[0] again with position += L to close the circle.  
+Step D. Compute for i = 0…2n–1:  
+  gap[i] = P[i+1].position – P[i].position  
+  balance[i] = running sum of P[k].type for k=0…i  
+  initialCost += gap[i] * balance[i]  
+  totalLen += gap[i]  (should equal L)  
+Step E. Create an array events = [0,1,…,2n–1], sort it by ascending balance[index].  
+Step F. Sweep events in that order, maintaining:  
+  curCost (starts = initialCost),  
+  prefixLen (initially 0),  
+  lastBal (initially 0),  
+  bestCost = initialCost, bestIdx = 0.  
+  For each idx in events:  
+    d = balance[idx] – lastBal  
+    curCost += prefixLen * d – (totalLen – prefixLen) * d  
+    if curCost < bestCost: update bestCost, bestIdx = idx  
+    prefixLen += gap[idx]  
+    lastBal = balance[idx]  
+Step G. The minimal total travel time = bestCost. The cut is just after gap bestIdx.  
+Step H. Reconstruct matching: start at pos = bestIdx+1 mod (2n), an empty stack S. Repeat 2n times:  
+    let p = P[pos]  
+    if S.empty() or S.top().type == p.type: push p  
+    else pop q = S.top(), match the house‐office pair (depending on which has type +1), record in ans[houseIndex] = officeIndex+1  
+    pos = (pos+1) mod 2n  
+Step I. Print bestCost and ans[0…n–1].
+
+Overall time O(n log n), memory O(n).
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A point is either a house (+1) or an office (-1)
+struct Point {
+    long long x;    // position on circular railway
+    int idx;        // original index in its array
+    int type;       // +1 for house, -1 for office
+    Point(long long _x=0, int _idx=0, int _type=0)
+        : x(_x), idx(_idx), type(_type) {}
+    // Sort by position, then by type so offices come before houses on ties
+    bool operator<(const Point &o) const {
+        if (x != o.x) return x < o.x;
+        return type < o.type;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    long long L;
+    cin >> n >> L;
+    vector<long long> H(n), O(n);
+    for(int i=0; i<n; i++) cin >> H[i];
+    for(int i=0; i<n; i++) cin >> O[i];
+
+    // Build 2n points
+    vector<Point> P;
+    P.reserve(2*n + 1);
+    for(int i=0; i<n; i++) P.emplace_back(H[i], i, +1);
+    for(int j=0; j<n; j++) P.emplace_back(O[j], j, -1);
+
+    // Sort around the circle and duplicate first point at +L
+    sort(P.begin(), P.end());
+    P.push_back(Point(P[0].x + L, P[0].idx, P[0].type));
+
+    // Precompute gaps, balances, and initial cost
+    int M = 2*n;
+    vector<long long> gap(M);
+    vector<int> balance(M);
+    long long totalLen = 0, initialCost = 0;
+    int runBal = 0;
+    for(int i=0; i<M; i++){
+        runBal += P[i].type;
+        balance[i] = runBal;
+        gap[i] = P[i+1].x - P[i].x;
+        totalLen += gap[i];
+        initialCost += gap[i] * 1LL * runBal;
+    }
+
+    // Events sorted by balance[i]
+    vector<int> events(M);
+    iota(events.begin(), events.end(), 0);
+    sort(events.begin(), events.end(),
+         [&](int a, int b){ return balance[a] < balance[b]; });
+
+    // Sweep to find best cut
+    long long bestCost = initialCost;
+    long long curCost = initialCost;
+    long long prefixLen = 0;
+    int lastBal = 0;
+    int bestIdx = 0;
+    for(int idx: events){
+        int d = balance[idx] - lastBal;
+        // Crossing gap[idx] changes cost by prefixLen*d - (totalLen-prefixLen)*d
+        curCost += prefixLen * d - (totalLen - prefixLen) * d;
+        if(curCost < bestCost){
+            bestCost = curCost;
+            bestIdx = idx;
+        }
+        prefixLen += gap[idx];
+        lastBal = balance[idx];
+    }
+
+    // Output minimal total travel time
+    cout << bestCost << "\n";
+
+    // Reconstruct matching using a stack
+    vector<int> ans(n, -1);
+    stack<Point> st;
+    int pos = (bestIdx + 1) % M;
+    for(int t=0; t<M; t++){
+        const Point &p = P[pos];
+        if(st.empty() || st.top().type == p.type){
+            st.push(p);
+        } else {
+            Point q = st.top(); st.pop();
+            // p.type != q.type
+            if(p.type == +1){
+                // p is house, q is office
+                ans[p.idx] = q.idx + 1;
+            } else {
+                // q is house, p is office
+                ans[q.idx] = p.idx + 1;
+            }
+        }
+        pos = (pos + 1) % M;
+    }
+
+    // Print assignment for each house in input order
+    for(int i=0; i<n; i++){
+        cout << ans[i] << (i+1<n ? ' ' : '\n');
+    }
+
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    L = int(next(it))
+    H = [int(next(it)) for _ in range(n)]
+    O = [int(next(it)) for _ in range(n)]
+
+    # Build 2n points: (position, index, type)
+    pts = []
+    for i, x in enumerate(H):
+        pts.append([x, i, +1])
+    for j, x in enumerate(O):
+        pts.append([x, j, -1])
+
+    # Sort by position, then by type so offices (-1) come before houses (+1)
+    pts.sort(key=lambda p: (p[0], p[2]))
+    # Duplicate first point at +L to close the circle
+    pts.append([pts[0][0] + L, pts[0][1], pts[0][2]])
+
+    M = 2*n
+    gap = [0]*M
+    balance = [0]*M
+    runBal = 0
+    totalLen = 0
+    initialCost = 0
+
+    # Compute gap[i], balance[i], and initial cost
+    for i in range(M):
+        runBal += pts[i][2]
+        balance[i] = runBal
+        gap[i] = pts[i+1][0] - pts[i][0]
+        totalLen += gap[i]
+        initialCost += gap[i] * runBal
+
+    # Events: indices 0..M-1 sorted by balance
+    events = list(range(M))
+    events.sort(key=lambda i: balance[i])
+
+    # Sweep to find the best cut index
+    bestCost = initialCost
+    curCost = initialCost
+    prefixLen = 0
+    lastBal = 0
+    bestIdx = 0
+
+    for idx in events:
+        d = balance[idx] - lastBal
+        curCost += prefixLen * d - (totalLen - prefixLen) * d
+        if curCost < bestCost:
+            bestCost = curCost
+            bestIdx = idx
+        prefixLen += gap[idx]
+        lastBal = balance[idx]
+
+    # Output the minimal total travel time
+    out = [str(bestCost)]
+
+    # Reconstruct the matching on the unwrapped line
+    ans = [-1]*n
+    stack = []
+    pos = (bestIdx + 1) % M
+    for _ in range(M):
+        x, idx, t = pts[pos]
+        if not stack or stack[-1][2] == t:
+            stack.append([x, idx, t])
+        else:
+            x2, idx2, t2 = stack.pop()
+            # One is house (+1), one is office (-1)
+            if t == +1:
+                # current is house, stack-top was office
+                ans[idx] = idx2 + 1
+            else:
+                # current is office, stack-top was house
+                ans[idx2] = idx + 1
+        pos = (pos + 1) % M
+
+    # Print assignment for each house in input order
+    out.append(" ".join(map(str, ans)))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```

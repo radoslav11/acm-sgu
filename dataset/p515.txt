@@ -1,0 +1,305 @@
+1. Abridged Problem Statement  
+Given an undirected weighted graph with n nodes and m edges (each edge has a positive travel time). You are also given k distinct “important” nodes. It is guaranteed that there exists a shortest path in the graph between some pair of nodes that visits all k important nodes. Find any such shortest path and output the sequence of edge indices (in input order) along it.
+
+2. Detailed Editorial  
+
+Overview  
+We must find two nodes s,t and a path P from s to t of minimum total weight, such that P visits all given k important nodes. The key insight is that this path P is itself a shortest path (in the usual sense) between its endpoints; we just don’t know which endpoints s,t form it.  
+
+Step 1: Identify candidate endpoints  
+- Pick any important node a₀.  
+- Run Dijkstra from a₀ to get distances dist₁[]. Among the k important nodes, pick endpoint A as the one farthest from a₀ (max dist₁).  
+- Run Dijkstra again from A to get distances dist₂[]. Among the k important nodes, pick endpoint B as the one farthest from A (max dist₂).  
+
+Claim: the unique shortest path from A to B passes through all k important nodes.  
+Justification sketch: among all pairs of important nodes, A and B are a diameter (longest) pair in the shortest-path metric restricted to the important set. Any other important node X lies on some shortest path between A and B—otherwise you could make a longer diameter by replacing one endpoint with X.
+
+Step 2: Build the Shortest‐Path DAG from A  
+We construct a directed acyclic graph DAG on the original vertex set: for every undirected edge (u,v,w), if dist₂[v] = dist₂[u] + w then add a directed edge u→v; similarly if dist₂[u] = dist₂[v] + w then add v→u. This DAG encodes all shortest‐path moves increasing distance from A.
+
+Step 3: DP to maximize important‐node visits  
+We mark all k important nodes with weight 1, others 0.  We want a path in the DAG starting at A and ending at B that maximizes the sum of these weights; since there is a path that gets all k ones, this maximum is k, and that path visits every important node.
+
+We do a memoized DFS dp[u] = maximum number of important nodes collectable from u to any sink.  Then dp[A] = k, and dp[B] = 1.
+
+Step 4: Reconstruct the path  
+Starting at A, repeatedly follow an outgoing edge u→v in the DAG such that  
+  dp[u] = dp[v] + (is_important[u]?1:0)  
+until we reach B.  Collect the corresponding original edge IDs.
+
+Overall Complexity  
+- Two Dijkstra runs: O(m log n).  
+- Building the DAG: O(m).  
+- DFS‐DP on the DAG: O(n + m).  
+Total: O(m log n + n + m) which is fine for n,m up to 1e5.
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload for printing and reading pairs and vectors conveniently.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, m, k;
+// edges[i] = (u, v, w) for edge index i
+vector<tuple<int,int,int>> edges;
+// adjacency list: adj[u] = list of (neighbor, edge index)
+vector<vector<pair<int,int>>> adj;
+// list of k important vertices
+vector<int> important;
+
+// Read input graph and list of important nodes.
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    adj.assign(n, {});
+    // Read edges, store them 0-based
+    for(int i = 0; i < m; i++){
+        int u,v,w;
+        cin >> u >> v >> w;
+        u--; v--;
+        edges[i] = {u,v,w};
+        adj[u].push_back({v,i});
+        adj[v].push_back({u,i});
+    }
+    cin >> k;
+    important.resize(k);
+    cin >> important;          // read k cities
+    for(int &v: important) 
+        --v;                   // make 0-based
+}
+
+// Standard Dijkstra from src, returns dist array
+vector<int> dijkstra(int src) {
+    const int INF = 1e9;
+    vector<int> dist(n, INF);
+    dist[src] = 0;
+    // (distance, node)
+    priority_queue<pair<int,int>, vector<pair<int,int>>, greater<>> pq;
+    pq.push({0, src});
+    while(!pq.empty()) {
+        auto [d,u] = pq.top(); pq.pop();
+        if(d > dist[u]) continue;
+        // relax all edges u->v
+        for(auto [v, ei] : adj[u]) {
+            int w = get<2>(edges[ei]);
+            if(dist[v] > d + w) {
+                dist[v] = d + w;
+                pq.push({dist[v], v});
+            }
+        }
+    }
+    return dist;
+}
+
+// Build DAG of shortest‐path edges using dist[] from A.
+// For an undirected edge u--v with weight w, if dist[v] == dist[u] + w,
+// then add a directed edge u->v (increasing dist). Reverse if dist[u] == dist[v] + w.
+vector<vector<pair<int,int>>> build_dag(const vector<int>& dist) {
+    vector<vector<pair<int,int>>> dag(n);
+    for(int u = 0; u < n; u++){
+        for(auto [v, ei] : adj[u]) {
+            int w = get<2>(edges[ei]);
+            // only forward edges in the direction of increasing distance
+            if(dist[v] == dist[u] + w) {
+                dag[u].push_back({v, ei});
+            }
+        }
+    }
+    return dag;
+}
+
+// Among the important nodes, return the one farthest (max dist[])
+int get_farthest(const vector<int>& dist) {
+    int best = important[0];
+    for(int v: important) {
+        if(dist[v] > dist[best]) 
+            best = v;
+    }
+    return best;
+}
+
+void solve() {
+    // 1) Find endpoint A by Dijkstra from important[0]
+    vector<int> dist1 = dijkstra(important[0]);
+    int A = get_farthest(dist1);
+
+    // 2) Dijkstra from A to get dist2[], then get endpoint B
+    vector<int> dist2 = dijkstra(A);
+    int B = get_farthest(dist2);
+
+    // 3) Build the shortest-path DAG wrt dist2[]
+    auto dag = build_dag(dist2);
+
+    // 4) DP on DAG to count how many important nodes we can collect from u
+    vector<int> dp(n, -1);
+    vector<char> is_imp(n, 0);
+    for(int v: important) 
+        is_imp[v] = 1;
+
+    function<int(int)> dfs = [&](int u) -> int {
+        if(dp[u] != -1) return dp[u];
+        int best = is_imp[u]; // collect 1 if u itself is important
+        for(auto [v, ei] : dag[u]) {
+            best = max(best, is_imp[u] + dfs(v));
+        }
+        return dp[u] = best;
+    };
+    dfs(A);  // fill dp[]
+
+    // 5) Reconstruct a path from A to B that collects dp[A]==k
+    vector<int> answer_edges;
+    int cur = A;
+    while(cur != B) {
+        // pick any outgoing edge u->v that matches the DP value
+        for(auto [v, ei] : dag[cur]) {
+            if(dp[cur] == is_imp[cur] + dp[v]) {
+                answer_edges.push_back(ei+1); // 1-based index
+                cur = v;
+                break;
+            }
+        }
+    }
+
+    // Output
+    cout << answer_edges.size() << "\n";
+    cout << answer_edges << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import threading
+import heapq
+
+def main():
+    sys.setrecursionlimit(10**7)
+    input = sys.stdin.readline
+
+    n, m = map(int, input().split())
+    # Store edges as (u, v, w). 0-based.
+    edges = []
+    # adjacency: for each u, list of (v, edge_index)
+    adj = [[] for _ in range(n)]
+    for i in range(m):
+        u, v, w = map(int, input().split())
+        u -= 1; v -= 1
+        edges.append((u, v, w))
+        adj[u].append((v, i))
+        adj[v].append((u, i))
+
+    k = int(input())
+    important = list(map(lambda x: int(x)-1, input().split()))
+    is_imp = [0]*n
+    for v in important:
+        is_imp[v] = 1
+
+    # Dijkstra from src -> returns dist array
+    def dijkstra(src):
+        INF = 10**18
+        dist = [INF]*n
+        dist[src] = 0
+        pq = [(0, src)]
+        while pq:
+            d,u = heapq.heappop(pq)
+            if d > dist[u]: 
+                continue
+            for v, ei in adj[u]:
+                w = edges[ei][2]
+                nd = d + w
+                if nd < dist[v]:
+                    dist[v] = nd
+                    heapq.heappush(pq, (nd, v))
+        return dist
+
+    # Find the important node farthest from src
+    def get_farthest(dist):
+        best = important[0]
+        for v in important:
+            if dist[v] > dist[best]:
+                best = v
+        return best
+
+    # 1) pick initial, find A
+    dist0 = dijkstra(important[0])
+    A = get_farthest(dist0)
+    # 2) from A, find B
+    distA = dijkstra(A)
+    B = get_farthest(distA)
+
+    # 3) build shortest-path DAG wrt distA
+    dag = [[] for _ in range(n)]
+    for u in range(n):
+        for v, ei in adj[u]:
+            w = edges[ei][2]
+            if distA[v] == distA[u] + w:
+                dag[u].append((v, ei))
+
+    # 4) DP[u] = max important-nodes collectable from u
+    dp = [-1]*n
+    def dfs(u):
+        if dp[u] != -1:
+            return dp[u]
+        best = is_imp[u]
+        for v, ei in dag[u]:
+            best = max(best, is_imp[u] + dfs(v))
+        dp[u] = best
+        return best
+
+    dfs(A)
+
+    # 5) Reconstruct path from A to B
+    ans = []
+    cur = A
+    while cur != B:
+        for v, ei in dag[cur]:
+            if dp[cur] == is_imp[cur] + dp[v]:
+                ans.append(ei+1)  # convert to 1-based
+                cur = v
+                break
+
+    # Output
+    print(len(ans))
+    print(*ans)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+- Run Dijkstra from an arbitrary important node to pick one endpoint A (the farthest important).  
+- Run Dijkstra from A to find the other endpoint B (the farthest important from A). The unique shortest path A→B will pass through all important nodes.  
+- Build the shortest-path DAG oriented outward from A (edges u→v where dist[v]=dist[u]+w).  
+- Mark important nodes with weight 1, others 0. Do a memoized DFS on the DAG from A computing dp[u]=max sum of weights from u to any sink. Then dp[A]=k.  
+- Reconstruct any path from A to B that respects dp transitions, collecting all k important nodes, and output its edge indices.

@@ -1,0 +1,320 @@
+1. Abridged Problem Statement  
+Given n piles with sizes a₁,…,aₙ. Petya may remove x stones from each pile (0 ≤ x < min(aᵢ)). After removal, the players play normal Nim (first player loses iff the XOR of pile sizes is 0). Count how many x make the resulting XOR = 0.
+
+2. Detailed Editorial  
+
+Overview  
+We need the number of x ∈ [0, m–1], where m = min(aᵢ), such that  
+   F(x) = a₁⊕a₂⊕…⊕aₙ computed after replacing each aᵢ with (aᵢ–x) equals 0.  
+
+Challenge: Subtraction with a common x introduces borrows that couple bits across all piles. A direct bitwise XOR formula does not apply.
+
+Key observation  
+When subtracting x from each aᵢ in binary, each bit position k is affected by:  
+  – The k-th bit of x (0 or 1).  
+  – The k-th bit of aᵢ.  
+  – Whether there is a borrow coming in from bit k–1.  
+
+We can do a digit-DP over bit positions from LSB (bit 0) up to the highest bit (we can stop at ~60, since aᵢ ≤ 10¹⁸).  
+State D[k][c] = number of ways to choose the lower k bits of x so that:  
+ 1. The partial XOR of the k LSBs of all (aᵢ–x) is 0.  
+ 2. Exactly c piles generate a borrow into bit k.  
+
+Transition:  
+For bit k, we choose xₖ∈{0,1}. Each pile i has incoming borrow bᵢ ∈ {0,1}. If bᵢ=1, its effective subtraction at bit k is (aᵢₖ – xₖ –1); otherwise (aᵢₖ – xₖ). From that we determine:  
+  a) The parity contribution (for the XOR) at this bit across all piles, which must be 0.  
+  b) Which piles produce an outgoing borrow into bit k+1.  
+
+We only need to know how many piles have incoming borrow=0 vs 1, and among each group, how many have aₖ=1 vs 0. Let c = number of piles with incoming borrow=1. Then n–c have borrow=0. Precompute for each bit k a prefix array that, for any reorder where the first c piles are those with borrow=1, tells us how many of those c piles have aₖ=1 (and similarly for the other group). With those counts we can in O(1) compute:  
+  – The XOR parity at bit k for chosen xₖ.  
+  – The number of outgoing borrows to bit k+1.  
+
+Finally D and transitions over k=0…60 in O(60·n) total time.
+
+Edge case: subtracting x=m may produce a zero pile; the problem forbids x≥m. Also, if after subtracting the minimum value x yields all piles equal, the XOR=0 case x=minimum gives a spurious count we must exclude: if XOR_{i}(aᵢ – m) = 0, we must subtract 1 from the total, because x=m is not allowed. In code we handle that by computing the XOR at x=m separately, and if zero, we decrement the final answer by 1.
+
+Complexities  
+ Time O(n·log A), Memory O(n·log A).
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload printing for pairs and vectors for convenience
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& p) {
+    return out << p.first << ' ' << p.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& p) {
+    return in >> p.first >> p.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& v) {
+    for (auto& x : v) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& v) {
+    for (auto& x : v) out << x << ' ';
+    return out;
+}
+
+int n;
+vector<int64_t> a;
+
+// Read input: n and array a
+void read() {
+    cin >> n;
+    a.resize(n);
+    cin >> a;
+}
+
+// pref_cnt_1[k][i] = among the first i indices in the 'order' array for bit k,
+//                 how many have their k-th bit = 1.
+vector<vector<int>> pref_cnt_1;
+
+// We build an ordering of piles for each bit k so that we can quickly query
+// how many piles among any prefix have bit k = 1.
+void prepare() {
+    // We plan up to bit 60 (because a[i] ≤ 10^18 < 2^60)
+    pref_cnt_1.assign(61, vector<int>(n+1, 0));
+
+    // 'order' will hold a permutation of [0..n-1]
+    // At each bit we stable-partition by that bit
+    vector<int> order(n);
+    iota(order.begin(), order.end(), 0);
+
+    for (int bit = 0; bit < 61; ++bit) {
+        // We'll split 'order' into two lists: those with bit=0 and bit=1
+        vector<vector<int>> bucket(2);
+        bucket[0].reserve(n);
+        bucket[1].reserve(n);
+
+        // Build prefix counts for how many 1s in this bit so far
+        for (int i = 0; i < n; ++i) {
+            int idx = order[i];
+            int bitval = (a[idx] >> bit) & 1;
+            bucket[bitval].push_back(idx);
+            // pref_cnt_1[bit][i+1] = pref_cnt_1[bit][i] + (this pile has bit=1)
+            pref_cnt_1[bit][i+1] = pref_cnt_1[bit][i] + bitval;
+        }
+        // Reassemble 'order': all zero-bit piles first, then one-bit piles
+        order = move(bucket[0]);
+        order.insert(order.end(), bucket[1].begin(), bucket[1].end());
+    }
+}
+
+// dp[bit][c] = number of ways to choose bits x_0..x_{bit-1}
+// such that:
+// 1) The XOR of those lower bits of all (a[i] - x) is 0
+// 2) Exactly c piles carry a borrow into bit 'bit'
+vector<vector<int64_t>> dp;
+
+// Recursive DP with memoization
+int64_t rec(int bit, int carry_cnt) {
+    // Base case: we processed bits 0..60
+    if (bit == 61) {
+        // If no borrows remain, we've formed a valid x
+        return (carry_cnt == 0) ? 1 : 0;
+    }
+    int64_t &memo = dp[bit][carry_cnt];
+    if (memo != -1) return memo;
+    memo = 0;
+
+    // Try x_bit = 0 or 1
+    for (int xbit = 0; xbit < 2; ++xbit) {
+        // We must check that the XOR of the resulting bit contributions is 0
+        int xor_parity = 0;
+        int new_carry = 0;
+
+        // We consider two groups: piles with incoming borrow=0 (size n-carry_cnt)
+        // and with borrow=1 (size carry_cnt). For each group, we need to know
+        // how many have a[bit]=1 vs 0. Using pref_cnt_1:
+        //   Among the first carry_cnt piles in 'order', num_ones = pref_cnt_1[bit][carry_cnt].
+        //   Among the other piles, num_ones = pref_cnt_1[bit][n] - pref_cnt_1[bit][carry_cnt].
+        int ones_if_borrow1 = pref_cnt_1[bit][carry_cnt];
+        int ones_if_borrow0 = pref_cnt_1[bit][n] - ones_if_borrow1;
+        int zero_if_borrow1 = carry_cnt - ones_if_borrow1;
+        int zero_if_borrow0 = (n - carry_cnt) - ones_if_borrow0;
+
+        // For each combination of (incoming borrow b ∈ {0,1}) and (a_bit v ∈ {0,1}),
+        // count how many piles are in that category, then compute:
+        //   result_bit = (v - xbit - b) mod 2  → contributes to XOR
+        //   borrow_out = 1 if (v - xbit - b) < 0
+        // We XOR all result_bit multiplied by (cnt & 1) into xor_parity,
+        // and sum all cnt that borrow_out into new_carry.
+
+        // Group (b=0, v=0)
+        {
+            int cnt = zero_if_borrow0;
+            int res = (0 - xbit - 0) & 1;      // bit result
+            int br = (0 - xbit < 0) ? cnt : 0; // borrow out
+            xor_parity ^= res * (cnt & 1);
+            new_carry += br;
+        }
+        // Group (b=0, v=1)
+        {
+            int cnt = ones_if_borrow0;
+            int res = (1 - xbit) & 1;
+            int br = (1 - xbit < 0) ? cnt : 0;
+            xor_parity ^= res * (cnt & 1);
+            new_carry += br;
+        }
+        // Group (b=1, v=0)
+        {
+            int cnt = zero_if_borrow1;
+            int res = (0 - xbit - 1) & 1;
+            int br = (0 - xbit - 1 < 0) ? cnt : 0;
+            xor_parity ^= res * (cnt & 1);
+            new_carry += br;
+        }
+        // Group (b=1, v=1)
+        {
+            int cnt = ones_if_borrow1;
+            int res = (1 - xbit - 1) & 1;
+            int br = (1 - xbit - 1 < 0) ? cnt : 0;
+            xor_parity ^= res * (cnt & 1);
+            new_carry += br;
+        }
+
+        // If this bit's XOR is zero, we can recurse
+        if (xor_parity == 0) {
+            memo += rec(bit+1, new_carry);
+        }
+    }
+    return memo;
+}
+
+void solve() {
+    // Precompute the ordering and prefix sums
+    prepare();
+
+    // Initialize dp to -1 (uncomputed)
+    dp.assign(61, vector<int64_t>(n+1, -1));
+
+    // Count all valid x in [0..∞) that satisfy XOR=0
+    int64_t answer = rec(0, 0);
+
+    // But we only allow x < min(a[i]). We must check if x = min(a) would
+    // also be counted. If so, subtract 1.
+    int64_t mn = *min_element(a.begin(), a.end());
+    int64_t xor_at_mn = 0;
+    for (auto v : a) xor_at_mn ^= (v - mn);
+    if (xor_at_mn == 0) --answer;
+
+    cout << answer << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_input():
+    data = sys.stdin.read().split()
+    n = int(data[0])
+    a = list(map(int, data[1:]))
+    return n, a
+
+def prepare(a, n):
+    # pref_cnt_1[k][i] = among the first i piles in 'order' for bit k,
+    # how many have bit k = 1
+    pref_cnt_1 = [[0]*(n+1) for _ in range(61)]
+    order = list(range(n))
+    for bit in range(61):
+        zero_bucket = []
+        one_bucket = []
+        cnt1 = 0
+        for i, idx in enumerate(order):
+            b = (a[idx] >> bit) & 1
+            if b:
+                one_bucket.append(idx)
+            else:
+                zero_bucket.append(idx)
+            cnt1 += b
+            pref_cnt_1[bit][i+1] = cnt1
+        # new order: zeros then ones
+        order = zero_bucket + one_bucket
+    return pref_cnt_1
+
+def solve():
+    n, a = read_input()
+    pref_cnt_1 = prepare(a, n)
+
+    # dp[bit][carry_cnt]: number of ways from bit..60 with carry_cnt incoming borrows
+    from functools import lru_cache
+    @lru_cache(None)
+    def dp(bit, carry):
+        # If past final bit, valid only if no carry remains
+        if bit == 61:
+            return 1 if carry == 0 else 0
+        res = 0
+        # Precompute counts for this bit
+        total_ones = pref_cnt_1[bit][n]
+        ones1 = pref_cnt_1[bit][carry]          # among piles with incoming borrow=1
+        zeros1 = carry - ones1
+        ones0 = total_ones - ones1             # among piles with incoming borrow=0
+        zeros0 = (n - carry) - ones0
+
+        # Try x_bit = 0 or 1
+        for xbit in (0,1):
+            xor_par = 0
+            new_c = 0
+            # group b=0,v=0
+            cnt = zeros0
+            val = (0 - xbit) & 1
+            xor_par ^= val * (cnt & 1)
+            if 0 - xbit < 0: new_c += cnt
+            # group b=0,v=1
+            cnt = ones0
+            val = (1 - xbit) & 1
+            xor_par ^= val * (cnt & 1)
+            if 1 - xbit < 0: new_c += cnt
+            # group b=1,v=0
+            cnt = zeros1
+            val = (0 - xbit - 1) & 1
+            xor_par ^= val * (cnt & 1)
+            if 0 - xbit - 1 < 0: new_c += cnt
+            # group b=1,v=1
+            cnt = ones1
+            val = (1 - xbit - 1) & 1
+            xor_par ^= val * (cnt & 1)
+            if 1 - xbit - 1 < 0: new_c += cnt
+
+            if xor_par == 0:
+                res += dp(bit+1, new_c)
+        return res
+
+    # Total ways for x >= 0
+    total = dp(0, 0)
+    # Subtract invalid x = min(a)
+    mn = min(a)
+    xor_mn = 0
+    for v in a:
+        xor_mn ^= (v - mn)
+    if xor_mn == 0:
+        total -= 1
+
+    print(total)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+
+We wish to count x ∈ [0, m–1] so that ⊕ᵢ(aᵢ–x)=0. Subtraction introduces borrows across bits. Use a digit-DP over bit positions 0..60. Define D[k][c] = #ways to choose lower k bits of x achieving zero XOR so far and with c piles carrying a borrow into bit k. For each bit we try xₖ=0/1, compute parity of that bit’s XOR from four categories (borrow in 0/1 × aᵢ’s bit 0/1) and count outgoing borrows. Transition in O(1) with precomputed prefix sums of bit counts over a special ordering. Finally subtract 1 if x=m also led to XOR=0 (x=m is forbidden). Total O(n·60).

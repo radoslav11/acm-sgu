@@ -1,0 +1,253 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+200. Cracking RSA
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+The following problem is somehow related to the final stage of many famous integer factorization algorithms involved in some cryptoanalytical problems, for example cracking well-known RSA public key system.
+
+The most powerful of such algorithms, so called quadratic sieve descendant algorithms, utilize the fact that if n = pq where p and q are large unknown primes needed to be found out, then if v2=w2 (mod n), u ≠ v (mod n) and u ≠ -v (mod n), then gcd(v + w, n) is a factor of n (either p or q).
+
+Not getting further in the details of these algorithms, let us consider our problem. Given m integer numbers b1, b2, ..., bm such that all their prime factors are from the set of first t primes, the task is to find such a subset S of {1, 2, ..., m} that product of bi for i from S is a perfect square i.e. equal to u2 for some integer u. Given such S we get one pair for testing (product of S elements stands for v when w is known from other steps of algorithms which are of no interest to us, testing performed is checking whether pair is nontrivial, i.e. u ≠ v (mod n) and u ≠ -v (mod n)). Since we want to factor n with maximum possible probability, we would like to get as many such sets as possible. So the interesting problem could be to calculate the number of all such sets. This is exactly your task.
+
+Input
+
+The first line of the input file contains two integers t and m (1 ≤ t ≤ 100, 1 ≤ m ≤ 100). The second line of the input file contains m integer numbers bi such that all their prime factors are from t first primes (for example, if t = 3 all their prime factors are from the set {2, 3, 5}). 1 ≤ bi ≤ 109 for all i.
+
+Output
+
+Output the number of non-empty subsets of the given set {bi}, the product of numbers from which is a perfect square
+
+
+Sample test(s)
+
+Input
+
+3 4
+9 20 500 3
+
+Output
+
+3
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Winter Trainings 2003
+Date:	2003-02-06
+
+<|response|>
+1. Abridged problem statement  
+   Given t (≤100) and m (≤100), and m positive integers b₁…bₘ whose prime factors lie among the first t primes, count the number of non-empty subsets S of {1…m} such that the product of bᵢ for i∈S is a perfect square. Output the exact count.
+
+2. Key observations  
+   • A positive integer is a perfect square if and only if every prime in its factorization has an even exponent.  
+   • For each bᵢ, record a t-dimensional vector over GF(2) of the parity (0 or 1) of the exponent of each of the first t primes.  
+   • A subset S multiplies to a square exactly when the bitwise XOR (sum mod 2) of its vectors is the zero vector.  
+   • If we build an m×t matrix A whose rows are those vectors, the number of solutions x∈{0,1}ᵐ to A·x=0 over GF(2) is 2^(m−rank(A)).  
+   • Excluding the trivial all-zero choice (empty subset), the answer is 2^(m−rank(A))−1.
+
+3. Full solution approach  
+   1. Generate the first t primes by simple trial division.  
+   2. For each bᵢ, factor out each of those primes and record the exponent mod 2 into a vector vᵢ of length t.  
+   3. Assemble these m vectors as rows of an m×t binary matrix.  
+   4. Perform Gaussian elimination over GF(2) on that matrix to compute its rank r.  
+      - Iterate columns 0…t−1, for each find a pivot row (with a 1 in that column), swap it into position “current rank”, then XOR-eliminate that column from all other rows.  
+   5. The null‐space dimension is m−r, so there are 2^(m−r) solutions; subtract 1 to exclude the empty subset.  
+   6. Compute 2^(m−r) as a decimal string by repeated doubling of “1”, then subtract “1” in decimal string form, and print the result.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Add two non-negative decimal strings a and b, return their sum as string.
+string addStrings(const string &a, const string &b) {
+    int i = a.size()-1, j = b.size()-1, carry = 0;
+    string res;
+    while (i>=0 || j>=0 || carry) {
+        int da = (i>=0 ? a[i--]-'0' : 0);
+        int db = (j>=0 ? b[j--]-'0' : 0);
+        int s = da + db + carry;
+        res.push_back(char('0' + (s%10)));
+        carry = s/10;
+    }
+    while (res.size()>1 && res.back()=='0') res.pop_back();
+    reverse(res.begin(), res.end());
+    return res;
+}
+
+// Subtract decimal string b from a (assume a >= b >= "0")
+string subStrings(const string &a, const string &b) {
+    int i = a.size()-1, j = b.size()-1, borrow = 0;
+    string res;
+    while (i >= 0) {
+        int da = a[i] - '0' - borrow;
+        int db = (j>=0 ? b[j]-'0' : 0);
+        if (da < db) {
+            da += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        res.push_back(char('0' + (da - db)));
+        i--; j--;
+    }
+    while (res.size()>1 && res.back()=='0') res.pop_back();
+    reverse(res.begin(), res.end());
+    return res;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(NULL);
+
+    int t, m;
+    cin >> t >> m;
+    vector<long long> b(m);
+    for(int i=0; i<m; i++) cin >> b[i];
+
+    // 1) Generate first t primes
+    vector<int> primes;
+    int cand = 2;
+    while ((int)primes.size() < t) {
+        bool isP = true;
+        for(int p: primes) {
+            if (1LL*p*p > cand) break;
+            if (cand % p == 0) { isP = false; break; }
+        }
+        if (isP) primes.push_back(cand);
+        cand = (cand==2 ? 3 : cand+2);
+    }
+
+    // 2) Build m x t matrix of exponent parities
+    vector<vector<int>> mat(m, vector<int>(t, 0));
+    for(int i=0; i<m; i++){
+        long long x = b[i];
+        for(int j=0; j<t; j++){
+            int p = primes[j];
+            while (x % p == 0) {
+                mat[i][j] ^= 1;
+                x /= p;
+            }
+            if (x==1) break;
+        }
+    }
+
+    // 3) Gaussian elimination over GF(2) to find rank
+    int rank = 0;
+    for(int col=0; col<t && rank<m; col++){
+        // find pivot
+        int sel = -1;
+        for(int row=rank; row<m; row++){
+            if (mat[row][col]==1) { sel = row; break; }
+        }
+        if (sel<0) continue;
+        swap(mat[rank], mat[sel]);
+        // eliminate in all other rows
+        for(int row=0; row<m; row++){
+            if (row!=rank && mat[row][col]==1) {
+                for(int c=col; c<t; c++){
+                    mat[row][c] ^= mat[rank][c];
+                }
+            }
+        }
+        rank++;
+    }
+
+    // 4) Number of non-empty solutions = 2^(m-rank) - 1
+    int freeVars = m - rank;
+    string ans = "1";
+    for(int i=0; i<freeVars; i++){
+        ans = addStrings(ans, ans);  // double it
+    }
+    ans = subStrings(ans, "1");     // subtract empty subset
+    cout << ans << "\n";
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(10000)
+
+def first_primes(t):
+    """Return a list of the first t prime numbers."""
+    primes = []
+    p = 2
+    while len(primes) < t:
+        is_p = True
+        for q in primes:
+            if q*q > p: break
+            if p % q == 0:
+                is_p = False
+                break
+        if is_p:
+            primes.append(p)
+        p = 3 if p==2 else p+2
+    return primes
+
+def rank_gf2(mat, t):
+    """
+    Perform in-place Gaussian elimination on mat (list of m rows, each length t)
+    over GF(2). Return the rank (number of pivot rows).
+    """
+    m = len(mat)
+    r = 0  # current pivot row
+    for col in range(t):
+        # find a row >= r with a 1 in this column
+        pivot = -1
+        for row in range(r, m):
+            if mat[row][col] == 1:
+                pivot = row
+                break
+        if pivot < 0:
+            continue
+        # swap pivot row into position r
+        mat[r], mat[pivot] = mat[pivot], mat[r]
+        # eliminate this column from all other rows
+        for row in range(m):
+            if row != r and mat[row][col] == 1:
+                # row_i ^= pivot_row
+                mat[row] = [ (a ^ b) for a,b in zip(mat[row], mat[r]) ]
+        r += 1
+        if r == m:
+            break
+    return r
+
+def main():
+    data = sys.stdin.read().split()
+    t, m = map(int, data[:2])
+    b_list = list(map(int, data[2:]))
+
+    # 1. generate primes
+    primes = first_primes(t)
+
+    # 2. build exponent-parity matrix
+    mat = []
+    for x in b_list:
+        row = [0]*t
+        tmp = x
+        for i,p in enumerate(primes):
+            while tmp % p == 0:
+                row[i] ^= 1
+                tmp //= p
+            if tmp == 1:
+                break
+        mat.append(row)
+
+    # 3. compute rank over GF(2)
+    r = rank_gf2(mat, t)
+
+    # 4. answer = 2^(m-r) - 1
+    # Python has big ints, so use shift
+    free_vars = m - r
+    result = (1 << free_vars) - 1
+    print(result)
+
+if __name__ == "__main__":
+    main()
+```

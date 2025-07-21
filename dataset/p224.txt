@@ -1,0 +1,200 @@
+1. Abridged Problem Statement  
+Given an n×n chessboard (1≤n≤10) and an integer k (0≤k≤n²), count the number of ways to place k identical queens so that no two attack each other (i.e., no two share a row, column, or diagonal).
+
+2. Detailed Editorial  
+
+We need to count all configurations of k queens on an n×n board so that no two are in line vertically, horizontally, or along either diagonal. A classic approach is backtracking (depth-first search) that proceeds row by row:
+
+ 1. We maintain a structure (here, a 2D array `attacked[row][col]`) that records how many queens attack a given square. A square is safe if its attacked count is zero.
+ 2. We write a recursive function `brute(row, k_left)` which returns the number of ways to place `k_left` queens on rows `row..n−1`.  
+    - Prune immediately if `k_left > n − row` (not enough rows remain).
+    - If `row == n`, we have considered all rows: return 1 if `k_left == 0`, else 0.
+    - First, consider _not_ placing a queen on this row at all: `ans = brute(row+1, k_left)`.
+    - Then, for each column `col` in `[0..n-1]`, if `(row,col)` is safe (`attacked[row][col]==0`) and `k_left>0`, we:
+        a. Mark the new queen by incrementing `attacked` on its row, column, and both diagonals (`change_queen`).
+        b. Recurse: `ans += brute(row+1, k_left-1)`.
+        c. Unmark (subtract) to restore state.
+ 3. The function `change_queen(row, col, delta)` walks outwards in all eight directions from `(row,col)`, adding `delta` (±1) to `attacked`. We subtract an extra `3*delta` at the end to correct for the overcount at `(row,col)` itself (since the four “directional” loops each revisit it).
+ 4. The total number of valid placements is `brute(0, k)` with an initially zeroed `attacked` grid.
+  
+Time complexity: In the worst case (small k), the branching factor is O(n) per row, depth ≤ n, yielding something like O(nⁿ) in the absolute worst—but n≤10 makes this feasible, and pruning by `k_left` further reduces branches.
+
+3. Annotated C++ Solution  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload for printing pairs
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1,T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload for reading pairs
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1,T2> &x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for (auto &x : a)
+        in >> x;
+    return in;
+}
+
+// Print a vector
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for (auto x : a)
+        out << x << ' ';
+    return out;
+}
+
+int n, k;
+
+// Read n and k
+void read() {
+    cin >> n >> k;
+}
+
+// Mark or unmark attacks introduced by placing/removing a queen at (r,c)
+// delta = +1 to mark, -1 to unmark
+void change_queen(int row, int col, vector<vector<int>> &attacked, int delta) {
+    // For each direction: row, column, and 4 diagonals
+    for (int i = 0; i < n; i++) {
+        attacked[row][i] += delta;          // mark row
+        attacked[i][col] += delta;          // mark column
+        // Four diagonal directions
+        if (row + i < n && col + i < n) {
+            attacked[row+i][col+i] += delta;
+        }
+        if (row + i < n && col - i >= 0) {
+            attacked[row+i][col-i] += delta;
+        }
+        if (row - i >= 0 && col + i < n) {
+            attacked[row-i][col+i] += delta;
+        }
+        if (row - i >= 0 && col - i >= 0) {
+            attacked[row-i][col-i] += delta;
+        }
+    }
+    // The loops above each touched (row,col) once; we want that square
+    // to reflect exactly delta once, so subtract 3*delta to correct.
+    attacked[row][col] -= 3 * delta;
+}
+
+// Recursive backtracking: count ways to place k_left queens on rows [row..n-1]
+int brute(int row, int k_left, vector<vector<int>> &attacked) {
+    // Prune: not enough rows to place remaining queens
+    if (k_left > n - row) return 0;
+    // If we've processed all rows, succeed only if k_left==0
+    if (row == n) return (k_left == 0) ? 1 : 0;
+    
+    // 1) Option: place no queen on this row
+    int ans = brute(row + 1, k_left, attacked);
+    
+    // 2) Try placing one queen in each safe column
+    if (k_left > 0) {
+        for (int col = 0; col < n; col++) {
+            if (attacked[row][col] == 0) {
+                // mark attacks
+                change_queen(row, col, attacked, +1);
+                // recurse with one fewer queen to place
+                ans += brute(row + 1, k_left - 1, attacked);
+                // unmark
+                change_queen(row, col, attacked, -1);
+            }
+        }
+    }
+    return ans;
+}
+
+void solve() {
+    // attacked[r][c] = number of queens attacking (r,c)
+    vector<vector<int>> attacked(n, vector<int>(n, 0));
+    // start from row 0 with k queens to place
+    cout << brute(0, k, attacked) << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+def count_configurations(n, k):
+    """
+    Count ways to place k queens on an n×n board without attacks,
+    proceeding row by row.
+    """
+
+    # Use bitmasks to track attacked columns and diagonals:
+    # `cols`  : columns under attack
+    # `d1`    : "main" diagonals under attack (row+col)
+    # `d2`    : "anti" diagonals under attack (row-col + (n-1))
+    ALL = (1 << n) - 1  # mask of n one-bits
+
+    from functools import lru_cache
+
+    @lru_cache(None)
+    def dfs(row, placed, cols, d1, d2):
+        # placed = number of queens already placed
+        # row = next row index to consider
+        if placed == k:
+            # All required queens placed: any remaining rows can be empty
+            return 1
+        if row == n:
+            # No more rows
+            return 0
+        # Prune: if even placing one queen per remaining row can't reach k
+        if placed + (n - row) < k:
+            return 0
+
+        ways = 0
+        # 1) Skip placing on this row
+        ways += dfs(row+1, placed, cols, d1<<1, d2>>1)
+
+        # 2) Place exactly one queen in any safe column on this row
+        # safe positions = those columns not in cols, and not attacked on diagonals
+        attacked = cols | d1 | d2
+        free_positions = (~attacked) & ALL
+        while free_positions:
+            # pick lowest set bit
+            bit = free_positions & -free_positions
+            free_positions -= bit
+            # Set that bit in cols;
+            # shift diagonals for next row
+            ways += dfs(
+                row+1,
+                placed+1,
+                cols | bit,
+                (d1 | bit) << 1,
+                (d2 | bit) >> 1
+            )
+        return ways
+
+    return dfs(0, 0, 0, 0, 0)
+
+# Example usage:
+if __name__ == "__main__":
+    n, k = map(int, input().split())
+    print(count_configurations(n, k))
+```
+
+Explanation of the Python approach:  
+- We encode the board state in three bitmasks—columns, main diagonals, and anti-diagonals.  
+- At each row, we can either skip placing a queen (so just update the diagonals' masks by shifting), or place one queen in any free column (bit not set in any of the three masks).  
+- We recurse until we have placed k queens or run out of rows, using memoization (`lru_cache`) to avoid recomputation.
+
+5. Compressed Editorial  
+
+We use a depth-first search over rows, keeping track of attacked squares. At each row, we either skip placing a queen or place one in any safe column (attacked count zero). We prune when too few rows remain to fit the remaining queens. The complexity is acceptable for n≤10. A bitmask variant replaces the 2D attacked array with three integer masks—columns, main diagonals, and anti-diagonals—and shifts them as we move down the rows, with memoization to accelerate overlapping subproblems.

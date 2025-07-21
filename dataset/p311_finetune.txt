@@ -1,0 +1,259 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+311. Ice-cream Tycoon
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+You've recently started an ice-cream business in a local school. During a day you have many suppliers delivering the ice-cream for you, and many students buying it from you. You are not allowed to set the prices, as you are told the price for each piece of ice-cream by the suppliers.
+
+The day is described with a sequence of queries. Each query can be either ARRIVE n c, meaning that a supplier has delivered n pieces of ice-cream priced c each to you, or BUY n t, meaning that a student wants to buy n pieces of ice-cream, having a total of t money. The latter is processed as follows: in case n cheapest pieces of ice-cream you have cost no more than t (together), you sell those n cheapest pieces to the student; in case they cost more, she gets nothing. You start the day with no ice-cream.
+
+For each student, output HAPPY if she gets her ice-cream, and UNHAPPYif she doesn't.
+
+Input
+The input file contains between 1 and 105 queries (inclusive), each on a separate line. The queries are formatted as described above, either ARRIVE n c or BUY n t, 1 ≤ n, c ≤ 106, 1 ≤ t ≤ 1012.
+
+Output
+For each BUY-query output one line, containing either the word HAPPY or the word UNHAPPY (answers should be in the same order as the corresponding queries).
+
+Example(s)
+sample input
+sample output
+ARRIVE 1 1
+ARRIVE 10 200
+BUY 5 900
+BUY 5 900
+BUY 5 1000
+HAPPY
+UNHAPPY
+HAPPY
+
+<|response|>
+1. Abridged Problem Statement  
+You start with no ice-cream. You process up to 10^5 queries of two types:  
+• ARRIVE n c: A supplier delivers n pieces, each costing c.  
+• BUY n t: A student wants to buy the n cheapest pieces and has t money.  
+  – If the total cost of those n cheapest pieces ≤ t, you remove them from stock and print “HAPPY”.  
+  – Otherwise, you leave your stock unchanged and print “UNHAPPY”.  
+
+Prices c range from 1 to 10^6, n up to 10^6 per ARRIVE, total t up to 10^12.
+
+2. Key Observations  
+- We need to maintain a multiset of prices with fast:  
+  1. Insert n copies of price c.  
+  2. Query the sum of the k smallest prices.  
+  3. If affordable, delete exactly those k smallest.  
+- Price domain is small (1…10^6), so we can index data structures by price.  
+- A Fenwick (Binary Indexed) Tree supports point updates and prefix-sum queries in O(log C).  
+- We actually need two Fenwicks over prices 1…C:  
+  • bitCount[p]: how many pieces at price p.  
+  • bitSum[p]: total cost contributed by price p (i.e. p × bitCount[p]).  
+- To get the k-th smallest price p, we do a “lower_bound” on bitCount by cumulative count.  
+- Then we can compute cost of k cheapest as:  
+  sum over prices < p plus (k − count(< p)) × p.  
+- If affordable, we must delete those k items:  
+  • Fully delete all items priced < p.  
+  • Delete the remaining needed at price p.  
+
+3. Full Solution Approach  
+1. Initialize two Fenwicks of size CMAX = 10^6: bitCount and bitSum.  
+2. For ARRIVE(n, c):  
+   - bitCount.update(c, +n)  
+   - bitSum.update(c, +n × c)  
+3. For BUY(k, t):  
+   a) Let total = bitCount.query(CMAX). If total < k, print “UNHAPPY” and continue.  
+   b) Find p = bitCount.lower_bound(k), the smallest price where cumulative count ≥ k.  
+   c) cntBelow = bitCount.query(p−1), needAtP = k − cntBelow.  
+   d) costBelow = bitSum.query(p−1), totalCost = costBelow + needAtP × p.  
+   e) If totalCost > t, print “UNHAPPY” (do not modify Fenwicks).  
+   f) Else (we can sell):  
+      - Remove all pieces priced < p:  
+         rem = cntBelow  
+         while rem > 0:  
+           q = bitCount.lower_bound(rem)  // the highest price that accounts for rem pieces  
+           cntAtQ = bitCount.query(q) − bitCount.query(q−1)  
+           r = min(cntAtQ, rem)  
+           bitCount.update(q, −r)  
+           bitSum.update(q, −r × q)  
+           rem -= r  
+      - Remove needAtP at price p:  
+           bitCount.update(p, −needAtP)  
+           bitSum.update(p, −needAtP × p)  
+      - Print “HAPPY”.  
+4. Each update/query/lower_bound is O(log C). Total time O(Q log C + total_distinct_removals log C), which is fine for Q=10^5, C=10^6.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Fenwick tree supporting point updates and prefix sums on 1..n
+struct Fenwick {
+    int n;
+    vector<long long> f;
+    Fenwick(int _n): n(_n), f(n+1, 0) {}
+    // add v at index i
+    void update(int i, long long v) {
+        for (; i <= n; i += i & -i)
+            f[i] += v;
+    }
+    // sum of [1..i]
+    long long query(int i) const {
+        long long s = 0;
+        for (; i > 0; i -= i & -i)
+            s += f[i];
+        return s;
+    }
+    // find smallest index p such that query(p) >= target
+    int lower_bound(long long target) const {
+        int pos = 0;
+        // binary lift over bit-length of n
+        for (int pw = 1 << 20; pw > 0; pw >>= 1) {
+            int nxt = pos + pw;
+            if (nxt <= n && f[nxt] < target) {
+                target -= f[nxt];
+                pos = nxt;
+            }
+        }
+        return pos + 1;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    const int CMAX = 1000000;
+    Fenwick bitCount(CMAX), bitSum(CMAX);
+
+    string op;
+    long long a, b;
+    while ( (cin >> op >> a >> b) ) {
+        if (op == "ARRIVE") {
+            // Add a pieces of price b
+            bitCount.update((int)b, a);
+            bitSum.update((int)b, a * b);
+        } else {
+            // BUY a pieces with budget b
+            long long k = a, t = b;
+            long long totalPieces = bitCount.query(CMAX);
+            if (totalPieces < k) {
+                cout << "UNHAPPY\n";
+                continue;
+            }
+            // find price p for the k-th piece
+            int p = bitCount.lower_bound(k);
+            long long cntBelow = bitCount.query(p - 1);
+            long long needAtP = k - cntBelow;
+            long long costBelow = bitSum.query(p - 1);
+            long long totalCost = costBelow + needAtP * p;
+
+            if (totalCost > t) {
+                // cannot afford
+                cout << "UNHAPPY\n";
+            } else {
+                // perform deletions
+                long long rem = cntBelow;
+                // remove all items priced < p
+                while (rem > 0) {
+                    // find the price q that accounts for the rem-th piece
+                    int q = bitCount.lower_bound(rem);
+                    long long cntAtQ = bitCount.query(q) - bitCount.query(q - 1);
+                    long long r = min(cntAtQ, rem);
+                    bitCount.update(q, -r);
+                    bitSum.update(q, -r * q);
+                    rem -= r;
+                }
+                // remove the remaining at price p
+                bitCount.update(p, -needAtP);
+                bitSum.update(p, -needAtP * p);
+                cout << "HAPPY\n";
+            }
+        }
+    }
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+input = sys.stdin.readline
+
+class Fenwick:
+    def __init__(self, n):
+        self.n = n
+        self.f = [0] * (n+1)
+    # add v at index i
+    def update(self, i, v):
+        while i <= self.n:
+            self.f[i] += v
+            i += i & -i
+    # sum of [1..i]
+    def query(self, i):
+        s = 0
+        while i > 0:
+            s += self.f[i]
+            i -= i & -i
+        return s
+    # find smallest index p with prefix sum >= target
+    def lower_bound(self, target):
+        pos = 0
+        bit_mask = 1 << (self.n.bit_length())
+        while bit_mask:
+            nxt = pos + bit_mask
+            if nxt <= self.n and self.f[nxt] < target:
+                target -= self.f[nxt]
+                pos = nxt
+            bit_mask >>= 1
+        return pos + 1
+
+CMAX = 10**6
+bitCount = Fenwick(CMAX)
+bitSum   = Fenwick(CMAX)
+
+for line in sys.stdin:
+    parts = line.split()
+    if not parts:
+        continue
+    op, a, b = parts[0], int(parts[1]), int(parts[2])
+    if op == "ARRIVE":
+        # add a pieces priced b
+        bitCount.update(b, a)
+        bitSum.update(b, a * b)
+    else:  # BUY a pieces with budget b
+        k, t = a, b
+        total = bitCount.query(CMAX)
+        if total < k:
+            print("UNHAPPY")
+            continue
+        # find the price p of the k-th cheapest piece
+        p = bitCount.lower_bound(k)
+        cntBelow = bitCount.query(p - 1)
+        needAtP = k - cntBelow
+        costBelow = bitSum.query(p - 1)
+        totalCost = costBelow + needAtP * p
+
+        if totalCost > t:
+            # too expensive
+            print("UNHAPPY")
+        else:
+            # delete all pieces priced < p
+            rem = cntBelow
+            while rem > 0:
+                q = bitCount.lower_bound(rem)
+                cntAtQ = bitCount.query(q) - bitCount.query(q - 1)
+                r = min(cntAtQ, rem)
+                bitCount.update(q, -r)
+                bitSum.update(q,   -r * q)
+                rem -= r
+            # delete the needed at price p
+            bitCount.update(p, -needAtP)
+            bitSum.update(p, -needAtP * p)
+            print("HAPPY")
+```

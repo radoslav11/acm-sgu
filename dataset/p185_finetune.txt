@@ -1,0 +1,379 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+185. Two shortest
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard input
+output: standard output
+
+
+
+Yesterday Vasya and Petya quarreled badly, and now they don't want to see each other on their way to school. The problem is that they live in one and the same house, leave the house at the same time and go at the same speed by the shortest road. Neither of them wants to change their principles, that is why they want to find two separate shortest routes, which won't make them go along one road, but still they can meet at any junction. They ask you to help them. They number all the junctions with numbers from 1 to N (home and school are also considered as junctions). So their house has the number 1 and the school has the number N, each road connects two junctions exactly, and there cannot be several roads between any two junctions.
+
+Input
+The first line contains two integer numbers N and M (2<=N<=400), where M is the number of roads Petya and Vasya noticed. Each of the following M lines contains 3 integers: X, Y and L (1<=X, Y<=N, 1<=L<=10000), where X and Y - numbers of junctions, connected by the road and L is the length of the road.
+
+Output
+Write to the first line numbers of the junctions in the way they passed them on the first route. Write to the second line numbers of the junctions in the way they passed them on the second route. If it is impossible to help guys, then output "No solution".
+
+Sample test(s)
+
+Input
+6 8
+1 2 1
+3 2 1
+3 4 1
+1 3 2
+4 2 2
+4 5 1
+5 6 1
+4 6 2
+
+Output
+1 3 4 5 6
+1 2 4 6
+Author:	Andrew V. Lazarev
+Resource:	ACM International Collegiate Programming Contest 2003-2004
+North-Eastern European Region, Southern Subregion
+Date:	2003 October, 9
+
+<|response|>
+1. Abridged problem statement  
+Given an undirected weighted graph with N nodes (1…N) and M edges. Find two paths from node 1 to node N such that:  
+- Each path has length equal to the shortest‐path distance D from 1 to N.  
+- The two paths are edge‐disjoint (they may share vertices but no edge).  
+If no such pair exists, output “No solution”. Otherwise print each path as a sequence of node numbers.
+
+2. Key observations  
+- A single‐source shortest‐path computation (e.g. Dijkstra) from node 1 yields for each node u its distance dist[u] to the source.  
+- An undirected edge (u,v,w) lies on some shortest path 1→…→N exactly when dist[u]+w = dist[v] or dist[v]+w = dist[u]. If you orient such edges in increasing‐distance direction, you build a directed acyclic “shortest‐path DAG” containing exactly the edges that participate in at least one shortest path.  
+- In that DAG, any path from 1 to N has length D. We now need two edge‐disjoint directed paths in this DAG.  
+- Finding k edge‐disjoint paths in a directed graph reduces to a max‐flow problem with unit capacities on each edge. Here k=2.  
+- After computing a max‐flow of value two, you can trace two flow‐units from source to sink to recover the two paths.
+
+3. Full solution approach  
+a. Run Dijkstra from node 1 to compute dist[1..N], where dist[v] is the distance of a shortest path 1→v. Let D = dist[N].  
+b. Build the shortest‐path DAG of size N: for each undirected edge (u,v,w),  
+   - if dist[u]+w == dist[v], add directed edge u→v,  
+   - if dist[v]+w == dist[u], add directed edge v→u.  
+c. Construct a flow network to enforce edge‐disjointness:  
+   - Give each original DAG edge e an index i.  
+   - Introduce a new “edge‐node” Ei for each i.  
+   - Add a unit‐capacity arc u→Ei and Ei→v whenever DAG has u→v with edge‐index i.  
+   - The flow network has N + (#DAG edges) nodes; source = 1, sink = N.  
+d. Run a unit‐capacity max‐flow (Dinic or Edmonds–Karp) from 1 to N, stopping early if flow≥2.  
+   - If the maximum flow < 2, print “No solution” and exit.  
+e. Otherwise flow = 2. To extract the two edge‐disjoint paths, do the following twice:  
+   - Start at u = 1, walk to N by always following an outgoing arc (u→Ei or Ei→v) that carries 1 unit of flow, decrementing the flow on that arc as you go.  
+   - Every time you traverse Ei, record the corresponding original edge u→v to recover the node sequence.  
+f. Print the two recovered paths in 1‐based node numbering.
+
+4. C++ implementation with detailed comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// ---------------- Dinic max‐flow for unit capacities ----------------
+struct Dinic {
+    struct Edge { int to, rev, cap; };
+    vector<vector<Edge>> g;
+    vector<int> level, ptr;
+    int n;
+    Dinic(int _n): n(_n), g(n), level(n), ptr(n) {}
+
+    void addEdge(int u, int v, int cap) {
+        g[u].push_back({v, (int)g[v].size(), cap});
+        g[v].push_back({u, (int)g[u].size()-1, 0});
+    }
+
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0; q.push(s);
+        while(!q.empty()) {
+            int u = q.front(); q.pop();
+            for(auto &e : g[u]) {
+                if(level[e.to] < 0 && e.cap > 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+
+    int dfs(int u, int t, int pushed) {
+        if(u == t || pushed == 0) return pushed;
+        for(int &cid = ptr[u]; cid < (int)g[u].size(); ++cid) {
+            auto &e = g[u][cid];
+            if(level[e.to] != level[u] + 1 || e.cap == 0) 
+                continue;
+            int tr = dfs(e.to, t, min(pushed, e.cap));
+            if(tr == 0) continue;
+            e.cap -= tr;
+            g[e.to][e.rev].cap += tr;
+            return tr;
+        }
+        return 0;
+    }
+
+    // compute max‐flow up to flow_limit
+    int maxflow(int s, int t, int flow_limit = INT_MAX) {
+        int flow = 0;
+        while(flow < flow_limit && bfs(s,t)) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while(flow < flow_limit) {
+                int pushed = dfs(s, t, flow_limit - flow);
+                if(pushed == 0) break;
+                flow += pushed;
+            }
+        }
+        return flow;
+    }
+};
+// --------------------------------------------------------------------
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    cin >> N >> M;
+    struct Edge { int u,v,w; };
+    vector<Edge> edges(M);
+    vector<vector<pair<int,int>>> adj(N+1);
+    for(int i = 0; i < M; i++) {
+        cin >> edges[i].u >> edges[i].v >> edges[i].w;
+        adj[edges[i].u].push_back({edges[i].v, i});
+        adj[edges[i].v].push_back({edges[i].u, i});
+    }
+
+    // 1) Dijkstra from 1
+    const int INF = 1e9;
+    vector<int> dist(N+1, INF);
+    dist[1] = 0;
+    priority_queue<pair<int,int>,
+       vector<pair<int,int>>, greater<>> pq;
+    pq.push({0,1});
+    while(!pq.empty()) {
+        auto [d,u] = pq.top(); pq.pop();
+        if(d > dist[u]) continue;
+        for(auto &pr : adj[u]) {
+            int v = pr.first, idx = pr.second;
+            int nd = d + edges[idx].w;
+            if(nd < dist[v]) {
+                dist[v] = nd;
+                pq.push({nd, v});
+            }
+        }
+    }
+    if(dist[N] == INF) {
+        cout << "No solution\n";
+        return 0;
+    }
+
+    // 2) Build shortest‐path DAG and list its edges
+    // We'll store (u→v, edge_index)
+    vector<tuple<int,int,int>> dagEdges;
+    for(int i = 0; i < M; i++) {
+        int u = edges[i].u, v = edges[i].v, w = edges[i].w;
+        if(dist[u] + w == dist[v]) dagEdges.emplace_back(u,v,i);
+        if(dist[v] + w == dist[u]) dagEdges.emplace_back(v,u,i);
+    }
+
+    int E = (int)dagEdges.size();
+    // 3) Build flow network of size = N + E
+    Dinic flow(N + E + 1);
+    int S = 1, T = N;
+    // nodes 1..N   = original graph nodes
+    // nodes N+1..N+E = each DAG edge turned into an intermediate node
+    for(int i = 0; i < E; i++) {
+        auto [u,v,idx] = dagEdges[i];
+        int edgeNode = N + 1 + i;
+        flow.addEdge(u, edgeNode, 1);
+        flow.addEdge(edgeNode, v, 1);
+    }
+
+    // 4) Max‐flow from 1 to N, up to 2
+    int f = flow.maxflow(S, T, 2);
+    if(f < 2) {
+        cout << "No solution\n";
+        return 0;
+    }
+
+    // 5) Extract the two paths by following used edges
+    // Build adjacency list of the chosen edges in the DAG
+    vector<vector<int>> used(N+1);
+    for(int i = 0; i < E; i++) {
+        int edgeNode = N + 1 + i;
+        for(auto &e : flow.g[edgeNode]) {
+            // if this backward arc has cap>0, then the forward arc was used
+            if(e.to >= 1 && e.to <= N && e.cap > 0) {
+                // we had edgeNode -> v with capacity 1
+                int v = e.to;
+                auto [u0, v0, idx0] = dagEdges[i];
+                // confirm v0 == v
+                // record u0 -> v0
+                used[u0].push_back(v0);
+            }
+        }
+    }
+
+    // Recover two paths
+    for(int pass = 0; pass < 2; pass++) {
+        vector<int> path;
+        int u = 1;
+        path.push_back(u);
+        while(u != N) {
+            int v = used[u].back();
+            used[u].pop_back();
+            path.push_back(v);
+            u = v;
+        }
+        // print path
+        for(int x : path) cout << x << ' ';
+        cout << "\n";
+    }
+
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+
+```python
+import sys
+import threading
+def main():
+    import heapq
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N, M = int(next(it)), int(next(it))
+    edges = []
+    adj = [[] for _ in range(N+1)]
+    for i in range(M):
+        u, v, w = int(next(it)), int(next(it)), int(next(it))
+        edges.append((u,v,w))
+        adj[u].append((v,i))
+        adj[v].append((u,i))
+
+    # 1) Dijkstra from 1
+    INF = 10**18
+    dist = [INF]*(N+1)
+    dist[1] = 0
+    pq = [(0,1)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]: continue
+        for v, idx in adj[u]:
+            nd = d + edges[idx][2]
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(pq, (nd, v))
+    if dist[N] == INF:
+        print("No solution")
+        return
+
+    # 2) Build shortest‐path DAG edges
+    dag = []  # list of (u,v)
+    for i, (u,v,w) in enumerate(edges):
+        if dist[u] + w == dist[v]:
+            dag.append((u,v))
+        if dist[v] + w == dist[u]:
+            dag.append((v,u))
+
+    E = len(dag)
+    # 3) Build flow network with unit capacities
+    # Nodes: 1..N = original; N+1..N+E = edge‐nodes
+    size = N + E + 1
+    graph = [[] for _ in range(size)]
+    # edge structure: to, capacity, rev‐index
+    class Edge:
+        __slots__ = ('to','cap','rev')
+        def __init__(self,to,cap,rev):
+            self.to, self.cap, self.rev = to,cap,rev
+
+    def add_edge(u,v,cap):
+        graph[u].append(Edge(v,cap,len(graph[v])))
+        graph[v].append(Edge(u,0,len(graph[u])-1))
+
+    S, T = 1, N
+    for i, (u,v) in enumerate(dag):
+        en = N + 1 + i
+        add_edge(u, en, 1)
+        add_edge(en, v, 1)
+
+    # Dinic
+    level = [0]*size
+    ptr = [0]*size
+
+    def bfs():
+        for i in range(size):
+            level[i] = -1
+        queue = [S]
+        level[S] = 0
+        for u in queue:
+            for e in graph[u]:
+                if level[e.to] < 0 and e.cap > 0:
+                    level[e.to] = level[u] + 1
+                    queue.append(e.to)
+        return level[T] >= 0
+
+    def dfs(u, pushed):
+        if u == T or pushed == 0:
+            return pushed
+        while ptr[u] < len(graph[u]):
+            e = graph[u][ptr[u]]
+            if level[e.to] == level[u] + 1 and e.cap > 0:
+                tr = dfs(e.to, min(pushed, e.cap))
+                if tr > 0:
+                    e.cap -= tr
+                    graph[e.to][e.rev].cap += tr
+                    return tr
+            ptr[u] += 1
+        return 0
+
+    # 4) max‐flow up to 2
+    flow = 0
+    while flow < 2 and bfs():
+        ptr = [0]*size
+        while flow < 2:
+            pushed = dfs(S, 2-flow)
+            if pushed == 0: break
+            flow += pushed
+
+    if flow < 2:
+        print("No solution")
+        return
+
+    # 5) Extract used DAG edges
+    used = [[] for _ in range(N+1)]
+    for i in range(E):
+        en = N + 1 + i
+        # any backward capacity >0 implies forward was used
+        for e in graph[en]:
+            if 1 <= e.to <= N and e.cap > 0:
+                u,v = dag[i]
+                used[u].append(v)
+
+    # 6) Recover two paths
+    for _ in range(2):
+        path = [1]
+        u = 1
+        while u != N:
+            v = used[u].pop()
+            path.append(v)
+            u = v
+        print(" ".join(map(str, path)))
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of Python steps:  
+- We build the same layered flow network with an intermediate node for each DAG edge.  
+- We run Dinic to send two unit‐flows from 1 to N.  
+- To reconstruct paths, we look at an “edge‐node” en: if its backward arc to v has positive capacity, the forward edge‐node→v was used in the max‐flow. We record u→v (the DAG edge) in used[u].  
+- Finally, we walk from 1 to N twice, each time popping one outgoing DAG edge, to print each path.

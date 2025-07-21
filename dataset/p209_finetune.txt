@@ -1,0 +1,394 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+209. Areas
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Consider N different lines on the plane. They divide it to several parts,some of which are finite, some infinite.
+
+Your task in this problem is for each finite part to find its area.
+
+Input
+
+The first line of the input file contains N — the number of lines (1 ≤ N ≤ 80). Each of next N lines contains four integer numbers x1, y1, x2 and y2 — the coordinates of two different points of the line.
+
+All coordinates do not exceed 102 by their absolute value.
+
+No two lines coincide.
+
+Output
+
+First output K — the number of finite parts among those the lines divide the plane to.
+
+Next K lines of the output file must contain area parts sorted in non-decreasing order. You answer must be accurate up to 10-4.
+
+Due to floating point precision losses possible, do not consider parts with area not exceeding 10-8.
+
+Sample test(s)
+
+Input
+5
+0 0 1 0
+1 0 1 1
+1 1 0 1
+0 1 0 0
+0 0 1 1
+
+Output
+2
+0.5000
+0.5000
+
+<|response|>
+1. Abridged Problem Statement  
+Given N infinite lines on the plane (1 ≤ N ≤ 80), they split the plane into regions—some bounded (finite) and some unbounded. Find all finite regions and report their areas in non-decreasing order (precision up to 1e-4), ignoring any region whose area ≤1e-8.
+
+2. Key Observations  
+- Any two non‐parallel lines intersect at exactly one point. There are O(N²) intersection points total.  
+- These intersections form the vertices of a planar graph; edges are the segments between consecutive intersections along each input line.  
+- In a planar straight‐line embedding, each face (region) can be traced by walking around directed edges, always turning “right” (or “left”) at each vertex in angular order.  
+- The area of a simple polygon given by its vertex cycle can be computed by the shoelace formula.  
+
+3. Full Solution Approach  
+
+Step A. Read input lines.  
+Step B. Compute all pairwise intersections exactly as rational points (to avoid duplicates from floating errors). Store them in a set to deduplicate.  
+Step C. Index each unique intersection point from 0…V–1.  
+Step D. For each input line:  
+  1. Collect all intersection‐points that lie on this line (check collinearity via cross‐product zero).  
+  2. Sort these points by their position along the line (parameter t).  
+  3. Connect each consecutive pair in this sorted list by an undirected edge.  
+
+Step E. At each vertex u, sort its adjacency list by the angle of the neighbor vector (u→v) in counterclockwise order. This gives a consistent circular order around u.  
+
+Step F. Face Tracing:  
+  - Treat each undirected edge {u,v} as two directed edges (u→v) and (v→u).  
+  - Maintain a visited set of directed edges.  
+  - For each unvisited directed edge (u→v), start a new face-walk:  
+      • Mark (u→v) visited, let cycle = [v].  
+      • Current directed edge is (u→v). At vertex v, find u’s index in v’s sorted neighbor list; move to the neighbor immediately before that index in cyclic order (i.e., turn “right”). Call it w.  
+      • Travel directed edge (v→w), mark visited, append w to cycle, then set (u,v) ← (v,w).  
+      • Stop when you return to the starting directed edge.  
+  - The collected cycle of vertices forms one face boundary.  
+
+Step G. Compute the signed area of each cycle via the shoelace formula. Keep only areas >1e-8. These correspond to bounded faces if you always turn “right” (you get positively oriented cycles for finite faces).  
+
+Step H. Sort the resulting areas and print the count and each area to 4 decimal places.  
+
+Overall complexity is O(N² log N + E), with E=O(N²), which is fine for N≤80.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+// Use 64-bit ints and __int128 for intermediate products
+// A rational number in lowest terms
+struct Rational {
+    long long n, d;
+    Rational(long long _n=0, long long _d=1): n(_n), d(_d) {
+        normalize();
+    }
+    // normalize so that d>0 and gcd(n,d)==1
+    void normalize() {
+        if (d < 0) { n = -n; d = -d; }
+        long long g = std::gcd(std::llabs(n), std::llabs(d));
+        n /= g; d /= g;
+    }
+    bool operator<(Rational const &o) const {
+        // compare n/d < o.n/o.d  =>  n*o.d < o.n*d
+        return __int128(n)*o.d < __int128(o.n)*d;
+    }
+    bool operator==(Rational const &o) const {
+        return n==o.n && d==o.d;
+    }
+    Rational operator+(Rational const &o) const {
+        return Rational(n*o.d + o.n*d, d*o.d);
+    }
+    Rational operator-(Rational const &o) const {
+        return Rational(n*o.d - o.n*d, d*o.d);
+    }
+    Rational operator*(Rational const &o) const {
+        return Rational(n*o.n, d*o.d);
+    }
+    Rational operator/(Rational const &o) const {
+        return Rational(n*o.d, d*o.n);
+    }
+};
+
+// A point with rational coordinates
+struct Point {
+    Rational x, y;
+    bool operator<(Point const &o) const {
+        if (x==o.x) return y<o.y;
+        return x<o.x;
+    }
+    bool operator==(Point const &o) const {
+        return x==o.x && y==o.y;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    struct Line { long long x1,y1,x2,y2; };
+    vector<Line> lines(N);
+    for(int i=0;i<N;i++){
+        cin >> lines[i].x1 >> lines[i].y1
+            >> lines[i].x2 >> lines[i].y2;
+    }
+
+    // Step B: compute all intersections
+    set<Point> allPts;
+    for(int i=0;i<N;i++){
+        auto &L1 = lines[i];
+        long long dx1 = L1.x2 - L1.x1;
+        long long dy1 = L1.y2 - L1.y1;
+        for(int j=i+1;j<N;j++){
+            auto &L2 = lines[j];
+            long long dx2 = L2.x2 - L2.x1;
+            long long dy2 = L2.y2 - L2.y1;
+            // determinant
+            long long den = dx1*dy2 - dy1*dx2;
+            if(den==0) continue; // parallel
+            // solve L1.p + t*(dx1,dy1) = intersection
+            long long num_t = (L2.x1 - L1.x1)*dy2
+                            - (L2.y1 - L1.y1)*dx2;
+            // intersection = (x1*den + t*dx1, ...)
+            long long xn = L1.x1*den + num_t*dx1;
+            long long yn = L1.y1*den + num_t*dy1;
+            Point P{ Rational(xn, den), Rational(yn, den) };
+            allPts.insert(P);
+        }
+    }
+
+    // Index vertices
+    vector<Point> verts(allPts.begin(), allPts.end());
+    int V = verts.size();
+    unordered_map<long long,int> vid; // custom hash: combine x.n,y.n,x.d,y.d
+    auto encode = [&](Point const &p){
+        // pack into a single 64-bit key (collision risk low for our bounds)
+        // since coords ≤1e2 and intersection denom ≤1e4 roughly
+        long long key = p.x.n;
+        key = key*1000007 + p.x.d;
+        key = key*1000007 + p.y.n;
+        key = key*1000007 + p.y.d;
+        return key;
+    };
+    for(int i=0;i<V;i++){
+        vid[encode(verts[i])] = i;
+    }
+
+    // Build adjacency lists
+    vector<vector<int>> adj(V);
+    for(int i=0;i<N;i++){
+        auto &L = lines[i];
+        long long dx = L.x2 - L.x1;
+        long long dy = L.y2 - L.y1;
+        // collect (t,vertex) on this line
+        vector<pair<Rational,int>> onL;
+        for(int v=0;v<V;v++){
+            // check if (verts[v] - (x1,y1)) cross (dx,dy) == 0
+            Rational rx = verts[v].x - Rational(L.x1,1);
+            Rational ry = verts[v].y - Rational(L.y1,1);
+            // rx*dy == ry*dx  <=>  collinear
+            if (rx * Rational(dy,1) == ry * Rational(dx,1)) {
+                // compute parameter t = rx/dx if dx!=0 else ry/dy
+                Rational t = (dx!=0 ? rx / Rational(dx,1)
+                                  : ry / Rational(dy,1));
+                onL.emplace_back(t, v);
+            }
+        }
+        sort(onL.begin(), onL.end(),
+             [&](auto &a, auto &b){ return a.first < b.first; });
+        for(int k=1;k<(int)onL.size();k++){
+            int u = onL[k-1].second;
+            int w = onL[k].second;
+            adj[u].push_back(w);
+            adj[w].push_back(u);
+        }
+    }
+
+    // Sort neighbors by angle
+    vector<vector<int>> nbr(V);
+    for(int u=0;u<V;u++){
+        auto &ne = adj[u];
+        sort(ne.begin(), ne.end());
+        ne.erase(unique(ne.begin(), ne.end()), ne.end());
+        // compute angle for each neighbor
+        vector<pair<double,int>> tmp;
+        for(int v: ne){
+            double ux = double(verts[u].x.n)/verts[u].x.d;
+            double uy = double(verts[u].y.n)/verts[u].y.d;
+            double vx = double(verts[v].x.n)/verts[v].x.d;
+            double vy = double(verts[v].y.n)/verts[v].y.d;
+            double ang = atan2(vy-uy, vx-ux);
+            tmp.emplace_back(ang, v);
+        }
+        sort(tmp.begin(), tmp.end());
+        for(auto &pr: tmp) nbr[u].push_back(pr.second);
+    }
+
+    // Face tracing
+    set<pair<int,int>> usedDir;
+    vector<double> areas;
+    for(int u=0;u<V;u++){
+        for(int v: adj[u]){
+            if(usedDir.count({u,v})) continue;
+            // start a new face from u->v
+            int su=u, sv=v;
+            usedDir.insert({su,sv});
+            vector<int> cycle = {sv};
+            int pu=su, pv=sv;
+            while(true){
+                // find pu in pv's neighbor list
+                auto &lst = nbr[pv];
+                int d=lst.size(), idx=0;
+                while(lst[idx]!=pu) idx++;
+                // turn right = (idx-1 + d)%d
+                int nxt = lst[(idx-1+d)%d];
+                usedDir.insert({pv,nxt});
+                pu = pv; pv = nxt;
+                if(pu==su && pv==sv) break;
+                cycle.push_back(pv);
+            }
+            // cycle has repeated start; remove it
+            // (in this code we stopped before pushing the repeated one)
+            if(cycle.size()<3) continue;
+            // compute area
+            double A=0;
+            int M=cycle.size();
+            for(int i=0;i<M;i++){
+                auto &P1 = verts[cycle[i]];
+                auto &P2 = verts[cycle[(i+1)%M]];
+                double x1 = double(P1.x.n)/P1.x.d;
+                double y1 = double(P1.y.n)/P1.y.d;
+                double x2 = double(P2.x.n)/P2.x.d;
+                double y2 = double(P2.y.n)/P2.y.d;
+                A += x1*y2 - x2*y1;
+            }
+            A = A*0.5;
+            if(A>1e-8) areas.push_back(A);
+        }
+    }
+
+    sort(areas.begin(), areas.end());
+    cout<<areas.size()<<"\n"<<fixed<<setprecision(4);
+    for(double a: areas) cout<<a<<"\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+from fractions import Fraction
+import math
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    lines = []
+    for _ in range(N):
+        x1 = int(next(it)); y1 = int(next(it))
+        x2 = int(next(it)); y2 = int(next(it))
+        lines.append((x1,y1,x2,y2))
+
+    # Step B: all intersections as exact Fractions
+    pts = set()
+    for i in range(N):
+        x1,y1,x2,y2 = lines[i]
+        dx1, dy1 = x2-x1, y2-y1
+        for j in range(i+1, N):
+            X1,Y1,X2,Y2 = lines[j]
+            dx2, dy2 = X2-X1, Y2-Y1
+            det = dx1*dy2 - dy1*dx2
+            if det == 0: continue  # parallel
+            # solve for parameter t on line i
+            num_t = (X1-x1)*dy2 - (Y1-y1)*dx2
+            t = Fraction(num_t, det)
+            xi = Fraction(x1,1) + t*dx1
+            yi = Fraction(y1,1) + t*dy1
+            pts.add((xi, yi))
+
+    # index vertices
+    verts = list(pts)
+    V = len(verts)
+    vid = {verts[i]:i for i in range(V)}
+
+    # adjacency
+    adj = [[] for _ in range(V)]
+    for (x1,y1,x2,y2) in lines:
+        dx, dy = x2-x1, y2-y1
+        onL = []
+        for i,(xi,yi) in enumerate(verts):
+            # check collinearity: (xi-x1, yi-y1) cross (dx,dy)==0
+            if (xi - x1)*dy == (yi - y1)*dx:
+                # compute parameter t
+                t = (xi - x1)/dx if dx!=0 else (yi - y1)/dy
+                onL.append((t,i))
+        onL.sort(key=lambda x: x[0])
+        for k in range(1, len(onL)):
+            u = onL[k-1][1]
+            v = onL[k][1]
+            adj[u].append(v)
+            adj[v].append(u)
+
+    # sort neighbors by angle
+    nbr = [[] for _ in range(V)]
+    for i in range(V):
+        neigh = sorted(set(adj[i]))
+        def ang(j):
+            x0 = float(verts[i][0]); y0 = float(verts[i][1])
+            x1 = float(verts[j][0]); y1 = float(verts[j][1])
+            return math.atan2(y1-y0, x1-x0)
+        neigh.sort(key=ang)
+        nbr[i] = neigh
+
+    # face tracing
+    used = set()
+    areas = []
+    for u in range(V):
+        for v in adj[u]:
+            if (u,v) in used: continue
+            used.add((u,v))
+            cycle = [v]
+            pu, pv = u, v
+            while True:
+                lst = nbr[pv]
+                k = lst.index(pu)
+                # turn right in cyclic order
+                w = lst[(k-1) % len(lst)]
+                pu, pv = pv, w
+                if (pu,pv) in used: break
+                used.add((pu,pv))
+                cycle.append(pv)
+            if len(cycle) < 3:
+                continue
+            # compute shoelace area
+            A = 0
+            M = len(cycle)
+            for i in range(M):
+                x1,y1 = verts[cycle[i]]
+                x2,y2 = verts[cycle[(i+1)%M]]
+                A += float(x1*y2 - x2*y1)
+            A = 0.5 * abs(A)
+            if A > 1e-8:
+                areas.append(A)
+
+    areas.sort()
+    print(len(areas))
+    for a in areas:
+        print(f"{a:.4f}")
+
+if __name__ == "__main__":
+    main()
+```

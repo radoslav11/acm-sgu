@@ -1,0 +1,458 @@
+1. Abridged Problem Statement  
+Given a directed graph with n vertices and m positive‐weight edges, a source s and target t, report the lengths of the k shortest s→t paths (paths may revisit vertices or edges). Output them in non‐decreasing order; if fewer than k distinct paths exist, print “NO” for each missing one.
+
+2. Detailed Editorial  
+The classic way to enumerate k shortest paths (allowing cycles) in near-optimal time is Eppstein’s algorithm. It runs Dijkstra once in reverse from the target t to compute dist[v] = shortest‐path‐distance from v to t, and it builds a shortest‐path tree (actually a directed arborescence) T over those distances. Any other edge (u→v) not in T “deviates” from the tree path at u, adding extra cost = w(u→v) + dist[v] – dist[u]. Such deviations represent one‐edge detours off the shortest‐path tree, each of which yields a candidate path.  
+
+Key steps:  
+1. Reverse‐Dijkstra from t to get dist[] and pick for each u the outgoing edge in the shortest‐path tree T.  
+2. For each u, collect all deviations: for each edge u→v not used in T, compute penalty cost c = w + dist[v] – dist[u], and insert (c,v) into a min‐heap Hu of deviations at u.  
+3. Topologically sort the tree T from leaves up, and in that order merge each node’s heap into its parent’s heap. After this, Hs (at source s) contains all possible single‐deviation costs from the unique shortest s→t path.  
+4. The first shortest path length is dist[s]. To extract the next k–1 shortest, maintain a global min‐queue of states (total_cost, heap_state). Initially push (dist[s] + top(Hs).cost, copy_of_Hs). Each time you pop (d, H), you record d, then split H into (head, left, right) via the trio operation: head = cheapest deviation at this heap node, and left/right are the subheaps representing alternative deviations. Push states reflecting continuing along left and right, and also, if the deviation leads to node v, push (d + top(Hv).cost, Hv). Repeat until k are output or queue exhausts.  
+
+This runs in O((n + m) log n + k log k) time roughly, and memory O(n + m + k). The critical data structure is a *meldable* heap (e.g. randomized / leftist / pairing heap) supporting merge in O(log N).
+
+3. The Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience operators for reading/writing pairs and vectors
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto& x: a) out << x << ' ';
+    return out;
+}
+
+// A randomized meldable min-heap storing keys of type T
+template<class T = int>
+class MeldableHeap {
+  private:
+    // Pseudo-random bit generator
+    static uint32_t rng() {
+        static mt19937 gen(random_device{}());
+        return gen();
+    }
+
+    // Nodes in the heap
+    struct Node {
+        T key;
+        Node *left, *right;
+        Node(T k): key(k), left(nullptr), right(nullptr) {}
+    };
+
+    // Merge two heap roots a and b, return merged root
+    Node* merge(Node* a, Node* b) {
+        if(!a) return b;
+        if(!b) return a;
+        // Ensure a->key <= b->key
+        if(a->key > b->key) swap(a, b);
+        // Copy node a to avoid destroying original (for persistence)
+        Node* r = new Node(a->key);
+        // Randomly choose which subtree to merge into
+        if(rng() & 1) {
+            r->left  = merge(a->left,  b);
+            r->right = a->right;
+        } else {
+            r->left  = a->left;
+            r->right = merge(a->right, b);
+        }
+        return r;
+    }
+
+    // Pop top key from heap rooted at a: returns (headNode, mergedTail)
+    pair<Node*, Node*> pop(Node* a) {
+        Node* head = new Node(a->key);
+        Node* tail = merge(a->left, a->right);
+        return {head, tail};
+    }
+
+  public:
+    Node* root;
+    MeldableHeap(): root(nullptr) {}
+    MeldableHeap(Node* r): root(r) {}
+    bool empty() const { return root == nullptr; }
+    T top()    const { return root->key; }
+
+    // Copy-on-write: share the same root pointer
+    MeldableHeap copy() const { return MeldableHeap(root); }
+
+    // Push a new key by merging a singleton node
+    void push(T key) {
+        Node* node = new Node(key);
+        root = merge(root, node);
+    }
+
+    // Pop the minimum key and return it
+    T pop() {
+        assert(root);
+        auto pr = pop(root);
+        root = pr.second;
+        return pr.first->key;
+    }
+
+    // Extract trio: (root key, left-heap, right-heap)
+    tuple<T, MeldableHeap, MeldableHeap> trio() const {
+        return { root->key,
+                 MeldableHeap(root->left),
+                 MeldableHeap(root->right) };
+    }
+
+    // Merge with another heap, returning new heap (persistent)
+    MeldableHeap merge(const MeldableHeap& other) const {
+        MeldableHeap H;
+        H.root = merge(root, other.root);
+        return H;
+    }
+    friend MeldableHeap merge(const MeldableHeap& a, const MeldableHeap& b) {
+        return a.merge(b);
+    }
+
+    // For priority_queue comparison
+    bool operator<(const MeldableHeap& other) const {
+        return top() < other.top();
+    }
+};
+
+// Implements Eppstein's k-shortest-paths algorithm
+template<class T = int64_t>
+class EppsteinShortestPaths {
+  private:
+    static constexpr T INF = numeric_limits<T>::max() / 2;
+
+    // Graph edge representation
+    struct Edge { int u, v; T w; };
+
+    int n;
+    vector<Edge> edges;
+    vector<vector<pair<int,int>>> adj, rev_adj;
+
+    // Run Dijkstra from t on the reversed graph, return (dist, parent_edge)
+    pair<vector<T>,vector<int>> build_dijkstra_tree(int t) {
+        vector<T> dist(n, INF);
+        dist[t] = 0;
+        priority_queue<pair<T,int>, vector<pair<T,int>>, greater<>> pq;
+        pq.emplace(0, t);
+
+        while(!pq.empty()) {
+            auto [d,u] = pq.top(); pq.pop();
+            if(d != dist[u]) continue;
+            // Relax incoming edges u<-v in original graph → outgoing in rev_adj
+            for(auto [v, idx]: rev_adj[u]) {
+                T nd = d + edges[idx].w;
+                if(nd < dist[v]) {
+                    dist[v] = nd;
+                    pq.emplace(nd, v);
+                }
+            }
+        }
+        // Build shortest-path tree: for each u, pick one outgoing edge
+        vector<int> tree(n, -1);
+        for(int u = 0; u < n; u++) {
+            for(auto [v, idx]: adj[u]) {
+                if(dist[u] == dist[v] + edges[idx].w) {
+                    tree[u] = idx;
+                    break;
+                }
+            }
+        }
+        return {dist, tree};
+    }
+
+    // Topological sort of the tree edges to process merges bottom-up
+    vector<int> topsort(const vector<int>& tree) {
+        vector<int> indeg(n, 0);
+        for(int u=0; u<n; u++) {
+            if(tree[u] != -1) {
+                int v = edges[tree[u]].v;
+                indeg[v]++;
+            }
+        }
+        queue<int> q;
+        for(int u=0; u<n; u++) if(indeg[u]==0) q.push(u);
+        vector<int> order;
+        while(!q.empty()) {
+            int u = q.front(); q.pop();
+            order.push_back(u);
+            if(tree[u] != -1) {
+                int v = edges[tree[u]].v;
+                if(--indeg[v] == 0) q.push(v);
+            }
+        }
+        return order;
+    }
+
+  public:
+    EppsteinShortestPaths(int _n=0){ init(_n); }
+
+    void init(int _n) {
+        n = _n;
+        edges.clear();
+        adj.assign(n, {});
+        rev_adj.assign(n, {});
+    }
+
+    // Add directed edge u->v with weight w
+    int add_edge(int u, int v, T w) {
+        int idx = edges.size();
+        edges.emplace_back(u,v,w);
+        adj[u].emplace_back(v,idx);
+        rev_adj[v].emplace_back(u,idx);
+        return idx;
+    }
+
+    // Return up to k shortest path lengths from s to t
+    vector<T> get_k_shortest_paths(int s, int t, int k) {
+        // 1) Build dist[] and tree from t
+        auto [dist, tree] = build_dijkstra_tree(t);
+        if(dist[s] == INF || k<=0) return {};
+
+        // 2) For each u, collect all non-tree outgoing edges as deviations
+        vector<MeldableHeap<pair<T,int>>> H(n);
+        for(int u=0; u<n; u++){
+            for(auto [v, idx]: adj[u]){
+                if(tree[u] == idx) continue;
+                T cost = edges[idx].w + dist[v] - dist[u];
+                H[u].push({cost, v});
+            }
+        }
+
+        // 3) Merge heaps bottom-up along tree
+        auto order = topsort(tree);
+        reverse(order.begin(), order.end());
+        for(int u: order){
+            if(tree[u] != -1){
+                int idx = tree[u];
+                int parent = edges[idx].v ^ edges[idx].u ^ u;
+                H[u] = merge(H[u], H[parent]);
+            }
+        }
+
+        // 4) Extract answers
+        vector<T> ans;
+        ans.push_back(dist[s]); // the shortest path
+        // If no deviations at s, we're done
+        if((int)ans.size() >= k || H[s].empty()) return ans;
+
+        // Min-heap of (candidate_total_cost, heap_state)
+        priority_queue<
+            pair<T,MeldableHeap<pair<T,int>>>,
+            vector<pair<T,MeldableHeap<pair<T,int>>>>,
+            greater<>
+        > pq;
+        // Push first deviation from s
+        pq.emplace(dist[s] + H[s].top().first, H[s].copy());
+
+        while(!pq.empty() && (int)ans.size() < k){
+            auto [cur_cost, heap_state] = pq.top(); pq.pop();
+            ans.push_back(cur_cost);
+
+            // Split heap_state into head, left, right
+            auto [hd, left_h, right_h] = heap_state.trio();
+            T head_cost = hd.first;    // cost of this deviation
+            int v = hd.second;          // node where deviation goes
+
+            // Continue along left subheap
+            if(!left_h.empty()){
+                T nc = cur_cost - head_cost + left_h.top().first;
+                pq.emplace(nc, left_h);
+            }
+            // Continue along right subheap
+            if(!right_h.empty()){
+                T nc = cur_cost - head_cost + right_h.top().first;
+                pq.emplace(nc, right_h);
+            }
+            // Also consider deviations from node v
+            if(!H[v].empty()){
+                pq.emplace(cur_cost + H[v].top().first, H[v].copy());
+            }
+        }
+        return ans;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m, k, s, t;
+    cin >> n >> m >> k;
+    cin >> s >> t;
+    --s; --t;
+
+    EppsteinShortestPaths<int64_t> solver(n);
+    for(int i=0,u,v,w; i<m; i++){
+        cin >> u >> v >> w;
+        solver.add_edge(u-1, v-1, w);
+    }
+
+    auto ans = solver.get_k_shortest_paths(s, t, k);
+    // Output exactly k lines
+    for(int i=0; i<k; i++){
+        if(i < (int)ans.size())
+            cout << ans[i] << "\n";
+        else
+            cout << "NO\n";
+    }
+    return 0;
+}
+```
+
+4. Python Implementation with Detailed Comments  
+```python
+import sys
+import threading
+import heapq
+def main():
+    sys.setrecursionlimit(10**7)
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+    K = int(next(it))
+    s = int(next(it)) - 1
+    t = int(next(it)) - 1
+
+    # Read graph
+    adj  = [[] for _ in range(n)]
+    radj = [[] for _ in range(n)]
+    edges = []
+    for _ in range(m):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        w = int(next(it))
+        idx = len(edges)
+        edges.append((u,v,w))
+        adj[u].append((v, idx))
+        radj[v].append((u, idx))
+
+    INF = 10**30
+
+    # 1) Reverse Dijkstra from t to get dist[v] = min distance v->...->t
+    dist = [INF]*n
+    dist[t] = 0
+    hq = [(0, t)]
+    while hq:
+        d, u = heapq.heappop(hq)
+        if d>dist[u]: continue
+        for v, ei in radj[u]:
+            w = edges[ei][2]
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(hq, (nd, v))
+
+    # 2) Build shortest-path tree: tree_edge[u] = edge idx in the shortest outgoing
+    tree_edge = [-1]*n
+    for u in range(n):
+        for v, ei in adj[u]:
+            w = edges[ei][2]
+            # if taking u->v plus dist[v] equals dist[u], it's on a shortest path
+            if dist[u] == w + dist[v]:
+                tree_edge[u] = ei
+                break
+
+    # 3) For each node u, collect deviation edges into a min-heap H[u].
+    #    Deviation cost = w + dist[v] - dist[u].
+    H = [[] for _ in range(n)]
+    for u in range(n):
+        for v, ei in adj[u]:
+            if ei == tree_edge[u]: continue
+            w = edges[ei][2]
+            penalty = w + dist[v] - dist[u]
+            heapq.heappush(H[u], (penalty, v))
+
+    # 4) Toposort the tree to merge heaps bottom-up
+    indeg = [0]*n
+    for u in range(n):
+        ei = tree_edge[u]
+        if ei != -1:
+            vv = edges[ei][1]
+            indeg[vv] += 1
+    q = [u for u in range(n) if indeg[u]==0]
+    topo = []
+    for u in q:
+        topo.append(u)
+        ei = tree_edge[u]
+        if ei != -1:
+            vv = edges[ei][1]
+            indeg[vv] -= 1
+            if indeg[vv]==0:
+                q.append(vv)
+    # Merge in reverse topo: child into parent
+    for u in reversed(topo):
+        ei = tree_edge[u]
+        if ei == -1: continue
+        # merge H[u] and H[parent]
+        p = edges[ei][1]  # parent of u
+        if len(H[u]) > len(H[p]):
+            H[u], H[p] = H[p], H[u]
+        # now H[p] >= H[u]
+        for item in H[u]:
+            heapq.heappush(H[p], item)
+        H[u].clear()
+
+    # 5) Extract k shortest paths
+    ans = []
+    if dist[s] < INF:
+        ans.append(dist[s])
+
+    # A global heap of (total_cost, node_heap, at_node v, index in H[v])
+    # But to avoid persistence, we store: (current_cost, u, idx, local_heap_snapshot)
+    # Instead, we emulate Eppstein: each candidate is (d, heap_u, u)
+    global_pq = []
+    if H[s]:
+        pen, v = H[s][0]
+        # store (total_cost, node, base_heap_slice)
+        heapq.heappush(global_pq, (dist[s] + pen, s, tuple(H[s])))
+
+    while global_pq and len(ans) < K:
+        d, u, heap_snapshot = heapq.heappop(global_pq)
+        ans.append(d)
+        # Convert snapshot back to a heap
+        local = list(heap_snapshot)
+        # pop the head deviation
+        pen, v = local[0]
+        # separate left/right is tricky in Python, so we simply remove first
+        # and push the rest as new candidate
+        rest = local[1:]
+        if rest:
+            # cheapest of rest
+            pen2, v2 = rest[0]
+            heapq.heappush(global_pq, (d - pen + pen2, u, tuple(rest)))
+        # also consider deviations from node v
+        if H[v]:
+            pen3, _ = H[v][0]
+            heapq.heappush(global_pq, (d + pen3, v, tuple(H[v])))
+
+    # Output exactly K lines
+    out = []
+    for i in range(K):
+        if i < len(ans):
+            out.append(str(ans[i]))
+        else:
+            out.append("NO")
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Run one reverse Dijkstra from t to get dist[v] and build the shortest-path arborescence T.  
+- For each non-tree edge u→v compute penalty = w + dist[v] – dist[u] and store it in a min-heap at u.  
+- Merge these heaps up the tree so that at s you have all single-edge deviations.  
+- The best path is dist[s]. Then repeatedly extract the next best deviation via a global min-queue of heap states, splitting each heap into subheaps and also spawning new candidates at the deviation’s endpoint v. This yields the k shortest (possibly non-simple) paths in O((n+m)log n + k log k).

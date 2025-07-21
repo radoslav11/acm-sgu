@@ -1,0 +1,233 @@
+1. Abridged Problem Statement  
+Given an undirected graph of N people (nodes) where each node has at least ⌈(N+1)/2⌉ friends (edges), find a Hamiltonian cycle starting and ending at node 1 (visiting all nodes exactly once). If none exists, print “No solution”. Otherwise, print N+1 node indices (1-based) that form the cycle.
+
+2. Detailed Editorial  
+
+We need to construct a Hamiltonian cycle in a Dirac graph (every vertex has degree ≥ N/2), so by Dirac’s theorem a cycle exists for N≥3. We use a classic “rotation” (or “insertion”) algorithm that runs in O(N³) worst-case but performs adequately up to N=1000 in optimized C++.
+
+Outline of the algorithm:  
+1. Label vertices from 0 to N–1, start with cycle = [0], pos[0]=0, pos[v]=–1 for v>0. Here pos[v] is the “insertion time” of v.  
+2. For i from 1 to N–1 (we will insert N–1 more vertices):  
+   a. Let u = cycle.back(). Try to find an unvisited neighbor v of u; if found, mark pos[v]=i, append v to cycle, continue.  
+   b. Otherwise, u’s unvisited neighbors are all blocked. We wish to perform a rotation:  
+      i. Build a Boolean array marked[ ]: for each neighbor w of u that is already in the cycle, mark the successor of w in the current cycle.  
+     ii. Scan all unvisited vertices x: if x has any neighbor y with marked[y]=true, we can “rotate.” Let j = pos[y]. Reverse the tail of the cycle from position j+1 to end. This reconnects edges so that u now has a neighbor at the end of the reversed segment.  
+    iii. After reversal, append x and set pos[x]=i.  
+3. At the end we have a sequence of length N. Output it (1-based) and then repeat the first node to close the cycle.
+
+Key observations:  
+- Dirac’s condition (min-degree ≥ N/2) guarantees that step 2b always finds some x, so the algorithm never fails.  
+- We maintain pos[v] as the order in which we inserted v; although after a reversal the geometric position of vertices in the cycle changes, pos[] remains consistent with insertion times, which is all we need to locate which segment to reverse next time.  
+- Total time: roughly Σᵢ[deg(uᵢ) + N·deg(xᵢ)], up to O(N³) in the worst case, but average performance is much better on dense graphs.
+
+3. Provided C++ Solution with Line-by-Line Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload << for vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n;                          // Number of vertices
+vector<vector<int>> adj;        // Adjacency lists
+
+// Read input graph
+void read() {
+    cin >> n;
+    adj.assign(n, {});
+    cin.ignore();  // consume endline after n
+    for(int i = 0; i < n; i++) {
+        string line;
+        getline(cin, line);        // entire line of neighbors
+        istringstream ss(line);
+        int neighbor;
+        while(ss >> neighbor) {
+            // store zero-based
+            adj[i].push_back(neighbor - 1);
+        }
+    }
+}
+
+// Construct one Hamiltonian cycle
+void solve() {
+    vector<int> pos(n, -1);
+    // cycle holds current cycle in order
+    vector<int> cycle = {0};
+    pos[0] = 0; // vertex 0 inserted at time 0
+
+    // Insert vertices one by one
+    for(int i = 1; i < n; i++) {
+        int u = cycle.back(); // current end of cycle
+        bool found = false;
+
+        // 2a. Try to extend cycle directly
+        for(int v: adj[u]) {
+            if(pos[v] == -1) {      // unvisited neighbor?
+                pos[v] = i;         // record insertion time
+                cycle.push_back(v);
+                found = true;
+                break;
+            }
+        }
+        if(found) continue;      // moved on, next i
+
+        // 2b. Need to perform a rotation
+        vector<bool> marked(n, false);
+        // Mark successors of neighbors of u
+        for(int v: adj[u]) {
+            int idx = pos[v];
+            if(idx + 1 < (int)cycle.size()) {
+                marked[cycle[idx + 1]] = true;
+            }
+        }
+
+        // Find an unvisited x with a marked neighbor y
+        for(int x = 0; x < n; x++) {
+            if(pos[x] != -1) continue;
+            bool doBreak = false;
+            for(int y: adj[x]) {
+                if(marked[y]) {
+                    // We rotate the segment after pos[y]
+                    int j = pos[y];
+                    reverse(cycle.begin() + j + 1, cycle.end());
+                    pos[x] = i;
+                    cycle.push_back(x);
+                    doBreak = true;
+                    break;
+                }
+            }
+            if(doBreak) break;
+        }
+    }
+
+    // Output cycle in 1-based form plus return to 1
+    for(int v: cycle) {
+        cout << v + 1 << ' ';
+    }
+    cout << cycle[0] + 1 << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+from collections import deque
+
+def read_graph():
+    data = sys.stdin.read().strip().splitlines()
+    n = int(data[0])
+    adj = []
+    for i in range(1, n+1):
+        # Convert to zero-based integers
+        nbrs = [int(x)-1 for x in data[i].split()]
+        adj.append(nbrs)
+    return n, adj
+
+def find_hamiltonian_cycle(n, adj):
+    # pos[v] = insertion time of v into 'cycle'; -1 if unvisited
+    pos = [-1]*n
+    cycle = [0]     # start with vertex 0
+    pos[0] = 0
+
+    for time in range(1, n):
+        u = cycle[-1]
+        extended = False
+
+        # 2a. Try to append an unvisited neighbor of u
+        for v in adj[u]:
+            if pos[v] == -1:
+                pos[v] = time
+                cycle.append(v)
+                extended = True
+                break
+        if extended:
+            continue
+
+        # 2b. Rotation step
+        # Mark the successors in the cycle of each visited neighbor of u
+        marked = [False]*n
+        for v in adj[u]:
+            idx = pos[v]
+            if idx + 1 < len(cycle):
+                marked[cycle[idx+1]] = True
+
+        # Find an unvisited x that is adjacent to some marked y
+        for x in range(n):
+            if pos[x] != -1:
+                continue
+            for y in adj[x]:
+                if marked[y]:
+                    # We can rotate the cycle after position pos[y]
+                    j = pos[y]
+                    # Reverse the tail from j+1 ... end
+                    tail = list(reversed(cycle[j+1:]))
+                    cycle = cycle[:j+1] + tail
+                    # Update pos[] for reversed segment
+                    for k in range(j+1, len(cycle)):
+                        pos[cycle[k]] = k
+                    # Finally append x
+                    pos[x] = time
+                    cycle.append(x)
+                    break
+            else:
+                continue
+            break
+
+    # Convert to 1-based and close the cycle
+    return [v+1 for v in cycle] + [cycle[0]+1]
+
+def main():
+    n, adj = read_graph()
+    if n == 0:
+        print("No solution")
+        return
+    tour = find_hamiltonian_cycle(n, adj)
+    if len(tour) != n+1:
+        print("No solution")
+    else:
+        print(" ".join(map(str, tour)))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Use Dirac’s theorem on minimum degree ≥ N/2 to guarantee a Hamiltonian cycle. Start from node 1, greedily append an unvisited neighbor. When stuck, mark successors of the last node’s visited neighbors, find an unvisited vertex adjacent to any marked node, then reverse a segment of the current cycle to create the needed edge (“rotation”), and append the new vertex. Repeat until all N vertices are in the cycle, then return to 1. This runs in roughly O(N³) worst-case but works efficiently in practice for N≤1000.

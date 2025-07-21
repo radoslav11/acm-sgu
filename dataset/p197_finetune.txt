@@ -1,0 +1,317 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+197. Nice Patterns Strike Back
+time limit per test: 0.5 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+You might have noticed that there is the new fashion among rich people to have their yards tiled with black and white tiles, forming a pattern. The company Broken Tiles is well known as the best tiling company in our region. It provides the widest choices of nice patterns to tile your yard with. The pattern is nice if there is no square of size 2 × 2, such that all tiles in it have the same color. So patterns on the figure 1 are nice, while patterns on the figure 2 are not.
+
+
+
+
+
+The president of the company wonders whether the variety of nice patterns he can provide to the clients is large enough. Thus he asks you to find out the number of nice patterns that can be used to tile the yard of size N × M. Now he is interested in the long term estimation, so he suggests N ≤ 10100. However, he does not like big numbers, so he asks you to find the answer modulo P.
+
+Input
+
+The input file contains three integer numbers: N (1 ≤ N ≤ 10100), M (1 ≤ M ≤ 5) and P (1 ≤ P ≤ 10000).
+
+Output
+
+Write the number of nice patterns of size N × M modulo P to the output file.
+
+Sample test(s)
+
+Input
+
+Test #1
+
+2 2 5
+
+Test #2
+
+3 3 23
+
+Output
+
+Test #1
+
+4
+
+Test #2
+
+0
+
+
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Winter Trainings 2003
+Date:	2003-02-06
+
+<|response|>
+1. Abridged Problem Statement  
+Given an N×M grid (1≤M≤5, N up to 10^100), color each cell black or white so that no 2×2 sub‐square is monochrome (all four tiles the same color). Compute the number of valid colorings modulo P (1≤P≤10 000).
+
+2. Key Observations  
+- Any coloring of a row of width M can be encoded as an M‐bit mask (0=white, 1=black). There are S=2^M possible masks.  
+- Whether two consecutive rows (masks a and b) create a forbidden monochrome 2×2 square depends only on adjacent columns in these two rows. We can precompute a Boolean “valid(a,b)”.  
+- Let dp[i][mask] = number of ways to color rows 1..i with row i = mask. Then  
+  dp[i][cur] = Σ_{prev=0..S−1} dp[i−1][prev] × valid(prev,cur).  
+- This is a linear recurrence in vector form: V_i = T · V_{i−1}, where T is an S×S transition matrix.  
+- We need V_N = T^(N−1) · V_1. Since N can be up to 10^100, we do fast exponentiation of T modulo P, treating N−1 as a big integer in decimal form.  
+- Finally, sum all entries of V_N and take mod P.
+
+3. Full Solution Approach  
+a) State Encoding  
+   Each row is an integer mask in [0,2^M).  
+b) Build Transition Matrix T of size S×S, where  
+   T[a][b] = 1 if placing row b immediately below row a never forms a 2×2 monochrome block; otherwise 0.  
+   To check valid(a,b): for each column k=1..M−1, extract bits  
+     a₁ = (a>>(k−1))&1, a₂ = (a>>k)&1, b₁ = (b>>(k−1))&1, b₂ = (b>>k)&1  
+     and ensure they are not all 0 and not all 1.  
+c) Initial Vector V₁: for row 1 any mask is allowed, so V₁[mask]=1 for all mask.  
+d) Exponentiation  
+   We need T^(N−1) mod P. Represent the decimal string N, decrement it by 1 (string subtraction), then do binary exponentiation:  
+   - While exponent_str ≠ “0”:  
+       – Divide exponent_str by 2 (string division), obtaining bit = old_exponent mod 2.  
+       – If bit=1, R = R × T mod P.  
+       – T = T × T mod P.  
+   - R starts as the S×S identity matrix.  
+e) Multiply R by V₁ to get V_N, then answer = (sum of entries of V_N) mod P.  
+f) Complexity  
+   - S = 2^M ≤ 32.  
+   - Matrix multiplication is O(S³) per multiply.  
+   - Exponentiation uses O(log N) ≈ O(330) squaring/multiplication steps.  
+   - Total ≈ 330 × 32³ ≈ 10⁷ basic ops, fits in 0.5 s.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Multiply two S×S matrices A and B modulo mod
+vector<vector<int>> matMul(const vector<vector<int>>& A,
+                           const vector<vector<int>>& B,
+                           int mod) {
+    int S = A.size();
+    vector<vector<int>> C(S, vector<int>(S, 0));
+    for (int i = 0; i < S; i++) {
+        for (int k = 0; k < S; k++) if (A[i][k] != 0) {
+            int aik = A[i][k];
+            for (int j = 0; j < S; j++) {
+                C[i][j] = (C[i][j] + aik * B[k][j]) % mod;
+            }
+        }
+    }
+    return C;
+}
+
+// Multiply S×S matrix A by length‐S vector v modulo mod
+vector<int> matVec(const vector<vector<int>>& A,
+                   const vector<int>& v,
+                   int mod) {
+    int S = A.size();
+    vector<int> res(S, 0);
+    for (int i = 0; i < S; i++) {
+        long long sum = 0;
+        for (int j = 0; j < S; j++) {
+            sum += 1LL * A[i][j] * v[j];
+        }
+        res[i] = sum % mod;
+    }
+    return res;
+}
+
+// Subtract 1 from a positive decimal string s
+void decMinusOne(string &s) {
+    int i = s.size() - 1;
+    while (i >= 0) {
+        if (s[i] > '0') { s[i]--; break; }
+        s[i] = '9';
+        i--;
+    }
+    // remove leading zero, if any
+    if (s.size() > 1 && s[0] == '0')
+        s.erase(s.begin());
+}
+
+// Divide decimal string s by 2, return remainder (0 or 1)
+int div2(string &s) {
+    int carry = 0;
+    for (char &c : s) {
+        int x = carry * 10 + (c - '0');
+        c = char('0' + x / 2);
+        carry = x % 2;
+    }
+    if (s.size() > 1 && s[0] == '0')
+        s.erase(s.begin());
+    return carry;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    string Nstr;
+    int M, P;
+    cin >> Nstr >> M >> P;
+
+    // Number of masks per row
+    int S = 1 << M;
+
+    // Build transition matrix T[prev][cur]
+    vector<vector<int>> T(S, vector<int>(S, 0));
+    for (int prev = 0; prev < S; prev++) {
+        for (int cur = 0; cur < S; cur++) {
+            bool good = true;
+            // Check every adjacent column pair for a forbidden 2×2 block
+            for (int k = 1; k < M; k++) {
+                int a = (prev >> (k-1)) & 1;
+                int b = (prev >> k) & 1;
+                int c = (cur  >> (k-1)) & 1;
+                int d = (cur  >> k) & 1;
+                int sum = a + b + c + d;
+                if (sum == 0 || sum == 4) { // all 0 or all 1
+                    good = false;
+                    break;
+                }
+            }
+            if (good) T[prev][cur] = 1;
+        }
+    }
+
+    // Initial vector V1: all ones (any first row is allowed)
+    vector<int> V(S, 1);
+
+    // We want exponent = N - 1
+    decMinusOne(Nstr);
+
+    // Initialize result matrix R = identity
+    vector<vector<int>> R(S, vector<int>(S, 0));
+    for (int i = 0; i < S; i++) R[i][i] = 1;
+
+    // Fast exponentiation: raise T to power (N-1) mod P
+    while (!(Nstr.size() == 1 && Nstr[0] == '0')) {
+        int bit = div2(Nstr);  // bit = old_exponent % 2
+        if (bit == 1) {
+            R = matMul(R, T, P);
+        }
+        T = matMul(T, T, P);
+    }
+
+    // Multiply R by initial vector V to get V_N
+    vector<int> VN = matVec(R, V, P);
+
+    // Sum all entries for the final answer
+    int answer = 0;
+    for (int x : VN) {
+        answer = (answer + x) % P;
+    }
+    cout << answer << "\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+
+def matrix_multiply(A, B, mod):
+    """Multiply two square matrices A and B under modulo mod."""
+    n = len(A)
+    C = [[0]*n for _ in range(n)]
+    for i in range(n):
+        for k in range(n):
+            aik = A[i][k]
+            if aik:
+                for j in range(n):
+                    C[i][j] = (C[i][j] + aik * B[k][j]) % mod
+    return C
+
+def matrix_vector_multiply(A, v, mod):
+    """Multiply matrix A (n×n) by vector v (length n) under modulo mod."""
+    n = len(A)
+    res = [0]*n
+    for i in range(n):
+        s = 0
+        for j in range(n):
+            s += A[i][j] * v[j]
+        res[i] = s % mod
+    return res
+
+def dec_minus_one(s):
+    """Subtract 1 from a positive decimal string s."""
+    i = len(s) - 1
+    while i >= 0:
+        if s[i] > '0':
+            s = s[:i] + chr(ord(s[i]) - 1) + s[i+1:]
+            break
+        else:
+            s = s[:i] + '9' + s[i+1:]
+            i -= 1
+    # Strip leading zero
+    if s[0] == '0' and len(s) > 1:
+        s = s[1:]
+    return s
+
+def div2(s):
+    """Divide decimal string s by 2. Return (quotient_str, remainder)."""
+    carry = 0
+    res = []
+    for ch in s:
+        x = carry*10 + (ord(ch) - ord('0'))
+        res.append(chr(ord('0') + x//2))
+        carry = x % 2
+    q = ''.join(res).lstrip('0')
+    if q == '': q = '0'
+    return q, carry
+
+def main():
+    data = sys.stdin.read().split()
+    Nstr, M, P = data[0], int(data[1]), int(data[2])
+
+    S = 1 << M  # number of possible row masks
+
+    # Build transition matrix T
+    T = [[0]*S for _ in range(S)]
+    for a in range(S):
+        for b in range(S):
+            ok = True
+            for k in range(1, M):
+                bitsum = ((a>>(k-1))&1) + ((a>>k)&1) + ((b>>(k-1))&1) + ((b>>k)&1)
+                if bitsum == 0 or bitsum == 4:
+                    ok = False
+                    break
+            if ok:
+                T[a][b] = 1
+
+    # Initial vector V1 (all ones)
+    V = [1]*S
+
+    # Compute exponent = N-1
+    Nstr = dec_minus_one(Nstr)
+
+    # Initialize result R = identity
+    R = [[1 if i==j else 0 for j in range(S)] for i in range(S)]
+
+    # Fast exponentiation: R = T^(N-1)
+    while Nstr != '0':
+        Nstr, bit = div2(Nstr)
+        if bit == 1:
+            R = matrix_multiply(R, T, P)
+        T = matrix_multiply(T, T, P)
+
+    # Multiply R by V1 to get V_N
+    VN = matrix_vector_multiply(R, V, P)
+
+    # Sum up all entries modulo P
+    answer = sum(VN) % P
+    print(answer)
+
+if __name__ == '__main__':
+    main()
+```

@@ -1,0 +1,406 @@
+1. Abridged Problem Statement
+
+You are given n distinct cities on a plane with coordinates (xi, yi). A valid tour is a sequence of cities where both x and y strictly increase at each step. The band wants to maximize the number of cities visited; let L be this maximum length.  
+• List A: all city indices that appear in at least one longest tour of length L.  
+• List B: all city indices that appear in every longest tour.
+
+Output A and B: each line starts with the count of cities, followed by their indices in ascending order.
+
+2. Detailed Editorial
+
+Overview  
+We need to find all points that can be on some longest strictly increasing-both-coordinates path (List A), and those that must be on every such path (List B). This is a 2D longest increasing subsequence (LIS) problem.
+
+Steps  
+1. Coordinate Compression on y  
+   • Gather all y-coordinates, sort and unique them → ranks [0..M−1].  
+   • Replace each point’s y with its rank ry.  
+
+2. Compute up_dp[i] = length of longest path ending at point i.  
+   • Sort points by x ascending. Process equal-x points in a batch (they cannot follow each other).  
+   • Maintain a segment tree (or Fenwick) over ry supporting max-query on [0..ry−1] and point-update at ry.  
+   • For each point in batch: up_dp = 1 + max_query(0, ry−1).  
+   • After computing dp for the batch, update the tree at each ry with its dp if larger.
+
+3. Compute down_dp[i] = length of longest path starting at point i, going in decreasing x but still increasing y.  
+   • Sort points by x descending; similarly batch same x.  
+   • Use a segment tree on ry but now we need max over [ry+1..M−1]. You can mirror ry → M−1−ry and reuse prefix max queries.  
+   • down_dp = 1 + max_query(0, (M−1−ry)−1). Update in batch.
+
+4. Find L = max_i (up_dp[i] + down_dp[i] − 1).  
+   • List A: all i with up_dp[i] + down_dp[i] − 1 == L.  
+
+5. Find List B (must-visit).  
+   • In any length-L path, exactly one city has up_dp = k at position k.  
+   • Group critical points (those in A) by their up_dp value.  
+   • If a group for k has size 1, that city is forced at position k in every path. Collect these.
+
+Complexities  
+• Sorting: O(n log n)  
+• Coordinate compression: O(n log n)  
+• Two passes of O(n log n) segment-tree/Fenwick operations  
+Overall O(n log n), feasible to n=1e5.
+
+3. C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overloads to ease I/O of pairs and vectors
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T> // read vector
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) in >> x;
+    return in;
+}
+template<typename T> // print vector with spaces
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto& x : a) out << x << ' ';
+    return out;
+}
+
+// Segment tree for range‐max and point‐update
+template<class T, T (*merge)(T, T), T (*e)()>
+class SegmentTree {
+  private:
+    int n, size;
+    vector<T> tr;
+    // Pull up value from children
+    void pull(int x) { tr[x] = merge(tr[2*x], tr[2*x+1]); }
+
+  public:
+    SegmentTree() { init(vector<T>()); }
+    SegmentTree(int _n) { init(vector<T>(_n, e())); }
+    SegmentTree(const vector<T>& _a) { init(_a); }
+
+    void init(const vector<T>& _a) {
+        n = (int)_a.size();
+        size = 1; while (size < n) size <<= 1;
+        tr.assign(2*size, e());
+        // build leaves
+        for(int i = 0; i < n; i++)
+            tr[size+i] = _a[i];
+        // build internals
+        for(int i = size-1; i > 0; i--)
+            pull(i);
+    }
+
+    // point update: set pos to val
+    void update(int pos, T val) {
+        pos += size;
+        tr[pos] = val;
+        for(pos >>= 1; pos > 0; pos >>= 1)
+            pull(pos);
+    }
+
+    // get single position
+    T get_pos(int pos) { return tr[pos + size]; }
+
+    // query max on [l..r]
+    T query(int l, int r) {
+        T resl = e(), resr = e();
+        for(l += size, r += size+1; l < r; l >>= 1, r >>= 1) {
+            if (l & 1) resl = merge(resl, tr[l++]);
+            if (r & 1) resr = merge(tr[--r], resr);
+        }
+        return merge(resl, resr);
+    }
+    // full range
+    T query_all() { return tr[1]; }
+};
+
+// merge = max, identity = 0
+int op(int a, int b) { return max(a,b); }
+int id() { return 0; }
+
+// Point struct
+struct Point {
+    int id;        // original index 1..n
+    int ry;        // compressed y
+    int64_t x, y;  // original coords
+};
+
+int N;
+vector<Point> points;
+vector<int64_t> y_coords;
+vector<int> up_dp, down_dp;
+
+// Read input
+void read() {
+    cin >> N;
+    points.resize(N);
+    for(int i = 0; i < N; i++) {
+        cin >> points[i].x >> points[i].y;
+        points[i].id = i+1;
+        y_coords.push_back(points[i].y);
+    }
+}
+
+// Compress y into 0..M-1
+void compress_coordinates() {
+    sort(y_coords.begin(), y_coords.end());
+    y_coords.erase(unique(y_coords.begin(), y_coords.end()), y_coords.end());
+    for(auto &p : points) {
+        p.ry = int(lower_bound(y_coords.begin(), y_coords.end(), p.y)
+                   - y_coords.begin());
+    }
+}
+
+// DP for LIS ending at point i
+void compute_up_dp() {
+    auto sorted_pts = points;
+    // Sort by x ascending
+    sort(sorted_pts.begin(), sorted_pts.end(),
+         [](auto &a, auto &b){ return a.x < b.x; });
+
+    SegmentTree<int, &op, &id> seg((int)y_coords.size());
+    up_dp.assign(N+1, 0);
+
+    int idx = 0;
+    while(idx < N) {
+        int64_t curx = sorted_pts[idx].x;
+        vector<pair<int,int>> batch;
+        // collect same-x batch
+        while(idx < N && sorted_pts[idx].x == curx) {
+            batch.emplace_back(sorted_pts[idx].ry, sorted_pts[idx].id);
+            idx++;
+        }
+        // compute dp for batch without updating the tree yet
+        vector<int> vals(batch.size());
+        for(int j = 0; j < (int)batch.size(); j++) {
+            int ry = batch[j].first;
+            // best among y < ry
+            int best = ry==0 ? 0 : seg.query(0, ry-1);
+            vals[j] = 1 + best;
+        }
+        // now update tree and fill up_dp
+        for(int j = 0; j < (int)batch.size(); j++) {
+            int ry = batch[j].first, id = batch[j].second, v = vals[j];
+            // keep the max at this ry
+            int cur = seg.get_pos(ry);
+            seg.update(ry, max(cur, v));
+            up_dp[id] = v;
+        }
+    }
+}
+
+// DP for LIS starting at point i when going in x-decreasing
+void compute_down_dp() {
+    auto sorted_pts = points;
+    sort(sorted_pts.begin(), sorted_pts.end(),
+         [](auto &a, auto &b){ return a.x > b.x; });
+
+    SegmentTree<int, &op, &id> seg((int)y_coords.size());
+    down_dp.assign(N+1, 0);
+
+    int idx = 0;
+    int M = (int)y_coords.size();
+    while(idx < N) {
+        int64_t curx = sorted_pts[idx].x;
+        vector<pair<int,int>> batch;
+        while(idx < N && sorted_pts[idx].x == curx) {
+            batch.emplace_back(sorted_pts[idx].ry, sorted_pts[idx].id);
+            idx++;
+        }
+        // compute dp for batch
+        vector<int> vals(batch.size());
+        for(int j = 0; j < (int)batch.size(); j++) {
+            int ry = batch[j].first;
+            // best among y > ry → query [ry+1..M-1]
+            int best = (ry+1 < M ? seg.query(ry+1, M-1) : 0);
+            vals[j] = 1 + best;
+        }
+        // update
+        for(int j = 0; j < (int)batch.size(); j++) {
+            int ry = batch[j].first, id = batch[j].second, v = vals[j];
+            int cur = seg.get_pos(ry);
+            seg.update(ry, max(cur, v));
+            down_dp[id] = v;
+        }
+    }
+}
+
+void solve() {
+    compress_coordinates();
+    compute_up_dp();
+    compute_down_dp();
+
+    // find global max length L
+    int L = 0;
+    for(int i = 1; i <= N; i++)
+        L = max(L, up_dp[i] + down_dp[i] - 1);
+
+    // List A: all cities on some longest path
+    vector<int> A;
+    for(int i = 1; i <= N; i++)
+        if (up_dp[i] + down_dp[i] - 1 == L)
+            A.push_back(i);
+    sort(A.begin(), A.end());
+    cout << A.size();
+    for(int x : A) cout << ' ' << x;
+    cout << "\n";
+
+    // Group A by up_dp value
+    map<int, vector<int>> byLevel;
+    for(int x : A)
+        byLevel[ up_dp[x] ].push_back(x);
+
+    // List B: those levels where only one choice exists
+    vector<int> B;
+    for(auto &kv : byLevel) {
+        if (kv.second.size() == 1)
+            B.push_back(kv.second[0]);
+    }
+    sort(B.begin(), B.end());
+    cout << B.size();
+    for(int x : B) cout << ' ' << x;
+    cout << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+input = sys.stdin.readline
+
+# Fenwick (BIT) for prefix‐max queries and point updates
+class FenwickMax:
+    def __init__(self, n):
+        self.n = n
+        self.fw = [0] * (n+1)
+    # update index i (1-based) to max(current, v)
+    def update(self, i, v):
+        while i <= self.n:
+            if self.fw[i] < v:
+                self.fw[i] = v
+            i += i & -i
+    # query max on [1..i]
+    def query(self, i):
+        res = 0
+        while i > 0:
+            if self.fw[i] > res:
+                res = self.fw[i]
+            i -= i & -i
+        return res
+
+def main():
+    n = int(input())
+    pts = []
+    ys = []
+    for idx in range(1, n+1):
+        x, y = map(int, input().split())
+        pts.append([x, y, idx])
+        ys.append(y)
+    # compress y
+    ys_sorted = sorted(set(ys))
+    m = len(ys_sorted)
+    for p in pts:
+        # rank 1..m
+        p.append(1 + ys_sorted.index(p[1]))
+
+    # up_dp: LIS ending at each point
+    up_dp = [0]*(n+1)
+    # sort by x increasing
+    pts.sort(key=lambda p: p[0])
+    ft = FenwickMax(m)
+
+    i = 0
+    while i < n:
+        x0 = pts[i][0]
+        batch = []
+        # gather same x
+        while i < n and pts[i][0] == x0:
+            batch.append(pts[i])
+            i += 1
+        # compute dp for batch
+        vals = []
+        for _, _, idx, ry in batch:
+            # max dp among ry'<ry → query(ry-1)
+            best = ft.query(ry-1)
+            vals.append(1 + best)
+        # update
+        for (_, _, idx, ry), v in zip(batch, vals):
+            # record dp
+            up_dp[idx] = v
+        for (_, _, idx, ry), v in zip(batch, vals):
+            ft.update(ry, v)
+
+    # down_dp: LIS starting at each point going x-decreasing
+    down_dp = [0]*(n+1)
+    # we want y increasing but x decreasing
+    # equivalently reverse x, and for y suffix queries, mirror ry
+    # mirror ry -> mr = m+1-ry
+    for p in pts:
+        p.append(m+1 - p[3])  # p[4] = mirrored ry
+
+    # sort by x descending
+    pts.sort(key=lambda p: -p[0])
+    ft = FenwickMax(m)
+    i = 0
+    while i < n:
+        x0 = pts[i][0]
+        batch = []
+        while i < n and pts[i][0] == x0:
+            batch.append(pts[i])
+            i += 1
+        vals = []
+        for _, _, idx, ry, mry in batch:
+            # we want max over original ry'>ry → mirrored index < mry
+            best = ft.query(mry-1)
+            vals.append(1 + best)
+        for (_, _, idx, ry, mry), v in zip(batch, vals):
+            down_dp[idx] = v
+        for (_, _, idx, ry, mry), v in zip(batch, vals):
+            ft.update(mry, v)
+
+    # compute global max length L
+    L = 0
+    for i in range(1, n+1):
+        L = max(L, up_dp[i] + down_dp[i] - 1)
+
+    # List A: those on some maximum path
+    A = [i for i in range(1, n+1) if up_dp[i] + down_dp[i] - 1 == L]
+    A.sort()
+    # List B: forced positions
+    from collections import defaultdict
+    bylev = defaultdict(list)
+    for x in A:
+        bylev[ up_dp[x] ].append(x)
+    B = [v[0] for k,v in bylev.items() if len(v)==1]
+    B.sort()
+
+    # output
+    print(len(A), *A)
+    print(len(B), *B)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+
+- Compress y-coordinates.  
+- up_dp: process points by x↑, use BIT for max on y-prefix, dp = 1+max(0..ry−1).  
+- down_dp: process x↓, mirror ry to reuse prefix max for suffix, dp = 1+max(mirrored_prefix).  
+- L = max(up_dp+down_dp−1).  
+- A = indices with up_dp+down_dp−1 == L.  
+- B = in A, those with unique up_dp level (position) across all critical points.

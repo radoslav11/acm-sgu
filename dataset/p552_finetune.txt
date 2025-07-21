@@ -1,0 +1,221 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+552. Database optimization
+Time limit per test: 3 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Alex worked at a big IT-company called Macrohard. Once, when he faced a large amount of data, he decided to leave this company and develop his own database which would be much better than all existing ones. When he was done with this he realized that the performance of some database queries might be improved. Alex uses AQL (Alex Query Language) which accidentally turned out to be exactly the same as the popular SQL. One of the most important problems he faced was the following.
+
+Consider n objects. The i-th object has ki (1 ≤ ki ≤ 4) properties in the form of key=value. Any object can't have two or more properties with the same key. Alex needs to improve the performance of the following query:
+
+SELECT COUNT(*) FROM Objects WHERE key1=value1 AND...  AND keyl=valuel
+(1 ≤ l ≤ 4, all keys are distinct)
+This means that Alex's database has to find the number of objects which have properties key1, key2,..., keyl with the values value1, value2,..., valuel respectively. Even if an object has extra properties it should be counted.
+
+Your task is to help Alex to write an efficient program to process such queries.
+
+Input
+The first line of the input contains a single integer n (1 ≤ n ≤ 5 · 104) — the number of objects. Following n lines describe objects by their properties. Each line contains the integer ki (1 ≤ ki ≤ 4) followed by ki tokens in the form of keyi,j=valuei,j separated by a single space. Both keyi,j and valuei,j consist of digits and lowercase Latin letters. The keyi,j are distinct for each object. It is possible that different objects have exactly the same set of properties.
+
+The next line of the input contains a single integer m (1 ≤ m ≤ 105) — the number of queries. The following m lines describe the queries. Each line contains a single integer li (the number of properties that describe the i-th query) followed by li (1 ≤ li ≤ 4) tokens keyi,j=valuei,j separated by a single space, where keyi,j and valuei,j consist of digits and lowercase Latin letters. The keyi,j are distinct for each query.
+
+Lengths of keyi,j and valuei,j both for objects and queries are between 1 and 5 characters inclusive.
+
+Output
+Print m lines, the i-th line should contain the result of the i-th query.
+
+Example(s)
+sample input
+sample output
+4
+3 width=5 ht=3 len=10
+2 name=circ rad=5
+2 name=circ rad=5
+3 name=sqr width=5 ht=3
+4
+2 ht=3 width=5
+1 name=circ
+1 name=sqr
+2 width=5 ht=03
+2
+2
+1
+0
+
+<|response|>
+1. Abridged problem statement  
+Given n objects (n ≤ 5·10^4), each with 1 to 4 distinct key=value properties (keys and values are short strings of length ≤5). We have m queries (m ≤ 10^5), each asking “how many objects contain at least this set of l (1 ≤ l ≤ 4) distinct key=value pairs?” (objects may have extra properties). Answer each query efficiently.
+
+2. Key observations  
+- Each object has at most 4 properties ⇒ it has at most 2^4=16 subsets of its properties (including the empty set).  
+- A query is exactly one such subset. We want to count how many objects’ property-subsets include that query subset.  
+- If we enumerate for every object all of its subsets and keep a count for each subset, then each query reduces to a single lookup in our count table.
+
+3. Full solution approach  
+a. Read all n objects. For each object, parse its ki key=value tokens into a vector of pairs and sort that vector by key to get a canonical order.  
+b. Build a hash map (e.g. unordered_map<string,int>) called cnt. For each object’s sorted property list of size k, iterate mask from 0 to (1<<k)-1. For each mask:  
+   - Collect the subset of pairs whose bits are set in the mask (in the same sorted order).  
+   - Serialize that subset into a string key, e.g. by concatenating “key=val,” for each pair.  
+   - Increment cnt[key] by 1.  
+c. For each query, read the l tokens, build and sort the vector of pairs by key, serialize it the same way, and output cnt[serialized_key] (or 0 if not found).  
+
+Time complexity:  
+- Preprocessing: ∑ 2^ki over all objects ≤ n·16. Serialization per subset is O(k) ≤4 ⇒ overall O(n).  
+- Querying: sorting ≤4 items + one hash lookup ⇒ O(m).  
+Memory: up to n·16 distinct subset-strings, fits within limits.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Fast IO
+static ios_base::Init __init_io([](){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    return 0;
+}());
+
+// Read k tokens of the form "key=value" and split into vector of (key,value) pairs
+vector<pair<string,string>> readProps(int k) {
+    vector<pair<string,string>> props;
+    props.reserve(k);
+    while(k--) {
+        string s;
+        cin >> s;  // e.g. "width=5"
+        // split at '='
+        int pos = s.find('=');
+        props.emplace_back(s.substr(0, pos), s.substr(pos+1));
+    }
+    return props;
+}
+
+// Serialize a sorted vector of (key,value) pairs into a single string.
+// We append a comma after each pair to avoid ambiguity.
+string serialize(const vector<pair<string,string>>& a) {
+    string res;
+    for (auto &kv : a) {
+        res += kv.first;
+        res.push_back('=');
+        res += kv.second;
+        res.push_back(',');
+    }
+    return res;
+}
+
+int main() {
+    int n;
+    cin >> n;
+    vector<vector<pair<string,string>>> objects(n);
+    // Read and sort each object's properties
+    for (int i = 0; i < n; i++) {
+        int k;
+        cin >> k;
+        auto props = readProps(k);
+        sort(props.begin(), props.end(),
+             [](auto &A, auto &B){ return A.first < B.first; });
+        objects[i] = move(props);
+    }
+
+    // Build the hash map: for every subset of every object, count occurrences
+    unordered_map<string,int> cnt;
+    cnt.reserve(n * 8);  // heuristic
+    for (auto &obj : objects) {
+        int k = (int)obj.size();
+        int totalMasks = 1 << k;
+        // Enumerate all subsets via bitmask
+        for (int mask = 0; mask < totalMasks; mask++) {
+            vector<pair<string,string>> subset;
+            subset.reserve(__builtin_popcount(mask));
+            for (int b = 0; b < k; b++) {
+                if (mask & (1 << b)) {
+                    subset.push_back(obj[b]);
+                }
+            }
+            string key = serialize(subset);
+            cnt[key]++;
+        }
+    }
+
+    // Answer queries
+    int m;
+    cin >> m;
+    while (m--) {
+        int l;
+        cin >> l;
+        auto qprops = readProps(l);
+        // Sort by key to match our canonical order
+        sort(qprops.begin(), qprops.end(),
+             [](auto &A, auto &B){ return A.first < B.first; });
+        string qkey = serialize(qprops);
+        auto it = cnt.find(qkey);
+        cout << (it == cnt.end() ? 0 : it->second) << '\n';
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+from itertools import combinations
+
+def input():
+    return sys.stdin.readline().rstrip()
+
+def serialize(props):
+    # props: list of (key, val) tuples, assumed already sorted by key
+    # join into "k1=v1,k2=v2," string
+    if not props:
+        return ""  # empty subset
+    return ",".join(f"{k}={v}" for k,v in props) + ","
+
+def main():
+    data = sys.stdin
+    n = int(data.readline())
+    all_props = []
+    for _ in range(n):
+        parts = data.readline().split()
+        k = int(parts[0])
+        # parse next k tokens "key=value"
+        props = []
+        for tok in parts[1:1+k]:
+            key, val = tok.split('=', 1)
+            props.append((key, val))
+        # sort by key for canonical form
+        props.sort(key=lambda x: x[0])
+        all_props.append(props)
+
+    # Precompute counts for every subset
+    cnt = {}
+    for props in all_props:
+        k = len(props)
+        # for subset size sz = 0..k
+        for sz in range(k+1):
+            for comb in combinations(props, sz):
+                key = serialize(comb)
+                cnt[key] = cnt.get(key, 0) + 1
+
+    m = int(data.readline())
+    out = []
+    for _ in range(m):
+        parts = data.readline().split()
+        l = int(parts[0])
+        qprops = []
+        for tok in parts[1:1+l]:
+            key, val = tok.split('=', 1)
+            qprops.append((key, val))
+        qprops.sort(key=lambda x: x[0])
+        qkey = serialize(qprops)
+        out.append(str(cnt.get(qkey, 0)))
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```

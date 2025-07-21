@@ -1,0 +1,245 @@
+1. Abridged Problem Statement  
+Given an \(n\times n\) chessboard (\(1\le n\le 10\)) and an integer \(k\) (\(0\le k\le n^2\)), count the number of ways to place exactly \(k\) kings so that no two attack each other. Two kings attack if they occupy adjacent squares, including diagonals. Output the count as a 64-bit integer.
+
+2. Detailed Editorial  
+
+We want the number of placements of \(k\) indistinguishable kings on an \(n\times n\) grid with the constraint that no two are in adjacent cells (horizontally, vertically, or diagonally). A direct combinatorial formula is hard to derive; instead we use dynamic programming (DP) with bitmasks to encode “what happened in the previous row” and “what we have built so far in the current row.”
+
+Notation and state design  
+- We scan the board row by row, left to right within each row. Let \(i\) be the current row index \((0\le i<n)\) and \(j\) the column index \((0\le j\le n)\). When \(j=n\), we have finished row \(i\) and move to row \(i+1\) at column 0.  
+- We maintain a bitmask `mask` of length \(n+1\) bits. Interpreted as follows:
+  - Bits \(\,0\ldots n-1\) (the low \(n\) bits) track the occupancy of the last \(n\) processed squares in the current scan. In particular, bit 0 is the cell we just placed (to the left of \((i,j)\)), bit 1 is the previous cell to its left, ..., bit \(n-1\) is the cell immediately above \((i,j)\) (from the previous row).
+  - Bit \(n\) tracks the cell diagonally up-left of \((i,j)\). (With a sliding window as we scan.)  
+  Whenever we advance one column, we shift the mask left by one, drop any bit beyond \(n\), and possibly OR in 1 if we place a king.
+
+DP dimension  
+Define  
+  DP\[mask\]\[p\]\[j\]\[r\]  
+= number of ways to reach column \(j\) of row \(i\), with row-parity \(p=i\bmod 2\), bitmask = `mask`, and \(r\) remaining kings yet to place in the rest of the board.  
+
+Transitions  
+- If \(j=n\): finish row \(i\), move to row \(i+1\):  
+  DP[mask][p^1][0][r] += DP[mask][p][n][r].  
+- Else (we are at column \(j<n\)):  
+  1. Option A: do not place a king at \((i,j)\).  
+     newMask = (mask << 1) & fullMask;  
+     DP[newMask][p][j+1][r] += DP[mask][p][j][r].  
+  2. Option B: place a king if and only if none of the four neighbors (left, up, up-left, up-right) currently set in `mask` are occupied, and \(r>0\).  
+     - left    = bit 0 of mask  
+     - up      = bit \(n-1\) of mask  
+     - diagL   = bit \(n\) of mask  
+     - diagR   = bit \(n-2\) of mask  
+     (with edge adjustments when \(i=0\) or \(j=0\) or \(j=n-1\)).  
+     If all these are 0, then  
+       newMask = ((mask << 1) | 1) & fullMask;  
+       DP[newMask][p][j+1][r-1] += DP[mask][p][j][r].  
+
+Initialization  
+ DP[0][0][0][k] = 1  (no rows done, no columns done, all \(k\) kings to place).
+
+Answer  
+ After processing all \(n\) rows, sum over all masks:  
+   answer = \(\sum_{mask} DP[mask][n \bmod 2][0][0].\)
+
+Complexity  
+ State count ≈ \((2^{\,n+1}) \times 2\times (n+1)\times(k+1)\).  
+ For \(n\le10,k\le100\), this is at most \(\sim 2{,}048\times2\times11\times101\approx4.5\) million states. Each has two transitions; well within time limits in C++.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload I/O for pairs and vectors (not essential for the solution logic).
+template<typename T1, typename T2>
+ostream &operator<<(ostream &out, const pair<T1, T2> &x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream &operator>>(istream &in, pair<T1, T2> &x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream &operator>>(istream &in, vector<T> &a) {
+    for(auto &x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream &operator<<(ostream &out, const vector<T> &a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, k;
+
+// Read input n, k.
+void read() {
+    cin >> n >> k;
+}
+
+void solve() {
+    // fullMask = (1 << (n+1)) - 1  to keep only (n+1) bits.
+    int fullMaskSize = 2 << n;  // = 1 << (n+1)
+    int fullMask     = fullMaskSize - 1;
+
+    // dp[mask][parity][col][remaining]
+    // parity = row index % 2, we roll between 0 and 1.
+    vector dp(
+        fullMaskSize,
+        vector(2,
+            vector(n+1, vector<int64_t>(k+1, 0))
+        )
+    );
+
+    // Start before any cell, row=0 (parity 0), col=0, all k left.
+    dp[0][0][0][k] = 1;
+
+    // Iterate rows i = 0..n-1, track parity pi = i%2, next is pi^1
+    for(int i = 0, pi = 0; i < n; ++i, pi ^= 1) {
+        // Zero out the "next" layer dp[*][pi^1][*][*]
+        for(int mask = 0; mask < fullMaskSize; ++mask)
+            for(int col = 0; col <= n; ++col)
+                for(int rem = 0; rem <= k; ++rem)
+                    dp[mask][pi^1][col][rem] = 0;
+
+        // Now process all states in dp[*][pi][*][*]
+        for(int col = 0; col <= n; ++col) {
+            for(int mask = 0; mask < fullMaskSize; ++mask) {
+                for(int rem = 0; rem <= k; ++rem) {
+                    int64_t ways = dp[mask][pi][col][rem];
+                    if (ways == 0) continue;
+
+                    // If we've reached col=n, move to next row
+                    if (col == n) {
+                        dp[mask][pi^1][0][rem] += ways;
+                        continue;
+                    }
+
+                    // Option 1: do NOT place a king at (i, col)
+                    {
+                        int newMask = (mask << 1) & fullMask;
+                        dp[newMask][pi][col+1][rem] += ways;
+                    }
+
+                    // Option 2: try to place a king, if neighbors are free
+                    // Extract neighbor bits from mask:
+                    int bit_left  =  mask        & 1;             // immediate left
+                    int bit_up    = (mask >> (n-1)) & 1;           // directly above
+                    int bit_dl    = (mask >> n)       & 1;         // diag up-left
+                    int bit_dr    = (mask >> (n-2))   & 1;         // diag up-right
+
+                    // Clear bits where they go out of board boundary:
+                    if (i == 0) { // first row has no "up" or diagonals
+                        bit_up = bit_dl = bit_dr = 0;
+                    }
+                    if (col == 0) { // first column has no left or diag-left
+                        bit_left = bit_dl = 0;
+                    }
+                    if (col == n-1) { // last column has no diag-right
+                        bit_dr = 0;
+                    }
+
+                    // If all four neighbors are free and we have kings left
+                    if (rem > 0 && bit_left==0 && bit_up==0 && bit_dl==0 && bit_dr==0) {
+                        int newMask = ((mask << 1) | 1) & fullMask;
+                        dp[newMask][pi][col+1][rem-1] += ways;
+                    }
+                }
+            }
+        }
+    }
+
+    // Sum up all ways where we've used exactly k kings, at row=n, col=0
+    // that means parity = n%2, rem = 0
+    int finalParity = n & 1;
+    int64_t answer = 0;
+    for(int mask = 0; mask < (2<<n); ++mask) {
+        answer += dp[mask][finalParity][0][0];
+    }
+    cout << answer << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+def count_placements(n, k):
+    fullMaskSize = 1 << (n+1)    # we keep n+1 bits in the mask
+    fullMask     = fullMaskSize - 1
+
+    # dp0[mask][col][rem] = ways at current row parity
+    # dp1 = next row's parity
+    dp0 = [[[0]*(k+1) for _ in range(n+1)] for __ in range(fullMaskSize)]
+    dp1 = [[[0]*(k+1) for _ in range(n+1)] for __ in range(fullMaskSize)]
+
+    # start before row 0, col 0, with k kings to place
+    dp0[0][0][k] = 1
+
+    for i in range(n):
+        # clear dp1 (next row parity)
+        for m in range(fullMaskSize):
+            for c in range(n+1):
+                for r in range(k+1):
+                    dp1[m][c][r] = 0
+
+        # parity is implicit: we read from dp0, write partly to dp1 when col==n,
+        # and to dp0 itself when col<n
+        for mask in range(fullMaskSize):
+            for col in range(n+1):
+                for rem in range(k+1):
+                    ways = dp0[mask][col][rem]
+                    if ways == 0:
+                        continue
+
+                    # If we hit end of row, move to next row (col=0)
+                    if col == n:
+                        dp1[mask][0][rem] += ways
+                        continue
+
+                    # Option A: skip placing at (i,col)
+                    newMask = (mask << 1) & fullMask
+                    dp0[newMask][col+1][rem] += ways
+
+                    # Option B: place a king if no neighbor conflicts
+                    bit_left =  mask        & 1
+                    bit_up   = (mask >> (n-1)) & 1
+                    bit_dl   = (mask >> n)       & 1
+                    bit_dr   = (mask >> (n-2))   & 1
+
+                    # adjust for borders
+                    if i == 0:
+                        bit_up = bit_dl = bit_dr = 0
+                    if col == 0:
+                        bit_left = bit_dl = 0
+                    if col == n-1:
+                        bit_dr = 0
+
+                    if rem>0 and bit_left==0 and bit_up==0 and bit_dl==0 and bit_dr==0:
+                        newMask2 = ((mask << 1) | 1) & fullMask
+                        dp0[newMask2][col+1][rem-1] += ways
+
+        # swap dp0 and dp1: dp1 becomes the starting dp0 for next row
+        dp0, dp1 = dp1, dp0
+
+    # after n rows, we're at col=0 of "dp0", with rem=0, sum over all masks
+    result = sum(dp0[mask][0][0] for mask in range(fullMaskSize))
+    return result
+
+if __name__ == "__main__":
+    data = sys.stdin.read().strip().split()
+    n, k = map(int, data)
+    ans = count_placements(n, k)
+    print(ans)
+```
+
+5. Compressed Editorial  
+Use a row-by-row DP with a sliding bitmask of length \(n+1\) to encode the immediate left, above, and two diagonal neighbors. State = (mask, column \(j\), kings remaining). At each cell either skip or place a king iff the four neighbor bits are 0, shifting the mask accordingly. Roll per row parity to keep memory down. Complexity \(\sim O(n\,(2^{n+1})\,n\,k)\).

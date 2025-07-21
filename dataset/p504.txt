@@ -1,0 +1,343 @@
+1. Abridged Problem Statement  
+Given an h×w grid of lowercase letters (1≤h,w≤700), find the largest square submatrix such that every row and every column of that square is a palindrome. Output the 1-based coordinates (r1, c1, r2, c2) of any maximum-size solution.
+
+2. Detailed Editorial
+
+Problem restatement  
+We must pick a k×k square in an h×w letter grid so that for each of its k rows the substring is a palindrome, and for each of its k columns the substring is a palindrome. We want the maximum k, and to report the coordinates of one such square.
+
+Challenges  
+A brute-force scan for all possible top-left corners and all k (up to 700) is O(h·w·k), up to 700³≈343 million checks—too big under 0.25 s. We need an O((h·w)·log n) or O(h·w) solution.
+
+Key ideas  
+1. Rolling hashes allow O(1) palindrome tests on any substring. We build forward and reverse hash arrays for each row and each column.  
+2. For a fixed k, we can mark at each cell (i,j):  
+   - rowPal[i][j]=1 if row i substring [j…j+k−1] is palindrome  
+   - colPal[i][j]=1 if column j substring [i…i+k−1] is palindrome  
+3. We want a k×k square at (i,j) if in that block all k rows are palindrome at column j, and all k columns are palindrome at row i. We can precompute two helper arrays:  
+   - cntDown[i][j]: how many consecutive rows from i downward have rowPal=1 at (row, j)  
+   - cntRight[i][j]: how many consecutive columns from j rightward have colPal=1 at (i, col)  
+   Then square exists when cntDown[i][j]≥k and cntRight[i][j]≥k.  
+4. We binary-search k in [1…min(h,w)] (or on ⌊k/2⌋ with parity trick). Each check costs O(h·w). Total O(h·w·log min(h,w))≈700·700·10≈5 million operations, fast enough in C++.
+
+Step by step  
+- Read h,w and the grid.  
+- Initialize a rolling-hash object with a random base and precompute base powers up to max(h,w).  
+- Build for each of the h rows the forward hash h[i][j] and reverse hash rh[i][j].  
+- Build similarly for each of the w columns the forward and reverse hashes.  
+- Binary‐search the size k (handling even/odd) to find the maximum k for which check(k) returns true.  
+- In check(k):  
+  • Loop i from h−1 downto 0, j from w−1 downto 0.  
+  • If row substring at (i,j) length k is palindrome, then cntDown[i][j]=1+cntDown[i+1][j], else 0.  
+  • If column substring at (i,j) length k is palindrome, then cntRight[i][j]=1+cntRight[i][j+1], else 0.  
+  • If both counts ≥k, record success and coordinates.  
+- After binary search, output the stored best coordinates (converted to 1-based).
+
+Complexity  
+Time: O((h·w) log (min(h,w))) from binary searches; each check is O(h·w).  
+Memory: O(h·w) for hashes and count arrays.
+
+3. Provided C++ Solution with Line-by-Line Comments
+
+#include <bits/stdc++.h>  
+#pragma GCC optimize("O3,unroll-loops,avx2")  
+using namespace std;
+
+// We maintain a rolling-hash class that supports forward & reverse substring hashing.
+class HashMeta {
+  private:
+    uint64_t base;
+    vector<uint64_t> base_pow;
+
+    // Choose a random 64-bit base.
+    void set_random_base() {
+        seed_seq seed{
+            (uint32_t)chrono::high_resolution_clock::now().time_since_epoch().count(),
+            (uint32_t)random_device()(), (uint32_t)42
+        };
+        mt19937_64 rng(seed);
+        base = uniform_int_distribution<uint64_t>()(rng);
+    }
+
+    // Precompute base^0 … base^(n−1)
+    void precompute_base_pow(size_t n) {
+        base_pow.resize(n);
+        base_pow[0] = 1;
+        for (size_t i = 1; i < n; i++)
+            base_pow[i] = base_pow[i-1] * base;
+    }
+
+  public:
+    // Single hash type
+    struct hash_t {
+        uint64_t h;
+        hash_t(uint64_t _h=0): h(_h) {}
+        hash_t operator*(const hash_t& o) const { return hash_t(h * o.h); }
+        hash_t operator+(const hash_t& o) const { return hash_t(h + o.h); }
+        hash_t operator-(const hash_t& o) const { return hash_t(h - o.h); }
+        bool operator==(const hash_t& o) const { return h == o.h; }
+    };
+
+    // Initialize base and powers up to size n
+    void init(size_t n) {
+        set_random_base();
+        precompute_base_pow(n);
+    }
+
+    // Compute prefix hash array for a container (string or vector)
+    template<typename T>
+    vector<hash_t> rabin_karp(const T& s) {
+        int L = s.size();
+        vector<hash_t> h(L);
+        for (int i = 0; i < L; i++) {
+            hash_t val(s[i]);
+            if (i) h[i] = h[i-1] * hash_t(base) + val;
+            else   h[i] = val;
+        }
+        return h;
+    }
+
+    // Hash of s[l..r], inclusive
+    hash_t hash_range(int l, int r, const vector<hash_t>& h) {
+        if (l == 0) return h[r];
+        // h[r] − h[l−1] * base^(r−l+1)
+        return h[r] - (h[l-1] * hash_t(base_pow[r-l+1]));
+    }
+};
+
+int n, m;
+vector<string> tbl;
+HashMeta HM;
+
+// Read input
+void read_in() {
+    cin >> n >> m;
+    tbl.resize(n);
+    for (int i = 0; i < n; i++)
+        cin >> tbl[i];
+}
+
+// Check if there is any k×k palindrome square.
+// Returns (found, top-left, bottom-right).
+tuple<bool, pair<int,int>, pair<int,int>>
+check(const vector<vector<HashMeta::hash_t>>& h,
+      const vector<vector<HashMeta::hash_t>>& rh,
+      const vector<vector<HashMeta::hash_t>>& v,
+      const vector<vector<HashMeta::hash_t>>& rv,
+      int k)
+{
+    if (k > n || k > m) return {false,{-1,-1},{-1,-1}};
+    // For each cell we’ll count how many rows downward and columns rightward are palindrome
+    vector<vector<int>> cnt_down(n, vector<int>(m,0));
+    vector<vector<int>> cnt_right(n, vector<int>(m,0));
+
+    // Traverse from bottom-right so we can build counts from i+1, j+1
+    for (int i = n-1; i >= 0; i--) {
+        for (int j = m-1; j >= 0; j--) {
+            bool row_pal=false, col_pal=false;
+
+            // Check row palindrome at (i,j) length k
+            if (j + k <= m) {
+                auto hf = HM.hash_range(j, j+k-1, h[i]);
+                // reversed indices: original row reversed is in rh[i]
+                auto hr = HM.hash_range(m-1-(j+k-1), m-1-j, rh[i]);
+                row_pal = (hf == hr);
+                if (row_pal)
+                    cnt_down[i][j] = 1 + (i+1 < n ? cnt_down[i+1][j] : 0);
+            }
+
+            // Check column palindrome at (i,j) length k
+            if (i + k <= n) {
+                auto vf = HM.hash_range(i, i+k-1, v[j]);
+                auto vr = HM.hash_range(n-1-(i+k-1), n-1-i, rv[j]);
+                col_pal = (vf == vr);
+                if (col_pal)
+                    cnt_right[i][j] = 1 + (j+1 < m ? cnt_right[i][j+1] : 0);
+            }
+
+            // If we have k consecutive rows palindrome downward and k columns rightward
+            if (cnt_down[i][j] >= k && cnt_right[i][j] >= k) {
+                return {true, {i,j}, {i+k-1, j+k-1}};
+            }
+        }
+    }
+
+    return {false, {-1,-1}, {-1,-1}};
+}
+
+void solve() {
+    HM.init(max(n,m)+1);
+
+    // Build row-forward & row-reversed hashes
+    vector<vector<HashMeta::hash_t>> h(n), rh(n);
+    for (int i = 0; i < n; i++) {
+        h[i]  = HM.rabin_karp(tbl[i]);
+        string rev = tbl[i];
+        reverse(rev.begin(), rev.end());
+        rh[i] = HM.rabin_karp(rev);
+    }
+
+    // Build column-forward & column-reversed hashes
+    vector<vector<HashMeta::hash_t>> v(m), rv(m);
+    for (int j = 0; j < m; j++) {
+        string col;
+        col.reserve(n);
+        for (int i = 0; i < n; i++) col.push_back(tbl[i][j]);
+        v[j]  = HM.rabin_karp(col);
+        reverse(col.begin(), col.end());
+        rv[j] = HM.rabin_karp(col);
+    }
+
+    int bestK=0, br1=0, bc1=0, br2=0, bc2=0;
+    // Binary search on half-length + parity
+    int lo=0, hi=min(n,m), parity0=0, foundParity=-1;
+    while (lo <= hi) {
+        int mid = (lo+hi)/2;
+        for (int parity: {foundParity==-1?0:foundParity, foundParity==-1?1:foundParity}) {
+            int k = mid*2 + parity;
+            if (k < 1) continue;
+            auto [ok, tl, br] = check(h, rh, v, rv, k);
+            if (ok) {
+                if (k > bestK) {
+                    bestK=k;
+                    br1 = tl.first; bc1 = tl.second;
+                    br2 = br.first; bc2 = br.second;
+                }
+                foundParity = parity;
+                lo = mid + 1;
+                goto next_iter;
+            }
+        }
+        hi = mid - 1;
+    next_iter:;
+    }
+
+    // Convert to 1-based and print
+    cout << (br1+1)<<" "<<(bc1+1)<<" "<<(br2+1)<<" "<<(bc2+1)<<"\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    cin>>n>>m;
+    tbl.resize(n);
+    for(int i=0;i<n;i++) cin>>tbl[i];
+    solve();
+    return 0;
+}
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def read_input():
+    h, w = map(int, sys.stdin.readline().split())
+    grid = [sys.stdin.readline().strip() for _ in range(h)]
+    return h, w, grid
+
+# We'll use a pair of moduli to reduce collisions
+MOD1 = 10**9+7
+MOD2 = 10**9+9
+BASE = 91138233
+
+def build_hashes(lines, length):
+    # Build forward and reverse prefix hashes for each string in 'lines'
+    n = len(lines)
+    pref = [ [ (0,0) ]*(length+1) for _ in range(n) ]
+    rpref = [ [ (0,0) ]*(length+1) for _ in range(n) ]
+    for i, s in enumerate(lines):
+        h1 = h2 = 0
+        rh1 = rh2 = 0
+        for j, ch in enumerate(s):
+            code = ord(ch) - 96
+            h1 = (h1 * BASE + code) % MOD1
+            h2 = (h2 * BASE + code) % MOD2
+            pref[i][j+1] = (h1, h2)
+            rcode = ord(s[-1-j]) - 96
+            rh1 = (rh1 * BASE + rcode) % MOD1
+            rh2 = (rh2 * BASE + rcode) % MOD2
+            rpref[i][j+1] = (rh1, rh2)
+    return pref, rpref
+
+def precompute_powers(n):
+    # base^0..base^n
+    p1 = [1]*(n+1)
+    p2 = [1]*(n+1)
+    for i in range(n):
+        p1[i+1] = p1[i]*BASE % MOD1
+        p2[i+1] = p2[i]*BASE % MOD2
+    return p1, p2
+
+def get_hash(pref, pows, i, l, r):
+    # hash of substring [l..r) in line i
+    h1, h2 = pref[i][r]
+    g1, g2 = pref[i][l]
+    mul1, mul2 = pows[0][r-l], pows[1][r-l]
+    return ((h1 - g1*mul1) % MOD1, (h2 - g2*mul2) % MOD2)
+
+def find_square(h, w, grid):
+    # Precompute row hashes
+    row_pref, row_rpref = build_hashes(grid, w)
+    # Precompute column strings
+    cols = [''.join(grid[i][j] for i in range(h)) for j in range(w)]
+    col_pref, col_rpref = build_hashes(cols, h)
+
+    pows = precompute_powers(max(h,w)+1)
+    best = (0, 0, 0, 0, 0)  # (size, r1, c1, r2, c2)
+
+    def check(k):
+        # cnt_down[i][j]: number of consecutive palindrome rows of length k from row i downward at column j
+        # cnt_right[i][j]: number of consecutive palindrome columns of length k from col j rightward at row i
+        cnt_down = [[0]*w for _ in range(h)]
+        cnt_right= [[0]*w for _ in range(h)]
+        for i in range(h-1, -1, -1):
+            for j in range(w-1, -1, -1):
+                # check row palindrome at (i,j)
+                if j+k <= w:
+                    hf = get_hash(row_pref, pows, i, j, j+k)
+                    hr = get_hash(row_rpref,pows, i, w-(j+k), w-j)
+                    if hf == hr:
+                        cnt_down[i][j] = 1 + (cnt_down[i+1][j] if i+1<h else 0)
+                # check column palindrome at (i,j)
+                if i+k <= h:
+                    vf = get_hash(col_pref, pows, j, i, i+k)
+                    vr = get_hash(col_rpref,pows, j, h-(i+k), h-i)
+                    if vf == vr:
+                        cnt_right[i][j] = 1 + (cnt_right[i][j+1] if j+1<w else 0)
+                # if we have k rows and k columns
+                if cnt_down[i][j] >= k and cnt_right[i][j] >= k:
+                    return (i, j)
+        return None
+
+    # Binary search on k from 1..min(h,w)
+    lo, hi = 1, min(h,w)
+    while lo <= hi:
+        mid = (lo+hi)//2
+        pos = check(mid)
+        if pos:
+            # found size mid
+            best = (mid, pos[0], pos[1])
+            lo = mid+1
+        else:
+            hi = mid-1
+
+    k, i, j = best
+    return (i+1, j+1, i+k, j+k)
+
+def main():
+    h, w, grid = read_input()
+    r1, c1, r2, c2 = find_square(h, w, grid)
+    print(r1, c1, r2, c2)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+1. Precompute forward/reverse rolling hashes for all rows and all columns in O(h·w).  
+2. Binary-search the maximum square size k (or on half-size plus parity).  
+3. For each candidate k, in O(h·w) check every top-left: use two DP arrays (`cnt_down`, `cnt_right`) to ensure k consecutive palindrome rows and columns.  
+4. Total time O(h·w·log min(h,w)), fast for h,w≤700.

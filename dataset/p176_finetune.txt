@@ -1,0 +1,369 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+176. Flow construction
+time limit per test: 0.5 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+You have given the net consisting of nodes and pipes; pipes connect the nodes. Some substance can flow by pipes, and flow speed in any pipe doesn't exceed capacity of this pipe.
+The substance cannot be accumulated in the nodes. But it is being produced in the first node with the non-negative speed and being consumed with the same speed in the last node.
+You have some subset taken from the set of pipes of this net. You need to start the motion of substance in the net, and your motion must fully fill the pipes of the given subset. Speed of the producing substance in the first node must be minimal.
+Calculate this speed and show the scene of substance motion.
+Remember that substance can't be accumulated in the nodes of the net.
+
+Input
+Two positive integer numbers N (1<=N<=100) and M have been written in the first line of the input - numbers of nodes and pipes.
+There are M lines follows: each line contains four integer numbers Ui, Vi, Zi, Ci; the numbers are separated by a space. Ui is the beginning of i-th pipe, Vi is its end, Zi is a capacity of i-th pipe (1<=Zi<=10^5) and Ci is 1 if i-th pipe must be fully filled, and 0 otherwise.
+Any pair of nodes can be connected only by one pipe. If there is a pipe from node A to node B, then there is no pipe from B to A. Not a single node is connected with itself.
+There is no pipe which connects nodes number 1 and N. Substance can flow only from the beginning of a pipe to its end.
+
+Output
+Write one integer number in the first line of the output - it ought to be the minimal speed of the producing substance in the first node.
+Write M integers in the second line - i-th number ought to be the flow speed in the i-th pipe (numbering of pipes is equal to the input).
+If it is impossible to fill the given subset, write "Impossible".
+
+Sample test(s)
+
+Input
+Input 1:
+4 4
+1 2 2 0
+2 4 1 1
+1 3 2 1
+3 4 3 0
+Input 2:
+4 4
+1 2 1 0
+2 4 2 1
+1 3 3 1
+3 4 2 0
+
+Output
+Output 1:
+3
+1 1 2 2
+Output 2:
+Impossible
+Author:	Dmitry Orlov
+Resource:	Saratov ST team Spring Contest #1
+Date:	18.05.2003
+
+<|response|>
+1. Abridged problem statement  
+You have a directed graph of N nodes (numbered 1…N) and M pipes. Pipe i goes from Ui to Vi, has capacity Zi, and a flag Ci:  
+- If Ci=1, you must send exactly Zi units of flow through that pipe (lower bound = Zi).  
+- If Ci=0, you can send any flow in [0, Zi].  
+
+You produce flow at node 1 at rate X≥0, consume it at node N at the same rate X, and every intermediate node must satisfy flow conservation (no storage). Find the minimal X for which a feasible flow exists meeting all lower‐bound requirements, and output X and the flow on each pipe. If no such X exists, print “Impossible.”
+
+2. Key observations  
+1. Pipes with Ci=1 impose a lower bound on flow; those with Ci=0 have lower bound 0.  
+2. A flow with lower bounds can be reduced to a circulation problem by:  
+   - Replacing each edge’s capacity from [lb, ub] to [0, ub−lb].  
+   - Recording at each node a “demand” equal to (sum of incoming lbs) − (sum of outgoing lbs).  
+3. To allow net injection of X at node 1 and removal at node N, add an extra edge N→1 with capacity X and lower bound 0.  
+4. A feasible circulation with these transformed edges exists if and only if, after adding a super‐source S connected to all demand‐positive nodes and a super‐sink T connected from all demand‐negative nodes, the max flow S→T saturates all demand edges.  
+5. Since X is unknown, we can binary‐search X and test feasibility by running a max‐flow for each candidate X.
+
+3. Full solution approach  
+1. Parse input, convert to 0-based indices. For each pipe i, set lb[i] = (Ci? Zi : 0), ub[i] = Zi.  
+2. Define a function feasible(X):  
+   a. Initialize demand[0…N−1] = 0.  
+   b. Create a flow network of size N+2 (nodes 0…N−1 are original, node N=super-source S, node N+1=super-sink T).  
+   c. For each original pipe i from u→v:  
+      - demand[u] −= lb[i];  demand[v] += lb[i].  
+      - Add edge u→v with capacity (ub[i]−lb[i]) and remember its index=i.  
+   d. For each node i in [0…N−1]:  
+      - If demand[i]>0, add edge S→i with capacity demand[i].  
+      - If demand[i]<0, add edge i→T with capacity −demand[i].  
+   e. Add edge (N−1)→0 with capacity X (the “circulation creator”).  
+   f. Compute max‐flow from S to T. Let totalDemand = sum of all demand[i]>0. If max-flow == totalDemand, return true; else false.  
+3. Binary‐search X over [0…sum_of_all_Zi] (or up to 1e8). If no X is feasible, print “Impossible.” Otherwise let X* be the minimal feasible X.  
+4. Rebuild the network for X*, run one more max‐flow to get the flow values on the transformed edges. For each original pipe i, its actual flow = (flow on transformed edge i) + lb[i].  
+5. Output X* and the M flows in input order.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Dinic max‐flow (integer capacities)
+struct Dinic {
+    struct Edge { int to, rev; int cap, flow; int idx; };
+    int n, S, T;
+    vector<vector<Edge>> adj;
+    vector<int> lvl, ptr;
+    Dinic(int _n): n(_n), adj(_n), lvl(_n), ptr(_n) {}
+    // add directed edge u→v with capacity c, store original index idx
+    void addEdge(int u, int v, int c, int idx=-1) {
+        adj[u].push_back({v, (int)adj[v].size(), c, 0, idx});
+        adj[v].push_back({u, (int)adj[u].size()-1, 0, 0, -1});
+    }
+    bool bfs() {
+        fill(lvl.begin(), lvl.end(), -1);
+        queue<int> q;
+        lvl[S] = 0; q.push(S);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e : adj[u]) {
+                if (lvl[e.to] < 0 && e.flow < e.cap) {
+                    lvl[e.to] = lvl[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return lvl[T] >= 0;
+    }
+    int dfs(int u, int pushed) {
+        if (u == T || !pushed) return pushed;
+        for (int &cid = ptr[u]; cid < (int)adj[u].size(); cid++) {
+            auto &e = adj[u][cid];
+            if (lvl[e.to] == lvl[u] + 1 && e.flow < e.cap) {
+                int tr = dfs(e.to, min(pushed, e.cap - e.flow));
+                if (tr > 0) {
+                    e.flow += tr;
+                    adj[e.to][e.rev].flow -= tr;
+                    return tr;
+                }
+            }
+        }
+        return 0;
+    }
+    int maxflow(int _S, int _T) {
+        S = _S; T = _T;
+        int flow = 0;
+        while (bfs()) {
+            fill(ptr.begin(), ptr.end(), 0);
+            while (int pushed = dfs(S, INT_MAX))
+                flow += pushed;
+        }
+        return flow;
+    }
+};
+
+// global input storage
+int N, M;
+struct Pipe { int u, v, cap, lb; };
+vector<Pipe> pipes;
+
+// Build the circulation‐test network for a given X.
+// Returns (totalDemand, Dinic instance).
+pair<int, Dinic> build(int X) {
+    int S = N, T = N+1;
+    Dinic mf(N+2);
+    vector<int> demand(N, 0);
+
+    // 1) transform edges, record demands
+    for (int i = 0; i < M; i++) {
+        auto &p = pipes[i];
+        demand[p.u] -= p.lb;
+        demand[p.v] += p.lb;
+        // capacity = ub - lb
+        mf.addEdge(p.u, p.v, p.cap - p.lb, i);
+    }
+    // 2) connect super‐source/sink
+    int totalDemand = 0;
+    for (int i = 0; i < N; i++) {
+        if (demand[i] > 0) {
+            mf.addEdge(S, i, demand[i]);
+            totalDemand += demand[i];
+        } else if (demand[i] < 0) {
+            mf.addEdge(i, T, -demand[i]);
+        }
+    }
+    // 3) add edge N-1 -> 0 with cap = X
+    mf.addEdge(N-1, 0, X);
+    return { totalDemand, mf };
+}
+
+// check if X is feasible
+bool feasible(int X) {
+    auto pr = build(X);
+    int need = pr.first;
+    Dinic &mf = pr.second;
+    int got = mf.maxflow(N, N+1);
+    return got == need;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> N >> M;
+    pipes.resize(M);
+    for (int i = 0; i < M; i++) {
+        int U,V,Z,C;
+        cin >> U >> V >> Z >> C;
+        U--; V--;
+        pipes[i] = {U, V, Z, (C? Z : 0)};
+    }
+
+    // binary search for minimal X
+    int lo = 0, hi = 100000000, ans = -1;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo)/2;
+        if (feasible(mid)) {
+            ans = mid;
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    if (ans < 0) {
+        cout << "Impossible\n";
+        return 0;
+    }
+
+    // rebuild for ans, run flow, extract per-edge flows
+    auto pr = build(ans);
+    Dinic &mf = pr.second;
+    mf.maxflow(N, N+1);
+
+    vector<int> result(M);
+    // for each original edge, flow = used + lb
+    for (int u = 0; u < N; u++) {
+        for (auto &e : mf.adj[u]) {
+            if (e.idx >= 0) {
+                int i = e.idx;
+                result[i] = e.flow + pipes[i].lb;
+            }
+        }
+    }
+
+    cout << ans << "\n";
+    for (int f : result) cout << f << " ";
+    cout << "\n";
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+        self.level = [0]*n
+        self.ptr = [0]*n
+
+    def add_edge(self, u, v, c, idx=-1):
+        # forward edge: [to, cap, flow, rev_index, orig_idx]
+        self.adj[u].append([v, c, 0, len(self.adj[v]), idx])
+        # reverse edge
+        self.adj[v].append([u, 0, 0, len(self.adj[u]) - 1, -1])
+
+    def bfs(self, S, T):
+        for i in range(self.n):
+            self.level[i] = -1
+        q = deque([S])
+        self.level[S] = 0
+        while q:
+            u = q.popleft()
+            for v, cap, flow, rev, _ in self.adj[u]:
+                if self.level[v] < 0 and flow < cap:
+                    self.level[v] = self.level[u] + 1
+                    q.append(v)
+        return self.level[T] >= 0
+
+    def dfs(self, u, T, pushed):
+        if pushed == 0 or u == T:
+            return pushed
+        for cid in range(self.ptr[u], len(self.adj[u])):
+            v, cap, flow, rev, _ = self.adj[u][cid]
+            if self.level[v] == self.level[u] + 1 and flow < cap:
+                tr = self.dfs(v, T, min(pushed, cap-flow))
+                if tr > 0:
+                    self.adj[u][cid][2] += tr
+                    self.adj[v][rev][2] -= tr
+                    return tr
+            self.ptr[u] += 1
+        return 0
+
+    def max_flow(self, S, T):
+        flow = 0
+        INF = 10**18
+        while self.bfs(S, T):
+            self.ptr = [0]*self.n
+            while True:
+                pushed = self.dfs(S, T, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+def build_graph(N, pipes, X):
+    S, T = N, N+1
+    mf = Dinic(N+2)
+    demand = [0]*N
+
+    # 1) adjust for lower bounds
+    for i, (u, v, cap, lb) in enumerate(pipes):
+        demand[u] -= lb
+        demand[v] += lb
+        mf.add_edge(u, v, cap-lb, i)
+
+    # 2) super‐source/sink for demands
+    total_demand = 0
+    for i in range(N):
+        if demand[i] > 0:
+            mf.add_edge(S, i, demand[i])
+            total_demand += demand[i]
+        elif demand[i] < 0:
+            mf.add_edge(i, T, -demand[i])
+
+    # 3) circulation‐creator edge N-1 → 0
+    mf.add_edge(N-1, 0, X)
+    return mf, total_demand
+
+def feasible(N, pipes, X):
+    mf, need = build_graph(N, pipes, X)
+    got = mf.max_flow(N, N+1)
+    return got == need
+
+def main():
+    input = sys.stdin.readline
+    N, M = map(int, input().split())
+    pipes = []
+    for _ in range(M):
+        u, v, z, c = map(int, input().split())
+        u -= 1; v -= 1
+        lb = z if c == 1 else 0
+        pipes.append((u, v, z, lb))
+
+    # binary search on X
+    lo, hi, ans = 0, 10**8, -1
+    while lo <= hi:
+        mid = (lo + hi)//2
+        if feasible(N, pipes, mid):
+            ans = mid
+            hi = mid - 1
+        else:
+            lo = mid + 1
+
+    if ans < 0:
+        print("Impossible")
+        return
+
+    # rebuild for ans, run flow, extract flows
+    mf, _ = build_graph(N, pipes, ans)
+    mf.max_flow(N, N+1)
+    res = [0]*M
+    for u in range(N):
+        for v, cap, flow, rev, idx in mf.adj[u]:
+            if idx >= 0:
+                # actual flow = recorded flow + lb
+                res[idx] = flow + pipes[idx][3]
+
+    print(ans)
+    print(*res)
+
+if __name__ == "__main__":
+    main()
+```

@@ -1,0 +1,264 @@
+1. Concise problem statement  
+Given positive integers x1, x2, a target position P (can be negative), and a total number of jumps K, decide whether it is possible to make exactly K jumps—each jump is either +x1, –x1, +x2, or –x2—so that the net displacement is exactly P. If yes, output “YES” and one quadruple (P1, N1, P2, N2) of nonnegative integers satisfying  
+ &nbsp;&nbsp;&nbsp;&nbsp;P1 + N1 + P2 + N2 = K  
+ &nbsp;&nbsp;&nbsp;&nbsp;P1·x1 − N1·x1 + P2·x2 − N2·x2 = P  
+otherwise output “NO.”
+
+2. Detailed editorial  
+
+Let a = P1 − N1 and b = P2 − N2. We then need  
+
+  (1)  a·x1 + b·x2 = P  
+  (2)  |a| + |b| ≤ K  
+  (3)  |a| + |b| ≡ K mod 2  
+
+Indeed, once we fix integers a,b satisfying (1), we can set P1,N1 so that P1−N1=a and P1+N1 contributes exactly |a| jumps, and similarly for x2. The remaining K−(|a|+|b|) jumps must be inserted in ± pairs that cancel out displacement; that is possible iff K−(|a|+|b|) is even.
+
+Step A: Solve a·x1 + b·x2 = P  
+  Use the extended Euclidean algorithm to find one particular integer solution (a0,b0). Let g = gcd(x1,x2). If g does not divide P, there is no solution: answer “NO.”
+
+Step B: Parametrize all solutions  
+  General solution is  
+    a = a0 + t·(x2/g),  
+    b = b0 − t·(x1/g),  
+  for integer t.
+
+Step C: Choose t to minimize S(t) = |a| + |b|  
+  Try to shift t so that a and b come closer to zero. Since S(t) is piecewise-linear, you can approximate the “best” real t and check its neighbors (or simply do two while-loops pushing t ±1 as long as it decreases S).
+
+Step D: Check feasibility  
+  Let S0 = |a| + |b|. If S0 > K, impossible: answer “NO.”  
+  Otherwise compute rem = K − S0.  
+  If rem is even, proceed.  
+  If rem is odd, we need one extra “unit step” in the solution family to flip parity of S: because moving t by +1 changes S by |a+dx|+|b−dy|−(|a|+|b|) where dx = x2/g, dy = x1/g. We check if (dx+dy) is odd (so parity of S flips). If not odd, no solution; else shift t by +1 or −1 in the direction that keeps S ≤ K. Recompute S0 and rem; now rem will be even.
+
+Step E: Build P1,N1,P2,N2  
+  For x1: if a ≥ 0 then P1 = a, N1 = 0; else P1 = 0, N1 = −a. Similarly for b and x2.  
+  Then distribute rem/2 extra +x1 and rem/2 extra −x1 jumps to keep net a unchanged; i.e. add rem/2 to both P1 and N1. That uses up all K jumps.  
+
+Time complexity: O(log (min(x1,x2))) for gcd plus a few corrections.
+
+3. C++ solution with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+using int64 = long long;
+
+// Extended Euclidean algorithm.
+// Returns gcd(a,b) and finds x,y such that a*x + b*y = gcd(a,b).
+int64 ext_gcd(int64 a, int64 b, int64 &x, int64 &y) {
+    if (b == 0) {
+        x = 1;      // 1·a + 0·b = a
+        y = 0;
+        return a;
+    }
+    int64 x1, y1;
+    int64 g = ext_gcd(b, a % b, x1, y1);
+    // Back-substitute: b·x1 + (a%b)·y1 = g
+    // (a%b) = a - (a/b)*b
+    x = y1;
+    y = x1 - (a / b) * y1;
+    return g;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int64 x1, x2, P, K;
+    cin >> x1 >> x2 >> P >> K;
+
+    // Step A: find one solution (a0,b0) to a·x1 + b·x2 = P
+    int64 a0, b0;
+    int64 g = ext_gcd(x1, x2, a0, b0);
+    if (P % g != 0) {
+        cout << "NO\n";
+        return 0;
+    }
+    // Scale the particular solution by P/g
+    a0 *= P / g;
+    b0 *= P / g;
+
+    // dx, dy are the shifts in a,b when we change the free parameter t by +1
+    int64 dx = x2 / g;
+    int64 dy = x1 / g;
+
+    // Step C: optimize t to minimize |a|+|b|
+    // We do a local descent: check if moving t by +1 or -1 reduces S.
+    auto S = [&](int64 a, int64 b) {
+        return llabs(a) + llabs(b);
+    };
+
+    int64 a = a0, b = b0;
+    // Try shifting t upwards as long as it helps
+    while (true) {
+        int64 a_up = a + dx, b_up = b - dy;
+        if (S(a_up, b_up) < S(a, b)) {
+            a = a_up; b = b_up;
+        } else break;
+    }
+    // Try shifting t downwards as long as it helps
+    while (true) {
+        int64 a_dn = a - dx, b_dn = b + dy;
+        if (S(a_dn, b_dn) < S(a, b)) {
+            a = a_dn; b = b_dn;
+        } else break;
+    }
+
+    int64 sumAbs = S(a, b);
+    if (sumAbs > K) {
+        cout << "NO\n";
+        return 0;
+    }
+
+    // rem = leftover jumps after using |a|+|b|
+    int64 rem = K - sumAbs;
+
+    // If rem is odd, we need to flip parity of sumAbs by shifting t by ±1
+    if (rem % 2 != 0) {
+        // Can we flip parity? Only if dx+dy is odd
+        if ((dx + dy) % 2 == 0) {
+            cout << "NO\n";
+            return 0;
+        }
+        // Choose the direction that keeps S <= K
+        int64 a_up = a + dx, b_up = b - dy;
+        if (S(a_up, b_up) <= K) {
+            a = a_up; b = b_up;
+        } else {
+            a = a - dx;
+            b = b + dy;
+        }
+        // Recompute sumAbs and rem
+        sumAbs = S(a, b);
+        rem = K - sumAbs;
+        // If it still fails, no solution
+        if (rem < 0 || rem % 2 != 0) {
+            cout << "NO\n";
+            return 0;
+        }
+    }
+
+    // Now rem is even. We can distribute rem/2 extra +x1 and rem/2 extra -x1.
+    int64 P1, N1, P2, N2;
+    // Base decomposition of a into P1,N1
+    if (a >= 0) { P1 = a; N1 = 0; }
+    else         { P1 = 0; N1 = -a; }
+    // Base decomposition of b into P2,N2
+    if (b >= 0) { P2 = b; N2 = 0; }
+    else         { P2 = 0; N2 = -b; }
+
+    // Insert cancelling jumps on x1: half +x1, half -x1
+    int64 add = rem / 2;
+    P1 += add;
+    N1 += add;
+
+    // We used |a| + |b| + 2*(rem/2) = K jumps total
+    cout << "YES\n";
+    cout << P1 << " " << N1 << " " << P2 << " " << N2 << "\n";
+    return 0;
+}
+```
+
+4. Python solution with detailed comments  
+```python
+def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
+    """
+    Return (g, x, y) such that g = gcd(a, b) and a*x + b*y = g.
+    """
+    if b == 0:
+        return (a, 1, 0)      # Base: gcd(a,0)=a => a*1 + 0*0 = a
+    # Recurse on (b, a mod b)
+    g, x1, y1 = extended_gcd(b, a % b)
+    # Now b*x1 + (a%b)*y1 = g
+    # a%b = a - (a//b)*b
+    # => a*y1 + b*(x1 - (a//b)*y1) = g
+    x = y1
+    y = x1 - (a // b) * y1
+    return (g, x, y)
+
+def solve_problem(x1: int, x2: int, P: int, K: int) -> None:
+    # Step A: find any solution (a0,b0) to a0*x1 + b0*x2 = P
+    g, a0, b0 = extended_gcd(x1, x2)
+    if P % g != 0:
+        print("NO")
+        return
+    # Scale to get a valid particular solution
+    a0 *= P // g
+    b0 *= P // g
+
+    dx = x2 // g  # shift in 'a' when changing parameter t by +1
+    dy = x1 // g  # shift in 'b' when changing parameter t by +1
+
+    # S(a,b) = |a| + |b|
+    def S(a, b): return abs(a) + abs(b)
+
+    # Step C: adjust t to minimize |a|+|b|
+    a, b = a0, b0
+    # push t upward while it strictly improves S
+    while True:
+        a_up, b_up = a + dx, b - dy
+        if S(a_up, b_up) < S(a, b):
+            a, b = a_up, b_up
+        else:
+            break
+    # push t downward similarly
+    while True:
+        a_dn, b_dn = a - dx, b + dy
+        if S(a_dn, b_dn) < S(a, b):
+            a, b = a_dn, b_dn
+        else:
+            break
+
+    sum_abs = S(a, b)
+    if sum_abs > K:
+        print("NO")
+        return
+    rem = K - sum_abs
+
+    # Step D: fix parity if needed
+    if rem % 2 != 0:
+        # We need dx+dy odd to flip parity of S
+        if (dx + dy) % 2 == 0:
+            print("NO")
+            return
+        # Try shifting t by +1; if that overshoots, shift by -1
+        if S(a+dx, b-dy) <= K:
+            a, b = a+dx, b-dy
+        else:
+            a, b = a-dx, b+dy
+        sum_abs = S(a, b)
+        rem = K - sum_abs
+        if rem < 0 or rem % 2 != 0:
+            print("NO")
+            return
+
+    # Step E: build P1,N1,P2,N2
+    # a = P1 - N1  =>  P1 = max(a,0), N1 = max(-a,0)
+    if a >= 0:
+        P1, N1 = a, 0
+    else:
+        P1, N1 = 0, -a
+    if b >= 0:
+        P2, N2 = b, 0
+    else:
+        P2, N2 = 0, -b
+
+    # Distribute remaining rem jumps in cancelling +x1/-x1 pairs:
+    add = rem // 2
+    P1 += add
+    N1 += add
+
+    print("YES")
+    print(P1, N1, P2, N2)
+
+def main():
+    x1, x2, P, K = map(int, input().split())
+    solve_problem(x1, x2, P, K)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed editorial  
+Use extended gcd to find one integer solution (a0,b0) to a·x1 + b·x2 = P. General solutions are a=a0+t·(x2/g), b=b0−t·(x1/g). Adjust t greedily to minimize |a|+|b|. If this minimum exceeds K, or if leftover jumps K–(|a|+|b|) has wrong parity (and cannot be flipped because (x2/g + x1/g) is even), answer NO. Otherwise distribute leftover as cancelling ± jumps to fill exactly K moves and print the resulting nonnegative counts.

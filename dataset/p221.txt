@@ -1,0 +1,166 @@
+1. Concise Problem Statement  
+Given an n×n chessboard, count the number of ways to place k bishops so that no two attack each other. Bishops attack along diagonals. Output the exact count.
+
+2. Detailed Editorial  
+
+Overview  
+Because bishops move only along diagonals, any two bishops on different-color squares can never attack each other. On an n×n board there are two independent sets of diagonals—“even” (say, black-square) diagonals and “odd” (white-square) diagonals. We split the problem into two subproblems: choose i bishops on even diagonals and k−i bishops on odd diagonals, for all i, and multiply the counts, then sum over i.
+
+Counting on one parity  
+Label the diagonals of one color by their lengths in increasing order. On an n×n board:
+
+ • For “even” diagonals (starting from the very top corner), their lengths go 1,2,3,…,n−1,n,n−1,…,2,1, but we only take every other diagonal depending on color.  
+ • You end up with a list per_diag of m diagonals, each with a certain number of available squares v1, v2, …, vm.  
+
+We wish to place j bishops among the first t diagonals so that no two share a diagonal—this means at most one bishop per diagonal. But bishops on different diagonals of the same color still attack if they share the *other* direction diagonal. However, by construction of our list (one color alone), any two chosen squares automatically lie on distinct diagonals in both directions if we never choose more than one from the same diagonal. Thus it reduces to “choose j diagonals out of t” but weighted by how many squares are on each diagonal.
+
+Dynamic Programming  
+Let dp[t][j] = number of ways to choose j bishops among the first t diagonals. Each diagonal t has vt squares:
+
+ Base: dp[0][0] = 1; dp[0][j>0] = 0.  
+ Transition: when considering diagonal t with vt squares, you either place no bishop there (dp[t−1][j] ways), or place one bishop there (choose one of vt squares, but note that if you already placed (j−1) bishops elsewhere, vt reduces by (j−1) because no two bishops on the same “anti”-diagonal—but this detail is built into the counting of per-diagonal list). Concretely:
+   dp[t][j] = dp[t−1][j]            // skip this diagonal  
+            + dp[t−1][j−1] * (vt − (j−1))  
+The term (vt − (j−1)) accounts for the fact that j−1 bishops already chosen forbid one square on that diagonal for each of them, but because all chosen bishops are on distinct “other” diagonals, exactly j−1 squares on the vt are attacked, leaving (vt − (j−1)) valid choices.
+
+Combine parities  
+Compute dp_even and dp_odd. Then the final answer is  
+   sum_{i=0..k} dp_even[m_even][i] * dp_odd[m_odd][k−i].  
+
+Time complexity O(n·k).
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+#include <boost/multiprecision/cpp_int.hpp>
+using namespace std;
+using Big = boost::multiprecision::cpp_int;
+
+// Build the dp table for one color–parity of diagonals.
+// n = board size, k = max bishops on this parity, start = 0 or 1 for even/odd.
+vector<vector<Big>> build_dp(int n, int k, int start) {
+    // Construct list of diagonal lengths for this parity.
+    vector<int> per_diag;
+    // We iterate over all diagonals (indexed 0..2n-2), but pick every other one.
+    // Diagonal index d has length len = (d < n ? d+1 : 2*n-1-d).
+    for (int d = start; d < 2*n - 1; d += 2) {
+        int len = (d < n ? d + 1 : 2*n - 1 - d);
+        per_diag.push_back(len);
+    }
+    int m = per_diag.size();
+    // dp[i][j] = ways to place j bishops among first i diagonals
+    vector<vector<Big>> dp(m+1, vector<Big>(k+1, 0));
+    dp[0][0] = 1;  // zero bishops in zero diagonals
+
+    // Fill DP
+    for (int i = 1; i <= m; i++) {
+        int v = per_diag[i-1];   // length of i-th diagonal
+        dp[i][0] = 1;            // zero bishops: exactly 1 way
+        for (int j = 1; j <= k; j++) {
+            // 1) skip this diagonal
+            dp[i][j] = dp[i-1][j];
+            // 2) place one bishop here; we must avoid conflicts with (j-1) already placed
+            //    so available squares = v - (j-1)
+            if (j <= v) {
+                dp[i][j] += dp[i-1][j-1] * Big(v - (j - 1));
+            }
+        }
+    }
+    return dp;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, k;
+    cin >> n >> k;
+    // Corner cases
+    if (k > 2*n - 1) {
+        // More bishops than total diagonals on one color => impossible
+        cout << 0 << "\n";
+        return 0;
+    }
+    // Build DP for even-parity and odd-parity diagonals
+    auto dp_even = build_dp(n, k, 0);
+    auto dp_odd  = build_dp(n, k, 1);
+
+    // Combine: choose i bishops on even, k-i on odd
+    Big answer = 0;
+    int m_even = dp_even.size() - 1;
+    int m_odd  = dp_odd.size() - 1;
+    for (int i = 0; i <= k; i++) {
+        answer += dp_even[m_even][i] * dp_odd[m_odd][k - i];
+    }
+    cout << answer << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+def solve_one_parity(n, k, start):
+    """
+    Build dp for diagonals of one color.
+    start = 0 for “even” diagonals, 1 for “odd”.
+    Returns dp table where dp[i][j] = ways to place j bishops
+    on the first i diagonals of this parity.
+    """
+    per_diag = []
+    # Collect lengths of diagonals of this parity
+    # Diagonal indices run from 0 to 2n-2
+    for d in range(start, 2*n - 1, 2):
+        if d < n:
+            length = d + 1
+        else:
+            length = 2*n - 1 - d
+        per_diag.append(length)
+
+    m = len(per_diag)
+    # Initialize dp with zeros
+    dp = [[0] * (k+1) for _ in range(m+1)]
+    dp[0][0] = 1  # zero bishops in zero diagonals
+
+    # Fill DP table
+    for i in range(1, m+1):
+        v = per_diag[i-1]  # length of the i-th diagonal
+        dp[i][0] = 1       # placing 0 bishops is always 1 way
+        # for j>=1, either skip or place one bishop
+        for j in range(1, k+1):
+            # skip this diagonal
+            dp[i][j] = dp[i-1][j]
+            # place one bishop: we have v squares but j-1 bishops already placed
+            # rule out (j-1) attacked squares => (v - (j-1)) choices if >=1
+            if j <= v:
+                dp[i][j] += dp[i-1][j-1] * (v - (j-1))
+    return dp
+
+def solve(n, k):
+    # if k exceeds total diagonals on one color, impossible
+    if k > 2*n - 1:
+        return 0
+
+    # build dp tables for both parities
+    dp0 = solve_one_parity(n, k, 0)
+    dp1 = solve_one_parity(n, k, 1)
+
+    ways = 0
+    m0 = len(dp0) - 1
+    m1 = len(dp1) - 1
+    # combine counts: choose i on parity0, k-i on parity1
+    for i in range(k+1):
+        ways += dp0[m0][i] * dp1[m1][k-i]
+    return ways
+
+# Read input and output answer
+n, k = map(int, input().split())
+print(solve(n, k))
+```
+
+5. Compressed Editorial  
+- Split board into two independent sets of diagonals by color (even/odd).  
+- For each parity, list diagonals’ lengths: per_diag.  
+- DP: dp[i][j] = ways to place j bishops in first i diagonals;  
+    dp[i][j] = dp[i-1][j] + dp[i-1][j-1]*(v_i − (j−1)).  
+- Combine both parities: ∑_{i=0..k} dp_even[i] * dp_odd[k−i].  
+- Time O(n·k), exact big-integer arithmetic.

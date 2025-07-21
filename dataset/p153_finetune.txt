@@ -1,0 +1,229 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+153. Playing with matches
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard input
+output: standard output
+
+
+
+Little boy Petya plays a game with his friend. They have a heap that consists of N (1<=N<=10^9) matches. It is possible to take 1,P1,P2,...,Pm (2<=Pi<=9, 0<=m<=8) matches from the heap.
+Players take matches from the heap one by one. The player who takes the last match looses. Petya proved that for any set of N and Pi one of players has winning strategy, i.e. set of rules driving to a victory independently of opponent's moves. You task is to discover who has this strategy.
+
+Input
+Input file consist of K test cases. Natural number K is written in the first line. Every test case describes one game: numbers N and M are written in first line of every test case, and second line contains sequence Pi. All numbers in then input are integer numbers. So, if K=2, then second and third lines describe first game and fourth and fifth lines describe second game.
+
+Output
+For each test case write in the output file phrase FIRST PLAYER MUST WIN if first player have winning strategy, and SECOND PLAYER MUST WIN therwise.
+
+Sample test(s)
+
+Input
+1
+5 3
+2 3 5
+
+Output
+SECOND PLAYER MUST WIN
+Author:	Andrew V. Lazarev
+Resource:	Saratov Subregional School Team Contest, 2002
+Date:	Spring, 2002
+
+<|response|>
+1. Abridged Problem Statement  
+You have a heap of N matches (1 ≤ N ≤ 10⁹). Two players alternate removing matches. On each move a player may take exactly 1 or one of the values P₁,…,Pₘ (each 2 ≤ Pᵢ ≤ 9). The player who takes the last match loses. Under perfect play, determine which player has a forced win.
+
+Input: K test cases. For each test case, N and m, then m integers P₁…Pₘ.  
+Output: For each test case, print  
+  FIRST PLAYER MUST WIN  
+or  
+  SECOND PLAYER MUST WIN  
+
+2. Key Observations  
+- This is a subtraction game under **misère** rule (last move loses).  
+- Let S = {1, P₁, P₂, …, Pₘ}. From a heap of size i you may move to i−s for any s∈S with s ≤ i.  
+- Define dp[i] = 1 if the position with i matches is winning for the player about to move, dp[i] = 0 if it is losing.  
+- Misère twist: normally taking the last wins; here it loses. If we set dp[0] = 1 (with 0 matches your opponent just took last and lost, so you “win” by default) and dp[1] = 0 (if you take the single match, you lose immediately), the standard DP recurrence still applies:  
+  dp[i] = 1 if there exists s in S, s ≤ i, such that dp[i−s] = 0; otherwise dp[i] = 0.  
+- Since all moves s ≤ 9, dp[i] depends only on dp[i−1]…dp[i−9]. Therefore the sequence {dp[i]} is eventually periodic with period at most 2¹⁰ = 1024. We can detect the cycle by hashing the last 10 dp-values into a 10-bit integer “state.”  
+
+3. Full Solution Approach  
+For each test case:  
+a. Read N, m and the list P₁…Pₘ. Append 1 to the list, sort and deduplicate to get moves S.  
+b. Prepare an array or vector dp[], and a map/array pos_of_state of size 1<<10 initialized to −1.  
+c. Set dp[0] = 1, dp[1] = 0.  
+d. Iterate i = 2,3,… up to either N or some upper limit (e.g. min(N, (1<<13)-1)), computing dp[i]:  
+  - dp[i] = 1 if ∃ s∈S, s ≤ i, such that dp[i−s] = 0; else dp[i] = 0.  
+  - Build the 10-bit state = bit0×dp[i] + bit1×dp[i−1] + … + bit9×dp[i−9], where bitk=1 if dp[i−k]==1 or (i−k)<0.  
+  - If pos_of_state[state] == −1, record pos_of_state[state] = i. Else a cycle is detected:  
+   let first_i = pos_of_state[state], cycle_len = i − first_i  
+   the answer for dp[N] when N ≥ i is dp[first_i + ((N − first_i) % cycle_len)]  
+   break out of the loop.  
+e. If no cycle was detected up to N, the answer is dp[N].  
+f. Output “FIRST PLAYER MUST WIN” if dp[N]==1, otherwise “SECOND PLAYER MUST WIN.”
+
+Time complexity per test is O(Period × |S|), with Period ≤ 1024 and |S| ≤ 9.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Solves one test case: determines if the first player has a winning strategy.
+void solve() {
+    long long N;
+    int m;
+    cin >> N >> m;
+    vector<int> moves(m);
+    for (int i = 0; i < m; i++) {
+        cin >> moves[i];
+    }
+    // Always allow taking 1 match
+    moves.push_back(1);
+    sort(moves.begin(), moves.end());
+    moves.erase(unique(moves.begin(), moves.end()), moves.end());
+    
+    // pos_of_state[state] = first index i at which this 10-bit state appeared
+    vector<int> pos_of_state(1 << 10, -1);
+    
+    // We'll compute dp up to min(N, LIMIT)
+    const int LIMIT = (1 << 13) - 1;  
+    int maxCompute = (int)min(N, (long long)LIMIT);
+    vector<int> dp(maxCompute + 1, 0);
+    
+    // Base cases for misère subtraction game
+    dp[0] = 1;  // with 0 matches your opponent just took last and lost
+    if (maxCompute >= 1) dp[1] = 0;  // taking the last match loses
+    
+    int result = -1;  // will hold dp[N] once known
+    
+    // Build dp[i] and detect cycle via 10-bit state
+    for (int i = 2; i <= maxCompute; i++) {
+        // Compute dp[i]: winning if any move leads to a losing position
+        for (int s : moves) {
+            if (s > i) break;
+            if (dp[i - s] == 0) {
+                dp[i] = 1;
+                break;
+            }
+        }
+        
+        // Build a 10-bit signature of dp[i], dp[i-1], …, dp[i-9]
+        int state = 0;
+        for (int b = 0; b < 10; b++) {
+            // If out-of-range or dp[...] == 1, set that bit to 1
+            if (i - b < 0 || dp[i - b] == 1) {
+                state |= (1 << b);
+            }
+        }
+        
+        // Cycle detection
+        if (pos_of_state[state] == -1) {
+            pos_of_state[state] = i;
+        } else {
+            int first_i = pos_of_state[state];
+            int cycle_len = i - first_i;
+            // Map N into the cycle
+            long long offset = (N - first_i) % cycle_len;
+            result = dp[first_i + offset];
+            break;
+        }
+    }
+    
+    // If no cycle detected and we computed up to N, take dp[N]
+    if (result == -1) {
+        result = dp[maxCompute];
+    }
+    
+    // Output final answer
+    if (result) {
+        cout << "FIRST PLAYER MUST WIN\n";
+    } else {
+        cout << "SECOND PLAYER MUST WIN\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int K;
+    cin >> K;
+    while (K--) {
+        solve();
+    }
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+
+def winner(N, moves):
+    # moves: sorted list of allowed removals including 1
+    # dp[i] = 1 if winning, 0 if losing for the player to move
+    # Base: dp[0]=1, dp[1]=0 under misère rule
+    dp = [1, 0]
+    pos_of_state = {}  # maps 10-bit state -> first index it appeared
+    
+    if N <= 1:
+        return dp[N]
+    
+    LIMIT = (1 << 13) - 1
+    max_compute = min(N, LIMIT)
+    
+    for i in range(2, max_compute + 1):
+        # Determine dp[i]
+        win = 0
+        for s in moves:
+            if s > i:
+                break
+            if dp[i - s] == 0:
+                win = 1
+                break
+        dp.append(win)
+        
+        # Build 10-bit signature of dp[i], dp[i-1], …, dp[i-9]
+        state = 0
+        for b in range(10):
+            if i - b < 0 or dp[i - b] == 1:
+                state |= (1 << b)
+        
+        if state not in pos_of_state:
+            pos_of_state[state] = i
+        else:
+            # Cycle detected
+            first_i = pos_of_state[state]
+            cycle_len = i - first_i
+            idx = first_i + ((N - first_i) % cycle_len)
+            return dp[idx]
+    
+    # No cycle up to max_compute, so dp[N] is known directly
+    return dp[N]
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    K = int(next(it))
+    out = []
+    
+    for _ in range(K):
+        N = int(next(it))
+        m = int(next(it))
+        p = [int(next(it)) for _ in range(m)]
+        # Always include removal of 1
+        moves = sorted(set(p + [1]))
+        w = winner(N, moves)
+        if w:
+            out.append("FIRST PLAYER MUST WIN")
+        else:
+            out.append("SECOND PLAYER MUST WIN")
+    
+    print("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```

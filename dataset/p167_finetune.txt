@@ -1,0 +1,391 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+167. I-country.
+time limit per test: 0.75 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+According to top-secret A-country plans, I-country is divided into N*M equal squares, each square contains some oil resources. They want to occupy all the territory of I-country, but the UN (United Nations) will allow them to occupy only K squares. Of course, A-country want to get control over as many oil as possible, but, they will have to guard all their territory. So, they need their territory to be easy-controlled, i.e. from any square to any it must be possible to get moving only along two directions (selected from the next list: left, right, up, down; for different squares pairs of directions may differ).
+You are to write a program, which determinies, what squares will be occupyed by A-country. If there are several solutions, you may output any.
+
+Input
+On the first line of input there are 3 integer numbers N,M,K (1<=N,M<=15, 0<=K<=N*M). Next N lines contains M integers each, which are the number of oil resource on that square. Each of this numbers lies in range of 0 to 1000.
+
+Output
+On the first line of output, write string "Oil : X", where integer number X --- the maximal number of oil which can be controlled by A-country. Next you should output K pairs of numbers --- coordinates of the squares which will be occupied by A-country. The first coordinate is number of row (top to bottom, starting from 1), second is number of column (left to right, starting from 1).
+
+Sample test(s)
+
+Input
+2 3 4
+10 20 30
+40 2 3
+
+Output
+Oil : 100
+1 1
+1 2
+1 3
+2 1
+Author:	NNSU #2 team
+Resource:	
+Date:
+
+<|response|>
+1. Abridged problem statement  
+Given an N×M grid of nonnegative oil values and an integer K, choose exactly K cells so that  
+  • In every row where you pick cells, the chosen cells form one contiguous segment [lᵢ, rᵢ].  
+  • Segments in consecutive chosen rows overlap by at least one column (so the occupied shape is row‐connected).  
+  • The left endpoints lᵢ never “re‐expand” once they move right, and the right endpoints rᵢ never “re‐expand” once they move left (this unimodal constraint guarantees you can travel between any two picked cells with at most two of the four directions).  
+Maximize the total oil in the K chosen cells, and output one example of a valid selection achieving that maximum.
+
+2. Key observations  
+• Any valid occupied shape can be described by, for each row, an interval [l, r]. Connectivity requires each [lᵢ, rᵢ] to overlap [lᵢ₋₁, rᵢ₋₁].  
+• The “once you shrink you can’t grow back” on the left and right boundaries can be enforced by two boolean “lock” flags: once lᵢ > lᵢ₋₁, the left side is locked (you cannot later pick an interval that starts to the left); similarly for the right side.  
+• We need exactly K cells in total.  
+• We can do a DP over rows, remembering:  
+    – current row index,  
+    – previous row’s segment [pl, pr],  
+    – number of cells still to pick rem,  
+    – 2‐bit mask of which sides are locked.  
+• Transitions try every potential new segment [l, r] on this row that:  
+    1. has length ≤ rem,  
+    2. overlaps [pl, pr],  
+    3. respects locks (if left is locked, l ≥ pl; if right locked, r ≤ pr),  
+    4. updates the locks if you shrink from one side.  
+• Precompute prefix sums per row to get segment sums in O(1).  
+• DP state count is O(N·M²·K·4), transitions each loop O(M²) → overall ~O(N·M⁴·K), which is fine for N,M ≤ 15 and K ≤ 225.  
+• Finally, we try every possible starting row and starting segment [l,r], use the DP to get the best total, then reconstruct one valid sequence of segments.
+
+3. Full solution approach  
+a) Read N,M,K and the grid a[i][j].  
+b) Build, for each row i, a 1D prefix sum rowSum[i][c] = sum of a[i][0..c].  
+c) Define a DP function rec(row, pl, pr, rem, mask) that returns the maximum oil sum from rows row…N−1 if:  
+   – in row−1 we used segment [pl, pr],  
+   – we still need to pick rem cells,  
+   – mask bit0=1 means left is locked, bit1=1 means right is locked.  
+   Base cases:  
+     • If row == N, return 0 if rem == 0 else −∞.  
+     • If rem == 0 but row < N, return 0 (we can pick no more).  
+   Recurrence: try all l, r with 0 ≤ l ≤ r < M:  
+     1. len = r−l+1 ≤ rem  
+     2. overlapLen = min(pr, r) − max(pl, l) + 1 > 0  
+     3. if (mask&1) and l < pl, skip; if (mask&2) and r > pr, skip.  
+     4. newMask = mask; if l>pl set bit0; if r<pr set bit1.  
+     5. s = rowSum[row][r] − (l>0 ? rowSum[row][l−1] : 0).  
+     6. candidate = s + rec(row+1, l, r, rem−len, newMask).  
+     Take the maximum over all valid (l,r).  
+d) Initialize a global best answer = −∞. Loop over every possible startRow in [0..N−1] and every segment [l,r] in that row with length ≤ K, compute s₀ for that segment, then val = s₀ + rec(startRow+1, l, r, K−len, 0). Track the best val and store the corresponding startRow, l, r.  
+e) Reconstruction:  
+   – Let rem = K, row = startRow, pl = startL, pr = startR, mask=0.  
+   – Output all cells (row, c) for c=pl..pr. rem−=len. row++.  
+   – While rem>0: compute curDP = rec(row, pl, pr, rem, mask). Loop over all valid next segments [l,r] as before; find the one where s + rec(row+1,l,r,rem−len,newMask) == curDP.  
+     • Append those cells, update rem, mask, pl=l, pr=r, row++.  
+f) Sort the list of chosen cells by (row, col), add +1 to make 1‐based indices, and print.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+static const int INF = 1000000000;
+
+// Grid dimensions and K
+int N, M, K;
+// Oil grid
+int a[16][16];
+// Row‐prefix sums: rowSum[i][j] = sum of a[i][0..j]
+int rowSum[16][16];
+
+// DP memo: dp[row][pl][pr][rem][mask], mask bit0=left locked, bit1=right locked
+int dp[16][16][16][226][4];
+// Visited flag
+bool seen[16][16][16][226][4];
+
+// Compute best from state (row, pl, pr, rem, mask)
+int rec(int row, int pl, int pr, int rem, int mask) {
+    if (row == N) {
+        // If no rows left, we must have used exactly K cells
+        return (rem == 0 ? 0 : -INF);
+    }
+    if (rem == 0) {
+        // We don't need more cells: we can skip remaining rows
+        return 0;
+    }
+    if (seen[row][pl][pr][rem][mask]) {
+        return dp[row][pl][pr][rem][mask];
+    }
+    seen[row][pl][pr][rem][mask] = true;
+    int &ans = dp[row][pl][pr][rem][mask];
+    ans = -INF;
+
+    bool leftLocked  = (mask & 1);
+    bool rightLocked = (mask & 2);
+
+    // Try all possible segments [l..r] in this row
+    for (int l = 0; l < M; ++l) {
+        for (int r = l; r < M; ++r) {
+            int len = r - l + 1;
+            if (len > rem) continue; // too many cells
+            // Must overlap [pl..pr]
+            int overlap = min(pr, r) - max(pl, l) + 1;
+            if (overlap <= 0) continue;
+            // Respect locked sides
+            if (leftLocked  && l < pl) continue;
+            if (rightLocked && r > pr) continue;
+            // Update lock mask if we shrink
+            int nm = mask;
+            if (l > pl) nm |= 1;
+            if (r < pr) nm |= 2;
+            // Sum of this row segment
+            int s = rowSum[row][r] - (l > 0 ? rowSum[row][l-1] : 0);
+            int cand = s + rec(row+1, l, r, rem - len, nm);
+            ans = max(ans, cand);
+        }
+    }
+    return ans;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> N >> M >> K;
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < M; j++)
+            cin >> a[i][j];
+
+    // Edge case: pick 0 cells
+    if (K == 0) {
+        cout << "Oil : 0\n";
+        return 0;
+    }
+
+    // Build row‐prefix sums
+    for (int i = 0; i < N; i++) {
+        int acc = 0;
+        for (int j = 0; j < M; j++) {
+            acc += a[i][j];
+            rowSum[i][j] = acc;
+        }
+    }
+
+    // Initialize DP seen[][][][][] to false
+    memset(seen, 0, sizeof(seen));
+
+    // Try every starting row and segment
+    int bestTotal = -INF;
+    int bestRow=0, bestL=0, bestR=0;
+    for (int row = 0; row < N; ++row) {
+        for (int l = 0; l < M; ++l) {
+            for (int r = l; r < M; ++r) {
+                int len = r - l + 1;
+                if (len > K) continue;
+                int s0 = rowSum[row][r] - (l>0 ? rowSum[row][l-1] : 0);
+                int val = s0 + rec(row+1, l, r, K - len, 0);
+                if (val > bestTotal) {
+                    bestTotal = val;
+                    bestRow = row;
+                    bestL = l;
+                    bestR = r;
+                }
+            }
+        }
+    }
+
+    // Output maximum oil
+    cout << "Oil : " << bestTotal << "\n";
+
+    // Reconstruct one solution
+    vector<pair<int,int>> answer;
+    int rem = K;
+    int row = bestRow;
+    int pl = bestL, pr = bestR;
+    int mask = 0;
+
+    // Take the initial segment
+    for (int c = pl; c <= pr; ++c)
+        answer.emplace_back(row, c);
+    rem -= (pr - pl + 1);
+    row++;
+
+    // Continue for rem > 0
+    while (rem > 0) {
+        // Current DP value at this state
+        int curDP = rec(row, pl, pr, rem, mask);
+        bool leftLocked  = (mask & 1);
+        bool rightLocked = (mask & 2);
+
+        // Find a next segment matching curDP
+        for (int l = 0; l < M; ++l) {
+            for (int r = l; r < M; ++r) {
+                int len = r - l + 1;
+                if (len > rem) continue;
+                int overlap = min(pr, r) - max(pl, l) + 1;
+                if (overlap <= 0) continue;
+                if (leftLocked  && l < pl) continue;
+                if (rightLocked && r > pr) continue;
+                int nm = mask;
+                if (l > pl) nm |= 1;
+                if (r < pr) nm |= 2;
+                int s = rowSum[row][r] - (l>0 ? rowSum[row][l-1] : 0);
+                int nextDP = rec(row+1, l, r, rem - len, nm);
+                if (s + nextDP == curDP) {
+                    // Accept this segment
+                    for (int c = l; c <= r; ++c)
+                        answer.emplace_back(row, c);
+                    rem -= len;
+                    pl = l;  pr = r;  mask = nm;
+                    goto found_next;
+                }
+            }
+        }
+        found_next:
+        row++;
+    }
+
+    // Sort and print in 1‐based indices
+    sort(answer.begin(), answer.end());
+    for (auto &p : answer) {
+        cout << (p.first+1) << " " << (p.second+1) << "\n";
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+from functools import lru_cache
+
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N, M, K = map(int, (next(it), next(it), next(it)))
+    # Read grid
+    a = [list(map(int, (next(it) for _ in range(M)))) for __ in range(N)]
+
+    # If K==0, answer is trivial
+    if K == 0:
+        print("Oil : 0")
+        return
+
+    # Build row‐prefix sums
+    rowSum = [[0]*M for _ in range(N)]
+    for i in range(N):
+        acc = 0
+        for j in range(M):
+            acc += a[i][j]
+            rowSum[i][j] = acc
+
+    INF = 10**15
+
+    @lru_cache(None)
+    def rec(row, pl, pr, rem, mask):
+        """
+        Return max oil from rows[row..N-1], given previous segment [pl, pr],
+        rem cells still needed, mask bit0=left locked, bit1=right locked.
+        """
+        if row == N:
+            return 0 if rem == 0 else -INF
+        if rem == 0:
+            return 0
+
+        best = -INF
+        leftLocked  = (mask & 1)
+        rightLocked = (mask & 2)
+
+        for l in range(M):
+            for r in range(l, M):
+                length = r - l + 1
+                if length > rem: continue
+                # Must overlap previous
+                if min(pr, r) < max(pl, l): continue
+                # Respect locks
+                if leftLocked  and l < pl: continue
+                if rightLocked and r > pr: continue
+                nm = mask
+                if l > pl: nm |= 1
+                if r < pr: nm |= 2
+                s = rowSum[row][r] - (rowSum[row][l-1] if l>0 else 0)
+                val = s + rec(row+1, l, r, rem - length, nm)
+                if val > best:
+                    best = val
+        return best
+
+    # Find best starting row and segment
+    bestTotal = -INF
+    start = None
+    for row in range(N):
+        for l in range(M):
+            for r in range(l, M):
+                length = r - l + 1
+                if length > K: continue
+                s0 = rowSum[row][r] - (rowSum[row][l-1] if l>0 else 0)
+                val = s0 + rec(row+1, l, r, K - length, 0)
+                if val > bestTotal:
+                    bestTotal = val
+                    start = (row, l, r)
+
+    print("Oil : {}".format(bestTotal))
+
+    # Reconstruct one solution
+    row, pl, pr = start
+    rem = K
+    mask = 0
+    ans = []
+
+    # Take initial segment
+    for c in range(pl, pr+1):
+        ans.append((row, c))
+    rem -= (pr - pl + 1)
+    row += 1
+
+    # Step through remaining rows
+    while rem > 0:
+        curDP = rec(row, pl, pr, rem, mask)
+        leftLocked  = (mask & 1)
+        rightLocked = (mask & 2)
+        found = False
+        for l in range(M):
+            if found: break
+            for r in range(l, M):
+                length = r - l + 1
+                if length > rem: continue
+                if min(pr, r) < max(pl, l): continue
+                if leftLocked  and l < pl: continue
+                if rightLocked and r > pr: continue
+                nm = mask
+                if l > pl: nm |= 1
+                if r < pr: nm |= 2
+                s = rowSum[row][r] - (rowSum[row][l-1] if l>0 else 0)
+                if s + rec(row+1, l, r, rem - length, nm) == curDP:
+                    # Choose this segment
+                    for c in range(l, r+1):
+                        ans.append((row, c))
+                    rem -= length
+                    pl, pr, mask = l, r, nm
+                    found = True
+                    break
+        row += 1
+
+    # Sort & print in 1‐based coords
+    ans.sort()
+    for i, j in ans:
+        print(i+1, j+1)
+
+if __name__ == "__main__":
+    solve()
+```
+
+Explanation of the Python code:  
+- We build per‐row prefix sums for O(1) segment queries.  
+- We use `@lru_cache` to memoize the recursive DP `rec(row, pl, pr, rem, mask)`.  
+- We then try all possible starting positions to get the global best.  
+- Reconstruction uses the same DP to find a valid next segment that realizes the optimum.  
+- Finally, we output “Oil : X” and the list of K coordinates in any order (we sort them for neatness).

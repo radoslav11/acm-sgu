@@ -1,0 +1,167 @@
+1. Abridged Problem Statement  
+Count the number of “extremal” (alternating) permutations of {1,2,…,n}, i.e. permutations p where for every i=2…n−1, either pᵢ is a strict peak (pᵢ>pᵢ₋₁ and pᵢ>pᵢ₊₁) or a strict valley (pᵢ<pᵢ₋₁ and pᵢ<pᵢ₊₁). Output the total count modulo m.
+
+2. Detailed Editorial  
+We wish to count permutations of length n in which entries alternate up and down at every interior position. A classic way is an O(n²) DP by building the permutation element by element, tracking two pieces of state:
+- d ∈ {0,1}: the direction of the last step (0 = last step was “down,” 1 = last step was “up”).
+- v ∈ [0…i]: the rank (0-based) of the most recently placed element among the i+1 elements used so far.
+
+Define dp[i][d][v] = number of ways to form an alternating prefix of length i+1 with last‐step direction d and ending at rank v. We start at i=0 (length=1) with dp[0][0][0] = dp[0][1][0] = 1 (the first element can be considered trivially as coming from either direction).
+
+To add the (i+2)-th element (i from 0 to n−2), we insert a new number that is largest so far but choose its rank v_new ∈ [0…i+1]. The direction of the step from the previous element to this new one must alternate:
+  - If we want an “up” step (d_new=1), the new rank must be ≥ old rank.
+  - If we want a “down” step (d_new=0), the new rank must be ≤ old rank.
+
+Thus the transitions are:
+  dp[i+1][1][v] = sum_{x=v…i} dp[i][0][x],  
+  dp[i+1][0][v] = sum_{x=0…v−1} dp[i][1][x].
+
+We implement these sums efficiently by maintaining prefix (or suffix) sums in O(1) per state, leading to an overall O(n²) time and O(n) space. Finally, the answer is
+  ∑_{v=0…n−1} (dp[n−1][0][v] + dp[n−1][1][v]) mod m.
+
+3. Provided C++ Solution with Line–by–Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helpers to read/write pairs and vectors succinctly
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) out << x << ' ';
+    return out;
+}
+
+int n, mod;
+
+// Read inputs n and mod
+void read() {
+    cin >> n >> mod;
+}
+
+void solve() {
+    // Special case: if n=1 there's exactly one permutation
+    if (n == 1) {
+        cout << 1 % mod << '\n';
+        return;
+    }
+
+    // We'll keep two rolling arrays last_dp[d] and dp[d], each a vector of size = current length
+    // last_dp[0][v] = dp at previous step with last direction=down, ending rank=v
+    // last_dp[1][v] = dp at previous step with last direction=up, ending rank=v
+    vector<vector<int>> last_dp(2), dp(2);
+
+    // Base: length=1, only one rank=0, both directions initialized to 1
+    last_dp[0] = {1 % mod};
+    last_dp[1] = {1 % mod};
+
+    // Build up from length=1 to length=n
+    for (int pos = 1; pos < n; pos++) {
+        // Prepare dp[1] for “up” steps: size = pos+1 possible ranks
+        dp[1].resize(pos + 1);
+        dp[1][pos] = 0;  // boundary for suffix sum
+        // Fill dp[1][v] = sum_{x=v…pos-1} last_dp[0][x] mod
+        for (int v = pos - 1; v >= 0; v--) {
+            dp[1][v] = last_dp[0][v] + dp[1][v + 1];
+            if (dp[1][v] >= mod) dp[1][v] -= mod;
+        }
+        // Prepare dp[0] for “down” steps
+        dp[0].resize(pos + 1);
+        dp[0][0] = 0;  // boundary for prefix sum
+        // Fill dp[0][v] = sum_{x=0…v-1} last_dp[1][x] mod
+        for (int v = 1; v <= pos; v++) {
+            dp[0][v] = last_dp[1][v - 1] + dp[0][v - 1];
+            if (dp[0][v] >= mod) dp[0][v] -= mod;
+        }
+        // Move dp -> last_dp for next iteration
+        swap(last_dp, dp);
+    }
+
+    // Sum over both directions and all possible end-ranks
+    int ans = 0;
+    for (int v = 0; v <= n - 1; v++) {
+        ans = (ans + last_dp[0][v]) % mod;
+        ans = (ans + last_dp[1][v]) % mod;
+    }
+    cout << ans << '\n';
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+def main():
+    data = sys.stdin.read().strip().split()
+    n, mod = map(int, data)
+
+    # If n = 1, only one permutation
+    if n == 1:
+        print(1 % mod)
+        return
+
+    # last_dp[0] and last_dp[1] are lists of size = current length
+    # last_dp[d][v] = number of prefixes of length L ending at rank v, last step direction d
+    last_dp = [ [1],  # at length=1, only rank 0, count=1, direction=down
+                [1] ] # and also count=1 for direction=up (base)
+
+    # Build up from prefix length=1 to n
+    for length in range(2, n+1):
+        pos = length - 1  # zero-based index for new dp size
+        dp_up   = [0] * length  # dp for direction=up
+        dp_down = [0] * length  # dp for direction=down
+
+        # Compute dp_up[v] = sum(last_dp[0][x] for x in [v..pos-1]), do suffix sums
+        suffix = 0
+        # We treat last_dp[0] as having size pos
+        for v in range(pos-1, -1, -1):
+            suffix = (suffix + last_dp[0][v]) % mod
+            dp_up[v] = suffix
+        # dp_up[pos] stays 0 (no x ≥ pos)
+
+        # Compute dp_down[v] = sum(last_dp[1][x] for x in [0..v-1]), do prefix sums
+        prefix = 0
+        for v in range(1, length):
+            prefix = (prefix + last_dp[1][v-1]) % mod
+            dp_down[v] = prefix
+        # dp_down[0] is 0 (no x < 0)
+
+        # Prepare for next iteration
+        last_dp = [dp_down, dp_up]
+
+    # Sum over both directions and all possible ending ranks
+    result = sum(last_dp[0]) + sum(last_dp[1])
+    print(result % mod)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+• Define dp[i][d][v] = count of alternating prefixes of length i+1 ending at relative rank v, with last step direction d.  
+• Base: dp[0][0][0] = dp[0][1][0] = 1.  
+• Transition by inserting a new largest element with chosen rank v_new:  
+  – For an “up” step (d=1), sum dp[i−1][0][x] over x ≥ v_new.  
+  – For a “down” step (d=0), sum dp[i−1][1][x] over x < v_new.  
+• Maintain these sums by prefix/suffix accumulation in O(1) per state so total time is O(n²), space O(n).  
+• Final answer = Σ_v (dp[n−1][0][v] + dp[n−1][1][v]) mod m.

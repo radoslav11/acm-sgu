@@ -1,0 +1,299 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+218. Unstable Systems
+time limit per test: 1.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Of course you know that some operating systems are not stable. Sasha learnt it only few days ago. Now there are very bad days of his life. He is an adminstrator of the network of n computers with different versions of such systems. Each computer is a workstation which is usually used to run a single program. But the programs often crash with a message "The system is busy or unstable" Sasha has determined some unsafety value corresponding to the frequency of program crash for each program on each workstation (the larger values correspond to more often crashes). Now he plans to arrange programs in such a way that the maximal unsafety value of all workstations will become minimal possible (because crashes slow down all the work!). Help him!
+
+Input
+
+The first line of the input file contains the number of workstations n (1 ≤ n ≤ 500) which is equal to number of programs. The next n lines contain n numbers each — j-th number of i-th line contains the unsafety value for a program j on i-th computer. All numbers do not exceed 106 by their absolute values.
+
+Output
+
+Write the maximal unsafety value on the first line. Then output n lines each corresponding to one program in format "i j" — i-th computer must run j-th program.
+
+Sample test(s)
+
+Input
+2
+1 3
+4 5
+
+Output
+4
+1 2
+2 1
+Author:	Andrew Stankevich, Andrew Lopatin
+Resource:	Petrozavodsk Summer Trainings 2003
+Date:	2003-08-31
+
+<|response|>
+1. Abridged problem statement  
+We have n computers and n programs, and an n×n matrix a where a[i][j] is the “unsafety” of running program j on computer i. We must assign exactly one program to each computer (a perfect matching) so that the maximum unsafety among all chosen pairs is as small as possible. Output that minimal maximum unsafety and one valid assignment.
+
+2. Key observations  
+- This is the classic “bottleneck assignment” problem: minimize the largest edge in a perfect matching of a complete bipartite graph.  
+- Equivalently, ask: for a threshold T, can we select one entry in each row and column with value ≤ T? That becomes the question of whether a bipartite graph (rows vs. columns) with edges for all a[i][j] ≤ T has a perfect matching.  
+- We can binary-search T over the sorted list of all n² values, and for each candidate T test if a perfect matching exists using Hopcroft–Karp in O(E√V).
+
+3. Full solution approach  
+a. Read n and the matrix a of size n×n.  
+b. Flatten all entries into a list of triples (value, row, col) and sort it by value ascending. Call it edges.  
+c. Binary search on an index mid in [0..n²−1]:  
+   - Let threshold = edges[mid].value.  
+   - Build a bipartite graph G(mid) with left nodes 0..n−1 (computers) and right nodes 0..n−1 (programs). Add an edge (i,j) if a[i][j] ≤ threshold (i.e. if (value, i, j) appears among the first mid+1 entries).  
+   - Run Hopcroft–Karp on G(mid). If maximum matching size == n, we can lower the threshold (high = mid−1), else raise it (low = mid+1).  
+d. After binary search, low (or the recorded answer index) gives the smallest threshold that admits a perfect matching. Rebuild G(answer) and run Hopcroft–Karp one more time to extract an explicit matching.  
+e. Output the threshold and the n matched pairs, converting indices to 1-based.
+
+Time complexity:  
+- Sorting edges in O(n² log(n²)).  
+- Each matching check in O(E√V)=O(n²√n).  
+- O(log(n²))≈O(log n) checks. Total ≈ O(n²√n log n), feasible for n≤500.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Hopcroft–Karp for maximum bipartite matching
+struct HopcroftKarp {
+    int n, m;                         // n = left side size, m = right side size
+    vector<vector<int>> adj;         // adj[u] = list of v's
+    vector<int> dist, pairU, pairV;  // pairU[u]=v matched, pairV[v]=u matched
+
+    HopcroftKarp(int _n, int _m) : n(_n), m(_m) {
+        adj.assign(n, {});
+        pairU.assign(n, -1);
+        pairV.assign(m, -1);
+        dist.assign(n, 0);
+    }
+
+    // BFS builds layers, returns true if there is an augmenting path
+    bool bfs() {
+        queue<int> q;
+        const int INF = 1e9;
+        for (int u = 0; u < n; ++u) {
+            if (pairU[u] == -1) {
+                dist[u] = 0;
+                q.push(u);
+            } else {
+                dist[u] = INF;
+            }
+        }
+        bool foundAug = false;
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (int v: adj[u]) {
+                int pu = pairV[v];
+                if (pu == -1) {
+                    // free node on right found → there is an augmenting path
+                    foundAug = true;
+                } else if (dist[pu] == INF) {
+                    dist[pu] = dist[u] + 1;
+                    q.push(pu);
+                }
+            }
+        }
+        return foundAug;
+    }
+
+    // DFS tries to use the layering to find augmenting paths
+    bool dfs(int u) {
+        for (int v: adj[u]) {
+            int pu = pairV[v];
+            if (pu == -1 || (dist[pu] == dist[u] + 1 && dfs(pu))) {
+                pairU[u] = v;
+                pairV[v] = u;
+                return true;
+            }
+        }
+        dist[u] = INT_MAX;  // mark as dead end
+        return false;
+    }
+
+    // Add edge from left node u to right node v
+    void addEdge(int u, int v) {
+        adj[u].push_back(v);
+    }
+
+    // Compute maximum matching size
+    int maxMatching() {
+        int matching = 0;
+        while (bfs()) {
+            for (int u = 0; u < n; ++u) {
+                if (pairU[u] == -1 && dfs(u)) {
+                    matching++;
+                }
+            }
+        }
+        return matching;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<vector<int>> a(n, vector<int>(n));
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            cin >> a[i][j];
+
+    // Flatten and sort all edges
+    vector<array<int,3>> edges;
+    edges.reserve(n*n);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            edges.push_back({a[i][j], i, j});
+    sort(edges.begin(), edges.end(),
+         [](auto &A, auto &B){ return A[0] < B[0]; });
+
+    // Binary search over edges[]
+    int low = 0, high = n*n - 1, answer = high;
+    while (low <= high) {
+        int mid = (low + high) >> 1;
+        int T = edges[mid][0];
+
+        // Build graph with all edges of weight ≤ T (i.e. first mid+1 sorted edges)
+        HopcroftKarp hk(n, n);
+        for (int e = 0; e <= mid; e++) {
+            int i = edges[e][1], j = edges[e][2];
+            hk.addEdge(i, j);
+        }
+
+        // Check for perfect matching
+        if (hk.maxMatching() == n) {
+            answer = mid;
+            high = mid - 1;
+        } else {
+            low = mid + 1;
+        }
+    }
+
+    // Rebuild final matching at index = answer
+    int bestT = edges[answer][0];
+    HopcroftKarp hk(n, n);
+    for (int e = 0; e <= answer; e++) {
+        int i = edges[e][1], j = edges[e][2];
+        hk.addEdge(i, j);
+    }
+    hk.maxMatching();  // compute matching
+
+    // Output result
+    cout << bestT << "\n";
+    // pairU[i] is the program matched to computer i
+    for (int i = 0; i < n; i++) {
+        cout << (i+1) << " " << (hk.pairU[i]+1) << "\n";
+    }
+
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+from collections import deque
+
+def hopcroft_karp(adj, N, M):
+    # adj: list of lists, adj[u] = list of v's
+    # N = number of left nodes, M = number of right nodes
+    INF = 10**9
+    pairU = [-1]*N    # pairU[u] = matched v or -1
+    pairV = [-1]*M    # pairV[v] = matched u or -1
+    dist = [0]*N
+
+    def bfs():
+        queue = deque()
+        for u in range(N):
+            if pairU[u] == -1:
+                dist[u] = 0
+                queue.append(u)
+            else:
+                dist[u] = INF
+        found = False
+        while queue:
+            u = queue.popleft()
+            for v in adj[u]:
+                pu = pairV[v]
+                if pu == -1:
+                    found = True
+                elif dist[pu] == INF:
+                    dist[pu] = dist[u] + 1
+                    queue.append(pu)
+        return found
+
+    def dfs(u):
+        for v in adj[u]:
+            pu = pairV[v]
+            if pu == -1 or (dist[pu] == dist[u] + 1 and dfs(pu)):
+                pairU[u] = v
+                pairV[v] = u
+                return True
+        dist[u] = INF
+        return False
+
+    matching = 0
+    while bfs():
+        for u in range(N):
+            if pairU[u] == -1 and dfs(u):
+                matching += 1
+    return matching, pairU
+
+def main():
+    input = sys.stdin.readline
+    n = int(input())
+    a = [list(map(int, input().split())) for _ in range(n)]
+
+    # Flatten and sort edges (value, row, col)
+    edges = []
+    for i in range(n):
+        for j in range(n):
+            edges.append((a[i][j], i, j))
+    edges.sort(key=lambda x: x[0])
+
+    # Build adjacency list up to index mid
+    def build_adj(mid):
+        adj = [[] for _ in range(n)]
+        for k in range(mid+1):
+            _, i, j = edges[k]
+            adj[i].append(j)
+        return adj
+
+    # Binary search on sorted edges
+    low, high, answer = 0, n*n-1, n*n-1
+    while low <= high:
+        mid = (low + high) // 2
+        adj = build_adj(mid)
+        match_size, _ = hopcroft_karp(adj, n, n)
+        if match_size == n:
+            answer = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+
+    # Reconstruct final assignment
+    adj = build_adj(answer)
+    _, pairU = hopcroft_karp(adj, n, n)
+    bestT = edges[answer][0]
+
+    # Output
+    out = [str(bestT)]
+    for i in range(n):
+        # computer i runs program pairU[i]
+        out.append(f"{i+1} {pairU[i]+1}")
+    print("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
