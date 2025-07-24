@@ -1,0 +1,154 @@
+1. Abridged Problem Statement  
+Given an undirected graph with one capital (node 0) and n country towns arranged in a cycle (nodes 1…n). The capital is connected to every country town, and each town i is connected to towns i–1 and i+1 (modulo n). Count the number of walks of exactly m edges that start and end at the capital (node 0), allowing revisits.  
+Input: integers n (3 ≤ n ≤ 1000) and m (0 ≤ m ≤ 5000).  
+Output: the total number of such walks (exact value, no mod).  
+
+2. Detailed Editorial  
+We want the count of length-m walks from 0 back to 0 in this “wheel” graph. A direct DP on all n+1 states would be O(m·n), which in the worst case is about 5·10^6 transitions – borderline but possible in C++ with careful big-integer arithmetic. However, we can do much better in O(log m) big-integer operations by aggregating all the peripheral towns into one “supernode.”  
+
+Define two macro-states:  
+ • State 0 = at the capital.  
+ • State 1 = at any country town (all towns merged).  
+
+We track a 2-vector v_k = [ways to be at 0 after k steps, ways to be at super after k steps].  
+
+Determine the 2×2 transition matrix A so that v_{k+1} = A · v_k:  
+ - From state 0 you can only go to any of the n towns → super. That contributes n ways to go from state 0 to state 1: A[1][0] = n.  
+ - From state 0 you cannot stay in 0: A[0][0] = 0.  
+ - From state 1 (i.e. any town) you have exactly one edge back to 0 among the three edges of the cycle + spoke. But we compressed all towns, so that cluster contributes exactly 1 aggregated way: A[0][1] = 1.  
+ - From state 1 you can also go to an adjacent town within the cycle (not to 0). Each town has two cycle‐neighbors. Aggregating again gives A[1][1] = 2.  
+
+So  
+    A = [[0, 1],  
+         [n, 2]]  
+
+with initial v₀ = [1, 0]. Then v_m = A^m · v₀, and the answer is v_m[0].  
+
+We exponentiate the 2×2 matrix A in O(log m) multiprecisions big-integer multiplies and adds.  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+#include <boost/multiprecision/cpp_int.hpp>
+using namespace std;
+// Use boost::multiprecision to handle arbitrarily large integers.
+using BigInt = boost::multiprecision::cpp_int;
+
+// Multiply two 2x2 matrices of BigInt.
+array<array<BigInt,2>,2> mulMat(
+    const array<array<BigInt,2>,2>& A,
+    const array<array<BigInt,2>,2>& B)
+{
+    array<array<BigInt,2>,2> C;
+    // C[i][j] = sum over k of A[i][k] * B[k][j]
+    for(int i = 0; i < 2; ++i) {
+        for(int j = 0; j < 2; ++j) {
+            C[i][j] = 0;
+            for(int k = 0; k < 2; ++k)
+                C[i][j] += A[i][k] * B[k][j];
+        }
+    }
+    return C;
+}
+
+// Fast exponentiation of 2x2 matrix to power p.
+array<array<BigInt,2>,2> powMat(
+    array<array<BigInt,2>,2> base,
+    long long p)
+{
+    // Initialize result as identity matrix.
+    array<array<BigInt,2>,2> result = { { {1,0}, {0,1} } };
+    while(p > 0) {
+        if (p & 1LL) {
+            result = mulMat(result, base);
+        }
+        base = mulMat(base, base);
+        p >>= 1;
+    }
+    return result;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    long long m;
+    cin >> n >> m;              // Read number of towns and length m.
+
+    // Build the 2x2 transition matrix A.
+    // A = [ [0, 1],
+    //       [n, 2] ]
+    array<array<BigInt,2>,2> A;
+    A[0][0] = 0;     A[0][1] = 1;
+    A[1][0] = n;     A[1][1] = 2;
+
+    // Compute A^m by fast exponentiation.
+    auto Am = powMat(A, m);
+
+    // Initial state vector v0 = [1, 0]^T.
+    // After m steps vm = Am * v0. We only need the first component:
+    // vm[0] = Am[0][0]*1 + Am[0][1]*0 = Am[0][0].
+    BigInt answer = Am[0][0];
+
+    // Output the exact answer.
+    cout << answer << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+
+def matrix_mult_2x2(A, B):
+    # Multiply two 2×2 matrices A and B.
+    return [
+        [
+            A[0][0]*B[0][0] + A[0][1]*B[1][0],
+            A[0][0]*B[0][1] + A[0][1]*B[1][1]
+        ],
+        [
+            A[1][0]*B[0][0] + A[1][1]*B[1][0],
+            A[1][0]*B[0][1] + A[1][1]*B[1][1]
+        ]
+    ]
+
+def matrix_pow_2x2(A, power):
+    # Fast exponentiation of 2×2 matrix A to integer power.
+    # Start with identity matrix.
+    result = [[1, 0], [0, 1]]
+    while power > 0:
+        if power & 1:
+            result = matrix_mult_2x2(result, A)
+        A = matrix_mult_2x2(A, A)
+        power >>= 1
+    return result
+
+def solve(n, m):
+    # Transition matrix A for the two macro-states:
+    #    [ 0  1 ]
+    #    [ n  2 ]
+    A = [[0, 1], [n, 2]]
+    # Raise A to the power m
+    Am = matrix_pow_2x2(A, m)
+    # Initial vector v0 = [1, 0]; after m steps vm = Am · v0
+    # The number of ways to return to capital is vm[0].
+    return Am[0][0]
+
+def main():
+    # Read n and m from stdin
+    n, m = map(int, sys.stdin.readline().split())
+    # Python int auto-scales to big integers
+    print(solve(n, m))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Merge all n peripheral towns into one “supernode.”  
+- Model transitions between {capital, supernode} by a 2×2 matrix:  
+      A = [[0, 1], [n, 2]].  
+- Initial state v₀ = [1,0]. After m steps, vₘ = A^m · v₀; answer = vₘ[0].  
+- Compute A^m in O(log m) using fast matrix exponentiation with big integers.
