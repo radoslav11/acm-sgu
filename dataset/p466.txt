@@ -1,0 +1,411 @@
+1. Concise Problem Statement  
+   You have N circular parking slots (1…N), some initially occupied. Process Q queries:  
+   - “PARK S”: find a contiguous free segment (cluster) of at least S slots. Among all such clusters choose the one with smallest size, breaking ties by smallest head index. Allocate S slots from its head, possibly splitting the cluster. Print the allocated intervals or “NO ROOM”.  
+   - “LEAVE i”: free the slots allocated by the i-th PARK query, then merge with adjacent free clusters (considering wrap‐around).  
+
+2. Detailed Editorial  
+   We must maintain the free segments (“clusters”) on a circle, support two operations efficiently:  
+   A) Allocate S slots:  
+     1. Find the cluster of minimal size ≥ S (tie‐break by head).  
+     2. If none, output “NO ROOM”.  
+     3. Otherwise, remove that cluster, allocate the first S slots from its head, record those intervals, output them. If the cluster was larger, insert a new free cluster for the remaining slots.  
+   B) Free the intervals of a previous allocation:  
+     1. Retrieve the stored intervals for query i; compute total size and head.  
+     2. In the cyclic order of clusters (sorted by head), find the immediate predecessors and successors around where the freed block would go.  
+     3. Check if we can merge with the cluster on the left (its end meets our head) and/or the cluster on the right (our end meets its head). Remove any merged clusters and enlarge the freed block accordingly.  
+     4. Insert the resulting merged cluster.  
+   
+   Data structures:  
+   - A set or balanced BST keyed by (size, head) to find the minimal sufficient cluster in O(log N).  
+   - A set/BST keyed by (head) to locate neighbors for merging in O(log N).  
+   - Mappings from cluster head → cluster ID → (head, size) to support removals.  
+   - A map from query index → allocated intervals for LEAVE.  
+   - A helper to normalize indices on the circle.  
+   
+   Splitting and merging handle wrap‐around by normalizing positions modulo N, and representing any cluster or allocation that crosses N→1 as two intervals.
+
+3. C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload to print a pair
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload to read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector from input
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int N, Q;
+string slots;  // initial occupancy string, '.' for free, 'X' for occupied
+
+// Clusters keyed by (size, head, size) to find minimal ≥ S.
+// We store size twice so the tuple compares first by size, then head.
+set<tuple<int,int,int>> clusters_by_size;
+
+// Clusters keyed by (head, cluster_id) to find neighbors by head order.
+set<pair<int,int>> clusters_by_pos;
+
+// Map from cluster head → cluster_id
+map<int,int> cluster_head_to_id;
+
+// Map from cluster_id → (head, size)
+map<int, pair<int,int>> cluster_info;
+
+// For each PARK query index, store the allocated intervals
+map<int, vector<pair<int,int>>> query_allocations;
+
+int next_cluster_id = 0;
+
+// Add a new free cluster of given head and size
+void add_cluster(int head, int size) {
+    int id = next_cluster_id++;
+    clusters_by_size.insert({size, head, size});
+    clusters_by_pos.insert({head, id});
+    cluster_head_to_id[head] = id;
+    cluster_info[id] = {head, size};
+}
+
+// Remove cluster by its ID
+void remove_cluster(int id) {
+    auto [head, size] = cluster_info[id];
+    clusters_by_size.erase({size, head, size});
+    clusters_by_pos.erase({head, id});
+    cluster_head_to_id.erase(head);
+    cluster_info.erase(id);
+}
+
+// Normalize a position onto [1..N] (circular wrap)
+int normalize(int pos) {
+    if (pos <= 0) return pos + N;
+    if (pos > N)  return pos - N;
+    return pos;
+}
+
+// Given a block starting at head of total length S, produce 1 or 2 intervals
+vector<pair<int,int>> get_intervals(int head, int size) {
+    vector<pair<int,int>> intervals;
+    // If it does not wrap beyond N
+    if (head + size - 1 <= N) {
+        intervals.push_back({head, head + size - 1});
+    } else {
+        // Wraps: [head..N] and [1..(remaining)]
+        intervals.push_back({head, N});
+        intervals.push_back({1, size - (N - head + 1)});
+    }
+    return intervals;
+}
+
+// Print intervals in the required comma-separated format
+void print_intervals(vector<pair<int,int>>& intervals) {
+    sort(intervals.begin(), intervals.end());
+    bool first = true;
+    for (auto &pr: intervals) {
+        if (!first) cout << ",";
+        first = false;
+        if (pr.first == pr.second)
+            cout << pr.first;
+        else
+            cout << pr.first << "-" << pr.second;
+    }
+    cout << "\n";
+}
+
+// Read N, Q, and the initial slots string
+void read_input() {
+    cin >> N >> Q;
+    cin >> slots;
+}
+
+void solve() {
+    // Build initial clusters of '.' around the circle
+    int blocked = -1;
+    // find any occupied slot
+    for (int i = 1; i <= N; i++) {
+        if (slots[i-1] == 'X') {
+            blocked = i;
+            break;
+        }
+    }
+    // If no 'X', entire circle is one free cluster
+    if (blocked == -1) {
+        add_cluster(1, N);
+    } else {
+        // walk from blocked around the circle, collect runs of '.'
+        int i = blocked;
+        do {
+            if (slots[i-1] == '.') {
+                int head = i, length = 0;
+                while (slots[i-1] == '.') {
+                    length++;
+                    i = normalize(i+1);
+                }
+                add_cluster(head, length);
+            } else {
+                i = normalize(i+1);
+            }
+        } while (i != blocked);
+    }
+
+    // Process queries
+    for (int q = 1; q <= Q; q++) {
+        string type;
+        cin >> type;
+        if (type == "PARK") {
+            int S; 
+            cin >> S;
+            // find cluster with minimal size ≥ S
+            auto it = clusters_by_size.lower_bound({S, -1, -1});
+            if (it == clusters_by_size.end()) {
+                cout << "NO ROOM\n";
+            } else {
+                auto [csize, head, _] = *it;
+                int cid = cluster_head_to_id[head];
+
+                // allocate first S slots
+                auto allocated = get_intervals(head, S);
+                query_allocations[q] = allocated;
+                print_intervals(allocated);
+
+                // remove old cluster
+                remove_cluster(cid);
+                // if leftover remains, insert remainder
+                if (csize > S) {
+                    int new_head = normalize(head + S);
+                    add_cluster(new_head, csize - S);
+                }
+            }
+        } else { // LEAVE
+            int qi; 
+            cin >> qi;
+            // locate the stored intervals
+            auto itq = query_allocations.find(qi);
+            vector<pair<int,int>> intervals = itq->second;
+            query_allocations.erase(itq);
+
+            // compute total size and head
+            int head = intervals[0].first;
+            int size = 0;
+            for (auto &pr: intervals)
+                size += pr.second - pr.first + 1;
+
+            // if no existing free clusters, just add it
+            if (clusters_by_pos.empty()) {
+                add_cluster(head, size);
+                continue;
+            }
+
+            // find insertion position in head-sorted set
+            int endpos = normalize(head + size);
+            auto cw_it = clusters_by_pos.lower_bound({endpos, -1});
+            if (cw_it == clusters_by_pos.end())
+                cw_it = clusters_by_pos.begin();
+            // ccw_it is the predecessor in the circular order
+            auto ccw_it = (cw_it == clusters_by_pos.begin())
+                          ? prev(clusters_by_pos.end())
+                          : prev(cw_it);
+
+            int left_id  = ccw_it->second;
+            int right_id = cw_it->second;
+
+            // check if we can merge with left
+            bool merge_left = normalize(cluster_info[left_id].first
+                                + cluster_info[left_id].second) == head;
+            // check if we can merge with right
+            bool merge_right = normalize(head + size)
+                                == cluster_info[right_id].first;
+
+            if (merge_left) {
+                head = cluster_info[left_id].first;
+                size += cluster_info[left_id].second;
+                remove_cluster(left_id);
+            }
+            if (merge_right) {
+                size += cluster_info[right_id].second;
+                remove_cluster(right_id);
+            }
+            // if it fills everything, reset head to 1
+            if (size == N) head = 1;
+            add_cluster(head, size);
+        }
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys, bisect
+
+def normalize(pos, N):
+    """Wrap pos onto [1..N] circularly."""
+    if pos <= 0:
+        return pos + N
+    if pos > N:
+        return pos - N
+    return pos
+
+def get_intervals(head, size, N):
+    """Return list of 1 or 2 intervals for a block of length size from head."""
+    if head + size - 1 <= N:
+        return [(head, head + size - 1)]
+    else:
+        rem = size - (N - head + 1)
+        return [(head, N), (1, rem)]
+
+def format_intervals(intervals):
+    """Format intervals as 'a-b,c-d,...' or single numbers."""
+    intervals.sort()
+    parts = []
+    for l, r in intervals:
+        parts.append(f"{l}" if l == r else f"{l}-{r}")
+    return ",".join(parts)
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N, Q = map(int, (next(it), next(it)))
+    slots = next(it).strip()
+
+    # Two sorted lists for clusters:
+    #  by size: list of (size, head, id)
+    #  by pos: list of (head, id)
+    clusters_by_size = []
+    clusters_by_pos = []
+
+    # Maps and counters
+    next_cid = 0
+    head_to_id = {}
+    info = {}  # cid -> (head, size)
+    alloc = {} # query idx -> intervals
+
+    def add_cluster(head, size):
+        nonlocal next_cid
+        cid = next_cid
+        next_cid += 1
+        tup_s = (size, head, cid)
+        tup_p = (head, cid)
+        # insert in sorted order
+        bisect.insort(clusters_by_size, tup_s)
+        bisect.insort(clusters_by_pos, tup_p)
+        head_to_id[head] = cid
+        info[cid] = (head, size)
+
+    def remove_cluster(cid):
+        head, size = info[cid]
+        # remove by binary search
+        i = bisect.bisect_left(clusters_by_size, (size, head, cid))
+        clusters_by_size.pop(i)
+        j = bisect.bisect_left(clusters_by_pos, (head, cid))
+        clusters_by_pos.pop(j)
+        head_to_id.pop(head)
+        info.pop(cid)
+
+    # Build initial clusters by scanning the circle
+    # Find an occupied slot to start
+    occ = next((i+1 for i,ch in enumerate(slots) if ch=='X'), None)
+    if occ is None:
+        add_cluster(1, N)
+    else:
+        i = occ
+        while True:
+            if slots[i-1]=='.':
+                h=i; length=0
+                while slots[i-1]=='.':
+                    length+=1
+                    i = normalize(i+1, N)
+                add_cluster(h, length)
+            else:
+                i = normalize(i+1, N)
+            if i==occ:
+                break
+
+    out = []
+    for q in range(1, Q+1):
+        typ = next(it)
+        if typ=='PARK':
+            S = int(next(it))
+            # find first cluster size>=S
+            i = bisect.bisect_left(clusters_by_size, (S, -1, -1))
+            if i==len(clusters_by_size):
+                out.append("NO ROOM")
+            else:
+                size, head, cid = clusters_by_size[i]
+                # record intervals
+                iv = get_intervals(head, S, N)
+                alloc[q] = iv
+                out.append(format_intervals(iv))
+                # remove old cluster and maybe add remainder
+                remove_cluster(cid)
+                if size>S:
+                    add_cluster(normalize(head+S, N), size-S)
+
+        else:  # LEAVE
+            qi = int(next(it))
+            iv = alloc.pop(qi)
+            head = iv[0][0]
+            size = sum(r-l+1 for l,r in iv)
+            if not clusters_by_pos:
+                add_cluster(head, size)
+            else:
+                # find neighbor by head
+                endpos = normalize(head+size, N)
+                j = bisect.bisect_left(clusters_by_pos, (endpos, -1))
+                if j==len(clusters_by_pos):
+                    j=0
+                # predecessor in circular list
+                k = j-1 if j>0 else len(clusters_by_pos)-1
+                left_id  = clusters_by_pos[k][1]
+                right_id = clusters_by_pos[j][1]
+
+                lhead, lsize = info[left_id]
+                rhead, rsize = info[right_id]
+
+                ml = normalize(lhead+lsize, N)==head
+                mr = normalize(head+size, N)==rhead
+
+                if ml:
+                    head = lhead
+                    size += lsize
+                    remove_cluster(left_id)
+                if mr:
+                    size += rsize
+                    remove_cluster(right_id)
+                if size==N:
+                    head=1
+                add_cluster(head, size)
+
+    sys.stdout.write("\n".join(out))
+
+if __name__=='__main__':
+    main()
+```
+
+5. Compressed Editorial  
+Maintain two ordered sets of free clusters—one by (size, head) to allocate the smallest fitting cluster, one by head to merge on LEAVE. On PARK, locate lower_bound(size=S), remove it, output the first S slots as intervals, and reinsert the leftover. On LEAVE, retrieve the stored intervals, compute the block’s head and size, locate neighbors in head‐order, merge if adjacent, then insert the combined cluster. Normalize indices for wrap‐around.

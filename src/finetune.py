@@ -25,7 +25,7 @@ def signal_handler(sig, frame):
     print("\n\nReceived interrupt signal. Saving model and exiting...")
     should_stop = True
     # Force exit if called multiple times
-    if hasattr(signal_handler, 'called'):
+    if hasattr(signal_handler, "called"):
         print("Force exit!")
         exit(1)
     signal_handler.called = True
@@ -54,17 +54,20 @@ def create_batches(
     texts, tokenizer, batch_size, max_length=1024, model_vocab_size=152064
 ):
     """Create batches of tokenized text with proper padding and sliding window chunking."""
-    
+
     # First, create all chunks from all texts
     all_chunks = []
-    
-    print(f"Processing {len(texts)} texts with sliding window (max_length={max_length})...")
-    
+
+    print(
+        f"Processing {len(texts)} texts with sliding window"
+        f" (max_length={max_length})..."
+    )
+
     for text_idx, text in enumerate(texts):
         tokens = tokenizer.encode(text)
         # Clamp token IDs to valid range
         tokens = [min(token, model_vocab_size - 1) for token in tokens]
-        
+
         # Implement sliding window chunking with 50% overlap
         if len(tokens) <= max_length:
             # Short enough to fit completely
@@ -74,25 +77,32 @@ def create_batches(
             step_size = max_length // 2  # 50% overlap
             chunk_count = 0
             for start in range(0, len(tokens), step_size):
-                chunk = tokens[start:start + max_length]
-                if len(chunk) >= max_length // 4:  # Only keep chunks with reasonable length
+                chunk = tokens[start : start + max_length]
+                if (
+                    len(chunk) >= max_length // 4
+                ):  # Only keep chunks with reasonable length
                     all_chunks.append(chunk)
                     chunk_count += 1
-                if start + max_length >= len(tokens):  # Last chunk covers the end
+                if start + max_length >= len(
+                    tokens
+                ):  # Last chunk covers the end
                     break
-            
+
             if text_idx < 5:  # Log first few examples
-                print(f"  Text {text_idx+1}: {len(tokens)} tokens -> {chunk_count} chunks")
-    
+                print(
+                    f"  Text {text_idx+1}: {len(tokens)} tokens ->"
+                    f" {chunk_count} chunks"
+                )
+
     print(f"Created {len(all_chunks)} chunks from {len(texts)} original texts")
     print(f"Expansion factor: {len(all_chunks) / len(texts):.1f}x")
-    
+
     # Now create batches from chunks
     batches = []
-    
+
     for i in range(0, len(all_chunks), batch_size):
         batch_chunks = all_chunks[i : i + batch_size]
-        
+
         # Find max length in this batch for padding
         max_len = max(len(chunk) for chunk in batch_chunks)
 
@@ -149,7 +159,6 @@ def compute_loss(model, input_ids, labels, loss_weights):
     # Reshape for cross entropy: (batch, seq, vocab) -> (batch*seq, vocab)
     logits_flat = logits.reshape(-1, logits.shape[-1])
     labels_flat = labels.reshape(-1)
-    weights_flat = loss_weights.reshape(-1)
 
     # Compute cross entropy loss - much simpler approach
     losses = nn.losses.cross_entropy(
@@ -403,9 +412,6 @@ def main():
     tokenizer.eos_token_id = safe_eos_id
     tokenizer.pad_token_id = safe_eos_id
 
-    print(f"Final EOS token ID: {tokenizer.eos_token_id}")
-    print(f"Final PAD token ID: {tokenizer.pad_token_id}")
-
     print(f"Loading dataset from {args.dataset_dir}")
     texts = load_dataset_files(args.dataset_dir)
 
@@ -508,7 +514,7 @@ def main():
 
             # Calculate running average
             running_avg = running_loss / running_count
-            
+
             # Log after every batch with running average
             print(
                 f"  Batch {batch_idx+1}/{len(batches)} | "
@@ -516,22 +522,28 @@ def main():
                 f"Running Avg: {running_avg:.4f} | "
                 f"Grad Norm: {grad_norm_val:.4f}"
             )
-            
+
             # Log progress every 25 batches
             if (batch_idx + 1) % 25 == 0:
-                recent_losses = all_losses[-25:] if len(all_losses) >= 25 else all_losses
+                recent_losses = (
+                    all_losses[-25:] if len(all_losses) >= 25 else all_losses
+                )
                 recent_avg = np.mean(recent_losses)
-                print(f"    [Progress] Recent 25-batch avg: {recent_avg:.4f}, "
-                      f"Overall avg: {running_avg:.4f}, "
-                      f"Total batches: {running_count}")
-                
-            # Log progress every 100 batches  
+                print(
+                    f"    [Progress] Recent 25-batch avg: {recent_avg:.4f}, "
+                    f"Overall avg: {running_avg:.4f}, "
+                    f"Total batches: {running_count}"
+                )
+
+            # Log progress every 100 batches
             if (batch_idx + 1) % 100 == 0:
                 min_loss = min(all_losses)
                 max_loss = max(all_losses)
-                print(f"    [Milestone] 100 batches completed! "
-                      f"Min: {min_loss:.4f}, Max: {max_loss:.4f}, "
-                      f"Range: {max_loss - min_loss:.4f}")
+                print(
+                    "    [Milestone] 100 batches completed! "
+                    f"Min: {min_loss:.4f}, Max: {max_loss:.4f}, "
+                    f"Range: {max_loss - min_loss:.4f}"
+                )
 
             # Save checkpoint periodically
             if current_batch % args.save_every == 0:
@@ -540,6 +552,7 @@ def main():
                 )
                 print(f"Saving checkpoint to {checkpoint_dir}")
                 os.makedirs(checkpoint_dir, exist_ok=True)
+
                 # Flatten the parameters properly for saving
                 def flatten_dict(d, prefix=""):
                     result = {}
@@ -550,18 +563,20 @@ def main():
                             # Handle list of dicts (like layers)
                             for i, item in enumerate(v):
                                 if isinstance(item, dict):
-                                    result.update(flatten_dict(item, f"{prefix}{k}.{i}."))
+                                    result.update(
+                                        flatten_dict(item, f"{prefix}{k}.{i}.")
+                                    )
                                 else:
                                     result[f"{prefix}{k}.{i}"] = item
                         else:
                             result[f"{prefix}{k}"] = v
                     return result
-                
+
                 flattened_weights = flatten_dict(model.parameters())
                 utils.save_weights(checkpoint_dir, flattened_weights)
 
         avg_loss = epoch_loss / len(batches)
-        
+
         # Epoch summary statistics
         valid_losses = [l for l in epoch_losses if not np.isnan(l)]
         if valid_losses:
@@ -569,7 +584,7 @@ def main():
             epoch_max = max(valid_losses)
             epoch_std = np.std(valid_losses)
             successful_batches = len(valid_losses)
-            
+
             print(f"\n=== Epoch {epoch+1} Summary ===")
             print(f"Average loss: {avg_loss:.4f}")
             print(f"Min loss: {epoch_min:.4f}")
@@ -596,6 +611,7 @@ def main():
         epoch_dir = f"{args.output_dir}_epoch_{epoch+1}"
         print(f"Saving model after epoch {epoch+1} to {epoch_dir}")
         os.makedirs(epoch_dir, exist_ok=True)
+
         # Flatten the parameters properly for saving
         def flatten_dict(d, prefix=""):
             result = {}
@@ -606,19 +622,22 @@ def main():
                     # Handle list of dicts (like layers)
                     for i, item in enumerate(v):
                         if isinstance(item, dict):
-                            result.update(flatten_dict(item, f"{prefix}{k}.{i}."))
+                            result.update(
+                                flatten_dict(item, f"{prefix}{k}.{i}.")
+                            )
                         else:
                             result[f"{prefix}{k}.{i}"] = item
                 else:
                     result[f"{prefix}{k}"] = v
             return result
-        
+
         flattened_weights = flatten_dict(model.parameters())
         utils.save_weights(epoch_dir, flattened_weights)
 
     # Final save
     print(f"\nSaving final model to {args.output_dir}")
     os.makedirs(args.output_dir, exist_ok=True)
+
     # Flatten the parameters properly for saving
     def flatten_dict(d, prefix=""):
         result = {}
@@ -635,7 +654,7 @@ def main():
             else:
                 result[f"{prefix}{k}"] = v
         return result
-    
+
     flattened_weights = flatten_dict(model.parameters())
     utils.save_weights(args.output_dir, flattened_weights)
 
