@@ -1,0 +1,298 @@
+1. Abridged Problem Statement  
+Given two integers A and B (0 ≤ A ≤ B ≤ 10^9), count how many integers x in [A, B] are “almost lucky.” A number is “lucky” if it has an even number of digits 2N and the sum of its first N digits equals the sum of its last N digits. A number is “almost lucky” if by changing exactly one digit (the first digit cannot be changed to zero) you can make it lucky.
+
+2. Detailed Editorial  
+
+Overview  
+We must count, for all x ∈ [A, B], those with an even number of digits 2N for which there exists a single-digit modification that balances the two halves’ digit sums. Brute force is impossible for up to 10^9. Instead we:
+
+1. Loop over every even digit-length L = 2, 4, 6, 8, 10 up to the number of digits of B.  
+2. For each length L, run a digit-DP to count almost-lucky numbers ≤ bound, where bound is either B (if L = |B|) or the all-9’s number of length L.
+3. Subtract the count for A–1 from that for B to get the final answer on [A, B].
+
+Key DP Idea  
+For a fixed length L = 2N and an upper bound string S of length L, we define a recursive DP(pos, balance, max_inc, max_dec, tight) that returns the count of valid numbers completing from digit position pos to L–1, given:
+
+- balance = (sum of digits in first half so far) – (sum in second half so far). (Range roughly [–90,+90].)  
+- max_inc = the maximum possible increase to any one digit seen so far (original digit→9), i.e. max(9–digit).  
+- max_dec = the maximum possible decrease to any one digit seen so far (digit→0, except the leading digit can only go to 1), i.e. max(digit) or (digit–1 if pos=0).  
+- tight = whether we are still matching the prefix of S.  
+
+Transitions  
+At each pos we choose digit d from 0..(tight?S[pos]–'0':9), except at pos=0 we choose 1..limit (no leading zero). We update:
+- new_balance = balance ± d (plus if pos < N, minus otherwise).
+- new_max_inc = max(max_inc, (pos<N ? 9–d : d)).
+- new_max_dec = max(max_dec, (pos<N ? (pos==0?d–1:d) : 9–d)).
+- new_tight = tight & (d == limit).
+
+Base Case (pos == L): we have a complete number. It is almost-lucky if:
+- balance ≠ 0 (it wasn’t already lucky), and
+- if balance < 0, we need an increase of at least –balance, so max_inc ≥ –balance, or
+- if balance > 0, we need a decrease of at least balance, so max_dec ≥ balance.
+
+Memoize the DP to run in O(L×range(balance)×10×10×2) states, each trying up to 10 digits → very fast for L≤10.
+
+Precomputing All-9’s Answers  
+For full 9’s bounds like 99, 9999, … we can precompute once (or cache on the fly) to avoid rerunning the DP for those special bounds.
+
+Overall Complexity  
+We run the DP for each even length ≤10, at most 5 times, each in a few million operations. That fits easily in the time limit.
+
+3. C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload I/O for pairs and vectors for convenience (not critical to logic).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// Input bounds
+int A, B;
+
+// Precomputed answers for bounds = "99", "9999", ... to speed up repeated 9’s cases
+map<string, int64_t> answer_for_9s = {
+    {"99", 81},
+    {"9999", 7389},
+    {"999999", 676133},
+    {"99999999", 62563644},
+    {"9999999999", 1550148951}
+};
+
+// Read A, B
+void read() { 
+    cin >> A >> B; 
+}
+
+// Digit-DP for a given bound string of even length
+int solve_dp(const string &bound) {
+    int L = bound.size();
+    int N = L / 2;
+    // DP dimensions:
+    // dp[pos][balance+100][max_inc][max_dec][tight] = count
+    // balance offset by +100 to allow negative
+    static int dp[11][201][10][10][2];
+    // Initialize to -1
+    memset(dp, -1, sizeof dp);
+
+    // Recursive lambda to fill dp
+    function<int(int,int,int,int,bool)> rec = [&](int pos, int balance,
+                                                 int max_inc, int max_dec,
+                                                 bool tight)->int {
+        // If we completed all digits, check almost-lucky condition
+        if(pos == L) {
+            // If already lucky, skip
+            if(balance == 0) return 0;
+            // If balance<0 we need an increase of at least -balance
+            if(balance < 0 && max_inc >= -balance) return 1;
+            // If balance>0 we need a decrease of at least balance
+            if(balance > 0 && max_dec >= balance) return 1;
+            return 0;
+        }
+        int t = tight ? 1 : 0;
+        int bal_idx = balance + 100;
+        int &memo = dp[pos][bal_idx][max_inc][max_dec][t];
+        if(memo != -1) return memo;
+
+        int up = tight ? (bound[pos] - '0') : 9;
+        int res = 0;
+        // Leading digit cannot be zero
+        int start = (pos == 0 ? 1 : 0);
+        for(int d = start; d <= up; d++) {
+            int nb = balance;
+            int ni = max_inc;
+            int nd = max_dec;
+            // Update balance and possible inc/dec for this digit
+            if(pos < N) {
+                // First half: adds positively
+                nb += d;
+                // Decrease: can lower digit to 0 (or 1 if leading)
+                nd = max(nd, (pos==0 ? d-1 : d));
+                // Increase: can raise digit to 9
+                ni = max(ni, 9 - d);
+            } else {
+                // Second half: subtracts
+                nb -= d;
+                // Increase: can raise this to 9, which increases balance positively
+                ni = max(ni, d);
+                // Decrease: can lower to 0
+                nd = max(nd, 9 - d);
+            }
+            bool nt = tight && (d == up);
+            res += rec(pos + 1, nb, ni, nd, nt);
+        }
+        return memo = res;
+    };
+
+    // Start recursion from pos=0, balance=0, inc=0, dec=0, tight=true
+    return rec(0, 0, 0, 0, true);
+}
+
+// Solve count of almost lucky ≤ n
+int solve(int n) {
+    if(n < 10) return 0;  // no even-digit numbers below 10
+    // Number of digits of n
+    int nd = 0, tmp = n;
+    while(tmp) { nd++; tmp /= 10; }
+    int64_t ans = 0;
+
+    // For each even length up to nd
+    for(int len = 2; len <= nd; len += 2) {
+        string bound;
+        if(len < nd) {
+            // full 9’s case
+            bound = string(len, '9');
+            // use precomputed if available
+            if(answer_for_9s.count(bound)) {
+                ans += answer_for_9s[bound];
+                continue;
+            }
+        } else {
+            // same number of digits as n → bound = to_string(n)
+            bound = to_string(n);
+        }
+        // Run DP
+        ans += solve_dp(bound);
+    }
+    return (int)ans;
+}
+
+void solve() {
+    // Count in [A, B] = solve(B) - solve(A-1)
+    int resB = solve(B);
+    int resA = (A > 0 ? solve(A - 1) : 0);
+    cout << (resB - resA) << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.setrecursionlimit(10000)
+from functools import lru_cache
+
+def count_almost_lucky_up_to(n: int) -> int:
+    """
+    Returns the number of almost-lucky numbers <= n.
+    """
+
+    s = str(n)
+    nd = len(s)
+    res = 0
+
+    # We only consider even digit lengths 2,4,6,8,10
+    for length in range(2, nd+1, 2):
+        # Build bound string for this length
+        if length < nd:
+            bound = '9' * length
+        else:
+            bound = s
+
+        L = len(bound)
+        N = L // 2
+
+        @lru_cache(None)
+        def dp(pos: int, balance: int, max_inc: int, max_dec: int, tight: bool) -> int:
+            """
+            pos      : current digit position [0..L]
+            balance  : sum(first half) - sum(second half)
+            max_inc  : best possible increase from any digit so far
+            max_dec  : best possible decrease from any digit so far
+            tight    : whether prefix == bound[:pos]
+            """
+            # Base case: completed all digits
+            if pos == L:
+                # If already lucky, not almost-lucky
+                if balance == 0:
+                    return 0
+                # If balance < 0, we need to increase some digit by at least -balance
+                if balance < 0 and max_inc >= -balance:
+                    return 1
+                # If balance > 0, we need to decrease some digit by at least balance
+                if balance > 0 and max_dec >= balance:
+                    return 1
+                return 0
+
+            total = 0
+            up = int(bound[pos]) if tight else 9
+            # No leading zero
+            start = 1 if pos == 0 else 0
+
+            for d in range(start, up+1):
+                nb = balance
+                ni = max_inc
+                ndc = max_dec
+                # First half: contributes +d
+                if pos < N:
+                    nb += d
+                    # Decrease: can lower d to 0 (or 1 if leading)
+                    dec_possible = d - 1 if pos == 0 else d
+                    ndc = max(ndc, dec_possible)
+                    # Increase: to 9
+                    ni = max(ni, 9 - d)
+                else:
+                    # Second half: contributes -d
+                    nb -= d
+                    # Increase: raising this digit from d→9 gives +d
+                    ni = max(ni, d)
+                    # Decrease: lowering from d→0 gives +(9-d)
+                    ndc = max(ndc, 9 - d)
+
+                nt = tight and (d == up)
+                total += dp(pos+1, nb, ni, ndc, nt)
+
+            return total
+
+        res += dp(0, 0, 0, 0, True)
+
+    return res
+
+def main():
+    A, B = map(int, sys.stdin.read().split())
+    ans = count_almost_lucky_up_to(B)
+    if A > 0:
+        ans -= count_almost_lucky_up_to(A-1)
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+- We only need to consider numbers with 2N digits (even length).
+- A number is almost‐lucky if its two-half digit‐sum difference D ≠ 0 can be zeroed by a single-digit change.  
+  - If D<0, we need to increase one digit by ≥ –D.  
+  - If D>0, we need to decrease one digit by ≥ D.  
+- Digit-DP tracks, as we build the number:  
+  (pos, balance = sum(first)–sum(second), max_inc, max_dec, tight).  
+- At the end, check D≠0 and max_inc or max_dec suffices to fix |D|.  
+- Sum results for each even length ≤ |B|, subtract count for A–1.  
+- Complexity O(∑_length DP_states×10) with length≤10, fast enough.
