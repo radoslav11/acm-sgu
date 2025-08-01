@@ -41,7 +41,7 @@ The editorials follow a structured format:
 ## Model Finetuning
 
 ### Dataset Preparation
-- **181 problems** (and slowly increasing) from the SGU archive solved by me ([radoslav11](https://codeforces.com/problemsets/acmsguru/standings)).
+- **190 problems** (and slowly increasing) from the SGU archive solved by me ([radoslav11](https://codeforces.com/problemsets/acmsguru/standings)).
 - Enhanced with detailed editorials using GPT o4-mini.
 
 ### Training Configuration
