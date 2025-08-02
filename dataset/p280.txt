@@ -1,0 +1,197 @@
+1. Abridged Problem Statement  
+Given a tree of N cities (nodes) and an integer K, select as few “trade centers” (special nodes) as possible so that every city is at distance ≤ K from at least one center. Output the number of centers and their labels.
+
+2. Detailed Editorial  
+
+Overview  
+We must cover all nodes in a tree by “balls” of radius K centered at chosen nodes, using the minimum number of centers. A classic greedy strategy on trees is to process from the leaves upward, tracking how far each node is from the nearest center placed so far in its subtree. Whenever a pair of uncovered branches beneath a node would force some leaf-to-leaf path to exceed length 2K without a center, we must place a center there.
+
+Key Idea and DP Definition  
+Root the tree at an arbitrary node (say 1). Define dp[u] = the minimum distance from u down to any center placed in u’s subtree; if no center is “close enough,” dp[u] will grow until it triggers placing a center.
+
+Leaf Initialization  
+For a leaf u, we pretend there is a center at distance K+1 below it (so dp[u] = K+1). This encodes “no center in its true subtree yet” and allows us to measure when the leaf is too far from any center.
+
+Merging Children  
+At an internal node u, collect dp[v] for all children v. Let mn = min(dp[v]) and mx = max(dp[v]). Now:
+
+- If mn + mx + 2 ≤ 2K+1, then the branch closest to a center (distance mn) can cover u and that center still reaches the farthest branch within K after we move up one edge. So we set dp[u] = mn+1.
+- Otherwise, the two most distant uncovered tips would form a path longer than 2K if unchecked, so we place a center at u.  Concretely, we detect this when mx+mn+2 > 2K+1; equivalently, when after updating dp[u] = mx+1 we hit dp[u] = 2K+1. At that moment we reset dp[u]=0 (placing a center at u) and record u in our answer.
+
+Final Check at the Root  
+After processing the whole tree, if dp[root] > K, it means the root is still too far from any center, so we must add a center at the root.
+
+Proof of Optimality  
+This greedy is optimal because placing a center only when forced (a critical path would exceed length 2K without it) ensures minimality. One can show that any solution must have a center in the same positions (up to relabeling) to cover the same critical leaves, so no extra centers are used.
+
+Complexity  
+We do a single DFS, merging children in O(deg(u)) each, so O(N) overall. Memory is O(N).
+
+3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload printing for convenience (not essential to logic)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, k;
+vector<vector<int>> adj;  // adjacency list
+vector<int> dp;           // dp[u] = distance from u to nearest center in its subtree
+
+// Read input
+void read() {
+    cin >> n >> k;
+    adj.assign(n+1, {});
+    dp.assign(n+1, 0);
+    for(int i = 1; i < n; i++) {
+        int u, v;
+        cin >> u >> v;
+        adj[u].push_back(v);
+        adj[v].push_back(u);
+    }
+}
+
+// DFS that fills dp[] and collects centers in ans
+int dfs(int u, int parent, vector<int>& ans) {
+    vector<int> child_dp;
+    // Process children
+    for(int v: adj[u]) {
+        if(v == parent) continue;
+        dfs(v, u, ans);
+        child_dp.push_back(dp[v]);
+    }
+    if(child_dp.empty()) {
+        // Leaf: pretend no center until distance K+1
+        dp[u] = k + 1;
+    } else {
+        // Compute min and max distances among children
+        int mn = *min_element(child_dp.begin(), child_dp.end());
+        int mx = *max_element(child_dp.begin(), child_dp.end());
+        // If the two farthest uncovered tips would exceed 2K+1 via u,
+        // we must place a center → this will be detected below.
+        if(mn + mx + 2 <= 2*k + 1) {
+            // Safe to carry up the closest branch
+            dp[u] = mn + 1;
+        } else {
+            // Must cover the critical path: carry up farthest
+            dp[u] = mx + 1;
+        }
+    }
+    // If dp[u] reaches 2K+1, that's the signal to place a center at u
+    if(dp[u] == 2*k + 1) {
+        dp[u] = 0;         // center is here, so distance zero
+        ans.push_back(u);  // record center
+    }
+    return dp[u];
+}
+
+// Solve one test case
+void solve() {
+    vector<int> ans;
+    dfs(1, -1, ans);
+    // If root is still too far, we need a center there
+    if(dp[1] > k) {
+        ans.push_back(1);
+    }
+    sort(ans.begin(), ans.end());
+    // Output result
+    cout << ans.size() << "\n";
+    for(int c: ans) {
+        cout << c << "\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+sys.setrecursionlimit(1000000)
+
+def read_input():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n, k = int(next(it)), int(next(it))
+    adj = [[] for _ in range(n+1)]
+    for _ in range(n-1):
+        u, v = int(next(it)), int(next(it))
+        adj[u].append(v)
+        adj[v].append(u)
+    return n, k, adj
+
+def solve():
+    n, k, adj = read_input()
+    dp = [0]*(n+1)
+    centers = []
+
+    def dfs(u, p):
+        """
+        Post-order DFS.
+        Computes dp[u]: distance from u to nearest center in subtree.
+        Adds to centers[] when a center is placed.
+        """
+        child_dp = []
+        for v in adj[u]:
+            if v == p: continue
+            dfs(v, u)
+            child_dp.append(dp[v])
+        if not child_dp:
+            # Leaf: no center below → pretend it's at distance k+1
+            dp[u] = k + 1
+        else:
+            mn = min(child_dp)
+            mx = max(child_dp)
+            # If the two farthest uncovered tips would exceed 2k+1,
+            # we must place a center (detected when dp[u] hits 2k+1).
+            if mn + mx + 2 <= 2*k + 1:
+                dp[u] = mn + 1
+            else:
+                dp[u] = mx + 1
+        # Place center if dp[u] == 2k+1
+        if dp[u] == 2*k + 1:
+            dp[u] = 0
+            centers.append(u)
+
+    dfs(1, 0)
+    # After DFS, if root is still > k away, place a center at root
+    if dp[1] > k:
+        centers.append(1)
+    centers.sort()
+    # Output
+    print(len(centers))
+    for c in centers:
+        print(c)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+Run one DFS from an arbitrary root. For each node, maintain dp[u] = distance downward to the nearest placed center (initially K+1 at a leaf). When combining children, if the closest and farthest dp values force a leaf-to-leaf path > 2K without coverage, place a center at u (reset dp[u]=0). Finally, if the root remains uncovered beyond K, add it. This greedy is optimal and runs in O(N).
