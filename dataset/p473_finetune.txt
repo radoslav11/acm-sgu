@@ -1,0 +1,238 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+473. Droid formation
+Time limit per test: 0.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+A long time ago (but somehow in the future), in a Galaxy Far Far Away...
+
+— Your majesty, Jedi detachment almost finished to mine our new Death Cube! New battle droids are unable to restrain them! What to do!?
+
+— Rest assured! What is the strength of every troop of droids?
+
+— 12 droids, your majesty!
+
+— Fools! I told you that a troop should have 4 variants of evolution but troop of 12 droids has 6! This perverts threads of the Power — and infeeds Jedis! Regroup the army — and Jedis will lose!
+
+— Yes sir!
+
+Number of variants of evolution of a troop of droids is the number of ways to draw it up in rows so that every row has the same number of droids. For example, a troop of 12 droids can be arranged in 1 row of 12 droids, 2 rows of 6 droids, 3 rows of 4 droids, 4 rows of 3 droids, 6 rows of 2 droids and 12 rows consisting of 1 droid each. So, as the Emperor noticed, there are 6 variants of evolution for this troop of droids.
+
+You problem is more general — given the number K of favorable variants of evolution, find the smallest positive size of a troop of droids N which has this very number of variants of evolution.
+
+Input
+Input file contains only number K from the problem statement (1 ≤ K ≤ 105).
+
+Output
+Write to the output file the required number N. If there is no such number, write to the output file number 0 instead.
+
+Example(s)
+sample input
+sample output
+4
+6
+
+<|response|>
+1. Abridged problem statement  
+Given an integer K (1 ≤ K ≤ 10^5), find the smallest positive integer N whose number of positive divisors is exactly K. If no such N exists, output 0.
+
+2. Key observations  
+- If the prime factorization of N is  
+    N = p₁ᵃ¹ · p₂ᵃ² · … · pₘᵃᵐ  
+  then the count of divisors is  
+    d(N) = (a₁+1)·(a₂+1)·…·(aₘ+1).  
+- To have d(N)=K we must write K as a product of integers each ≥2:  
+    K = b₁·b₂·…·bₘ,  bᵢ ≥ 2,  
+  and then set aᵢ = bᵢ−1.  
+- To minimize N for a given multiset {bᵢ}, assign the largest exponents to the smallest primes. Equivalently, sort the bᵢ in descending order and pair them with 2,3,5,…
+
+3. Full solution approach  
+a. Handle K=1 as a special case: the only N with exactly 1 divisor is N=1.  
+b. Precompute the first L primes, where L ≥ log₂K (worst case K=2^c).  
+c. Enumerate all ways to factor K into factors ≥2 in nondecreasing order to avoid duplicates. A simple DFS or explicit stack suffices:  
+   - State = (current remainder r, list of chosen factors so far, minimum next factor fmin).  
+   - Start with (K, [], 2). At each step try every f from fmin…r that divides r.  
+d. For each complete factorization [b₁, b₂, …, bₘ] (with product=K), sort b’s in descending order. Compute  
+     candidate = 2^(b₁−1) · 3^(b₂−1) · 5^(b₃−1) · …  
+   Stop early if candidate exceeds the best found so far.  
+e. Track the minimum candidate over all factorizations. If none is found, answer is 0.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+// we'll use unsigned __int128 to hold big products
+using u128 = unsigned __int128;
+
+// convert a u128 to string
+string toString(u128 x) {
+    if (x == 0) return "0";
+    string s;
+    while (x > 0) {
+        s.push_back(char('0' + int(x % 10)));
+        x /= 10;
+    }
+    reverse(s.begin(), s.end());
+    return s;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int K;
+    cin >> K;
+    if (K == 1) {
+        // only N=1 has exactly one divisor
+        cout << 1 << "\n";
+        return 0;
+    }
+
+    // estimate how many primes we might need (worst case K=2^c)
+    int maxPrimes = K == 0 ? 1 : 32; 
+    // a tighter bound is K.bit_length(), but 32 is safe for K<=1e5
+
+    // sieve to collect first maxPrimes primes
+    vector<bool> isPrime(2000, true);
+    vector<int> primes;
+    isPrime[0] = isPrime[1] = false;
+    for (int i = 2; i < (int)isPrime.size() && (int)primes.size() < maxPrimes; ++i) {
+        if (!isPrime[i]) continue;
+        primes.push_back(i);
+        for (long long j = 1LL*i*i; j < (int)isPrime.size(); j += i)
+            isPrime[j] = false;
+    }
+
+    // enumerate factorizations of K into factors >=2 in nondecreasing order
+    vector<vector<int>> factorizations;
+    // stack holds (remainder, current factors, minimum next factor)
+    stack< tuple<int, vector<int>, int> > st;
+    st.emplace(K, vector<int>(), 2);
+
+    while (!st.empty()) {
+        auto [rem, curr, fmin] = st.top();
+        st.pop();
+
+        if (rem == 1) {
+            // full factorization reached
+            factorizations.push_back(curr);
+            continue;
+        }
+        // try every factor f from fmin to rem
+        for (int f = fmin; f <= rem; ++f) {
+            if (rem % f == 0) {
+                auto next = curr;
+                next.push_back(f);
+                st.emplace(rem / f, next, f);
+            }
+        }
+    }
+
+    u128 best = 0;  // zero means "not set yet"
+
+    // for each factorization compute the corresponding N
+    for (auto &fac : factorizations) {
+        // sort factors descending so largest exponents go to smallest primes
+        sort(fac.rbegin(), fac.rend());
+        u128 candidate = 1;
+        bool pruned = false;
+
+        for (int i = 0; i < (int)fac.size(); ++i) {
+            int exponent = fac[i] - 1;
+            int p = primes[i];
+            // multiply p^exponent
+            for (int e = 0; e < exponent; ++e) {
+                candidate *= p;
+                // early stop if already >= best
+                if (best != 0 && candidate >= best) {
+                    pruned = true;
+                    break;
+                }
+            }
+            if (pruned) break;
+        }
+        if (!pruned) {
+            if (best == 0 || candidate < best)
+                best = candidate;
+        }
+    }
+
+    // output
+    cout << (best ? toString(best) : string("0")) << "\n";
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.set_int_max_str_digits(10**7)
+
+def solve(K):
+    # special case
+    if K == 1:
+        return 1
+
+    # estimate number of primes needed: bit_length of K
+    max_primes = K.bit_length()
+    # simple sieve to get first max_primes primes
+    limit = max_primes * 20 + 100
+    is_prime = [True] * limit
+    primes = []
+    for i in range(2, limit):
+        if is_prime[i]:
+            primes.append(i)
+            if len(primes) >= max_primes:
+                break
+            for j in range(i*i, limit, i):
+                is_prime[j] = False
+
+    # enumerate all factorizations of K into factors >=2, nondecreasing
+    factorizations = []
+    stack = [(K, [], 2)]  # (remaining, current_list, min_next)
+
+    while stack:
+        rem, curr, mn = stack.pop()
+        if rem == 1:
+            factorizations.append(curr)
+            continue
+        # try divisor f from mn to rem
+        for f in range(mn, rem+1):
+            if rem % f == 0:
+                stack.append((rem//f, curr + [f], f))
+
+    best = None
+    for fac in factorizations:
+        # assign largest exponents to smallest primes
+        fac.sort(reverse=True)
+        n = 1
+        prune = False
+        for i, b in enumerate(fac):
+            exp = b - 1
+            p = primes[i]
+            # multiply p^exp, with early break
+            for _ in range(exp):
+                n *= p
+                if best is not None and n >= best:
+                    prune = True
+                    break
+            if prune:
+                break
+        if not prune:
+            if best is None or n < best:
+                best = n
+
+    return 0 if best is None else best
+
+def main():
+    K = int(sys.stdin.readline())
+    print(solve(K))
+
+if __name__ == "__main__":
+    main()
+```

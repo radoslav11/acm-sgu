@@ -1,0 +1,220 @@
+1. Abridged Problem Statement  
+Given an integer K (1 ≤ K ≤ 10^5), find the smallest positive integer N whose number of positive divisors is exactly K. If no such N exists, output 0.
+
+2. Detailed Editorial  
+
+Let d(N) denote the number of positive divisors of N.  If  
+ N = p₁ᵃ¹ · p₂ᵃ² · … · pₘᵃᵐ  
+is the prime factorization of N, then  
+ d(N) = (a₁ + 1)·(a₂ + 1)·…·(aₘ + 1).  
+
+We are given K and want the smallest N with d(N) = K.  Equivalently, we want to write K as a product of integers each ≥2:  
+ K = b₁·b₂·…·bₘ,   bᵢ ≥ 2,  
+and then set aᵢ = bᵢ − 1.  To minimize N we should assign the largest exponents to the smallest primes, i.e. sort the bᵢ in nonincreasing order and pair b₁−1 with 2, b₂−1 with 3, b₃−1 with 5, etc.
+
+Algorithm Outline  
+1. Handle K=1 as a special case: the only N with exactly 1 divisor is N=1.  
+2. Generate the first L primes, where L ≥ ⌈log₂K⌉.  We’ll never need more primes than the maximum number of factors in a factorization of K into ≥2’s.  
+3. Enumerate all ways to factor K into factors ≥2 in nondecreasing order (to avoid duplicates).  We can do this by a DFS (or iterative stack) that at each step picks the next factor f ≥ previous factor, divides K by f, and recurses until the remainder is 1.  
+4. For each factorization [b₁, b₂, …, bₘ], sort it in descending order.  Compute  
+   N = 2^(b₁−1) · 3^(b₂−1) · 5^(b₃−1) · …  
+   Use early stopping if N exceeds the best known answer.  
+5. Take the minimum N over all factorizations.  If no factorization yields a finite N (unlikely for K up to 10^5), output 0.  
+
+Time Complexity  
+- Number of factorizations of K is small for K ≤ 10^5 (empirically under a few thousand).  
+- For each factorization we do O(m) multiplications on big integers.  
+- Overall this runs very fast under 0.5 s for K up to 10^5.
+
+3. C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+using u128 = unsigned __int128;
+
+// Convert an unsigned __int128 to string for output.
+string toString(u128 x) {
+    if (x == 0) return "0";
+    string s;
+    while (x > 0) {
+        int digit = int(x % 10);
+        s.push_back(char('0' + digit));
+        x /= 10;
+    }
+    reverse(s.begin(), s.end());
+    return s;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int K;
+    cin >> K;
+    // Special case: exactly one divisor means N = 1
+    if (K == 1) {
+        cout << 1 << "\n";
+        return 0;
+    }
+
+    // Estimate how many primes we might need:
+    // worst case K = 2^c => we need c primes, and c = log2(K)
+    int maxPrimes = 0;
+    {
+        int t = K;
+        while (t > 0) { maxPrimes++; t >>= 1; }
+    }
+
+    // Sieve to generate at least maxPrimes primes
+    int limit = maxPrimes * 20 + 100; 
+    vector<bool> is_prime(limit, true);
+    vector<int> primes;
+    is_prime[0] = is_prime[1] = false;
+    for (int i = 2; i < limit && (int)primes.size() < maxPrimes; i++) {
+        if (!is_prime[i]) continue;
+        primes.push_back(i);
+        if ((int)primes.size() >= maxPrimes) break;
+        for (long long j = 1LL * i * i; j < limit; j += i)
+            is_prime[j] = false;
+    }
+
+    // Enumerate all nondecreasing factorizations of K into factors >= 2.
+    vector<vector<int>> factorizations;
+    // Stack holds tuples (remainder, current list of factors, minFactor)
+    stack< tuple<int, vector<int>, int> > st;
+    st.emplace(K, vector<int>(), 2);
+
+    while (!st.empty()) {
+        auto [rem, curr, minF] = st.top();
+        st.pop();
+
+        if (rem == 1) {
+            // We have a full factorization; store it
+            factorizations.push_back(curr);
+            continue;
+        }
+        // Try every factor f from minF up to rem
+        for (int f = minF; f <= rem; ++f) {
+            if (rem % f == 0) {
+                auto next = curr;
+                next.push_back(f);
+                st.emplace(rem / f, next, f);
+            }
+        }
+    }
+
+    // We'll track the minimum N found so far
+    u128 bestN = 0;  // 0 means "not set yet"
+
+    // For each factorization, build N = ∏ pᵢ^(bᵢ−1)
+    for (auto &fac : factorizations) {
+        // Sort in descending order to give largest exponents to smallest primes
+        sort(fac.rbegin(), fac.rend());
+        u128 candidate = 1;
+        bool overflow = false;
+        for (int i = 0; i < (int)fac.size(); i++) {
+            int exponent = fac[i] - 1;
+            int prime = primes[i];
+            // Multiply candidate by prime^exponent
+            for (int e = 0; e < exponent; e++) {
+                candidate *= prime;
+                // Early break if we're already worse than best known
+                if (bestN != 0 && candidate >= bestN) {
+                    overflow = true;
+                    break;
+                }
+            }
+            if (overflow) break;
+        }
+        // Update bestN if candidate is better
+        if (!overflow) {
+            if (bestN == 0 || candidate < bestN)
+                bestN = candidate;
+        }
+    }
+
+    // If bestN is still 0, no solution; else print bestN
+    cout << (bestN ? toString(bestN) : string("0")) << "\n";
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+sys.set_int_max_str_digits(10**7)
+
+def solve(K):
+    # Edge case: only N=1 has exactly 1 divisor
+    if K == 1:
+        return 1
+
+    # We will need at most log2(K) primes (worst case K=2^c)
+    max_primes = K.bit_length()
+
+    # Simple sieve to collect the first max_primes primes
+    limit = max_primes * 20 + 100
+    is_prime = [True] * limit
+    primes = []
+    for i in range(2, limit):
+        if is_prime[i]:
+            primes.append(i)
+            if len(primes) >= max_primes:
+                break
+            for j in range(i*i, limit, i):
+                is_prime[j] = False
+
+    # Enumerate factorizations of K into factors >= 2
+    factorizations = []
+    stack = [(K, [], 2)]  # (remaining, factors_so_far, min_factor_next)
+    while stack:
+        rem, curr, min_f = stack.pop()
+        if rem == 1:
+            # Found a complete factorization
+            factorizations.append(curr.copy())
+            continue
+        # Try splitting rem = f * (rem//f) for f >= min_f
+        for f in range(min_f, rem + 1):
+            if rem % f == 0:
+                stack.append((rem // f, curr + [f], f))
+
+    # For each factorization, build N = ∏ primes[i]^(factor[i]-1)
+    best = None
+    for fac in factorizations:
+        # Sort in descending order so largest exponents go on smallest primes
+        fac.sort(reverse=True)
+        n = 1
+        # Build the number, stop early if it is already too big
+        for i, b in enumerate(fac):
+            exp = b - 1
+            p = primes[i]
+            # Multiply n by p^exp
+            for _ in range(exp):
+                n *= p
+                if best is not None and n >= best:
+                    break
+            if best is not None and n >= best:
+                break
+        # Update the best answer
+        if best is None or n < best:
+            best = n
+
+    return best if best is not None else 0
+
+def main():
+    K = int(sys.stdin.readline())
+    print(solve(K))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+- We want the smallest N with exactly K divisors.  
+- If N = ∏pᵢᵃⁱ then d(N) = ∏(aᵢ+1).  
+- Write K = ∏bᵢ with each bᵢ ≥ 2.  Then set aᵢ = bᵢ−1 and assign larger aᵢ to smaller primes.  
+- Enumerate all nondecreasing factorizations of K by DFS/stack.  For each, sort bᵢ descending, form N = ∏ primes[i]^(bᵢ−1), track the minimum.  
+- Handle K=1 separately (answer=1).  If no factorization, output 0.
