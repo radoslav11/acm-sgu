@@ -1,0 +1,400 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+525. Revolutionary Roads
+Time limit per test: 1 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+Governments of different countries like to boast about their achievements. For instance, the President of Flatland has announced that his country has the most advanced road system. He said the degree of a country road system development is equal to the amount of cities in the largest  subset of cities. A subset of cities is called  if it is possible to get from any city of the subset to all other cities of the subset.
+
+Not to lag behind the neighbors Berland's President decided to undertake a reform and modernize roads in his country. All the roads in Berland are one-way, each of them connects a pair of cities in one direction. There is at most one road in each direction between any two given cities.
+
+Since there is little money in the budget, President's plans aren't very ambitious. He can turn at most one of all given one-way roads into a two-way road. And he wants to do it in such a way that the resulting road system degree of development in Berland becomes as high as possible. Let's say the maximum degree of development, which can be achieved by this action, is equal to w.
+
+A road is called  if, after it is changed from one-way to two-way, the degree of road system development becomes equal to w. Your task is to find all  roads.
+
+Input
+The first line of input contains a pair of numbers n, m (1 ≤ n ≤ 1000, 0 ≤ m ≤ 20000), where n — the number cities, m — the number of roads. The following m lines contain descriptions of the roads. Each line contains a pair of integers ai, bi (1 ≤ ai, bi ≤ n, ai ≠ bi), representing a one-way road from city ai to city bi. Cities are numbered from 1 to n.
+
+Output
+Write w to the first line of output. To the second line write t — number of roads in the required subset. To the third line write indices of the roads in this subset. Roads are numbered from 1 to m according to their order in the input file.
+
+Example(s)
+sample input
+sample output
+5 4
+1 2
+2 3
+1 3
+4 1
+3
+1
+3 
+
+sample input
+sample output
+3 4
+1 2
+2 1
+1 3
+3 1
+3
+4
+1 2 3 4
+
+<|response|>
+1. Abridged Problem Statement  
+You are given a directed graph of n cities (nodes) and m one-way roads (edges). You may choose at most one existing directed edge u→v and add the reverse edge v→u, effectively making that road two-way. After this change, the “degree of development” is the size (number of cities) of the largest strongly connected component (SCC) in the new graph.  
+• Compute the maximum possible SCC size w achievable by upgrading at most one road.  
+• List all edges (by their input indices) whose upgrading attains this maximum w.
+
+2. Key Observations  
+- In the original graph, find its SCC decomposition. Contract each SCC into a single node to form a condensation DAG (directed acyclic graph).  
+- Adding the reverse of an edge u→v can only merge SCC(u) and SCC(v), along with any components reachable forward from SCC(u) and backward to SCC(v).  
+- If cu = comp[u] and cv = comp[v], then the set of components that become one new SCC is exactly those c for which cu→…→c and c→…→cv both hold in the condensation DAG.  
+- We need to know, for every component x:  
+   • which components it can reach (forward closure)  
+   • which components can reach it (reverse closure)  
+  so that for each edge we can quickly compute the intersection.  
+- For each edge, merging gives total size = sum of comp_size over the intersection. The resulting largest SCC is max(merged_size, largest comp_size among components not in that merged set).  
+- Edge cases: if cu==cv, upgrading does nothing and the best SCC size is comp_size[cu]; if m=0, no edges exist, best w=1 (any single city).
+
+3. Full Solution Approach  
+Step 1: Read n, m and the list of directed edges (0-based) in a vector edges.  
+Step 2: Run SCC (Kosaraju or Tarjan) on the original graph to get for each vertex v its component id comp[v], and count C = number of components. Also compute comp_size[c] = number of original vertices in component c.  
+Step 3: Build the condensation DAG of size C: for each original edge u→v, if comp[u]≠comp[v], add a single DAG edge cu→cv (deduplicated), and record indegrees.  
+Step 4: Topologically sort the DAG (Kahn’s algorithm), obtaining an order topo[].  
+Step 5: Compute forward reachability closure: create a bitset closure[c] of size C, initialize closure[c][c]=1. Process components in reverse topological order; for each u, for each v in adj[u], do closure[u] |= closure[v].  
+Step 6: Build the reverse-DAG adjacency rcadj by reversing each DAG edge. Similarly compute reverse closure rclosure[c], indicating which components can reach c.  
+Step 7: Now iterate over each original edge i: let u,v be its endpoints and cu=comp[u], cv=comp[v].  
+   - If cu==cv: current_max = comp_size[cu].  
+   - Else: let mask = closure[cu] & rclosure[cv].  
+        merged_size = sum(comp_size[c] for c where mask[c]=1)  
+        other_max = maximum comp_size[d] for d where mask[d]=0  
+        current_max = max(merged_size, other_max)  
+   Track the global maximum w and maintain a list of all edge indices i (1-based) for which current_max == w.  
+Step 8: If m==0, set w=1 and answer-set empty.  
+Step 9: Output w, the count of chosen edges, then the sorted list of their indices.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Kosaraju’s algorithm to find SCCs
+struct SCCFinder {
+    int n;
+    vector<vector<int>> adj, radj;
+    vector<int> comp, order;
+    vector<bool> used;
+
+    SCCFinder(int _n = 0) { init(_n); }
+
+    void init(int _n) {
+        n = _n;
+        adj.assign(n, {});
+        radj.assign(n, {});
+    }
+
+    void add_edge(int u, int v) {
+        adj[u].push_back(v);
+        radj[v].push_back(u);
+    }
+
+    // First pass: build order by dfs on original graph
+    void dfs1(int u) {
+        used[u] = true;
+        for (int v : adj[u]) {
+            if (!used[v]) dfs1(v);
+        }
+        order.push_back(u);
+    }
+
+    // Second pass: assign component ids on reversed graph
+    void dfs2(int u, int cid) {
+        comp[u] = cid;
+        for (int v : radj[u]) {
+            if (comp[v] < 0) dfs2(v, cid);
+        }
+    }
+
+    // Main routine: returns number of components
+    int run() {
+        used.assign(n, false);
+        order.clear();
+        for (int i = 0; i < n; i++)
+            if (!used[i]) dfs1(i);
+
+        comp.assign(n, -1);
+        int cid = 0;
+        // process in reverse finishing order
+        for (int i = n - 1; i >= 0; i--) {
+            int u = order[i];
+            if (comp[u] < 0) {
+                dfs2(u, cid++);
+            }
+        }
+        return cid;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m;
+    cin >> n >> m;
+    vector<pair<int,int>> edges(m);
+    SCCFinder scc(n);
+    for(int i = 0; i < m; i++){
+        int u,v;
+        cin >> u >> v;
+        --u; --v;
+        edges[i] = {u,v};
+        scc.add_edge(u,v);
+    }
+
+    // Step 2: find SCCs
+    int C = scc.run();
+    vector<int>& comp = scc.comp;
+
+    // Step 3: build condensation DAG
+    vector< vector<int> > cadj(C), rcadj(C);
+    vector<int> indeg(C,0);
+    vector<vector<bool>> seen(C, vector<bool>(C,false));
+    for(auto &e: edges){
+        int cu = comp[e.first], cv = comp[e.second];
+        if(cu != cv && !seen[cu][cv]){
+            seen[cu][cv] = true;
+            cadj[cu].push_back(cv);
+            rcadj[cv].push_back(cu);
+            indeg[cv]++;
+        }
+    }
+
+    // Step 2B: component sizes
+    vector<int> comp_size(C,0);
+    for(int v = 0; v < n; v++){
+        comp_size[comp[v]]++;
+    }
+
+    // Step 4: topological order of DAG
+    queue<int> q;
+    for(int i = 0; i < C; i++)
+        if(indeg[i] == 0) q.push(i);
+    vector<int> topo;
+    while(!q.empty()){
+        int u = q.front(); q.pop();
+        topo.push_back(u);
+        for(int v: cadj[u]){
+            if(--indeg[v] == 0) q.push(v);
+        }
+    }
+
+    // Step 5 & 6: forward and reverse reachability closures
+    const int MAXC = 1000;
+    vector< bitset<MAXC> > closure(C), rclosure(C);
+    for(int i = 0; i < C; i++){
+        closure[i].set(i);
+        rclosure[i].set(i);
+    }
+    // forward closure in reverse topo
+    for(int i = C-1; i >= 0; i--){
+        int u = topo[i];
+        for(int v: cadj[u])
+            closure[u] |= closure[v];
+    }
+    // reverse closure in reverse topo
+    for(int i = C-1; i >= 0; i--){
+        int u = topo[i];
+        for(int v: rcadj[u])
+            rclosure[u] |= rclosure[v];
+    }
+
+    // Step 7: evaluate each edge
+    int best = 0;
+    vector<int> answer;
+    if(m == 0){
+        // no edges → any single node is best
+        best = 1;
+    } else {
+        for(int i = 0; i < m; i++){
+            int u = edges[i].first, v = edges[i].second;
+            int cu = comp[u], cv = comp[v];
+            int cur_max;
+            if(cu == cv){
+                // no change in SCC
+                cur_max = comp_size[cu];
+            } else {
+                // merged set = intersection of forward from cu and reverse to cv
+                auto mask = closure[cu] & rclosure[cv];
+                int merged_sz = 0, other_max = 0;
+                for(int c = 0; c < C; c++){
+                    if(mask.test(c))
+                        merged_sz += comp_size[c];
+                    else
+                        other_max = max(other_max, comp_size[c]);
+                }
+                cur_max = max(merged_sz, other_max);
+            }
+            if(cur_max > best){
+                best = cur_max;
+                answer.clear();
+                answer.push_back(i+1);
+            } else if(cur_max == best){
+                answer.push_back(i+1);
+            }
+        }
+    }
+
+    // Step 9: output results
+    cout << best << "\n";
+    cout << answer.size() << "\n";
+    if(!answer.empty()){
+        for(int i = 0; i < (int)answer.size(); i++){
+            if(i) cout << " ";
+            cout << answer[i];
+        }
+        cout << "\n";
+    }
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def readints():
+    return map(int, sys.stdin.readline().split())
+
+# Step 1: read input
+n, m = map(int, sys.stdin.readline().split())
+edges = []
+g = [[] for _ in range(n)]
+rg = [[] for _ in range(n)]
+for _ in range(m):
+    u, v = map(int, sys.stdin.readline().split())
+    u -= 1; v -= 1
+    edges.append((u, v))
+    g[u].append(v)
+    rg[v].append(u)
+
+# Step 2: Kosaraju to find SCCs
+visited = [False]*n
+order = []
+
+def dfs1(u):
+    visited[u] = True
+    for w in g[u]:
+        if not visited[w]:
+            dfs1(w)
+    order.append(u)
+
+for i in range(n):
+    if not visited[i]:
+        dfs1(i)
+
+comp = [-1]*n
+cid = 0
+def dfs2(u, cid):
+    comp[u] = cid
+    for w in rg[u]:
+        if comp[w] == -1:
+            dfs2(w, cid)
+
+for u in reversed(order):
+    if comp[u] == -1:
+        dfs2(u, cid)
+        cid += 1
+
+C = cid
+
+# Step 2B: component sizes
+comp_size = [0]*C
+for v in range(n):
+    comp_size[comp[v]] += 1
+
+# Step 3: build condensation DAG and its reverse
+cadj = [set() for _ in range(C)]
+rcadj = [set() for _ in range(C)]
+indeg = [0]*C
+for u, v in edges:
+    cu, cv = comp[u], comp[v]
+    if cu != cv and cv not in cadj[cu]:
+        cadj[cu].add(cv)
+        rcadj[cv].add(cu)
+        indeg[cv] += 1
+
+# Step 4: topological sort (Kahn’s algorithm)
+from collections import deque
+q = deque([i for i in range(C) if indeg[i] == 0])
+topo = []
+while q:
+    u = q.popleft()
+    topo.append(u)
+    for v in cadj[u]:
+        indeg[v] -= 1
+        if indeg[v] == 0:
+            q.append(v)
+
+# Step 5 & 6: compute forward and reverse closures using ints as bitsets
+closure = [0]*C
+rclosure = [0]*C
+for i in range(C):
+    closure[i] = 1 << i
+    rclosure[i] = 1 << i
+
+# forward: process reverse topo
+for u in reversed(topo):
+    for v in cadj[u]:
+        closure[u] |= closure[v]
+
+# reverse: process reverse topo on rcadj
+for u in reversed(topo):
+    for v in rcadj[u]:
+        rclosure[u] |= rclosure[v]
+
+# Step 7: evaluate each edge
+best = 0
+ans = []
+if m == 0:
+    best = 1
+else:
+    for idx, (u, v) in enumerate(edges, start=1):
+        cu, cv = comp[u], comp[v]
+        if cu == cv:
+            cur = comp_size[cu]
+        else:
+            mask = closure[cu] & rclosure[cv]
+            merged_sz = 0
+            other_max = 0
+            # iterate over components
+            for c in range(C):
+                if (mask >> c) & 1:
+                    merged_sz += comp_size[c]
+                else:
+                    other_max = max(other_max, comp_size[c])
+            cur = max(merged_sz, other_max)
+        if cur > best:
+            best = cur
+            ans = [idx]
+        elif cur == best:
+            ans.append(idx)
+
+# Step 9: output
+print(best)
+print(len(ans))
+if ans:
+    print(*ans)
+```
+
+Explanation Comments in Code  
+- We first decompose the original graph into SCCs in O(n+m).  
+- We build a smaller DAG of components and topologically sort it in O(C + #dag_edges).  
+- We compute reachability closures in O(C²/word_size) using bitsets or Python integers.  
+- Finally, for each of the m edges we compute the effect of adding its reverse in O(C) by intersecting two bitsets and scanning components.  
+This runs comfortably within the constraints (n≤1000, m≤20000) under 1 second.

@@ -1,0 +1,212 @@
+1. Abridged Problem Statement
+
+Given an undirected tree of N cities (nodes) and a parameter B, partition the cities into K “provinces” (each province is a connected subset of nodes) so that every province has size between B and 3 B inclusive. Each province must have a designated capital city with the following reachability rule: for any city u in province P, the unique path from u to P’s capital may use cities outside P only at the final step (all intermediate cities on that path must lie inside P). Output any valid partition: first K, then an array of length N giving each city’s province index (1…K), then a list of the K capitals. If no valid partition exists, output 0.
+
+2. Detailed Editorial
+
+Overview  
+We will root the tree arbitrarily (say at node 1) and do a single post‐order DFS. We maintain:
+
+  • A global stack st that accumulates nodes in the current DFS subtree that are not yet assigned to any province.  
+  • A list of capitals.  
+  • An array comp[1..N] to record each node’s province index.
+
+As we return from each child in the DFS, we learn how many unassigned nodes that child subtree contributed (cnt_v). We add that to our local counter cnt_here. Whenever cnt_here ≥ B at node u, we can form a new province containing exactly those cnt_here nodes currently at the top of st: we pop them off, label them with a new province index, and record u as that province’s capital. Popping resets cnt_here to 0, so we never form an oversized province at u. After processing all children of u, we push u itself onto st and return cnt_here+1 to our parent.
+
+At the very end (back at the root), there may still be fewer than B nodes left in st. We take those leftovers and assign them to the last province we created (if none was created at all, we declare a single province with the root as capital). Because leftovers < B and the last province had size ≥ B and ≤ 2B–1, the merged size stays ≤3B–1.
+
+Why provinces are connected  
+Every time we cut off a batch of nodes at u, those nodes are exactly the ones added to st during the complete exploration of u’s subtree (after we returned from all children that didn’t cause earlier cuts). All of them lie in u’s subtree, and in the order they were finished; popping them induces a connected subgraph whose highest node is u. We then pick u as their capital, so the path rule is satisfied: any city in that batch goes up only through its ancestors in the batch to reach u.
+
+Bounds on province size  
+– Whenever we pop: cnt_here was in [B, 2B–1], because if it ever reached ≥2B we would have popped as soon as it hit ≥B and reset cnt_here to 0, then accumulated at most B–1 more before the next check.  
+– The final leftover batch is < B, merged into a province of size in [B,2B–1], so the result is ≤3B–2 (hence ≤3B).
+
+Complexity  
+Each node is pushed and popped from st at most once. DFS is O(N). Memory is O(N).
+
+3. Provided C++ Solution with Detailed Line-by-Line Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overloaded operators for convenient I/O of vectors/pairs
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, B;
+vector<vector<int>> adj;
+
+// Read input: N, B and then N–1 edges (1-based)
+void read() {
+    cin >> n >> B;
+    adj.assign(n, {});
+    for (int i = 1; i < n; i++) {
+        int u, v;
+        cin >> u >> v;
+        u--, v--;
+        adj[u].push_back(v);
+        adj[v].push_back(u);
+    }
+}
+
+// DFS returns the number of currently unassigned nodes in u's subtree.
+// 'comp' will get filled with province indices, 'capitals' records capitals,
+// and 'st' is the stack of unassigned nodes.
+int dfs(int u, int parent,
+        vector<int>& comp,
+        vector<int>& capitals,
+        vector<int>& st) {
+    int cnt_here = 0;  // count of unassigned nodes collected so far in this subtree
+
+    // Process each child in post-order
+    for (int v: adj[u]) {
+        if (v == parent) continue;
+        // Recursive return: how many nodes in v's subtree are still unassigned
+        cnt_here += dfs(v, u, comp, capitals, st);
+
+        // If we have accumulated at least B, we form a province right here at u
+        if (cnt_here >= B) {
+            capitals.push_back(u + 1);        // record u as capital (1-based)
+            int province_id = capitals.size();
+            // Pop exactly cnt_here nodes from 'st' and assign them to this new province
+            while (cnt_here--) {
+                int node = st.back();
+                st.pop_back();
+                comp[node] = province_id;
+            }
+            // Reset cnt_here = 0 because we've just assigned all those nodes
+        }
+    }
+
+    // After children, push u itself as unassigned (it may go into an ancestor's province)
+    st.push_back(u);
+    return cnt_here + 1;  // one more unassigned node (u itself)
+}
+
+void solve() {
+    vector<int> comp(n, 0), capitals, st;
+
+    // Run DFS from root = 0
+    dfs(0, -1, comp, capitals, st);
+
+    // If we never created any province, force one at node 1
+    if (capitals.empty()) {
+        capitals.push_back(1);
+    }
+
+    // Whatever remains in st (< B nodes) go into the last province
+    int last_id = capitals.size();
+    while (!st.empty()) {
+        comp[st.back()] = last_id;
+        st.pop_back();
+    }
+
+    // Output results
+    cout << capitals.size() << "\n";
+    cout << comp << "\n";
+    cout << capitals << "\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+
+```python
+import sys
+sys.setrecursionlimit(20000)
+
+def main():
+    data = sys.stdin.read().split()
+    n, B = map(int, data[:2])
+    edges = list(map(int, data[2:]))
+
+    # Build adjacency list
+    adj = [[] for _ in range(n)]
+    ptr = 0
+    for _ in range(n-1):
+        u = edges[ptr] - 1
+        v = edges[ptr+1] - 1
+        ptr += 2
+        adj[u].append(v)
+        adj[v].append(u)
+
+    comp = [0]*n         # province index for each node
+    capitals = []        # list of capitals (1-based)
+    stack = []           # holds unassigned nodes during DFS
+
+    # DFS returns how many nodes in this subtree are still unassigned
+    def dfs(u, parent):
+        cnt_here = 0
+        # Process children first (post-order)
+        for v in adj[u]:
+            if v == parent:
+                continue
+            cnt_here += dfs(v, u)
+            # If we reach B unassigned nodes, form a province here at u
+            if cnt_here >= B:
+                capitals.append(u+1)      # record capital as 1-based
+                pid = len(capitals)       # new province index
+                # Pop exactly cnt_here nodes from stack and assign them
+                for _ in range(cnt_here):
+                    x = stack.pop()
+                    comp[x] = pid
+                cnt_here = 0
+        # After children, add u as unassigned
+        stack.append(u)
+        return cnt_here + 1
+
+    # Run DFS from root 0
+    dfs(0, -1)
+
+    # If no province was formed, create one at node 1
+    if not capitals:
+        capitals.append(1)
+
+    # Assign leftovers to last province
+    last = len(capitals)
+    while stack:
+        comp[stack.pop()] = last
+
+    # Print answer
+    print(last)
+    print(' '.join(map(str, comp)))
+    print(' '.join(map(str, capitals)))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+
+- Root the tree at node 1, do post-order DFS.  
+- Maintain a stack of “unassigned” nodes as we explore.  
+- Each time at node u the accumulated unassigned count ≥ B, pop exactly that many from the stack to form a province with capital = u.  
+- Push u onto the stack after handling children and return unassigned count +1 to parent.  
+- After DFS, merge any leftover (< B) nodes into the last province (or create one if none).  
+- Each province ends up connected, size in [B,3B], and the capital-reachability condition is satisfied. Complexity O(N).

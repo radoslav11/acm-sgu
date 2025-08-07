@@ -1,0 +1,395 @@
+1. Abridged Problem Statement  
+Given a directed graph of n cities and m one-way roads (edges), you may choose at most one of these roads and make it two-way (i.e. add its reverse). Define the “degree of development” as the size of the largest strongly connected subset of cities (i.e. largest strongly connected component).    
+• Compute the maximum degree of development w achievable by upgrading at most one road.  
+• List all road indices which, when made two-way, achieve this maximum w.  
+
+2. Detailed Editorial  
+
+Overview  
+We must consider, for each original edge e = (u→v), what happens if we add the reverse edge v→u. That additional edge can merge multiple strongly connected components (SCCs) in the condensation DAG. We need to compute the resulting largest SCC size for each choice, pick the maximum size w, and report all edges e achieving w.
+
+Step A: Compute SCCs of the original graph  
+– Run Kosaraju (or Tarjan) to label each vertex with its SCC index comp[v], total C SCCs.  
+– Record comp_size[c] = number of original vertices in SCC c.  
+– Build the condensation DAG of these C components: for each original edge (u→v) if comp[u]≠comp[v], add a DAG edge comp[u]→comp[v]. Remove duplicates.
+
+Step B: Topological order and reachability closure  
+– Compute a topological order topo of the DAG.  
+– Build forward reachability closure[f][g]: bitset of components reachable from f (including f).  
+  Process in reverse topo: for u in reverse(topo),  
+    closure[u] = union over closure[v] for all v in adj[u], plus bit u itself.  
+– Similarly build reverse reachability closure_rev[g][f]: those that can reach g. This is just the forward closure on the reversed DAG.
+
+Step C: Evaluate each edge  
+For each original road i: u→v  
+  let cu = comp[u], cv = comp[v].  
+  If cu==cv, upgrading does nothing; the largest SCC remains the size comp_size[cu].  
+  Else:  
+    Merged components = { c : closure[cu][c]=1 AND closure_rev[cv][c]=1 }.  
+    merged_size = sum(comp_size[c] for c in Merged components)  
+    best_other = maximum comp_size[d] among d not in Merged components  
+    current_max = max(merged_size, best_other)  
+  Track the global maximum w and collect all edges i for which current_max = w.
+
+Complexities  
+– SCC (Kosaraju): O(n+m)  
+– Building DAG & topo: O(C + #dag_edges) ≤ O(n + m)  
+– Computing closure with bitsets: O(C²/w)  
+– Loop over m edges each in O(C + C) = O(m·C) ≤ 2·10^7 in worst case. Acceptable for n≤1000, m≤20000.
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Class to find strongly connected components (Kosaraju)
+class StronglyConnectedComponents {
+  private:
+    vector<bool> visited;              // visited flag for the first DFS
+
+    // First DFS: build a reverse topological order in top_sort
+    void dfs1(int u) {
+        visited[u] = true;
+        for (int v : adj[u]) {
+            if (!visited[v])
+                dfs1(v);
+        }
+        top_sort.push_back(u);  // post-order
+    }
+
+    // Second DFS on the reversed graph: assign component IDs
+    void dfs2(int u) {
+        for (int v : radj[u]) {
+            if (comp[v] == -1) {
+                comp[v] = comp[u];  // same component
+                dfs2(v);
+            }
+        }
+    }
+
+  public:
+    int n;                           // number of vertices
+    vector<vector<int>> adj, radj;   // adjacency and reverse adjacency
+    vector<int> comp;                // component assignment for each vertex
+    vector<int> comp_ids;            // list of component IDs found
+    vector<int> top_sort;            // vertices in postorder of dfs1
+
+    StronglyConnectedComponents() {}
+    StronglyConnectedComponents(int _n) { init(_n); }
+
+    // Add directed edge u->v
+    void add_edge(int u, int v) {
+        adj[u].push_back(v);
+        radj[v].push_back(u);
+    }
+
+    // Initialize for a new graph of size _n
+    void init(int _n) {
+        n = _n;
+        comp_ids.clear();
+        top_sort.clear();
+        adj.assign(n, {});
+        radj.assign(n, {});
+    }
+
+    // Main routine: find all SCCs
+    void find_components() {
+        comp.assign(n, -1);
+        visited.assign(n, false);
+        // 1) Order vertices by finish time
+        for (int i = 0; i < n; i++) {
+            if (!visited[i]) dfs1(i);
+        }
+        // 2) Process in reverse postorder on the reversed graph
+        reverse(top_sort.begin(), top_sort.end());
+        for (int u : top_sort) {
+            if (comp[u] == -1) {
+                comp[u] = comp_ids.size();     // new component ID
+                comp_ids.push_back(comp[u]);
+                dfs2(u);
+            }
+        }
+    }
+};
+
+int n, m;
+vector<pair<int,int>> edges;   // original edges (0-based)
+StronglyConnectedComponents SCC;
+
+// Read input
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    SCC.init(n);
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        u--, v--;
+        edges[i] = {u, v};
+        SCC.add_edge(u, v);
+    }
+}
+
+void solve() {
+    // 1) Compute SCCs
+    SCC.find_components();
+    int C = SCC.comp_ids.size();  // number of components
+
+    // 2) Build condensation DAG
+    vector<vector<bool>> used(C, vector<bool>(C, false));
+    vector<vector<int>> cadj(C);
+    vector<int> indegree(C, 0);
+    for (auto &e : edges) {
+        int cu = SCC.comp[e.first], cv = SCC.comp[e.second];
+        if (cu != cv && !used[cu][cv]) {
+            used[cu][cv] = true;
+            cadj[cu].push_back(cv);
+            indegree[cv]++;
+        }
+    }
+
+    // 3) Record sizes of each component
+    vector<int> comp_size(C, 0);
+    for (int v = 0; v < n; v++)
+        comp_size[SCC.comp[v]]++;
+
+    // 4) Topological sort of the DAG
+    queue<int> q;
+    for (int i = 0; i < C; i++)
+        if (indegree[i] == 0) q.push(i);
+
+    vector<int> topo;
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        topo.push_back(u);
+        for (int w : cadj[u]) {
+            if (--indegree[w] == 0)
+                q.push(w);
+        }
+    }
+
+    // 5) Compute forward reachability closure with bitsets
+    vector<bitset<1024>> closure(C);
+    for (int i = 0; i < C; i++)
+        closure[i].set(i);   // each reaches itself
+    // process in reverse topo so that children are filled first
+    for (int i = C - 1; i >= 0; i--) {
+        int u = topo[i];
+        for (int v : cadj[u])
+            closure[u] |= closure[v];
+    }
+
+    // 6) Also compute reverse closure (who can reach you)
+    vector<vector<int>> rcadj(C);
+    for (int u = 0; u < C; u++)
+        for (int v : cadj[u])
+            rcadj[v].push_back(u);
+
+    vector<bitset<1024>> rclosure(C);
+    for (int i = 0; i < C; i++)
+        rclosure[i].set(i);
+    for (int i = C - 1; i >= 0; i--) {
+        int u = topo[i];
+        for (int v : rcadj[u])
+            rclosure[u] |= rclosure[v];
+    }
+
+    int best = 0;
+    vector<int> ans_edges;
+
+    // 7) Try each original edge
+    if (m == 0) {
+        // Special case: no edges, best we can do is pick any single city
+        best = 1;
+    } else {
+        for (int i = 0; i < m; i++) {
+            auto [u, v] = edges[i];
+            int cu = SCC.comp[u], cv = SCC.comp[v];
+
+            int current_max;
+            if (cu == cv) {
+                // No change
+                current_max = comp_size[cu];
+            } else {
+                // Components that become one big SCC
+                bitset<1024> merged = closure[cu] & rclosure[cv];
+                int merged_size = 0, other_max = 0;
+                for (int c = 0; c < C; c++) {
+                    if (merged.test(c))
+                        merged_size += comp_size[c];
+                    else
+                        other_max = max(other_max, comp_size[c]);
+                }
+                current_max = max(merged_size, other_max);
+            }
+            // Track the global maximum
+            if (current_max > best) {
+                best = current_max;
+                ans_edges.clear();
+                ans_edges.push_back(i+1);
+            } else if (current_max == best) {
+                ans_edges.push_back(i+1);
+            }
+        }
+    }
+
+    // 8) Output
+    cout << best << "\n";
+    cout << ans_edges.size() << "\n";
+    for (int i = 0; i < (int)ans_edges.size(); i++) {
+        if (i) cout << " ";
+        cout << ans_edges[i];
+    }
+    if (!ans_edges.empty()) cout << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def readints():
+    return map(int, sys.stdin.readline().split())
+
+# 1) Read input
+n, m = map(int, sys.stdin.readline().split())
+edges = []
+g = [[] for _ in range(n)]
+rg = [[] for _ in range(n)]
+for _ in range(m):
+    u, v = map(int, sys.stdin.readline().split())
+    u -= 1; v -= 1
+    edges.append((u, v))
+    g[u].append(v)
+    rg[v].append(u)
+
+# 2) Kosaraju to find SCCs
+visited = [False]*n
+order = []
+def dfs1(u):
+    visited[u] = True
+    for w in g[u]:
+        if not visited[w]:
+            dfs1(w)
+    order.append(u)
+
+for i in range(n):
+    if not visited[i]:
+        dfs1(i)
+
+comp = [-1]*n
+cid = 0
+def dfs2(u, cid):
+    comp[u] = cid
+    for w in rg[u]:
+        if comp[w] == -1:
+            dfs2(w, cid)
+
+# process in reverse finishing order
+for u in reversed(order):
+    if comp[u] == -1:
+        dfs2(u, cid)
+        cid += 1
+
+C = cid  # number of components
+
+# 3) comp_size and build DAG of components
+comp_size = [0]*C
+for v in range(n):
+    comp_size[comp[v]] += 1
+
+cadj = [set() for _ in range(C)]
+rcadj = [set() for _ in range(C)]
+for u, v in edges:
+    cu, cv = comp[u], comp[v]
+    if cu != cv:
+        cadj[cu].add(cv)
+        rcadj[cv].add(cu)
+
+# 4) Topological sort of the DAG (Kahn’s algorithm)
+indeg = [0]*C
+for u in range(C):
+    for v in cadj[u]:
+        indeg[v] += 1
+
+from collections import deque
+q = deque(i for i in range(C) if indeg[i] == 0)
+topo = []
+while q:
+    u = q.popleft()
+    topo.append(u)
+    for v in cadj[u]:
+        indeg[v] -= 1
+        if indeg[v] == 0:
+            q.append(v)
+
+# 5) Forward and reverse reachability with Python ints as bitsets
+closure = [0]*C
+rclosure = [0]*C
+# each comp can reach itself
+for i in range(C):
+    closure[i] = 1 << i
+    rclosure[i] = 1 << i
+
+# forward closure: process reverse topo
+for u in reversed(topo):
+    for v in cadj[u]:
+        closure[u] |= closure[v]
+
+# reverse closure: on reversed DAG
+for u in reversed(topo):
+    for v in rcadj[u]:
+        rclosure[u] |= rclosure[v]
+
+# 6) Evaluate each edge
+best = 0
+ans = []
+
+if m == 0:
+    # no edges: best is any single node
+    best = 1
+else:
+    for idx, (u, v) in enumerate(edges, start=1):
+        cu, cv = comp[u], comp[v]
+        if cu == cv:
+            cur = comp_size[cu]
+        else:
+            # components that merge are those c with
+            # bit c set in both closure[cu] and rclosure[cv]
+            merged_mask = closure[cu] & rclosure[cv]
+            merged_size = 0
+            other_max = 0
+            for c in range(C):
+                if (merged_mask >> c) & 1:
+                    merged_size += comp_size[c]
+                else:
+                    other_max = max(other_max, comp_size[c])
+            cur = max(merged_size, other_max)
+        if cur > best:
+            best = cur
+            ans = [idx]
+        elif cur == best:
+            ans.append(idx)
+
+# 7) Output result
+print(best)
+print(len(ans))
+if ans:
+    print(*ans)
+```
+
+5. Compressed Editorial  
+– Find SCCs, form condensation DAG.  
+– Compute forward reachability closure and reverse closure on the DAG via bitsets in topological order.  
+– For each original edge (u→v), if it links different components cu→cv, merging occurs on all c where cu→…→c→…→cv. Sum their sizes, compare with the largest unaffected component. If cu=cv, no change.  
+– Track the maximum resulting SCC size w and list all edges achieving w.
