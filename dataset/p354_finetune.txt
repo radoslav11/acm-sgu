@@ -1,0 +1,346 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+354. Just Matrix
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+This task is not about Berland or Beerland troubles, roads or flights. There will be no boring coins. This task is about simple square matrix.
+
+Numbers from 1 to n2 were written down in nx n square matrix A. Each number was written exactly once. After that for each number the pair topi,j and lefti,j was written. topi,j is the number of elements in column j bigger than Ai,j and positioned to the top from Ai,j. lefti,j is the number of elements in the row i bigger than Ai,j and positioned to the left from Ai,j.
+
+You are given matrices top and left. Your task is to find any possible matrix A fulfilling the requirements of the problem.
+
+Input
+The first line of the input contains integer number n (1 ≤ n ≤ 600). Further matrices top and left are written, each in the form of n lines of n non-negative integer numbers. The matrices are separated by the empty line. Numbers in both matrices are not bigger than n.
+
+Output
+Write to the output matrix A in the format similar to the input data. If there are several solutions, you can choose any of them. If there is no solution, write to the output just one number 0.
+
+Example(s)
+sample input
+sample output
+3
+0 0 0 
+0 0 0
+0 0 2
+
+0 0 0
+0 1 0
+0 1 2
+1 2 6
+5 3 7
+9 8 4
+
+<|response|>
+1. Abridged problem statement  
+You are given an integer n and two n×n non‐negative integer matrices top and left. There was an unknown permutation of numbers 1…n² placed into an n×n matrix A so that for each cell (i,j):  
+  • left[i][j] = the count of entries in row i to the left of (i,j) that are larger than A[i][j],  
+  • top[i][j]  = the count of entries in column j above (i,j) that are larger than A[i][j].  
+Reconstruct any valid A or report 0 if no such A exists.
+
+2. Key observations  
+- Feasibility check: In row i, position j has at most j cells to its left, so left[i][j] ≤ j.  Similarly, top[i][j] ≤ i.  If violated, answer is 0.  
+- A row’s sequence of “left counts” is exactly the Lehmer code (inversion vector) of the permutation of that row’s values.  Likewise each column’s “top counts” is a Lehmer code.  
+- From a Lehmer code of length n you can reconstruct the relative ordering of n elements by maintaining a multiset of free ranks {1…n}, repeatedly taking the (code[pos]+1)-th smallest unused rank.  That yields an ordering from smallest value to largest.  
+- Enforce these orderings as a directed chain: if in some row the k-th smallest cell (by value) is u and the (k+1)-th smallest is v, add edge u → v.  Do the same for each column.  
+- The union of all such edges is a DAG on n² nodes.  A topological ordering of that DAG assigns distinct labels 1…n² consistent with all row/column constraints.  If the graph has a cycle, print 0.
+
+3. Full solution approach  
+a) Read n, the matrices top and left.  
+b) Check for any (i,j) that left[i][j] > j or top[i][j] > i.  If so, print 0 and exit.  
+c) Number each cell by a unique node id = i·n + j (0 ≤ id < n²).  Prepare adjacency list adj of size n².  
+d) Define a Fenwick‐tree (BIT) structure over [1…n] supporting  
+   - point updates,  
+   - prefix‐sum queries,  
+   - find_kth(k): the smallest index p with prefix_sum(p) ≥ k.  
+e) For each row i:  
+   • Initialize Fenwick so every index 1…n has value 1 (n free ranks).  
+   • Let code[j] = left[i][j].  Process j from n−1 down to 0:  
+       – want the (code[j]+1)-th free rank → p = find_kth(code[j]+1).  
+       – set vals[p−1] = node_id(i,j).  
+       – update Fenwick at p by −1 (mark rank used).  
+   • Now vals[0…n−1] lists the row’s nodes in increasing A-value order.  For k=0…n−2 add edge vals[k] → vals[k+1].  
+f) For each column j: do the same using code[i] = top[i][j], mapping node_id(i,j), and add chain edges.  
+g) Compute indegree[] for all nodes, then run Kahn’s algorithm:  
+   • enqueue all nodes of indegree 0, repeatedly pop u, assign A[i][j] = next_label++ to cell u, decrement indegree of its neighbors, enqueue any that drop to 0.  
+h) If you assigned fewer than n² labels (cycle detected), print 0; otherwise print the matrix A.
+
+Complexity: O(n² log n) for decoding all rows/columns + O(n²) for topo sort.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Fenwick (BIT) for 1..n
+struct Fenwick {
+    int n;
+    vector<int> f;
+    // initialize tree of size n
+    void init(int _n) {
+        n = _n;
+        f.assign(n+1, 0);
+    }
+    // add v at position i (1-based)
+    void update(int i, int v) {
+        for(; i <= n; i += i & -i)
+            f[i] += v;
+    }
+    // sum of [1..i]
+    int query(int i) const {
+        int s = 0;
+        for(; i > 0; i -= i & -i)
+            s += f[i];
+        return s;
+    }
+    // find smallest idx in [1..n] with prefix_sum >= k
+    int find_kth(int k) const {
+        int idx = 0, bit = 1 << (31 - __builtin_clz(n));
+        for(; bit; bit >>= 1) {
+            int nxt = idx + bit;
+            if(nxt <= n && f[nxt] < k) {
+                k -= f[nxt];
+                idx = nxt;
+            }
+        }
+        return idx + 1;
+    }
+};
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    if(!(cin >> n)) return 0;
+    vector<vector<int>> top(n, vector<int>(n)), leftc(n, vector<int>(n));
+    for(int i = 0; i < n; i++)
+        for(int j = 0; j < n; j++)
+            cin >> top[i][j];
+    for(int i = 0; i < n; i++)
+        for(int j = 0; j < n; j++)
+            cin >> leftc[i][j];
+
+    // 1) basic feasibility
+    for(int i = 0; i < n; i++){
+        for(int j = 0; j < n; j++){
+            if(leftc[i][j] > j || top[i][j] > i) {
+                cout << 0 << "\n";
+                return 0;
+            }
+        }
+    }
+
+    int N = n*n;
+    vector<vector<int>> adj(N);
+    Fenwick fenw;
+    fenw.init(n);
+
+    // helper to map (i,j) -> node id
+    auto nodeId = [&](int i, int j){
+        return i * n + j;
+    };
+
+    // decode a Lehmer code for a row or column
+    // code[0..n-1], and map positions -> node ids via getNode(pos)
+    auto process = [&](const vector<int>& code, auto getNode){
+        // reset Fenwick: all n ranks are free
+        for(int x = 1; x <= n; x++)
+            fenw.update(x, +1);
+        vector<int> vals(n);
+        // assign from right to left
+        for(int pos = n-1; pos >= 0; pos--){
+            int cnt = code[pos];
+            int rank = fenw.find_kth(cnt + 1);
+            vals[rank - 1] = getNode(pos);
+            fenw.update(rank, -1);
+        }
+        // chain edges: vals[k] -> vals[k+1]
+        for(int k = 0; k + 1 < n; k++){
+            adj[ vals[k] ].push_back( vals[k+1] );
+        }
+    };
+
+    // 2) rows
+    for(int i = 0; i < n; i++){
+        process(leftc[i], [&](int pos){
+            return nodeId(i, pos);
+        });
+    }
+    // 3) columns
+    for(int j = 0; j < n; j++){
+        vector<int> colCode(n);
+        for(int i = 0; i < n; i++)
+            colCode[i] = top[i][j];
+        process(colCode, [&](int pos){
+            return nodeId(pos, j);
+        });
+    }
+
+    // 4) topo sort Kahn's algorithm
+    vector<int> indeg(N, 0);
+    for(int u = 0; u < N; u++)
+        for(int v: adj[u])
+            indeg[v]++;
+
+    queue<int> q;
+    for(int u = 0; u < N; u++)
+        if(indeg[u] == 0)
+            q.push(u);
+
+    vector<int> Aflat(N);
+    int label = 1;
+    while(!q.empty()){
+        int u = q.front(); q.pop();
+        Aflat[u] = label++;
+        for(int v: adj[u]){
+            if(--indeg[v] == 0)
+                q.push(v);
+        }
+    }
+    if(label != N+1){
+        // cycle detected
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // 5) print matrix
+    for(int i = 0; i < n; i++){
+        for(int j = 0; j < n; j++){
+            cout << Aflat[nodeId(i,j)] << (j+1<n? ' ':'\n');
+        }
+    }
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+from collections import deque
+
+def main():
+    data = sys.stdin.read().split()
+    if not data: 
+        return
+    it = iter(data)
+    n = int(next(it))
+
+    # Read top and left matrices
+    top = [ [int(next(it)) for _ in range(n)] for _ in range(n) ]
+    leftc = [ [int(next(it)) for _ in range(n)] for _ in range(n) ]
+
+    # 1) Feasibility check
+    for i in range(n):
+        for j in range(n):
+            if leftc[i][j] > j or top[i][j] > i:
+                print(0)
+                return
+
+    # Prepare adjacency for n^2 nodes
+    N = n * n
+    adj = [[] for _ in range(N)]
+    indeg = [0] * N
+
+    # Fenwick (1-based) supporting point update and prefix sums
+    class Fenw:
+        def __init__(self, n):
+            self.n = n
+            self.f = [0] * (n + 1)
+        def update(self, i, v):
+            while i <= self.n:
+                self.f[i] += v
+                i += i & -i
+        def query(self, i):
+            s = 0
+            while i > 0:
+                s += self.f[i]
+                i -= i & -i
+            return s
+        # find smallest idx with prefix_sum >= k
+        def find_kth(self, k):
+            idx = 0
+            bit = 1 << (self.n.bit_length())  # cover up to n
+            while bit:
+                nxt = idx + bit
+                if nxt <= self.n and self.f[nxt] < k:
+                    k -= self.f[nxt]
+                    idx = nxt
+                bit >>= 1
+            return idx + 1
+
+    fenw = Fenw(n)
+
+    # map (i,j) to node id
+    def node_id(i,j):
+        return i * n + j
+
+    # decode a Lehmer code array of length n
+    # getNode(pos) returns the node_id for that position
+    def decode_and_chain(code, getNode):
+        # reset Fenwick: mark all ranks [1..n] free
+        for x in range(1, n+1):
+            fenw.update(x, 1)
+        vals = [0]*n
+        # assign from rightmost position down to 0
+        for pos in range(n-1, -1, -1):
+            cnt = code[pos]
+            rank = fenw.find_kth(cnt + 1)
+            vals[rank - 1] = getNode(pos)
+            fenw.update(rank, -1)
+        # add chain edges
+        for k in range(n-1):
+            u = vals[k]
+            v = vals[k+1]
+            adj[u].append(v)
+            indeg[v] += 1
+
+    # 2) process rows
+    for i in range(n):
+        decode_and_chain(leftc[i], lambda pos, i=i: node_id(i, pos))
+
+    # 3) process columns
+    for j in range(n):
+        col_code = [ top[i][j] for i in range(n) ]
+        decode_and_chain(col_code, lambda pos, j=j: node_id(pos, j))
+
+    # 4) Kahn's algorithm for topo sort
+    q = deque(u for u in range(N) if indeg[u] == 0)
+    Aflat = [0] * N
+    label = 1
+    while q:
+        u = q.popleft()
+        Aflat[u] = label
+        label += 1
+        for v in adj[u]:
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                q.append(v)
+
+    # if cycle detected
+    if label != N+1:
+        print(0)
+        return
+
+    # 5) output the matrix
+    out = []
+    for i in range(n):
+        row = Aflat[i*n:(i+1)*n]
+        out.append(" ".join(map(str, row)))
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of the main steps:  
+- We interpret each row’s `left` counts (and each column’s `top` counts) as a Lehmer code, decode it via a Fenwick‐tree to recover the relative ordering of the n cells in that line.  
+- We link consecutive cells in that order by directed edges, enforcing “smaller value → larger value.”  
+- A global topological sort of all n² cells yields a linear ordering to assign labels 1…n².  
+- Any violation (impossible inversion count or cycle) forces us to print 0.

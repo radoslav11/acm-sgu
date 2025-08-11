@@ -1,0 +1,203 @@
+1. Abridged Problem Statement  
+Given 3N labeled students (numbered 1…3N), we want to count the number of ways to split them into N unordered teams of 3 (teams themselves are unlabeled, and within each team the order does not matter), subject to the constraint that none of the chosen teams is one of K forbidden triples.  N≤1000, K≤20.  Output the exact count.
+
+2. Detailed Editorial  
+
+Let total(N) be the number of ways to partition 3N items into N unlabeled triples.  It is  
+  total(N) = (3N)!  / ( (3!)^N · N! ).  
+
+We have a set F of K forbidden triples.  We wish to count partitions that include *no* forbidden triple.  By the principle of inclusion–exclusion, if we let for any subset S⊆F the quantity  
+  ways(S) = number of partitions that *do* include every triple of S  
+(only nonzero if the triples in S are disjoint), then the answer is  
+  Σ_{S⊆F}  (–1)^{|S|} · ways(S).  
+
+If |S|=t and its t triples are disjoint, those triples cover 3t distinct students, so the remaining 3(N–t) students can be arbitrarily partitioned into N–t triples.  Hence  
+  ways(S) = (3(N–t))!  / ( (3!)^{N–t} · (N–t)! ).  
+
+Summing over all 2^K subsets S (and dropping those that overlap), we get a direct inclusion–exclusion.  
+Because K≤20, 2^K is about 1 048 576, which is feasible.  Precompute factorials up to 3N, and powers of 6 up to N, so each term can be evaluated in O(1) big-integer operations.  To generate the valid subsets S and keep track of overlaps efficiently, we do a backtracking over the K forbidden triples, maintaining a “used” marker for each student to detect conflicts, and accumulate a coefficient coef[cnt] = Σ_{S:|S|·3=cnt} (–1)^{|S|}.  Finally, answer = Σ_{cnt} coef[cnt] · (3N–cnt)! / (6^{N–cnt/3} · (N–cnt/3)!).
+
+3. Provided C++ Solution (with detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+#include <boost/multiprecision/cpp_int.hpp>
+using namespace std;
+using BigInt = boost::multiprecision::cpp_int;
+
+// Global containers (to avoid passing by reference everywhere)
+int N, K;
+vector<array<int,3>> forbidden;   // list of forbidden triples
+vector<bool> used;                // marks which students are used in current subset
+vector<int> coef;                 // coef[cnt] accumulates inclusion–exclusion sign sums
+vector<BigInt> fact;              // factorials up to 3N
+vector<BigInt> power6;            // powers of 6 up to N
+
+// Recursively choose a subset of forbidden triples
+// pos = current index in forbidden[]
+// cnt = total number of students covered so far = 3 * (# of chosen triples)
+// sign = (+1) or (–1) depending on parity of chosen triples
+void backtrack(int pos, int cnt, int sign) {
+    if (pos == K) {
+        // we've decided for every triple whether to include it
+        coef[cnt] += sign;
+        return;
+    }
+    // Option 1: skip forbidden[pos]
+    backtrack(pos + 1, cnt, sign);
+
+    // Option 2: include forbidden[pos], if it doesn't overlap
+    bool conflict = false;
+    array<int,3> &tri = forbidden[pos];
+    vector<int> marked;  // track which students we mark, to undo later
+    for (int x: tri) {
+        if (used[x]) { conflict = true; break; }
+        used[x] = true;
+        marked.push_back(x);
+    }
+    if (!conflict) {
+        // no overlap: we can safely include this triple
+        backtrack(pos + 1, cnt + 3, -sign);
+    }
+    // undo marks
+    for (int x: marked) {
+        used[x] = false;
+    }
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Read input
+    cin >> N >> K;
+    forbidden.resize(K);
+    for (int i = 0; i < K; i++) {
+        cin >> forbidden[i][0]
+            >> forbidden[i][1]
+            >> forbidden[i][2];
+        // convert to 0-based for easy indexing
+        forbidden[i][0]--;
+        forbidden[i][1]--;
+        forbidden[i][2]--;
+    }
+
+    // Prepare space
+    used.assign(3*N, false);
+    coef.assign(3*N + 1, 0);
+
+    // Precompute factorials up to 3N
+    fact.assign(3*N + 1, 1);
+    for (int i = 1; i <= 3*N; i++) {
+        fact[i] = fact[i-1] * i;
+    }
+    // Precompute powers of 6 up to N
+    power6.assign(N + 1, 1);
+    for (int i = 1; i <= N; i++) {
+        power6[i] = power6[i-1] * 6;
+    }
+
+    // Build coef[cnt] via inclusion–exclusion recursion
+    backtrack(0, 0, +1);
+
+    // Sum up the final answer
+    BigInt answer = 0;
+    for (int cnt = 0; cnt <= 3*N; cnt++) {
+        if (coef[cnt] == 0) continue;
+        // cnt must be multiple of 3, let t = cnt/3
+        int t = cnt / 3;
+        // ways to partition remaining 3(N–t) students:
+        // (3(N–t))! / (6^(N–t) * (N–t)!)
+        BigInt ways = fact[3*(N-t)];
+        ways /= (power6[N-t] * fact[N-t]);
+        // add with sign coef[cnt]
+        answer += BigInt(coef[cnt]) * ways;
+    }
+
+    // Output
+    cout << answer << "\n";
+    return 0;
+}
+```
+
+4. Python Solution (with detailed comments)
+
+```python
+import sys
+sys.set_int_max_str_digits(100000)  # allow very large ints if Python 3.11+
+
+def main():
+    # Read input: N=number of teams, K=number of forbidden triples
+    n, k = map(int, sys.stdin.readline().split())
+    triplets = [tuple(map(int, sys.stdin.readline().split())) for _ in range(k)]
+
+    # Precompute factorials[0..3n] and powers of 6 up to n
+    factorial = [1] * (3*n + 1)
+    power6 = [1] * (n + 1)
+    for i in range(1, 3*n + 1):
+        factorial[i] = factorial[i - 1] * i
+    for i in range(1, n + 1):
+        power6[i] = power6[i - 1] * 6
+
+    # 'used' marks which student indices (0-based) are already included
+    used = [False] * (3*n)
+    # coef[cnt] will collect Σ_{S subset of forbidden} (–1)^|S|, where S covers cnt students
+    coef = [0] * (3*n + 1)
+
+    # Recursive inclusion–exclusion over forbidden triples
+    def rec(pos, cnt, sign):
+        # pos = index of next forbidden triple to consider
+        # cnt = how many students are already covered by chosen triples
+        # sign = +1 or –1
+        if pos == k:
+            coef[cnt] += sign
+            return
+
+        # 1) skip this triple
+        rec(pos + 1, cnt, sign)
+
+        # 2) try to include this triple, if no overlap
+        tri = triplets[pos]
+        conflict = False
+        marked = []
+        for x in tri:
+            idx = x-1
+            if used[idx]:
+                conflict = True
+                break
+            used[idx] = True
+            marked.append(idx)
+        if not conflict:
+            # flip sign when adding one triple
+            rec(pos + 1, cnt + 3, -sign)
+        # undo marks
+        for idx in marked:
+            used[idx] = False
+
+    # build coef[]
+    rec(0, 0, +1)
+
+    # compute answer via sum over cnt=3*t
+    ans = 0
+    for cnt, c in enumerate(coef):
+        if c == 0: 
+            continue
+        t = cnt // 3
+        # ways to partition remaining = factorial[3(n–t)] / (6^(n–t) * (n–t)!)
+        ways = factorial[3*(n-t)] // (power6[n-t] * factorial[n-t])
+        ans += c * ways
+
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+- Total partitions: (3N)!/((3!)^N·N!).  
+- Exclude forbidden triples by inclusion–exclusion over K (≤20) sets.  
+- For any subset S of t disjoint forbidden triples: count = (3(N–t))!/((3!)^(N–t)·(N–t)!).  
+- Sum (–1)^t · that count, over all S.  
+- Implement by backtracking with a “used” array to skip overlapping S.  
+- Precompute factorials (up to 3N) and powers of 6 (up to N).  
+- Final answer is ∑_{cnt=3t} coef[cnt]·(3N–cnt)!/(6^(N–t)·(N–t)!).
