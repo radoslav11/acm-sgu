@@ -1,0 +1,342 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+512. Friendly Points
+Time limit per test: 2.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+Consider n distinct points on a plane.
+
+Two points from that set are said to be friends, when there exists a rectangle with sides parallel to coordinate axes that contains those two points and doesn't contain any other point from the given set. A rectangle is said to contain a point if the point lies within the rectangle or on its border.
+
+How many pairs of friends are there among the given points?
+
+Input
+The first line of the input file contains an integer n <= 100 000.
+
+The next n lines contain two integers each, the coordinates of the given points. The coordinates don't exceed 10^9 by absolute value.
+
+Output
+Output one integer number — the sought number of pairs of friends.
+
+Example(s)
+sample input
+sample output
+5
+0 0
+0 2
+2 0
+2 2
+1 1
+8
+
+<|response|>
+1. Abridged problem statement  
+You have n distinct points on the plane. Call a pair of points (p, q) “friends” if you can draw an axis‐aligned rectangle that contains p and q (on its border or inside) and contains no other given point. Count the number of unordered friendly pairs.
+
+2. Key observations  
+- The minimal axis‐aligned rectangle spanning p=(x₁,y₁) and q=(x₂,y₂) has corners (min x, min y) to (max x, max y). It will contain exactly p and q iff no other point lies in the x‐interval [min x, max x] with y between min y and max y.  
+- We can sort points by x, group by equal x, and do a divide‐and‐conquer on these x‐groups.  
+- In the recursive step, after counting pairs entirely in the left half and entirely in the right half, we need to count “cross‐pairs” with one point in the left half L and one in the right half R.  
+- For a candidate pair (ℓ∈L, r∈R), emptiness of the rectangle is equivalent to:  
+  • No other L‐point whose x≥ℓ.x has y between ℓ.y and r.y.  
+  • No other R‐point whose x≤r.x has y between ℓ.y and r.y.  
+- We can handle all cross‐pairs in O(|L|+|R|) per recursive level by two sweeps over R sorted by y: one for ℓ.y ≥ r.y and one for ℓ.y ≤ r.y, maintaining a “Pareto frontier” of L‐points (those not dominated in x‐coordinate) and a frontier of R‐points for exclusion of already‐counted intervals.
+
+3. Full solution approach  
+A. Preprocessing  
+  1. Read n points, group them by x‐coordinate, and sort the distinct x‐values.  
+  2. Build a vector of groups, each group is all points with the same x, in increasing x‐order.  
+
+B. Divide‐and‐conquer function dc(groups):  
+  Base case: if there is only one x‐group G, then on this vertical line any two adjacent points in sorted‐by‐y order form a friendly pair and no other pairs do. So return |G| – 1.  
+
+  Otherwise:  
+  1. Split groups into left half L and right half R (by index).  
+  2. Recurse: ans = dc(L) + dc(R).  
+  3. Count cross‐pairs between L and R:  
+     a. Flatten L and R into lists Lpts and Rpts.  
+     b. SWEEP #1 for ℓ.y ≥ r.y:  
+        - Sort Lpts and Rpts by descending y (tie‐break ascending x).  
+        - Maintain two deques (vectors) paretoL and paretoR, each storing points in strictly increasing x order.  
+        - Use a pointer i over Lpts. For each r in Rpts in descending‐y order:  
+           • Pop from paretoR any points with x > r.x.  
+           • Add all Lpts[i] with y≥r.y into paretoL, popping from paretoL any with x≤ new point’s x (to keep it a true Pareto frontier).  
+           • Now every ℓ in paretoL is a valid friend‐partner for r, so add paretoL.size() to ans.  
+           • But some ℓ may have already been matched to a previous R‐point of higher y (and so that rectangle would have contained that earlier R). We subtract the count of those ℓ whose y≥ paretoR.back().y (if paretoR is nonempty).  
+           • Finally push r into paretoR.  
+     c. SWEEP #2 for ℓ.y ≤ r.y:  
+        - Sort Lpts and Rpts by ascending y (tie‐break ascending x).  
+        - Clear paretoL and paretoR, reset pointer i over Lpts.  
+        - For each r in Rpts in ascending‐y order:  
+           • Pop from paretoR any with x > r.x.  
+           • Add all Lpts[i] with y≤r.y into paretoL, popping dominated ones by x.  
+           • If paretoR is empty, all in paretoL have y<r.y, so add the count of ℓ with y<r.y.  
+             Otherwise subtract those ℓ with y≤ paretoR.back().y.  
+           • Push r into paretoR.  
+     d. Add the two sweep counts to ans.  
+
+  Return ans.  
+
+This runs in O(n log² n) overall for n≤10⁵.
+
+4. C++ implementation with detailed comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+using ll = long long;
+
+// The divide-and-conquer routine on a vector of x-groups.
+// Each x-group is a vector of (x,y) points sharing the same x.
+ll dc(vector<vector<pair<int,int>>>& groups) {
+    int m = groups.size();
+    // Base: one vertical line → adjacent-by-y pairs only
+    if (m == 1) {
+        int k = groups[0].size();
+        return max(0, k - 1);
+    }
+    int mid = m / 2;
+    // Split into left half and right half
+    vector<vector<pair<int,int>>> Lg(groups.begin(), groups.begin() + mid),
+                                   Rg(groups.begin() + mid, groups.end());
+    // Flatten points
+    vector<pair<int,int>> Lpts, Rpts;
+    for (auto &g: Lg) for (auto &p: g) Lpts.push_back(p);
+    for (auto &g: Rg) for (auto &p: g) Rpts.push_back(p);
+    // Recurse on each half
+    ll ans = dc(Lg) + dc(Rg);
+
+    // SWEEP #1: count cross-pairs with ℓ.y >= r.y
+    auto cmpDesc = [](auto &a, auto &b) {
+        if (a.second != b.second) return a.second > b.second;
+        return a.first < b.first;
+    };
+    sort(Lpts.begin(), Lpts.end(), cmpDesc);
+    sort(Rpts.begin(), Rpts.end(), cmpDesc);
+    vector<pair<int,int>> paretoL, paretoR;
+    int i = 0;
+    // For each r in descending-y
+    for (auto &r: Rpts) {
+        // Maintain paretoR: pop any with x>r.x
+        while (!paretoR.empty() && paretoR.back().first > r.first)
+            paretoR.pop_back();
+        // Add all Lpts with y>=r.y
+        while (i < (int)Lpts.size() && Lpts[i].second >= r.second) {
+            // Pop dominated by x
+            while (!paretoL.empty() && paretoL.back().first <= Lpts[i].first)
+                paretoL.pop_back();
+            paretoL.push_back(Lpts[i]);
+            ++i;
+        }
+        // All in paretoL pair with r
+        ans += paretoL.size();
+        // Subtract those ℓ already matched with a prior higher-y r
+        if (!paretoR.empty()) {
+            int y0 = paretoR.back().second;
+            // count ℓ with y>=y0
+            int cnt = 0;
+            // paretoL is in strictly decreasing y order, so a simple loop suffices
+            for (auto &p: paretoL) {
+                if (p.second >= y0) ++cnt;
+                else break;
+            }
+            ans -= cnt;
+        }
+        // Add r to paretoR
+        paretoR.push_back(r);
+    }
+
+    // SWEEP #2: count cross-pairs with ℓ.y <= r.y
+    auto cmpAsc = [](auto &a, auto &b) {
+        if (a.second != b.second) return a.second < b.second;
+        return a.first < b.first;
+    };
+    sort(Lpts.begin(), Lpts.end(), cmpAsc);
+    sort(Rpts.begin(), Rpts.end(), cmpAsc);
+    paretoL.clear();
+    paretoR.clear();
+    i = 0;
+    for (auto &r: Rpts) {
+        while (!paretoR.empty() && paretoR.back().first > r.first)
+            paretoR.pop_back();
+        while (i < (int)Lpts.size() && Lpts[i].second <= r.second) {
+            while (!paretoL.empty() && paretoL.back().first <= Lpts[i].first)
+                paretoL.pop_back();
+            paretoL.push_back(Lpts[i]);
+            ++i;
+        }
+        if (paretoR.empty()) {
+            // count ℓ with y < r.y
+            int cnt = 0;
+            for (auto &p: paretoL) {
+                if (p.second < r.second) ++cnt;
+                else break;
+            }
+            ans += cnt;
+        } else {
+            int y0 = paretoR.back().second;
+            int cnt1 = 0, cnt2 = 0;
+            for (auto &p: paretoL) {
+                if (p.second < r.second) ++cnt1;
+                else break;
+            }
+            for (auto &p: paretoL) {
+                if (p.second <= y0) ++cnt2;
+                else break;
+            }
+            ans += max(0, cnt1 - cnt2);
+        }
+        paretoR.push_back(r);
+    }
+    return ans;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    map<int, vector<pair<int,int>>> byX;
+    for (int i = 0; i < n; i++){
+        int x,y;
+        cin >> x >> y;
+        byX[x].push_back({x,y});
+    }
+    // Build sorted groups
+    vector<vector<pair<int,int>>> groups;
+    for (auto &kv: byX) {
+        auto &g = kv.second;
+        sort(g.begin(), g.end(), [](auto &a, auto &b){
+            return a.second < b.second;
+        });
+        groups.push_back(g);
+    }
+    // Run D&C and print result
+    cout << dc(groups) << "\n";
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def dc(groups):
+    # Divide-and-conquer on a list of x-groups
+    m = len(groups)
+    # Base case: single x => only adjacent-by-y pairs
+    if m == 1:
+        return max(0, len(groups[0]) - 1)
+
+    mid = m // 2
+    Lg = groups[:mid]
+    Rg = groups[mid:]
+    # Recurse on halves
+    ans = dc(Lg) + dc(Rg)
+
+    # Flatten points
+    Lpts = [p for g in Lg for p in g]
+    Rpts = [p for g in Rg for p in g]
+
+    # SWEEP #1: ℓ.y >= r.y
+    # Sort by descending y, tie x ascending
+    Lpts.sort(key=lambda p:(-p[1], p[0]))
+    Rpts.sort(key=lambda p:(-p[1], p[0]))
+    paretoL = []
+    paretoR = []
+    i = 0
+    for rx, ry in Rpts:
+        # pop from paretoR any x>rx
+        while paretoR and paretoR[-1][0] > rx:
+            paretoR.pop()
+        # add all Lpts with y>=ry
+        while i < len(Lpts) and Lpts[i][1] >= ry:
+            lx, ly = Lpts[i]
+            # pop dominated by x
+            while paretoL and paretoL[-1][0] <= lx:
+                paretoL.pop()
+            paretoL.append((lx, ly))
+            i += 1
+        # all in paretoL pair with (rx,ry)
+        ans += len(paretoL)
+        # subtract those already matched by a higher-y r
+        if paretoR:
+            y0 = paretoR[-1][1]
+            cnt = 0
+            for _, ly in paretoL:
+                if ly >= y0: cnt += 1
+                else: break
+            ans -= cnt
+        # add current r
+        paretoR.append((rx, ry))
+
+    # SWEEP #2: ℓ.y <= r.y
+    Lpts.sort(key=lambda p:(p[1], p[0]))
+    Rpts.sort(key=lambda p:(p[1], p[0]))
+    paretoL.clear()
+    paretoR.clear()
+    i = 0
+    for rx, ry in Rpts:
+        while paretoR and paretoR[-1][0] > rx:
+            paretoR.pop()
+        while i < len(Lpts) and Lpts[i][1] <= ry:
+            lx, ly = Lpts[i]
+            while paretoL and paretoL[-1][0] <= lx:
+                paretoL.pop()
+            paretoL.append((lx, ly))
+            i += 1
+        if not paretoR:
+            # count ℓ with y < ry
+            cnt = 0
+            for _, ly in paretoL:
+                if ly < ry: cnt += 1
+                else: break
+            ans += cnt
+        else:
+            y0 = paretoR[-1][1]
+            cnt1 = cnt2 = 0
+            for _, ly in paretoL:
+                if ly < ry: cnt1 += 1
+                else: break
+            for _, ly in paretoL:
+                if ly <= y0: cnt2 += 1
+                else: break
+            ans += max(0, cnt1 - cnt2)
+        paretoR.append((rx, ry))
+
+    return ans
+
+def main():
+    data = sys.stdin.read().split()
+    n = int(data[0])
+    pts = []
+    idx = 1
+    for _ in range(n):
+        x = int(data[idx]); y = int(data[idx+1])
+        idx += 2
+        pts.append((x,y))
+    # Group by x
+    from collections import defaultdict
+    byX = defaultdict(list)
+    for x,y in pts:
+        byX[x].append((x,y))
+    # Sort groups by x, then by y inside each group
+    groups = []
+    for x in sorted(byX):
+        g = sorted(byX[x], key=lambda p:p[1])
+        groups.append(g)
+    # Compute and output
+    print(dc(groups))
+
+if __name__ == "__main__":
+    main()
+```
+
+Explanation of key parts:  
+- We split the x‐ordered groups in half and recurse.  
+- Counting cross‐pairs reduces to two “sweeps” over the right‐half points sorted by y, maintaining a Pareto frontier of left‐half points by strictly increasing x.  
+- Each sweep runs in O(|L|+|R|) time. The total recurrence is T(n) = 2 T(n/2) + O(n log n), giving O(n log² n) for n up to 10⁵.

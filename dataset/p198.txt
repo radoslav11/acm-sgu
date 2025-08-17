@@ -1,0 +1,197 @@
+1. Abridged Problem Statement
+Given N solid circular islands (each defined by center (xi, yi) and radius ri) and a circular ship (center (cx, cy), radius cr) initially not overlapping any island, determine whether the ship can move arbitrarily far from its start without ever intersecting an island. The ship may touch islands but must not overlap them.
+
+2. Detailed Editorial
+
+Overview  
+We need to decide if the union of islands, after “growing” each by the ship’s radius (so that treating the ship as a point suffices), forms a closed barrier around the start point. If there is any continuous loop of overlapping expanded islands that encloses the starting point, the ship is trapped; otherwise it can escape.
+
+Key Steps  
+1. Minkowski Expansion  
+   Replace each island radius ri by ri+cr and translate coordinates so that the ship is at the origin. The problem reduces to whether the origin lies inside an enclosed loop formed by these expanded circles.
+
+2. Intersection Graph with Angular Weights  
+   Build a complete graph on the islands. For every pair (i, j):
+   - Compute squared distance d2 = (xi–xj)²+(yi–yj)².
+   - If d2 > (ri+ rj)², they do not touch: set both dist[i][j] = dist[j][i] = +∞.
+   - Otherwise they touch or overlap. Compute the angles αi, αj of centers i and j around the origin (using atan2). Let Δ = αj–αi normalized to (–π,π]. Then set
+        dist[i][j] = Δ,
+        dist[j][i] = –Δ.
+   These directed weights record how much one must “turn” around the origin when moving from circle i to j along the boundary.
+
+3. Detecting an Enclosing Cycle  
+   If there is a directed cycle whose total angular sum is nonzero (in fact <0), it means islands wrap around the origin. We detect a negative cycle by running Floyd–Warshall: if at the end dist[i][i] < 0 for any i, there is a negative cycle and the ship cannot escape.
+
+4. Complexity  
+   N ≤ 300, so Floyd–Warshall in O(N³) ≈ 27·10^6 updates is acceptable in C++ under 0.25 s.
+
+3. C++ Solution with Detailed Comments
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// A small epsilon for floating comparisons
+const double eps = 1e-6;
+const double INF = 1e18;
+const double PI = acos(-1.0);
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<double> x(n), y(n), r(n);
+
+    // Read islands
+    for(int i = 0; i < n; i++) {
+        cin >> x[i] >> y[i] >> r[i];
+    }
+    // Read ship center and radius
+    double cx, cy, cr;
+    cin >> cx >> cy >> cr;
+
+    // Translate so ship is at origin and expand each island by cr
+    for(int i = 0; i < n; i++) {
+        x[i] -= cx;
+        y[i] -= cy;
+        r[i] += cr;
+    }
+
+    // dist[i][j] = minimal angular displacement from i to j
+    vector<vector<double>> dist(n, vector<double>(n, 0));
+
+    // Build graph
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            // squared distance between centers
+            double dx = x[i] - x[j];
+            double dy = y[i] - y[j];
+            double d2 = dx*dx + dy*dy;
+            double R = r[i] + r[j];
+
+            if (d2 > R*R + eps) {
+                // No overlap: set both directions to +INF
+                dist[i][j] = dist[j][i] = INF;
+            } else {
+                // Compute angles of points i and j
+                double ai = atan2(y[i], x[i]);
+                double aj = atan2(y[j], x[j]);
+                // Compute minimal signed difference in (–π,π]
+                double d = aj - ai;
+                if (d <= -PI) d += 2*PI;
+                else if (d > PI) d -= 2*PI;
+                // Assign directed weights
+                dist[i][j] = d;
+                dist[j][i] = -d;
+            }
+        }
+    }
+
+    // Floyd–Warshall to find shortest paths (detect negative cycles)
+    for(int k = 0; k < n; k++) {
+        for(int i = 0; i < n; i++) {
+            for(int j = 0; j < n; j++) {
+                double nd = dist[i][k] + dist[k][j];
+                if (nd + eps < dist[i][j]) {
+                    dist[i][j] = nd;
+                }
+            }
+        }
+    }
+
+    // Check if any node has a negative cycle (dist[i][i] < 0)
+    for(int i = 0; i < n; i++) {
+        if (dist[i][i] < -eps) {
+            cout << "NO\n"; // trapped
+            return 0;
+        }
+    }
+
+    cout << "YES\n"; // can escape
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments
+```python
+import sys
+import math
+
+def can_escape(islands, ship):
+    n = len(islands)
+    x = [xi - ship[0] for xi, yi, ri in islands]
+    y = [yi - ship[1] for xi, yi, ri in islands]
+    r = [ri + ship[2] for xi, yi, ri in islands]
+
+    INF = 1e18
+    PI = math.pi
+    eps = 1e-9
+
+    # Initialize distance matrix
+    dist = [[0.0]*n for _ in range(n)]
+
+    # Build weighted graph
+    for i in range(n):
+        for j in range(i+1, n):
+            dx = x[i] - x[j]
+            dy = y[i] - y[j]
+            d2 = dx*dx + dy*dy
+            R = r[i] + r[j]
+            if d2 > R*R + eps:
+                # No overlap
+                dist[i][j] = dist[j][i] = INF
+            else:
+                # Angles around origin
+                ai = math.atan2(y[i], x[i])
+                aj = math.atan2(y[j], x[j])
+                # Signed difference in (-pi,pi]
+                d = aj - ai
+                if d <= -PI:
+                    d += 2*PI
+                elif d > PI:
+                    d -= 2*PI
+                dist[i][j] = d
+                dist[j][i] = -d
+
+    # Floyd–Warshall to detect negative cycle
+    for k in range(n):
+        for i in range(n):
+            # small optimization: local references
+            dik = dist[i][k]
+            row_i = dist[i]
+            row_k = dist[k]
+            for j in range(n):
+                nd = dik + row_k[j]
+                if nd + eps < row_i[j]:
+                    row_i[j] = nd
+
+    # If any dist[i][i] < 0, a negative cycle exists
+    for i in range(n):
+        if dist[i][i] < -eps:
+            return False
+    return True
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    n = int(next(it))
+    islands = []
+    for _ in range(n):
+        xi = float(next(it)); yi = float(next(it)); ri = float(next(it))
+        islands.append((xi, yi, ri))
+    cx = float(next(it)); cy = float(next(it)); cr = float(next(it))
+    if can_escape(islands, (cx, cy, cr)):
+        print("YES")
+    else:
+        print("NO")
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial
+- Grow each island radius by the ship’s radius and shift so ship is at origin.  
+- Build a directed graph: nodes = islands; if two islands overlap, edge weights = signed angle difference of their centers around origin.  
+- Use Floyd–Warshall to find shortest paths and detect any negative cycle (dist[i][i] < 0).  
+- A negative cycle means islands enclose the origin ⇒ NO; otherwise ⇒ YES.

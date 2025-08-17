@@ -1,0 +1,218 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n;
+map<int, vector<pair<int, int>>> pts_by_x;
+
+int64_t divide_conquer(vector<vector<pair<int, int>>>& pnts) {
+    if(pnts.size() == 1) {
+        return pnts[0].size() - 1;
+    }
+
+    vector<vector<pair<int, int>>> l_rec, r_rec;
+    vector<pair<int, int>> left_pts, right_pts;
+
+    int mid = pnts.size() / 2;
+    for(int i = 0; i < mid; ++i) {
+        for(auto& pt: pnts[i]) {
+            left_pts.push_back(pt);
+        }
+        l_rec.push_back(pnts[i]);
+    }
+    for(int i = mid; i < (int)pnts.size(); ++i) {
+        for(auto& pt: pnts[i]) {
+            right_pts.push_back(pt);
+        }
+        r_rec.push_back(pnts[i]);
+    }
+
+    int64_t result = 0;
+
+    sort(
+        left_pts.begin(), left_pts.end(),
+        [](const pair<int, int>& a, const pair<int, int>& b) {
+            return a.second > b.second ||
+                   (a.second == b.second && a.first < b.first);
+        }
+    );
+    sort(
+        right_pts.begin(), right_pts.end(),
+        [](const pair<int, int>& a, const pair<int, int>& b) {
+            return a.second > b.second ||
+                   (a.second == b.second && a.first < b.first);
+        }
+    );
+
+    vector<pair<int, int>> pareto_left;
+    vector<pair<int, int>> pareto_right;
+    auto left_ptr = left_pts.begin();
+
+    for(auto& curr: right_pts) {
+        while(!pareto_right.empty() && pareto_right.back().first > curr.first) {
+            pareto_right.pop_back();
+        }
+
+        while(left_ptr != left_pts.end() && left_ptr->second >= curr.second) {
+            while(!pareto_left.empty() &&
+                  pareto_left.back().first <= left_ptr->first) {
+                pareto_left.pop_back();
+            }
+            pareto_left.push_back(*left_ptr);
+            ++left_ptr;
+        }
+
+        result += pareto_left.size();
+        if(!pareto_right.empty()) {
+            auto it = upper_bound(
+                pareto_left.begin(), pareto_left.end(),
+                pareto_right.back().second,
+                [](int y, const pair<int, int>& p) { return y > p.second; }
+            );
+            result -= (it - pareto_left.begin());
+        }
+
+        pareto_right.push_back(curr);
+    }
+
+    sort(
+        left_pts.begin(), left_pts.end(),
+        [](const pair<int, int>& a, const pair<int, int>& b) {
+            return a.second < b.second ||
+                   (a.second == b.second && a.first < b.first);
+        }
+    );
+    sort(
+        right_pts.begin(), right_pts.end(),
+        [](const pair<int, int>& a, const pair<int, int>& b) {
+            return a.second < b.second ||
+                   (a.second == b.second && a.first < b.first);
+        }
+    );
+
+    pareto_left.clear();
+    pareto_right.clear();
+    left_ptr = left_pts.begin();
+
+    for(auto& curr: right_pts) {
+        while(!pareto_right.empty() && pareto_right.back().first > curr.first) {
+            pareto_right.pop_back();
+        }
+
+        while(left_ptr != left_pts.end() && left_ptr->second <= curr.second) {
+            while(!pareto_left.empty() &&
+                  pareto_left.back().first <= left_ptr->first) {
+                pareto_left.pop_back();
+            }
+            pareto_left.push_back(*left_ptr);
+            ++left_ptr;
+        }
+
+        if(pareto_right.empty()) {
+            auto it = upper_bound(
+                pareto_left.begin(), pareto_left.end(), curr.second - 1,
+                [](int y, const pair<int, int>& p) { return y < p.second; }
+            );
+            result += (it - pareto_left.begin());
+        } else {
+            auto it1 = upper_bound(
+                pareto_left.begin(), pareto_left.end(), curr.second - 1,
+                [](int y, const pair<int, int>& p) { return y < p.second; }
+            );
+            auto it2 = upper_bound(
+                pareto_left.begin(), pareto_left.end(),
+                pareto_right.back().second,
+                [](int y, const pair<int, int>& p) { return y < p.second; }
+            );
+            result +=
+                max(0ll, (int64_t)(it1 - pareto_left.begin()) -
+                             (it2 - pareto_left.begin()));
+        }
+
+        pareto_right.push_back(curr);
+    }
+
+    result += divide_conquer(l_rec) + divide_conquer(r_rec);
+    return result;
+}
+
+void read() {
+    cin >> n;
+    for(int i = 0; i < n; ++i) {
+        int x, y;
+        cin >> x >> y;
+        pts_by_x[x].push_back({x, y});
+    }
+}
+
+void solve() {
+    // For a given point (x, y), let's try to find the "pareto front" of the
+    // points to the left and below it. Then number of friends is the number of
+    // points in this pareto front + number of points in a similar pareto front
+    // above and to the left of it. Unfortunately, this is hard to maintain
+    // dynamically, but we can use a divide and conquer approach:
+    // 1. Get median point by x coordinate.
+    // 2. Split the points into two halves, left and right of the median, and
+    //    recursively find the number of pairs in each half.
+    // 3. For each point in the left half, count how many points in the right
+    //    half make a pair with it.
+    //
+    // For (3), we can sort by y coordinate and then do a merge-sort like
+    // procedure. In particular for a point on the right side, we are interested
+    // in the size of the "pareto front" on the left side above this point. The
+    // only thing we should be careful about is that for point (i) on the right
+    // side, we can only look at the pareto front with y >=
+    // y_of_right_point(i-1), because otherwise point (i-1) would be inside of
+    // the rectangle. However, this is still a range and can be found with
+    // binary search.
+    //
+    // This solution is O(N log^2 N) but the inner logarithm is very light.
+
+    vector<vector<pair<int, int>>> pnts;
+    for(auto it: pts_by_x) {
+        pnts.push_back(it.second);
+    }
+
+    int64_t result = divide_conquer(pnts);
+    cout << result << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}

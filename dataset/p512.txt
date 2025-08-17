@@ -1,0 +1,369 @@
+1. Abridged Problem Statement  
+Given n (≤100 000) distinct points on the plane with integer coordinates (absolute value ≤10^9), count the number of unordered pairs {p,q} for which there exists an axis‐aligned rectangle whose only points from the set are p and q (they may lie on its border).
+
+2. Detailed Editorial  
+
+Overview  
+We want to count all pairs of points (p, q) such that the minimal axis-aligned rectangle spanning them contains no other input point. A classic way to do this in O(n log² n) is a divide‐and‐conquer on the x-coordinate, counting (a) “intra‐half” pairs recursively and (b) “cross‐half” pairs between the left and right subsets.
+
+Steps  
+1. Group points by their x coordinate and sort these groups by x.  
+2. Recurse: split the sequence of x-groups at the median into a left half L and a right half R.  
+   - Count pairs entirely within L (recurse on L).  
+   - Count pairs entirely within R (recurse on R).  
+   - Count pairs with one point in L and one in R (“cross pairs”).  
+
+Cross-Pair Counting  
+Let LeftPts = all points in L, RightPts = all points in R. A pair (ℓ∈LeftPts, r∈RightPts) is friendly iff in the rectangle [ℓ.x, r.x]×[min(ℓ.y,r.y),max(ℓ.y,r.y)] there is no third point. Equivalently, no other L-point with x≥ℓ.x and y between ℓ.y and r.y, and no other R-point with x≤r.x and y between ℓ.y and r.y.
+
+We split cross counting in two sweeps:
+
+A. Counting those pairs with ℓ.y ≥ r.y  
+   - Sort LeftPts and RightPts by descending y (ties by ascending x).  
+   - Maintain two frontier stacks:  
+     • pareto_left: non‐dominated LeftPts by (x↑, y↓).  
+     • pareto_right: non‐dominated RightPts by (x↑, y↓).  
+   - Sweep through RightPts in descending y. For each r:  
+     1. Add all left points ℓ with y≥r.y into pareto_left, popping any with x≤ℓ.x to keep x strictly increasing.  
+     2. Count += size(pareto_left).  
+     3. If pareto_right is non‐empty, subtract those ℓ in pareto_left whose y≥ (last element of pareto_right).y, since those were already paired with an earlier R‐point and would violate emptiness.  
+     4. Update pareto_right by popping any with x>r.x, then push r.
+
+B. Counting those pairs with ℓ.y ≤ r.y  
+   - Identical idea, but sort both lists by ascending y, tie by ascending x, and maintain frontiers by the same rules, while counting left_pts whose y<r.y.
+
+Finally, sum the cross-pairs and the recursive results.
+
+Complexity  
+Each level does O(n log n) sorting + two linear sweeps with O(log n) binary searches → O(n log n). There are O(log n) levels → O(n log² n), which passes for n≤10^5.
+
+3. Provided C++ Solution with Line-by-Line Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << for pair to easily print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload >> for pair to easily read "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload >> for vector to read all elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Overload << for vector to print all elements separated by space
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n;
+// Map x-coordinate → list of points with that x
+map<int, vector<pair<int,int>>> pts_by_x;
+
+// Main divide & conquer routine: pnts is a sequence of x-groups.
+int64_t divide_conquer(vector<vector<pair<int,int>>>& pnts) {
+    // Base case: only one vertical line group
+    if(pnts.size() == 1) {
+        // Within a single x, any two points are friendly only if no other same-x point between them:
+        // that's just (#points − 1) friendly pairs (each adjacent in y).
+        return (int64_t)pnts[0].size() - 1;
+    }
+
+    // Split into left and right halves
+    int mid = pnts.size() / 2;
+    vector<vector<pair<int,int>>> left_groups, right_groups;
+    vector<pair<int,int>> left_pts, right_pts;
+
+    // Collect left half
+    for(int i = 0; i < mid; ++i) {
+        left_groups.push_back(pnts[i]);
+        for(auto& pt: pnts[i]) left_pts.push_back(pt);
+    }
+    // Collect right half
+    for(int i = mid; i < (int)pnts.size(); ++i) {
+        right_groups.push_back(pnts[i]);
+        for(auto& pt: pnts[i]) right_pts.push_back(pt);
+    }
+
+    int64_t cross_count = 0;
+
+    // ======= Sweep 1: count pairs with left.y >= right.y =======
+    // Sort by descending y, tiebreaker ascending x
+    auto cmp_desc = [](auto& a, auto& b){
+        return (a.second > b.second) || (a.second == b.second && a.first < b.first);
+    };
+    sort(left_pts.begin(), left_pts.end(), cmp_desc);
+    sort(right_pts.begin(), right_pts.end(), cmp_desc);
+
+    // Pareto frontiers
+    vector<pair<int,int>> pareto_left, pareto_right;
+    auto lit = left_pts.begin();
+
+    for(auto& r: right_pts) {
+        // Maintain pareto_right: pop any with x > current r.x
+        while(!pareto_right.empty() && pareto_right.back().first > r.first) {
+            pareto_right.pop_back();
+        }
+        // Add all left points with y >= r.y into pareto_left
+        while(lit != left_pts.end() && lit->second >= r.second) {
+            // Pop dominated ones: we keep x strictly increasing.
+            while(!pareto_left.empty() && pareto_left.back().first <= lit->first) {
+                pareto_left.pop_back();
+            }
+            pareto_left.push_back(*lit);
+            ++lit;
+        }
+        // Every ℓ in pareto_left can pair with this r
+        cross_count += pareto_left.size();
+
+        // But those ℓ that also pair with an earlier right-point
+        // (with larger or equal y) should be subtracted:
+        if(!pareto_right.empty()) {
+            // count ℓ with y >= last_right.y
+            int y0 = pareto_right.back().second;
+            auto it = upper_bound(
+                pareto_left.begin(), pareto_left.end(), y0,
+                // find first ℓ where y < y0 ⇒ we want how many ℓ have y >= y0
+                [](int val, const pair<int,int>& p){ return val > p.second; }
+            );
+            cross_count -= (it - pareto_left.begin());
+        }
+        // Finally add r to pareto_right
+        pareto_right.push_back(r);
+    }
+
+    // ======= Sweep 2: count pairs with left.y <= right.y =======
+    // Sort by ascending y, tiebreaker ascending x
+    auto cmp_asc = [](auto& a, auto& b){
+        return (a.second < b.second) || (a.second == b.second && a.first < b.first);
+    };
+    sort(left_pts.begin(), left_pts.end(), cmp_asc);
+    sort(right_pts.begin(), right_pts.end(), cmp_asc);
+
+    pareto_left.clear();
+    pareto_right.clear();
+    lit = left_pts.begin();
+
+    for(auto& r: right_pts) {
+        while(!pareto_right.empty() && pareto_right.back().first > r.first) {
+            pareto_right.pop_back();
+        }
+        while(lit != left_pts.end() && lit->second <= r.second) {
+            while(!pareto_left.empty() && pareto_left.back().first <= lit->first) {
+                pareto_left.pop_back();
+            }
+            pareto_left.push_back(*lit);
+            ++lit;
+        }
+        if(pareto_right.empty()) {
+            // all ℓ in pareto_left have ℓ.y <= r.y - 1
+            auto it = upper_bound(
+                pareto_left.begin(), pareto_left.end(), r.second - 1,
+                [](int val, const pair<int,int>& p){ return val < p.second; }
+            );
+            cross_count += (it - pareto_left.begin());
+        } else {
+            // subtract ℓ that already paired with an earlier right
+            int y0 = pareto_right.back().second;
+            auto it1 = upper_bound(
+                pareto_left.begin(), pareto_left.end(), r.second - 1,
+                [](int val, const pair<int,int>& p){ return val < p.second; }
+            );
+            auto it2 = upper_bound(
+                pareto_left.begin(), pareto_left.end(), y0,
+                [](int val, const pair<int,int>& p){ return val < p.second; }
+            );
+            cross_count += max(0LL, (long long)(it1 - pareto_left.begin()) - (long long)(it2 - pareto_left.begin()));
+        }
+        pareto_right.push_back(r);
+    }
+
+    // Recurse on each half and add cross_count
+    return cross_count + divide_conquer(left_groups) + divide_conquer(right_groups);
+}
+
+void read_input() {
+    cin >> n;
+    for(int i = 0; i < n; i++) {
+        int x, y;
+        cin >> x >> y;
+        pts_by_x[x].push_back({x,y});
+    }
+}
+
+void solve() {
+    // Build vector of x-groups in ascending x order
+    vector<vector<pair<int,int>>> pnts;
+    for(auto& kv: pts_by_x) {
+        pnts.push_back(kv.second);
+    }
+    // Run D&C
+    cout << divide_conquer(pnts) << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+import threading
+from bisect import bisect_left, bisect_right
+
+def main():
+    sys.setrecursionlimit(10**7)
+    data = sys.stdin.read().split()
+    n = int(data[0])
+    pts = []
+    idx = 1
+    for i in range(n):
+        x = int(data[idx]); y = int(data[idx+1])
+        idx += 2
+        pts.append((x,y))
+    # Group by x-coordinate
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for x,y in pts:
+        groups[x].append((x,y))
+    # Sort groups by x
+    pnts = [groups[x] for x in sorted(groups)]
+    
+    # Divide & conquer
+    def dc(pnts):
+        m = len(pnts)
+        # Base: if all share one x, friendly pairs = (#points-1)
+        if m == 1:
+            return len(pnts[0]) - 1
+        
+        mid = m // 2
+        left_groups = pnts[:mid]
+        right_groups = pnts[mid:]
+        
+        # Flatten left and right
+        left_flat = [pt for g in left_groups for pt in g]
+        right_flat = [pt for g in right_groups for pt in g]
+        
+        ans = 0
+        
+        # ---- Sweep 1: left.y >= right.y ----
+        # Sort by descending y, then ascending x
+        left_flat.sort(key=lambda p:(-p[1], p[0]))
+        right_flat.sort(key=lambda p:(-p[1], p[0]))
+        
+        pareto_left = []   # will store (x,y) with x strictly increasing
+        pareto_right = []  # same for right
+        li = 0             # pointer into left_flat
+        
+        for rx, ry in right_flat:
+            # maintain pareto_right: keep x increasing
+            while pareto_right and pareto_right[-1][0] > rx:
+                pareto_right.pop()
+            # add all left points with y>=ry
+            while li < len(left_flat) and left_flat[li][1] >= ry:
+                lx, ly = left_flat[li]
+                # remove dominated: keep x strictly increasing
+                while pareto_left and pareto_left[-1][0] <= lx:
+                    pareto_left.pop()
+                pareto_left.append((lx, ly))
+                li += 1
+            # all current pareto_left can pair with (rx,ry)
+            ans += len(pareto_left)
+            # subtract those that already paired with an earlier right
+            if pareto_right:
+                # count how many in pareto_left have y >= pareto_right[-1].y
+                ry0 = pareto_right[-1][1]
+                # pareto_left stored in order of decreasing y
+                # find boundary where y < ry0
+                # since y strictly decreasing, we do a linear/binary search
+                lo, hi = 0, len(pareto_left)
+                while lo < hi:
+                    mid2 = (lo+hi)//2
+                    if pareto_left[mid2][1] >= ry0:
+                        lo = mid2 + 1
+                    else:
+                        hi = mid2
+                ans -= lo
+            # add current right to its Pareto frontier
+            pareto_right.append((rx, ry))
+        
+        # ---- Sweep 2: left.y <= right.y ----
+        # Sort by ascending y, then ascending x
+        left_flat.sort(key=lambda p:(p[1], p[0]))
+        right_flat.sort(key=lambda p:(p[1], p[0]))
+        
+        pareto_left.clear()
+        pareto_right.clear()
+        li = 0
+        
+        for rx, ry in right_flat:
+            while pareto_right and pareto_right[-1][0] > rx:
+                pareto_right.pop()
+            while li < len(left_flat) and left_flat[li][1] <= ry:
+                lx, ly = left_flat[li]
+                while pareto_left and pareto_left[-1][0] <= lx:
+                    pareto_left.pop()
+                pareto_left.append((lx, ly))
+                li += 1
+            
+            if not pareto_right:
+                # count all with y < ry
+                # pareto_left is in order of increasing y
+                # find first y >= ry → index
+                ys = [p[1] for p in pareto_left]
+                idx2 = bisect_left(ys, ry)
+                ans += idx2
+            else:
+                # subtract those paired earlier
+                ys = [p[1] for p in pareto_left]
+                # how many y < ry
+                idx1 = bisect_left(ys, ry)
+                # how many y <= pareto_right[-1].y
+                y0 = pareto_right[-1][1]
+                idx2 = bisect_right(ys, y0)
+                ans += max(0, idx1 - idx2)
+            
+            pareto_right.append((rx, ry))
+        
+        # recurse on halves
+        return ans + dc(left_groups) + dc(right_groups)
+    
+    print(dc(pnts))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+
+- Sort points by x, group by equal x.  
+- Recurse: split groups at median x into L and R.  
+- Count pairs within L and within R recursively.  
+- To count cross‐pairs (one in L, one in R), flatten L and R to lists.  
+  - Sweep twice (once for ℓ.y≥r.y, once for ℓ.y≤r.y), each time sorting by y and maintaining two Pareto frontiers (non‐dominated by x).  
+  - For each right‐point r, update left-frontier, add its size to the answer, then subtract those already matched by an earlier right to avoid double‐counting.  
+- Total time O(n log² n).

@@ -1,0 +1,428 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, k;
+
+const vector<pair<int, int>> knight_moves = {
+    {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}
+};
+
+vector<int64_t> precomputed_for_8 = {
+    1ll,           64ll,          1848ll,       32084ll,       376560ll,
+    3184708ll,     20202298ll,    98796304ll,   379978716ll,   1167053680ll,
+    2897726604ll,  5876860140ll,  9825415557ll, 13660238780ll, 15932672964ll,
+    15737653004ll, 13304668385ll, 9742722088ll, 6260518246ll,  3574590840ll,
+    1830733371ll,  844203844ll,   349524138ll,  128874944ll,   41833846ll,
+    11792736ll,    2840224ll,     572432ll,     93840ll,       12004ll,
+    1122ll,        68ll,          2ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll,
+    0ll,           0ll,           0ll,          0ll,           0ll
+};
+
+vector<int64_t> precomputed_for_9 = {
+    1ll,
+    81ll,
+    3016ll,
+    68796ll,
+    1080942ll,
+    12472084ll,
+    110018552ll,
+    762775440ll,
+    4241252429ll,
+    19206532478ll,
+    71707869632ll,
+    222946143752ll,
+    582155146204ll,
+    1286247689414ll,
+    2421159140764ll,
+    3908273840366ll,
+    5446391581062ll,
+    6599640204257ll,
+    7010436668992ll,
+    6589213734278ll,
+    5537849837497ll,
+    4207779106033ll,
+    2920161348852ll,
+    1865346129716ll,
+    1101125592067ll,
+    600730512987ll,
+    302041066250ll,
+    139345014744ll,
+    58692638521ll,
+    22451454400ll,
+    7755194754ll,
+    2403337080ll,
+    663103709ll,
+    161373907ll,
+    34237130ll,
+    6238414ll,
+    957145ll,
+    120334ll,
+    11914ll,
+    872ll,
+    42ll,
+    1ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll
+};
+
+vector<int64_t> precomputed_for_10 = {
+    1ll,
+    100ll,
+    4662ll,
+    135040ll,
+    2732909ll,
+    41199404ll,
+    481719518ll,
+    4491423916ll,
+    34075586550ll,
+    213628255072ll,
+    1120204619108ll,
+    4961681221524ll,
+    18715619717199ll,
+    60541371615660ll,
+    168976761361446ll,
+    409191804533576ll,
+    864172675710439ll,
+    1599730843649564ll,
+    2609262108838924ll,
+    3770687313420780ll,
+    4857550050070531ll,
+    5616928666465104ll,
+    5874943705896600ll,
+    5604501518609804ll,
+    4917655076255841ll,
+    3999855946779732ll,
+    3034690618677388ll,
+    2156485957257040ll,
+    1437827591264317ll,
+    899278231344296ll,
+    526753407546620ll,
+    288274613750624ll,
+    146990556682887ll,
+    69626509814580ll,
+    30542906352994ll,
+    12366448408056ll,
+    4604442057431ll,
+    1569983914256ll,
+    487876545370ll,
+    137395261280ll,
+    34831261750ll,
+    7884855000ll,
+    1578162590ll,
+    275861904ll,
+    41455966ll,
+    5246412ll,
+    543534ll,
+    44244ll,
+    2652ll,
+    104ll,
+    2ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll,
+    0ll
+};
+
+void read() { cin >> n >> k; }
+
+int get_bit_position(int r, int c, int dr, int dc) {
+    int target_r = r + dr;
+    int target_c = c + dc;
+
+    if(target_r < 0 || target_c < 0 || target_c >= n) {
+        return -1;
+    }
+
+    return n * (-dr) + c - target_c - 1;
+}
+
+void solve() {
+    // The solution here is the classical bit mask profile, by keeping the last
+    // two rows. We always need to keep 2n+1 cells before, so this yields
+    // 2^(2n+1) masks naively. However we need to multiply this by n^4, as we
+    // have n^2 cells, and k <= n^2. This is slow for n >= 8, so we precompute
+    // all answers for n = 8,9,10.
+
+    if(n == 8) {
+        cout << precomputed_for_8[k] << endl;
+        return;
+    }
+
+    if(n == 9) {
+        cout << precomputed_for_9[k] << endl;
+        return;
+    }
+
+    if(n == 10) {
+        cout << precomputed_for_10[k] << endl;
+        return;
+    }
+
+    vector<vector<vector<int64_t>>> dp(
+        2, vector<vector<int64_t>>(1 << (2 * n + 1), vector<int64_t>(k + 1, 0))
+    );
+    dp[0][0][0] = 1;
+
+    for(int pos = 0; pos < n * n; pos++) {
+        int cp = pos & 1;
+        int r = pos / n;
+        int c = pos % n;
+
+        for(int mask = 0; mask < (1 << (2 * n + 1)); mask++) {
+            for(int knights = 0; knights <= k; knights++) {
+                dp[cp ^ 1][mask][knights] = 0;
+            }
+        }
+
+        for(int mask = 0; mask < (1 << (2 * n + 1)); mask++) {
+            for(int knights = 0; knights <= k; knights++) {
+                if(dp[cp][mask][knights] == 0) {
+                    continue;
+                }
+
+                int new_mask = (mask << 1) & ((1 << (2 * n + 1)) - 1);
+                dp[cp ^ 1][new_mask][knights] += dp[cp][mask][knights];
+
+                if(knights < k) {
+                    bool can_place = true;
+
+                    for(auto move: knight_moves) {
+                        int bit_pos =
+                            get_bit_position(r, c, move.first, move.second);
+                        if(bit_pos != -1 && (mask & (1 << bit_pos))) {
+                            can_place = false;
+                            break;
+                        }
+                    }
+
+                    if(can_place) {
+                        dp[cp ^ 1][new_mask | 1][knights + 1] +=
+                            dp[cp][mask][knights];
+                    }
+                }
+            }
+        }
+    }
+
+    int64_t result = 0;
+    for(int mask = 0; mask < (1 << (2 * n + 1)); mask++) {
+        result += dp[(n * n) & 1][mask][k];
+    }
+
+    cout << result << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // precompute();
+    // return 0;
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+
+// void precompute() {
+//     precomputed.resize(11);
+//     for(int board_n = 8; board_n <= 10; board_n++) {
+//         cout << "Computing n=" << board_n << "..." << endl;
+//         precomputed[board_n].resize(board_n * board_n + 1, 0);
+
+//         vector<vector<vector<int64_t>>> dp(
+//             board_n * board_n + 1, vector<vector<int64_t>>(
+//                                        1 << (2 * board_n + 1),
+//                                        vector<int64_t>(board_n * board_n + 1,
+//                                        0)
+//                                    )
+//         );
+//         dp[0][0][0] = 1;
+
+//         for(int pos = 0; pos < board_n * board_n; pos++) {
+//             int r = pos / board_n;
+//             int c = pos % board_n;
+
+//             for(int mask = 0; mask < (1 << (2 * board_n + 1)); mask++) {
+//                 for(int knights = 0; knights <= board_n * board_n; knights++)
+//                 {
+//                     if(dp[pos][mask][knights] == 0) {
+//                         continue;
+//                     }
+
+//                     int new_mask = (mask << 1) & ((1 << (2 * board_n + 1)) -
+//                     1); dp[pos + 1][new_mask][knights] +=
+//                     dp[pos][mask][knights];
+
+//                     if(knights < board_n * board_n) {
+//                         bool can_place = true;
+
+//                         for(auto move: knight_moves) {
+//                             int target_r = r + move.first;
+//                             int target_c = c + move.second;
+
+//                             if(target_r >= 0 && target_c >= 0 &&
+//                                target_c < board_n) {
+//                                 int bit_pos =
+//                                     board_n * (-move.first) + c - target_c -
+//                                     1;
+//                                 if(bit_pos >= 0 &&
+//                                    bit_pos < (2 * board_n + 1) &&
+//                                    (mask & (1 << bit_pos))) {
+//                                     can_place = false;
+//                                     break;
+//                                 }
+//                             }
+//                         }
+
+//                         if(can_place) {
+//                             dp[pos + 1][new_mask | 1][knights + 1] +=
+//                                 dp[pos][mask][knights];
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+
+//         for(int knights = 0; knights <= board_n * board_n; knights++) {
+//             for(int mask = 0; mask < (1 << (2 * board_n + 1)); mask++) {
+//                 precomputed[board_n][knights] +=
+//                     dp[board_n * board_n][mask][knights];
+//             }
+//         }
+//     }
+
+//     for(int board_n = 8; board_n <= 10; board_n++) {
+//         cout << "vector<int64_t> precomputed_for_" << board_n << " =  {";
+//         for(int knights = 0; knights <= board_n * board_n; knights++) {
+//             if(knights > 0) {
+//                 cout << ", ";
+//             }
+//             cout << precomputed[board_n][knights] << "ll";
+//         }
+//         cout << "};" << endl;
+//     }
+//     cout << "};" << endl;
+// }

@@ -1,0 +1,238 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+198. Get Out!
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Captain Faraway on his famous circular ship Kolobok is lost among the islands of the archipelago that he has just discovered. Now he wonders whether he can get out of there. Help him!
+
+All islands in the archipelago can be composed of pieces that have circular form. You are given the map of archipelago and the position of captain. Find out whether captain can get out of there, i.e. can get as far from the point he is in the beginning as he likes.
+
+Input
+
+The first line contains N — the number of circular island parts (1 ≤ N ≤ 300). N lines follow, each containing xi, yi, ri — coordinates of center and radius of the i-th circle. All coordinates and radii are real. Objects may overlap with each other in arbitrary way. All objects are considered solid.
+
+The last line of the input file contains three real numbers — coordinates of the center of Kolobok and its radius.
+
+You may consider Kolobok to be the perfect circle and that it is in the free area in the beginning. Kolobok can move along any trajectory and is so strong that he can even touch islands, but no nonzero part of island must intersect Kolobok during his motion. You may assume that making calculations with the precision of 10-6 is satisfactory.
+
+Output
+
+Output YES if Kolobok can leave archipelago and NO if it cannot.
+
+Sample test(s)
+
+Input
+
+Test #1
+
+7
+2 2 1.1
+-2 2 1.1
+2 -2 1.0
+-2 -2 1.0
+2 -5 1.0
+0 -8 1.0
+-2 -6 1.0
+0 0 1
+
+Test #2
+
+5
+2 2 1.1
+-2 2 1.1
+2 -2 1.0
+-2 -2 1.0
+0 -3 0.01
+0 0 1
+
+Output
+
+Test #1
+
+YES
+
+Test #2
+
+NO
+
+<|response|>
+1. Abridged Problem Statement  
+You are given N solid circular islands (each with center (xi, yi) and radius ri) and a circular ship (center (cx, cy), radius cr) initially not overlapping any island. The ship may move arbitrarily but must never overlap an island (touching is allowed). Determine if the ship can travel arbitrarily far from its start point (i.e. escape to infinity) without intersecting any island.
+
+2. Key Observations  
+- Minkowski‐sum trick: If you “grow” each island by the ship’s radius cr and shrink the ship to a point, forbidding the ship–island overlap becomes forbidding the point to enter any grown island.  
+- If the grown islands form a continuous closed loop enclosing the starting point, the point cannot escape. If no such enclosing loop exists, the point can slip through gaps and escape.  
+- Two grown islands “touch or overlap” iff the distance between their centers ≤ (ri+cr)+(rj+cr). Wherever they overlap, you can pass from one island boundary to the other around the origin.  
+- To detect whether these overlapping islands form an enclosing cycle around the origin, build a graph whose nodes are islands, and for every overlapping pair (i,j) assign a directed edge weight equal to the signed change in the polar angle around the origin when going from center i to center j.  
+- An enclosing cycle corresponds to a cycle whose total angular sum is ±2π (in particular a negative‐sum cycle if we measure angles in a consistent orientation). Detecting such a cycle can be done by running Floyd–Warshall and checking for dist[i][i] < 0.
+
+3. Full Solution Approach  
+Step 1: Read N and the N islands (xi, yi, ri). Read ship center (cx, cy) and radius cr.  
+Step 2: Shift coordinates so the ship’s center becomes the origin: xi←xi–cx, yi←yi–cy.  
+Step 3: Expand each island’s radius: ri←ri+cr. Now treat the ship as a point at (0,0).  
+Step 4: Precompute the polar angle ai=atan2(yi, xi) for each island center.  
+Step 5: Build an N×N distance matrix dist, initialized to 0 on the diagonal. For each pair i≠j:  
+ • Compute d2 = (xi–xj)²+(yi–yj)² and R = ri + rj.  
+ • If d2 > R² (no overlap even after expansion), set dist[i][j] = +INF (a large constant).  
+ • Otherwise (they touch/overlap), compute the signed angle difference Δ = aj–ai, normalized into (–π, π]. Then set:  
+  dist[i][j] = Δ  
+  dist[j][i] = –Δ  
+Step 6: Run Floyd–Warshall on dist to compute all‐pairs shortest paths, i.e.  
+ for k,i,j:  
+  if dist[i][k] + dist[k][j] < dist[i][j], update dist[i][j].  
+Step 7: After Floyd–Warshall, if any dist[i][i] < 0 (a negative‐weight cycle), output NO (the origin is enclosed). Otherwise output YES.
+
+4. C++ Implementation with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    const double EPS = 1e-9;
+    const double INF = 1e18;
+    const double PI  = acos(-1.0);
+
+    int N;
+    cin >> N;
+    vector<double> x(N), y(N), r(N);
+    for(int i = 0; i < N; i++){
+        cin >> x[i] >> y[i] >> r[i];
+    }
+    double cx, cy, cr;
+    cin >> cx >> cy >> cr;
+
+    // Translate so ship is at origin and expand each island radius
+    for(int i = 0; i < N; i++){
+        x[i] -= cx;
+        y[i] -= cy;
+        r[i] += cr;
+    }
+
+    // Precompute angles of island centers
+    vector<double> ang(N);
+    for(int i = 0; i < N; i++){
+        ang[i] = atan2(y[i], x[i]);
+    }
+
+    // Initialize dist matrix
+    vector<vector<double>> dist(N, vector<double>(N, 0.0));
+
+    // Build directed edges
+    for(int i = 0; i < N; i++){
+        for(int j = i+1; j < N; j++){
+            double dx = x[i] - x[j];
+            double dy = y[i] - y[j];
+            double d2 = dx*dx + dy*dy;
+            double R  = r[i] + r[j];
+            if(d2 > R*R + EPS){
+                // No overlap → no valid passage
+                dist[i][j] = dist[j][i] = INF;
+            } else {
+                // They overlap or touch → compute signed angle difference
+                double d = ang[j] - ang[i];
+                // Normalize to (-PI, PI]
+                if(d <= -PI) d += 2*PI;
+                else if(d > PI) d -= 2*PI;
+                dist[i][j] = d;
+                dist[j][i] = -d;
+            }
+        }
+    }
+
+    // Floyd–Warshall to detect negative cycles
+    for(int k = 0; k < N; k++){
+        for(int i = 0; i < N; i++){
+            // small local reference for speed
+            double dik = dist[i][k];
+            for(int j = 0; j < N; j++){
+                double nd = dik + dist[k][j];
+                if(nd + EPS < dist[i][j]){
+                    dist[i][j] = nd;
+                }
+            }
+        }
+    }
+
+    // If any dist[i][i] < 0, there is a trap enclosing the origin
+    for(int i = 0; i < N; i++){
+        if(dist[i][i] < -EPS){
+            cout << "NO\n";
+            return 0;
+        }
+    }
+    cout << "YES\n";
+    return 0;
+}
+```
+
+5. Python Implementation with Detailed Comments  
+```python
+import sys, math
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    islands = [ (float(next(it)), float(next(it)), float(next(it))) for _ in range(N) ]
+    cx, cy, cr = float(next(it)), float(next(it)), float(next(it))
+
+    # Shift so ship is at origin, and expand island radii
+    x = [xi - cx for xi, yi, ri in islands]
+    y = [yi - cy for xi, yi, ri in islands]
+    r = [ri + cr for xi, yi, ri in islands]
+
+    # Precompute polar angles
+    ang = [ math.atan2(y[i], x[i]) for i in range(N) ]
+
+    INF = 1e18
+    EPS = 1e-9
+    PI  = math.pi
+
+    # Initialize distance matrix
+    dist = [ [0.0]*N for _ in range(N) ]
+
+    # Build graph edges
+    for i in range(N):
+        for j in range(i+1, N):
+            dx, dy = x[i]-x[j], y[i]-y[j]
+            d2 = dx*dx + dy*dy
+            R  = r[i] + r[j]
+            if d2 > R*R + EPS:
+                # No overlap → block passage
+                dist[i][j] = dist[j][i] = INF
+            else:
+                # Compute signed difference of angles
+                d = ang[j] - ang[i]
+                if d <= -PI: d += 2*PI
+                elif d >  PI: d -= 2*PI
+                dist[i][j] = d
+                dist[j][i] = -d
+
+    # Floyd–Warshall for negative-cycle detection
+    for k in range(N):
+        for i in range(N):
+            dik = dist[i][k]
+            for j in range(N):
+                nd = dik + dist[k][j]
+                if nd + EPS < dist[i][j]:
+                    dist[i][j] = nd
+
+    # If any dist[i][i] < 0, there's an enclosing cycle
+    for i in range(N):
+        if dist[i][i] < -EPS:
+            print("NO")
+            return
+    print("YES")
+
+if __name__ == "__main__":
+    main()
+```
