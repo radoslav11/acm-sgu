@@ -1,0 +1,272 @@
+1. Abridged Problem Statement  
+Given an n×n chessboard (1≤n≤10) and an integer k (0≤k≤n²), count the number of ways to place k knights so that no two knights attack each other. A knight attacks another if it can move to its cell in one knight’s move.
+
+2. Detailed Editorial  
+
+We need to count independent k-sets under the “knight’s graph” on an n×n grid. Brute force over all subsets is infeasible for n up to 10 (there are 2¹⁰⁰ subsets). Instead, we use a profile-DP scanning the board cell by cell (row-major), maintaining a bitmask of all previously placed knights that could attack future placements.  
+
+Key observations:  
+- A knight’s move reaches only up to two rows above the current cell. Thus, when we decide whether to place a knight at cell pos=(r,c), we only need to remember occupancy of the previous two rows plus the cells in the current row to the left of c. We encode this as a sliding window of 2n+1 bits (“mask”).  
+- We DP over pos=0…n², mask∈[0,2^(2n+1)), and the count of knights used so far ≤k. Let dp[cur][mask][t] = number of ways to reach position pos with mask and t knights placed. On each step we:  
+  1. Shift mask left by 1 (dropping the oldest bit, corresponding to cells too far above).  
+  2. Option A: do not place a knight at pos → keep shifted mask, same t.  
+  3. Option B: if t<k and none of the bits in mask corresponding to knight-attack offsets (precomputed via get_bit_position) is set, place a knight → set the least significant bit in the new mask and increment t.  
+- At the end (pos=n²) sum dp[n² mod 2][mask][k] over all masks.  
+- Complexity: O(n² · 2^(2n+1) · k). This works up to about n=7. For n≥8, we precompute answers offline for n=8,9,10 and store them in arrays indexed by k.
+
+3. Provided C++ Solution with Line-by-Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload << and >> for convenience on pairs and vectors
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, k;
+
+// Four knight moves that go “upwards” relative to an in-row scan
+const vector<pair<int,int>> knight_moves = {
+    {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}
+};
+
+// Precomputed answers for n=8,9,10: indexed by k
+vector<int64_t> pre8 = {
+    1ll,64ll,1848ll,32084ll,376560ll,3184708ll,20202298ll,98796304ll,
+    379978716ll,1167053680ll,2897726604ll,5876860140ll,9825415557ll,
+    13660238780ll,15932672964ll,15737653004ll,13304668385ll,9742722088ll,
+    6260518246ll,3574590840ll,1830733371ll,844203844ll,349524138ll,
+    128874944ll,41833846ll,11792736ll,2840224ll,572432ll,93840ll,12004ll,
+    1122ll,68ll,2ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,
+    0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll
+};
+vector<int64_t> pre9 = {
+    1ll,81ll,3016ll,68796ll,1080942ll,12472084ll,110018552ll,
+    762775440ll,4241252429ll,19206532478ll,71707869632ll,
+    222946143752ll,582155146204ll,1286247689414ll,2421159140764ll,
+    3908273840366ll,5446391581062ll,6599640204257ll,7010436668992ll,
+    6589213734278ll,5537849837497ll,4207779106033ll,2920161348852ll,
+    1865346129716ll,1101125592067ll,600730512987ll,302041066250ll,
+    139345014744ll,58692638521ll,22451454400ll,7755194754ll,
+    2403337080ll,663103709ll,161373907ll,34237130ll,6238414ll,957145ll,
+    120334ll,11914ll,872ll,42ll,1ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,
+    0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll
+};
+vector<int64_t> pre10 = {
+    1ll,100ll,4662ll,135040ll,2732909ll,41199404ll,481719518ll,
+    4491423916ll,34075586550ll,213628255072ll,1120204619108ll,
+    4961681221524ll,18715619717199ll,60541371615660ll,168976761361446ll,
+    409191804533576ll,864172675710439ll,1599730843649564ll,
+    2609262108838924ll,3770687313420780ll,4857550050070531ll,
+    5616928666465104ll,5874943705896600ll,5604501518609804ll,
+    4917655076255841ll,3999855946779732ll,3034690618677388ll,
+    2156485957257040ll,1437827591264317ll,899278231344296ll,
+    526753407546620ll,288274613750624ll,146990556682887ll,
+    69626509814580ll,30542906352994ll,12366448408056ll,4604442057431ll,
+    1569983914256ll,487876545370ll,137395261280ll,34831261750ll,
+    7884855000ll,1578162590ll,275861904ll,41455966ll,5246412ll,
+    543534ll,44244ll,2652ll,104ll,2ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,
+    0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll
+};
+
+// Read n and k
+void read() {
+    cin >> n >> k;
+}
+
+// Given a previous knight at (r+dr, c+dc), return which bit in the mask
+// corresponds to that cell; or -1 if outside the “window”
+int get_bit_position(int r, int c, int dr, int dc) {
+    int rr = r + dr, cc = c + dc;
+    if (rr < 0 || cc < 0 || cc >= n) return -1;
+    // We map cells in row r-2, r-1, and current row left of c into bits 0..2n
+    // The formula is derived so that when we shift mask left each step,
+    // these bit positions line up with the LSB.
+    return n * (-dr) + c - cc - 1;
+}
+
+void solve() {
+    // If n>=8, use precomputed table
+    if (n == 8) { cout << pre8[k] << "\n"; return; }
+    if (n == 9) { cout << pre9[k] << "\n"; return; }
+    if (n == 10) { cout << pre10[k] << "\n"; return; }
+
+    int W = 2*n + 1;                // mask width
+    int M = 1 << W;                 // number of masks
+    // dp[parity][mask][t] = # ways
+    static vector<vector<vector<int64_t>>> dp(2,
+        vector<vector<int64_t>>(M, vector<int64_t>(k+1))
+    );
+    dp[0][0][0] = 1;
+
+    // Scan each cell pos = r*n + c
+    for(int pos = 0; pos < n*n; pos++) {
+        int now = pos & 1, nxt = now ^ 1;
+        int r = pos / n, c = pos % n;
+        // Reset next layer
+        for(int mask = 0; mask < M; mask++)
+            fill(dp[nxt][mask].begin(), dp[nxt][mask].end(), 0);
+
+        // Transition
+        for(int mask = 0; mask < M; mask++) {
+            for(int used = 0; used <= k; used++) {
+                auto ways = dp[now][mask][used];
+                if (!ways) continue;
+                // Shift the mask left by 1, drop overflow
+                int shifted = (mask << 1) & (M - 1);
+                // 1) do not place here
+                dp[nxt][shifted][used] += ways;
+                // 2) try placing a knight here
+                if (used < k) {
+                    bool ok = true;
+                    for(auto &mv: knight_moves) {
+                        int bp = get_bit_position(r, c, mv.first, mv.second);
+                        if (bp >= 0 && (mask & (1 << bp))) {
+                            ok = false; break;
+                        }
+                    }
+                    if (ok) {
+                        // set LSB of shifted, increment used
+                        dp[nxt][shifted | 1][used + 1] += ways;
+                    }
+                }
+            }
+        }
+    }
+
+    // Sum all masks at pos=n*n with exactly k knights
+    int final_layer = (n*n) & 1;
+    int64_t ans = 0;
+    for(int mask = 0; mask < (1 << (2*n+1)); mask++)
+        ans += dp[final_layer][mask][k];
+    cout << ans << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+# Precomputed for n=8,9,10 (same as C++ arrays)
+pre8 = [1,64,1848,32084,376560,3184708,20202298,98796304,
+    379978716,1167053680,2897726604,5876860140,9825415557,
+    13660238780,15932672964,15737653004,13304668385,9742722088,
+    6260518246,3574590840,1830733371,844203844,349524138,
+    128874944,41833846,11792736,2840224,572432,93840,12004,
+    1122,68,2] + [0]* (64-34)
+pre9 = [1,81,3016,68796,1080942,12472084,110018552,
+    762775440,4241252429,19206532478,71707869632,
+    222946143752,582155146204,1286247689414,2421159140764,
+    3908273840366,5446391581062,6599640204257,7010436668992,
+    6589213734278,5537849837497,4207779106033,2920161348852,
+    1865346129716,1101125592067,600730512987,302041066250,
+    139345014744,58692638521,22451454400,7755194754,
+    2403337080,663103709,161373907,34237130,6238414,957145,
+    120334,11914,872,42,1] + [0]* (79-44)
+pre10 = [1,100,4662,135040,2732909,41199404,481719518,
+    4491423916,34075586550,213628255072,1120204619108,
+    4961681221524,18715619717199,60541371615660,168976761361446,
+    409191804533576,864172675710439,1599730843649564,
+    2609262108838924,3770687313420780,4857550050070531,
+    5616928666465104,5874943705896600,5604501518609804,
+    4917655076255841,3999855946779732,3034690618677388,
+    2156485957257040,1437827591264317,899278231344296,
+    526753407546620,288274613750624,146990556682887,
+    69626509814580,30542906352994,12366448408056,4604442057431,
+    1569983914256,487876545370,137395261280,34831261750,
+    7884855000,1578162590,275861904,41455966,5246412,
+    543534,44244,2652,104,2] + [0]* (90-55)
+
+# The moves that look “up‐and‐left/right” when we scan row‐major
+knight_moves = [(-2,-1),(-2,1),(-1,-2),(-1,2)]
+
+def get_bit_position(n, r, c, dr, dc):
+    """ Map a knight at (r+dr,c+dc) onto a bit index in the sliding mask,
+        or return -1 if outside the tracked window. """
+    rr, cc = r+dr, c+dc
+    if rr<0 or cc<0 or cc>=n: return -1
+    # same formula as in C++
+    return n*(-dr) + (c - cc) - 1
+
+def solve():
+    n, k = map(int, sys.stdin.readline().split())
+    # Use precomputed for large n
+    if n==8:
+        print(pre8[k]); return
+    if n==9:
+        print(pre9[k]); return
+    if n==10:
+        print(pre10[k]); return
+
+    W = 2*n+1
+    M = 1<<W
+    # dp[2][M][k+1]
+    dp = [
+        [ [0]*(k+1) for _ in range(M) ],
+        [ [0]*(k+1) for _ in range(M) ]
+    ]
+    dp[0][0][0] = 1
+
+    for pos in range(n*n):
+        now = pos & 1
+        nxt = now ^ 1
+        # clear next layer
+        for m in range(M):
+            for t in range(k+1):
+                dp[nxt][m][t] = 0
+        r, c = divmod(pos, n)
+
+        for mask in range(M):
+            for used in range(k+1):
+                ways = dp[now][mask][used]
+                if ways == 0: continue
+                # shift mask
+                shifted = (mask<<1) & (M-1)
+                # 1) skip placement
+                dp[nxt][shifted][used] += ways
+                # 2) place a knight, if legal
+                if used<k:
+                    ok = True
+                    for dr,dc in knight_moves:
+                        bp = get_bit_position(n, r, c, dr, dc)
+                        if bp>=0 and (mask & (1<<bp)):
+                            ok = False
+                            break
+                    if ok:
+                        dp[nxt][shifted|1][used+1] += ways
+
+    # sum up all masks with exactly k knights
+    ans = sum(dp[(n*n)&1][mask][k] for mask in range(M))
+    print(ans)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5. Compressed Editorial  
+We count k-knight placements via a 3D DP scanning cells row-major. State is (pos, mask, used) where mask of width 2n+1 encodes the last two rows plus the current row prefix. We shift mask each step, branch on placing or not placing a knight (checking knight-move collisions via precomputed bit indices), and accumulate counts. Complexity ~O(n²·2^(2n+1)·k), feasible up to n=7. For n=8,9,10, we precompute results offline.
