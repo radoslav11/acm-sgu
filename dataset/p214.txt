@@ -1,0 +1,312 @@
+1. Abridged Problem Statement  
+Given:  
+- An alphabet Σ of size K.  
+- Two strings λ and μ.  
+- A K×K matrix cost[c1][c2] giving a nonnegative “dissimilarity” between characters c1, c2∈Σ.  
+
+We seek two strings α,β of equal length L (≤4000) such that λ is a subsequence of α, μ is a subsequence of β, and the position-wise sum of costs  
+  ∑_{i=1..L} cost[α[i]][β[i]]  
+is minimized. Output the minimum total cost and one pair (α,β) achieving it.
+
+2. Detailed Editorial  
+
+We reduce the problem to a classic 2D DP over prefixes of λ and μ:
+
+Definitions  
+- Let n=|λ|, m=|μ|.  
+- Define dp[i][j] = minimum cost achievable when we have already embedded λ[0..i−1] into α and μ[0..j−1] into β, and built α,β to the same length so far.  
+- We also keep a back-pointer move[i][j]∈{0,1,2} to reconstruct the choices.
+
+Transitions  
+At state (i,j) we can extend α,β by one more character pair:  
+
+  1) Match next characters of both sequences.  
+     - Append λ[i] to α and μ[j] to β.  
+     - Cost = dp[i][j] + cost[λ[i]][μ[j]].  
+     - Go to (i+1,j+1), record move=0.
+
+  2) Advance only in λ: append λ[i] to α and choose the BEST partner char x∈Σ to match in β that minimizes cost[λ[i]][x].  
+     - Cost = dp[i][j] + min_{x} cost[λ[i]][x].  
+     - Go to (i+1,j), record move=1.
+
+  3) Advance only in μ: append μ[j] to β and choose the BEST partner char y∈Σ to match in α that minimizes cost[y][μ[j]].  
+     - Cost = dp[i][j] + min_{y} cost[y][μ[j]].  
+     - Go to (i,j+1), record move=2.
+
+Precomputations  
+- Build a map char→index in Σ.  
+- For every a∈Σ, precompute best_for_a[a] = argmin_b cost[a][b].  
+- For every b∈Σ, precompute best_for_b[b] = argmin_a cost[a][b].  
+
+Complexities  
+- Precompute best matches in O(K^2).  
+- DP table has size (n+1)×(m+1), and each cell does O(1) work after precomputations. Total O(n·m + K^2). n,m ≤2000, K≤200.  
+- Reconstruct α and β by walking back from (n,m) following move[i][j].  
+
+3. Provided C++ Solution with Detailed Comments  
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Infinite cost sentinel (a very large number)
+const long long INF = numeric_limits<long long>::max();
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // 1) Read input
+    // sigma: the alphabet string (distinct chars)
+    // lambda, mu: the two input strings
+    string sigma, lambda, mu;
+    cin >> sigma >> lambda >> mu;
+    int K = sigma.size();
+    int n = lambda.size();
+    int m = mu.size();
+
+    // cost[i][j]: dissimilarity of sigma[i] from sigma[j]
+    vector<vector<int>> cost(K, vector<int>(K));
+    for(int i = 0; i < K; i++){
+        for(int j = 0; j < K; j++){
+            cin >> cost[i][j];
+        }
+    }
+
+    // 2) Map each ASCII char to its index in sigma (or -1 if not in sigma)
+    vector<int> sigma_idx(256, -1);
+    for(int i = 0; i < K; i++){
+        unsigned char c = sigma[i];
+        sigma_idx[c] = i;
+    }
+
+    // 3) Precompute best matches:
+    //    best_for_a[a] = index b that minimizes cost[a][b]
+    //    best_for_b[b] = index a that minimizes cost[a][b]
+    vector<int> best_for_a(K), best_for_b(K);
+    for(int a = 0; a < K; a++){
+        int mn = INT_MAX, arg = 0;
+        for(int b = 0; b < K; b++){
+            if(cost[a][b] < mn){
+                mn = cost[a][b];
+                arg = b;
+            }
+        }
+        best_for_a[a] = arg;
+    }
+    for(int b = 0; b < K; b++){
+        int mn = INT_MAX, arg = 0;
+        for(int a = 0; a < K; a++){
+            if(cost[a][b] < mn){
+                mn = cost[a][b];
+                arg = a;
+            }
+        }
+        best_for_b[b] = arg;
+    }
+
+    // 4) DP table and back-pointer table
+    // dp[i][j] = min cost to embed lambda[0..i-1], mu[0..j-1]
+    vector<vector<long long>> dp(n+1, vector<long long>(m+1, INF));
+    // move[i][j]: how we arrived here (0=match both,1=advance lambda,2=advance mu)
+    vector<vector<int8_t>> move(n+1, vector<int8_t>(m+1, -1));
+
+    dp[0][0] = 0;  // base case: both empty prefix
+
+    // 5) Fill dp
+    for(int i = 0; i <= n; i++){
+        for(int j = 0; j <= m; j++){
+            long long cur = dp[i][j];
+            if(cur == INF) continue;
+
+            // Option 1: match next chars of both
+            if(i < n && j < m){
+                int ai = sigma_idx[(unsigned char)lambda[i]];
+                int bi = sigma_idx[(unsigned char)mu[j]];
+                long long nxt = cur + cost[ai][bi];
+                if(nxt < dp[i+1][j+1]){
+                    dp[i+1][j+1] = nxt;
+                    move[i+1][j+1] = 0;
+                }
+            }
+            // Option 2: advance only lambda, match it to best_for_a
+            if(i < n){
+                int ai = sigma_idx[(unsigned char)lambda[i]];
+                int bi = best_for_a[ai];
+                long long nxt = cur + cost[ai][bi];
+                if(nxt < dp[i+1][j]){
+                    dp[i+1][j] = nxt;
+                    move[i+1][j] = 1;
+                }
+            }
+            // Option 3: advance only mu, match it to best_for_b
+            if(j < m){
+                int bi = sigma_idx[(unsigned char)mu[j]];
+                int ai = best_for_b[bi];
+                long long nxt = cur + cost[ai][bi];
+                if(nxt < dp[i][j+1]){
+                    dp[i][j+1] = nxt;
+                    move[i][j+1] = 2;
+                }
+            }
+        }
+    }
+
+    // 6) Reconstruct the optimal strings by walking back from (n,m)
+    int i = n, j = m;
+    string alpha, beta;
+    while(i > 0 || j > 0){
+        int mv = move[i][j];
+        if(mv == 0){
+            // matched both
+            alpha.push_back(lambda[i-1]);
+            beta .push_back(mu    [j-1]);
+            i--; j--;
+        }
+        else if(mv == 1){
+            // advanced lambda only
+            int ai = sigma_idx[(unsigned char)lambda[i-1]];
+            int bi = best_for_a[ai];
+            alpha.push_back(lambda[i-1]);
+            beta .push_back(sigma[bi]);
+            i--;
+        }
+        else {
+            // advanced mu only
+            int bi = sigma_idx[(unsigned char)mu[j-1]];
+            int ai = best_for_b[bi];
+            alpha.push_back(sigma[ai]);
+            beta .push_back(mu    [j-1]);
+            j--;
+        }
+    }
+    // currently alpha,beta are built backwards
+    reverse(alpha.begin(), alpha.end());
+    reverse(beta .begin(), beta .end());
+
+    // 7) Output result
+    cout << dp[n][m] << "\n";
+    cout << alpha << "\n";
+    cout << beta  << "\n";
+
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+
+```python
+import sys
+def read_tokens():
+    return sys.stdin.read().split()
+
+def main():
+    tokens = read_tokens()
+    it = iter(tokens)
+    # 1) Read alphabet, strings
+    sigma = next(it)
+    lam   = next(it)
+    mu    = next(it)
+    K = len(sigma)
+    n = len(lam)
+    m = len(mu)
+
+    # 2) Read cost matrix
+    cost = [[0]*K for _ in range(K)]
+    for i in range(K):
+        for j in range(K):
+            cost[i][j] = int(next(it))
+
+    # 3) Map each character to its index in sigma
+    sigma_idx = {c:i for i,c in enumerate(sigma)}
+
+    # 4) Precompute best matches
+    best_for_a = [0]*K
+    best_for_b = [0]*K
+    for a in range(K):
+        # find b minimizing cost[a][b]
+        best_for_a[a] = min(range(K), key=lambda b: cost[a][b])
+    for b in range(K):
+        # find a minimizing cost[a][b]
+        best_for_b[b] = min(range(K), key=lambda a: cost[a][b])
+
+    INF = 10**18
+    # 5) Initialize DP and back-pointer tables
+    dp = [ [INF]*(m+1) for _ in range(n+1) ]
+    move = [ [0]   *(m+1) for _ in range(n+1) ]
+    dp[0][0] = 0
+
+    # 6) Fill DP
+    for i in range(n+1):
+        for j in range(m+1):
+            cur = dp[i][j]
+            if cur == INF:
+                continue
+            # Option 1: match lam[i] with mu[j]
+            if i < n and j < m:
+                ai = sigma_idx[lam[i]]
+                bi = sigma_idx[mu[j]]
+                val = cur + cost[ai][bi]
+                if val < dp[i+1][j+1]:
+                    dp[i+1][j+1] = val
+                    move[i+1][j+1] = 0
+            # Option 2: advance in lam only
+            if i < n:
+                ai = sigma_idx[lam[i]]
+                bi = best_for_a[ai]
+                val = cur + cost[ai][bi]
+                if val < dp[i+1][j]:
+                    dp[i+1][j] = val
+                    move[i+1][j] = 1
+            # Option 3: advance in mu only
+            if j < m:
+                bi = sigma_idx[mu[j]]
+                ai = best_for_b[bi]
+                val = cur + cost[ai][bi]
+                if val < dp[i][j+1]:
+                    dp[i][j+1] = val
+                    move[i][j+1] = 2
+
+    # 7) Reconstruct alpha, beta by walking back from (n, m)
+    i, j = n, m
+    alpha = []
+    beta  = []
+    while i>0 or j>0:
+        mv = move[i][j]
+        if mv == 0:
+            # matched both characters
+            alpha.append(lam[i-1])
+            beta .append(mu[j-1])
+            i -= 1; j -= 1
+        elif mv == 1:
+            # advanced in lam only
+            ai = sigma_idx[lam[i-1]]
+            bi = best_for_a[ai]
+            alpha.append(lam[i-1])
+            beta .append(sigma[bi])
+            i -= 1
+        else:
+            # advanced in mu only
+            bi = sigma_idx[mu[j-1]]
+            ai = best_for_b[bi]
+            alpha.append(sigma[ai])
+            beta .append(mu[j-1])
+            j -= 1
+
+    # Reverse because we built them backwards
+    alpha.reverse()
+    beta .reverse()
+
+    # 8) Print results
+    out = []
+    out.append(str(dp[n][m]))
+    out.append(''.join(alpha))
+    out.append(''.join(beta))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Use a 2D DP dp[i][j] over prefixes of λ,μ. Three moves—match both next chars, or advance one string (inserting the other’s best-match character)—all cost O(1) after precomputing best partners per alphabet symbol. Reconstruct the optimal α,β via back-pointers. Total time O(|λ|·|μ|+|Σ|²).

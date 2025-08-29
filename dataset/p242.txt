@@ -1,0 +1,310 @@
+1. Abridged Problem Statement  
+Given N students and K universities (numbered 1…K). Each student i provides a list of universities he is willing to attend. We need to choose exactly K universities (all of them) and assign some students so that:  
+- Each of the K universities gets at least 2 students.  
+- Each student attends at most one university, from his preference list.  
+- Students not assigned stay home (that is allowed).  
+Determine if such an assignment exists. If yes, print “YES” and for each university output how many and which students go there; otherwise print “NO”.
+
+2. Detailed Editorial  
+We need to assign exactly 2K “slots” (two per university) to students, respecting each student’s preferences and the capacity constraint of one slot per student. This is a perfect setting for a max-flow or bipartite-matching formulation with capacities >1 on one side:
+
+  a) Build a flow network with nodes:  
+     – source S  
+     – university nodes U1…UK  
+     – student nodes S1…SN  
+     – sink T  
+
+  b) Edges and capacities:  
+     – (S → Uj) with capacity = 2, because each university j needs exactly two students.  
+     – (Uj → Si) with capacity = 1 if student i’s preference list includes j.  
+     – (Si → T) with capacity = 1, because each student can occupy at most one slot.  
+
+  c) Compute the maximum flow from S to T using Dinic’s algorithm (or any fast max-flow).  
+
+  d) If the maximum flow < 2·K, there is no way to fill all 2K slots → answer is NO. Otherwise, it is YES. To recover which students go to which university, scan the edges (Uj → Si). Whenever that edge is saturated (flow =1, so residual cap =0), it means student i is assigned to university j.  
+
+Complexities:  
+- Nodes V = 2 + K + N ≤ 402  
+- Edges E ≤ K + (sum of all preference sizes) + N ≤ K + N·K + N ≤ 40,400  
+- Dinic runs very fast on this scale (practically O(E·√V) or better).
+
+3. C++ Solution with Line-by-Line Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Structure to represent an edge in the flow graph
+struct Edge {
+    int to;         // endpoint of the edge
+    int cap;        // remaining capacity on this edge
+    int rev;        // index of the reverse edge in adj[to]
+};
+
+struct Dinic {
+    int N;                            // total number of nodes
+    vector<vector<Edge>> adj;         // adjacency list
+    vector<int> level;                // distance from source in level graph
+    vector<int> it;                   // iterator for DFS
+
+    Dinic(int n) : N(n), adj(n), level(n), it(n) {}
+
+    // Add directed edge u->v with capacity c, and a reverse edge v->u with capacity 0
+    void add_edge(int u, int v, int c) {
+        adj[u].push_back({v, c, (int)adj[v].size()});
+        adj[v].push_back({u, 0, (int)adj[u].size() - 1});
+    }
+
+    // Build level graph by BFS; return true if sink is reachable
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0;
+        q.push(s);
+        while(!q.empty()) {
+            int u = q.front(); q.pop();
+            for(auto &e : adj[u]) {
+                if(e.cap > 0 && level[e.to] < 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+
+    // Send flow by DFS in the level graph
+    int dfs(int u, int t, int f) {
+        if(u == t) return f;
+        for(int &i = it[u]; i < (int)adj[u].size(); ++i) {
+            Edge &e = adj[u][i];
+            if(e.cap > 0 && level[e.to] == level[u] + 1) {
+                int ret = dfs(e.to, t, min(f, e.cap));
+                if(ret > 0) {
+                    e.cap -= ret;                              // reduce forward capacity
+                    adj[e.to][e.rev].cap += ret;               // increase reverse capacity
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Compute max flow from s to t
+    int maxflow(int s, int t) {
+        int flow = 0;
+        const int INF = 1e9;
+        // While we can build a level graph…
+        while(bfs(s, t)) {
+            fill(it.begin(), it.end(), 0);
+            // send blocking flows
+            while(int pushed = dfs(s, t, INF))
+                flow += pushed;
+        }
+        return flow;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, K;
+    cin >> N >> K;
+
+    // Read preference lists
+    vector<vector<int>> pref(N);
+    for(int i = 0; i < N; i++) {
+        int cnt;
+        cin >> cnt;
+        pref[i].resize(cnt);
+        for(int j = 0; j < cnt; j++) {
+            cin >> pref[i][j];
+        }
+    }
+
+    // Node indexing:
+    // S = 0
+    // Universities U1..UK at [1 .. K]
+    // Students S1..SN at [K+1 .. K+N]
+    // T = K+N+1
+    int S = 0;
+    int uniStart = 1;
+    int stuStart = uniStart + K;
+    int T = stuStart + N;
+    int V = T + 1;
+
+    Dinic dinic(V);
+
+    // Connect source → each university with cap=2
+    for(int j = 0; j < K; j++) {
+        dinic.add_edge(S, uniStart + j, 2);
+    }
+
+    // Connect university j → student i if allowed, cap=1
+    for(int i = 0; i < N; i++) {
+        for(int u : pref[i]) {
+            if(u >= 1 && u <= K) {
+                dinic.add_edge(uniStart + (u - 1), stuStart + i, 1);
+            }
+        }
+    }
+
+    // Connect each student → sink with cap=1
+    for(int i = 0; i < N; i++) {
+        dinic.add_edge(stuStart + i, T, 1);
+    }
+
+    // We need total flow = 2*K
+    int flow = dinic.maxflow(S, T);
+    if(flow < 2 * K) {
+        cout << "NO\n";
+        return 0;
+    }
+
+    cout << "YES\n";
+    // Recover assignment: for each university, scan its outgoing edges
+    for(int j = 0; j < K; j++) {
+        int uNode = uniStart + j;
+        vector<int> assigned;
+        for(auto &e : dinic.adj[uNode]) {
+            // If this was an edge to a student and it is fully used (cap==0),
+            // then that student was assigned here.
+            if(e.to >= stuStart && e.to < stuStart + N && e.cap == 0) {
+                assigned.push_back(e.to - stuStart + 1);
+            }
+        }
+        // Print count and the student ids
+        cout << assigned.size();
+        for(int sid : assigned) cout << ' ' << sid;
+        cout << '\n';
+    }
+
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        # adj[u] = list of [v, cap, rev] edges
+        self.adj = [[] for _ in range(n)]
+        self.level = [0]*n
+        self.it = [0]*n
+
+    def add_edge(self, u, v, c):
+        # forward edge index = len(adj[u])
+        # backward edge index = len(adj[v])
+        self.adj[u].append([v, c, len(self.adj[v])])
+        self.adj[v].append([u, 0, len(self.adj[u]) - 1])
+
+    def bfs(self, s, t):
+        # Build level graph
+        self.level = [-1]*self.n
+        q = deque([s])
+        self.level[s] = 0
+        while q:
+            u = q.popleft()
+            for v, cap, _ in self.adj[u]:
+                if cap > 0 and self.level[v] < 0:
+                    self.level[v] = self.level[u] + 1
+                    q.append(v)
+        return self.level[t] >= 0
+
+    def dfs(self, u, t, f):
+        if u == t:
+            return f
+        for i in range(self.it[u], len(self.adj[u])):
+            self.it[u] = i
+            v, cap, rev = self.adj[u][i]
+            # follow only forward edges in level graph
+            if cap > 0 and self.level[v] == self.level[u] + 1:
+                ret = self.dfs(v, t, min(f, cap))
+                if ret > 0:
+                    # update capacities
+                    self.adj[u][i][1] -= ret
+                    self.adj[v][rev][1] += ret
+                    return ret
+        return 0
+
+    def maxflow(self, s, t):
+        flow = 0
+        INF = 10**9
+        # repeat BFS+DFS until no augmenting path
+        while self.bfs(s, t):
+            self.it = [0]*self.n
+            while True:
+                pushed = self.dfs(s, t, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+def main():
+    data = list(map(int, sys.stdin.read().split()))
+    it = iter(data)
+    N = next(it)
+    K = next(it)
+
+    # Read preferences
+    prefs = []
+    for _ in range(N):
+        cnt = next(it)
+        lst = [next(it) for __ in range(cnt)]
+        prefs.append(lst)
+
+    # Node assignments
+    S = 0
+    uni_off = 1
+    stu_off = uni_off + K
+    T = stu_off + N
+    V = T + 1
+
+    din = Dinic(V)
+
+    # Source -> each university (cap 2)
+    for j in range(K):
+        din.add_edge(S, uni_off + j, 2)
+
+    # Uni -> Student edges
+    for i in range(N):
+        for u in prefs[i]:
+            if 1 <= u <= K:
+                din.add_edge(uni_off + (u-1), stu_off + i, 1)
+
+    # Student -> sink (cap 1)
+    for i in range(N):
+        din.add_edge(stu_off + i, T, 1)
+
+    # Compute flow
+    need = 2*K
+    flow = din.maxflow(S, T)
+    if flow < need:
+        print("NO")
+        return
+
+    # It's possible
+    print("YES")
+    # Recover assignments: wherever uni->student edge is saturated (cap==0)
+    for j in range(K):
+        u_node = uni_off + j
+        assigned = []
+        for v, cap, _ in din.adj[u_node]:
+            if stu_off <= v < stu_off+N and cap == 0:
+                assigned.append(v - stu_off + 1)
+        print(len(assigned), *assigned)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+Model the problem as a bipartite flow/matching:  
+- Left side: K universities, each with capacity 2 (two slots).  
+- Right side: N students, each capacity 1.  
+- Add edges from university j to student i if i likes j.  
+Compute max-flow. If flow == 2K, answer YES; otherwise NO. Recover assignments from saturated edges.

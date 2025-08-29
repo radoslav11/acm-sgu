@@ -1,0 +1,329 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+242. Student's Morning
+time limit per test: 0.25 sec.
+memory limit per test: 6144 KB
+input: standard
+output: standard
+
+
+
+One Monday morning after some very fun party N students woke up at the flat of one of them. Notice that it was a Monday morning and every student of that party needs to be in his university this day. But nobody wants to go to his university alone (there were students from different universities). So, they decided to select from all universities only K of them to visit. Every selected university must be visited by at least two of the students. Every student has his own preference list of universities. It means, if some university is in list of some student's preferred universities, this student can go to this university with some non-empty company of students. Notice, that some of students can stay at the flat and continue drinking "juices" and playing "games". For example, student Shokman was to stay home (due to failed exam) with foreign student Chokman, who remained home because of runny nose.
+In that problem there are no preferences between students, because if they have very fun party that already means that everyone of them prefers anybody from this company.
+
+More formally, your task is, given numbers of students, selected universities and preference list of every student, to decide whether it is possible to visit all universities by at least two of students or no, and if it is possible you must output for each university numbers of students, which have to go to it in one company. One student can't be in more than one company.
+
+Input
+First line of input file contains two numbers N and K (0<=K<=N<=200). Next N lines contain preference lists of each student. Every preference list is started by number of preferred universities followed by numbers of these universities.
+
+Output
+First line of output file must contain word "YES" (without quotes), if it possible to visit all universities, satisfying rules of that task or word "NO" (also without quotes) when it is impossible. In case of positive answer next K lines must contain lists of students, who are going to corresponding university. First number in list of students must be a number of students in the list, followed by numbers of these students.
+
+Sample test(s)
+
+Input
+Test #1
+4 2
+1 1
+2 1 2
+1 2
+2 1 2
+
+Test #2
+3 2
+2 1 2
+2 1 2
+2 1 2
+
+Output
+Test #1
+YES
+2 1 2
+2 3 4
+
+Test #2
+NO
+Author:	Alexey Preobrajensky
+Resource:	---
+Date:	October, 2003
+
+<|response|>
+1. Abridged Problem Statement  
+Given N students and K universities (numbered 1…K). Each student i lists which universities he is willing to attend. We need to assign some students to all K universities so that:  
+- Each university has at least 2 students.  
+- Each student attends at most one university from his preference list.  
+Students not assigned may stay home. Determine if this is possible. If yes, output “YES” and for each university list the students assigned; otherwise output “NO”.
+
+2. Key Observations  
+- Each university needs exactly two “slots” filled (at least two students).  
+- Each student can fill at most one slot.  
+- This is a bipartite matching/flow problem: universities on the left (capacity 2 each), students on the right (capacity 1 each), edges for allowed assignments.
+
+3. Full Solution Approach  
+a) Model as a flow network:  
+   • Source node S.  
+   • University nodes U1…UK, with an edge from S→Uj of capacity 2.  
+   • Student nodes S1…SN, with an edge from Si→T of capacity 1.  
+   • For each student i and each preferred university j, add an edge Uj→Si of capacity 1.  
+   • Sink node T.  
+
+b) Compute maximum flow from S to T (e.g. with Dinic).  
+
+c) If the maximum flow equals 2·K, we can fill all slots → answer is YES. Otherwise NO.  
+
+d) To recover assignments, for each university Uj scan its outgoing edges to students. Any edge where flow=1 (i.e., residual capacity is zero) means that student is assigned to Uj.
+
+4. C++ Implementation with Detailed Comments  
+
+#include <bits/stdc++.h>
+using namespace std;
+
+// Edge structure for Dinic's algorithm
+struct Edge {
+    int to;     // endpoint
+    int cap;    // remaining capacity
+    int rev;    // index of the reverse edge
+};
+
+struct Dinic {
+    int N;
+    vector<vector<Edge>> adj;  // adjacency list
+    vector<int> level;         // level graph distances
+    vector<int> it;            // current edge iteration for DFS
+
+    // Initialize with n nodes (0…n-1)
+    Dinic(int n): N(n), adj(n), level(n), it(n) {}
+
+    // Add directed edge u->v with capacity c, and reverse edge v->u with capacity 0
+    void add_edge(int u, int v, int c) {
+        adj[u].push_back({v, c, (int)adj[v].size()});
+        adj[v].push_back({u, 0, (int)adj[u].size() - 1});
+    }
+
+    // Build level graph by BFS from s
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0;
+        q.push(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto &e : adj[u]) {
+                if (e.cap > 0 && level[e.to] < 0) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] >= 0;
+    }
+
+    // DFS to send flow in level graph
+    int dfs(int u, int t, int f) {
+        if (u == t) return f;
+        for (int &i = it[u]; i < (int)adj[u].size(); ++i) {
+            Edge &e = adj[u][i];
+            if (e.cap > 0 && level[e.to] == level[u] + 1) {
+                int ret = dfs(e.to, t, min(f, e.cap));
+                if (ret > 0) {
+                    e.cap -= ret;
+                    adj[e.to][e.rev].cap += ret;
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Compute max flow from s to t
+    int maxflow(int s, int t) {
+        int flow = 0, INF = 1e9;
+        while (bfs(s, t)) {
+            fill(it.begin(), it.end(), 0);
+            while (int pushed = dfs(s, t, INF))
+                flow += pushed;
+        }
+        return flow;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, K;
+    cin >> N >> K;
+    vector<vector<int>> prefs(N);
+    for (int i = 0; i < N; i++) {
+        int cnt; 
+        cin >> cnt;
+        prefs[i].resize(cnt);
+        for (int j = 0; j < cnt; j++) {
+            cin >> prefs[i][j];
+        }
+    }
+
+    // Node indexing
+    int S = 0;
+    int uniStart = 1;            // U1 at 1, U2 at 2, … U K at uniStart+K-1
+    int stuStart = uniStart + K; // S1 at stuStart, … SN at stuStart+N-1
+    int T = stuStart + N;
+    int V = T + 1;
+
+    Dinic dinic(V);
+
+    // Source → each university (capacity 2)
+    for (int j = 0; j < K; j++) {
+        dinic.add_edge(S, uniStart + j, 2);
+    }
+    // University → Student (capacity 1) if student prefers that university
+    for (int i = 0; i < N; i++) {
+        for (int u : prefs[i]) {
+            if (u >= 1 && u <= K) {
+                dinic.add_edge(uniStart + (u - 1), stuStart + i, 1);
+            }
+        }
+    }
+    // Student → Sink (capacity 1)
+    for (int i = 0; i < N; i++) {
+        dinic.add_edge(stuStart + i, T, 1);
+    }
+
+    // Compute flow and check if it equals 2*K
+    int flow = dinic.maxflow(S, T);
+    if (flow < 2 * K) {
+        cout << "NO\n";
+        return 0;
+    }
+
+    // Recover assignments
+    cout << "YES\n";
+    for (int j = 0; j < K; j++) {
+        int uNode = uniStart + j;
+        vector<int> assigned;
+        for (auto &e : dinic.adj[uNode]) {
+            // If edge goes to a student and is saturated (cap==0), it is used
+            if (e.to >= stuStart && e.to < stuStart + N && e.cap == 0) {
+                assigned.push_back(e.to - stuStart + 1);
+            }
+        }
+        // Output count and list
+        cout << assigned.size();
+        for (int sid : assigned) cout << ' ' << sid;
+        cout << '\n';
+    }
+    return 0;
+}
+
+5. Python Implementation with Detailed Comments  
+
+import sys
+from collections import deque
+
+class Dinic:
+    def __init__(self, n):
+        self.n = n
+        # adj[u] = list of [v, cap, rev_index]
+        self.adj = [[] for _ in range(n)]
+        self.level = [0] * n
+        self.it = [0] * n
+
+    # Add directed edge u->v with capacity c, plus reverse edge
+    def add_edge(self, u, v, c):
+        self.adj[u].append([v, c, len(self.adj[v])])
+        self.adj[v].append([u, 0, len(self.adj[u]) - 1])
+
+    # Build level graph by BFS
+    def bfs(self, s, t):
+        for i in range(self.n):
+            self.level[i] = -1
+        queue = deque([s])
+        self.level[s] = 0
+        while queue:
+            u = queue.popleft()
+            for v, cap, _ in self.adj[u]:
+                if cap > 0 and self.level[v] < 0:
+                    self.level[v] = self.level[u] + 1
+                    queue.append(v)
+        return self.level[t] >= 0
+
+    # DFS to send flow on level graph
+    def dfs(self, u, t, f):
+        if u == t:
+            return f
+        for i in range(self.it[u], len(self.adj[u])):
+            self.it[u] = i
+            v, cap, rev = self.adj[u][i]
+            if cap > 0 and self.level[v] == self.level[u] + 1:
+                pushed = self.dfs(v, t, min(f, cap))
+                if pushed > 0:
+                    # Decrease forward capacity, increase reverse
+                    self.adj[u][i][1] -= pushed
+                    self.adj[v][rev][1] += pushed
+                    return pushed
+        return 0
+
+    # Compute max flow s→t
+    def maxflow(self, s, t):
+        flow = 0
+        INF = 10**9
+        while self.bfs(s, t):
+            self.it = [0] * self.n
+            while True:
+                pushed = self.dfs(s, t, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+def main():
+    data = list(map(int, sys.stdin.read().split()))
+    it = iter(data)
+    N = next(it); K = next(it)
+    prefs = []
+    for _ in range(N):
+        cnt = next(it)
+        lst = [next(it) for _ in range(cnt)]
+        prefs.append(lst)
+
+    # Node indices
+    S = 0
+    uni_off = 1
+    stu_off = uni_off + K
+    T = stu_off + N
+    V = T + 1
+
+    din = Dinic(V)
+
+    # Source → each university (cap 2)
+    for j in range(K):
+        din.add_edge(S, uni_off + j, 2)
+    # University → Student edges
+    for i in range(N):
+        for u in prefs[i]:
+            if 1 <= u <= K:
+                din.add_edge(uni_off + (u - 1), stu_off + i, 1)
+    # Student → Sink (cap 1)
+    for i in range(N):
+        din.add_edge(stu_off + i, T, 1)
+
+    # Check if we can fill 2*K slots
+    flow = din.maxflow(S, T)
+    if flow < 2 * K:
+        print("NO")
+        return
+
+    # Recover assignment
+    print("YES")
+    for j in range(K):
+        u_node = uni_off + j
+        assigned = []
+        for v, cap, _ in din.adj[u_node]:
+            # If edge to student is used (cap==0), assign that student
+            if stu_off <= v < stu_off + N and cap == 0:
+                assigned.append(v - stu_off + 1)
+        print(len(assigned), *assigned)
+
+if __name__ == "__main__":
+    main()

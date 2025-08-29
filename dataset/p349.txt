@@ -1,0 +1,220 @@
+1. Abridged Problem Statement  
+   Given N wolves and M sheep, each represented by a line segment strictly in the half‐plane y ≥ 1. You stand at the origin (0,0) and can fire rays (shots) in any direction. A shot kills every animal whose segment the ray intersects. Find the minimum number of shots required to kill all wolves without intersecting any sheep. If it is impossible, output “No solution.”
+
+2. Detailed Editorial  
+   a) Geometry → Angle Intervals  
+   - Every segment above the x-axis can be “seen” from the origin under a continuous range of angles. For a segment with endpoints (x₁,y₁), (x₂,y₂), compute α = atan2(y₁,x₁), β = atan2(y₂,x₂), and let its angular interval be [min(α,β), max(α,β)].  
+   - A shot at angle θ kills exactly those segments whose intervals contain θ.
+
+   b) Sheep as Forbidden Intervals  
+   - Any angle inside a sheep’s interval is forbidden. Merge all sheep intervals into a sorted list of non‐overlapping forbidden intervals.
+
+   c) Wolves as Target Intervals  
+   - Each wolf also gives an interval [w₁,w₂]. We must choose angles θ₁ < θ₂ < … such that each wolf-interval contains at least one chosen θ, and no θ lies inside any forbidden sheep interval.
+
+   d) Greedy Interval Stabbing with Obstacles  
+   - Sort wolves by their right endpoint ascending. Maintain “last_shot” as the angle of the most recent shot (initialized to –∞).  
+   - For each wolf in order:  
+     • If its left endpoint ≤ last_shot, the wolf is already killed by a previous shot—skip.  
+     • Otherwise, we must place a new shot within [w_left, w_right], strictly greater than last_shot, but not inside a sheep interval.  
+     • Let the next sheep interval be [s_left, s_right] that intersects (last_shot, ∞). If s_left ≤ w_right, we can only shoot as late as (s_left – ε); otherwise we can shoot at w_right.  
+     • If this computed shooting angle < w_left, it’s impossible → “No solution.” Else place the shot there and increment the count.
+
+   e) Correctness & Complexity  
+   - This is the classic greedy for minimum interval “stabbing” points, extended to forbid certain sub‐ranges. Shooting as far right as possible always maximizes coverage of future wolves.  
+   - Merging sheep intervals takes O(M log M). Sorting wolves takes O(N log N). The one‐pass scan with two pointers over wolves and sheep is O(N + M).  
+
+3. Provided C++ Solution with Detailed Comments  
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Small epsilon to ensure we step just outside a sheep interval
+const double eps = 1e-9;
+
+int n, m;
+// Each pair holds [angle_left, angle_right] for a segment
+vector<pair<double, double>> wolves, sheep;
+
+// Read input and convert each segment into its angular interval
+void read() {
+    cin >> n >> m;
+    wolves.resize(n);
+    sheep.resize(m);
+
+    // Read wolves
+    for (auto &interval : wolves) {
+        int x1, y1, x2, y2;
+        cin >> x1 >> y1 >> x2 >> y2;
+        double a = atan2((double)y1, (double)x1);
+        double b = atan2((double)y2, (double)x2);
+        // Ensure a <= b
+        if (a > b) swap(a, b);
+        interval = {a, b};
+    }
+    // Read sheep
+    for (auto &interval : sheep) {
+        int x1, y1, x2, y2;
+        cin >> x1 >> y1 >> x2 >> y2;
+        double a = atan2((double)y1, (double)x1);
+        double b = atan2((double)y2, (double)x2);
+        if (a > b) swap(a, b);
+        interval = {a, b};
+    }
+}
+
+void solve() {
+    // 1. Merge overlapping sheep intervals (forbidden angles)
+    if (!sheep.empty()) {
+        sort(sheep.begin(), sheep.end());
+        vector<pair<double, double>> merged;
+        auto cur = sheep[0];
+        for (int i = 1; i < (int)sheep.size(); i++) {
+            if (sheep[i].first <= cur.second + eps) {
+                // Overlaps or touches: extend the current interval
+                cur.second = max(cur.second, sheep[i].second);
+            } else {
+                merged.push_back(cur);
+                cur = sheep[i];
+            }
+        }
+        merged.push_back(cur);
+        sheep.swap(merged);
+    }
+
+    // 2. Sort wolf intervals by their right endpoint (greedy order)
+    sort(wolves.begin(), wolves.end(),
+         [](auto &A, auto &B){ return A.second < B.second; });
+
+    int pos_sheep = 0;               // pointer into sheep intervals
+    double last_shot = -1e9;         // angle of the last shot
+    int shots = 0;
+
+    // 3. Greedily stab each wolf interval
+    for (auto &w : wolves) {
+        double wl = w.first, wr = w.second;
+        // If this wolf interval already contains last_shot, it's dead
+        if (wl <= last_shot + eps) continue;
+
+        // Advance to the first sheep interval whose end >= wr
+        while (pos_sheep < (int)sheep.size() 
+               && sheep[pos_sheep].second < wr) {
+            pos_sheep++;
+        }
+
+        // Candidate shot angle is as far right as possible
+        double shoot = wr;
+        // But if it would enter a sheep interval, step just before it
+        if (pos_sheep < (int)sheep.size()) {
+            double s_left = sheep[pos_sheep].first;
+            shoot = min(shoot, s_left - eps);
+        }
+
+        // Check feasibility: shoot must still lie ≥ wl
+        if (shoot < wl - eps) {
+            cout << "No solution\n";
+            return;
+        }
+
+        // Place the shot and mark this wolf and any overlapping wolves as covered
+        last_shot = shoot;
+        shots++;
+    }
+
+    cout << shots << "\n";
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read();
+    solve();
+    return 0;
+}
+```
+
+4. Python Solution with Detailed Comments  
+```python
+import sys
+import math
+
+def read_ints():
+    return map(int, sys.stdin.readline().split())
+
+def main():
+    data = sys.stdin.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n, m = int(next(it)), int(next(it))
+
+    wolves = []
+    sheep = []
+
+    # Helper to read one segment and turn into an angular interval
+    def read_interval():
+        x1, y1, x2, y2 = map(int, (next(it), next(it), next(it), next(it)))
+        a = math.atan2(y1, x1)
+        b = math.atan2(y2, x2)
+        return (min(a, b), max(a, b))
+
+    for _ in range(n):
+        wolves.append(read_interval())
+    for _ in range(m):
+        sheep.append(read_interval())
+
+    # Merge sheep intervals into non-overlapping forbidden zones
+    sheep.sort()
+    merged = []
+    for interval in sheep:
+        if not merged or interval[0] > merged[-1][1] + 1e-9:
+            merged.append(list(interval))
+        else:
+            # Overlap: extend the end
+            merged[-1][1] = max(merged[-1][1], interval[1])
+    sheep = merged
+
+    # Sort wolves by right endpoint for greedy stabbing
+    wolves.sort(key=lambda x: x[1])
+
+    last_shot = -1e18
+    shots = 0
+    pos_sheep = 0
+    S = len(sheep)
+
+    for wl, wr in wolves:
+        # Already covered?
+        if wl <= last_shot + 1e-9:
+            continue
+
+        # Skip sheep intervals that end before this wolf’s right edge
+        while pos_sheep < S and sheep[pos_sheep][1] < wr:
+            pos_sheep += 1
+
+        # Best shot is at wr, but must avoid the next sheep interval
+        shoot = wr
+        if pos_sheep < S:
+            s_left = sheep[pos_sheep][0]
+            shoot = min(shoot, s_left - 1e-9)
+
+        # If shoot < wl, no feasible shot
+        if shoot < wl - 1e-9:
+            print("No solution")
+            return
+
+        # Place shot
+        last_shot = shoot
+        shots += 1
+
+    print(shots)
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed Editorial  
+   • Convert each segment to an angular interval [α,β] via atan2.  
+   • Merge sheep intervals into forbidden zones.  
+   • Sort wolves by β, then greedily choose each shot at the rightmost feasible angle ≤ β but > previous shot and outside any sheep interval.  
+   • If at any step no valid angle remains inside [α,β], answer “No solution,” else print shot count.
