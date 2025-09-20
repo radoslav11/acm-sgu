@@ -20,11 +20,12 @@ Based on all the information provided for problem `{problem_name}`, please provi
 """
 
     response = openai.chat.completions.create(
-        model="o4-mini",
+        model="gpt-5",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
+        reasoning_effort="high"
     )
     return response.choices[0].message.content
 
@@ -66,10 +67,11 @@ Use the provided editorial and solutions as reference, but create a clear, educa
 """
 
     response = openai.chat.completions.create(
-        model="o4-mini",
+        model="gpt-5",
         messages=[
             {"role": "user", "content": prompt}
         ],
+        reasoning_effort="high"
     )
     return response.choices[0].message.content
 

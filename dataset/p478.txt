@@ -1,0 +1,283 @@
+1) Abridged problem statement
+
+- There are a boys and b girls. Initially, 0 boys are with the teacher and all b girls are with the teacher.
+- The teacher took n notes. Just before note i:
+  - Some number of boys can join (never leave afterward).
+  - Some number of girls can leave (never return).
+  - Then the teacher counts the group size; it must equal the i-th recorded number.
+- Find any schedule (for each note i: boys_joined_i, girls_left_i) that produces the notes. If impossible, print "ERROR".
+
+
+2) Detailed editorial
+
+Model:
+- Let cnt[i] be the group size recorded at note i (1-based).
+- Insert an initial “note” cnt[0] = b to represent the starting state (0 boys, b girls).
+- Let at step i (after applying that step’s moves and before counting):
+  - B_i = number of boys with the teacher,
+  - G_i = number of girls with the teacher.
+- Constraints:
+  - B_0 = 0, G_0 = b
+  - B_i ≥ B_{i-1} (boys only join and stay)
+  - G_i ≤ G_{i-1} (girls only leave)
+  - 0 ≤ B_i ≤ a, 0 ≤ G_i ≤ b
+  - B_i + G_i = cnt[i] for i = 0..n (with cnt[0] = b)
+
+Transition:
+- Suppose we are at position pos (0 ≤ pos < n) with B_pos boys. Then G_pos is determined:
+  - G_pos = cnt[pos] − B_pos
+  - If G_pos is outside [0, b], this state is invalid.
+- For the next note, pos+1:
+  - Let y = number of girls leaving at this step, where 0 ≤ y ≤ G_pos.
+  - Then G_{pos+1} = G_pos − y.
+  - The recorded size cnt[pos+1] fixes B_{pos+1}:
+    B_{pos+1} = cnt[pos+1] − G_{pos+1}.
+  - Validate:
+    - B_{pos+1} ≥ B_pos (non-decreasing boys),
+    - 0 ≤ B_{pos+1} ≤ a, 0 ≤ G_{pos+1} ≤ b.
+  - If valid, we can move to state (pos+1, B_{pos+1}), and the step’s action is:
+    boys_joined = B_{pos+1} − B_pos, girls_left = y.
+
+Algorithm:
+- Perform DP/graph search over states (pos, B_pos), pos ∈ [0..n], B_pos ∈ [0..a].
+- Start from (0, 0).
+- For each state, try all possible y (girls leaving), deduce B_{pos+1}, check validity, and mark reachable.
+- Store parent pointers to reconstruct moves:
+  par[pos+1][B_{pos+1}] = (B_pos, boys_joined, girls_left).
+- After filling DP, if any state (n, B_n) is reachable, reconstruct the path backwards and output the sequence of moves for i = 1..n. Otherwise print "ERROR".
+
+Correctness:
+- Every valid schedule obeys the monotonicity of B and G and the sum constraint at each note; the DP enumerates exactly those transitions, so every valid schedule is representable in the DP graph.
+- Conversely, any path found by the DP defines nonnegative join/leave counts that satisfy all constraints and produce the recorded sequence.
+
+Complexity:
+- States: (n+1) × (a+1) ≤ 101 × 101.
+- From each state, we try up to G_pos ≤ b possibilities for y, so O(n × a × b) ≤ about 10^6 operations.
+- Memory: O(n × a).
+
+
+3) Provided C++ solution with detailed comments
+
+#include <bits/stdc++.h>             // Pull in standard headers (GNU extension).
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair as "first second".
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read pair from stream.
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;                      // Read all elements of a vector.
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';              // Print vector elements separated by spaces.
+    }
+    return out;
+};
+
+int a, b, n;                          // a = boys total, b = girls total, n = number of notes.
+vector<int> cnt;                      // cnt[i] = recorded group sizes (we will prepend b).
+
+void read() {
+    cin >> a >> b;                    // Read the number of boys and girls.
+    cin >> n;                         // Read the number of notes.
+    cnt.resize(n);                    // Resize cnt to hold n notes.
+    cin >> cnt;                       // Read all recorded sizes.
+    cnt.insert(cnt.begin(), b);       // Prepend initial size: initially 0 boys, b girls -> size b.
+}
+
+void dfs(
+    int pos,                          // Current position in the sequence (0..n-1). pos=0 means before 1st note.
+    int cnt_boys,                     // Current number of boys with the teacher at this pos.
+    vector<vector<bool>>& visited,    // visited[pos][boys] indicates reachable state.
+    vector<vector<tuple<int, int, int>>>& par // Parent pointers for reconstruction:
+                                              // par[pos][boys] = {prev_boys, boys_joined, girls_left} to reach this state.
+) {
+
+    int cnt_girls = cnt[pos] - cnt_boys; // Current number of girls with teacher is determined by total at pos.
+
+    // If counts are invalid, stop exploring this path.
+    if(cnt_girls < 0 || cnt_boys < 0 || cnt_boys > a || cnt_girls > b) {
+        return;
+    }
+
+    if(pos == n) {                    // If we've processed all notes, no further transitions.
+        return;
+    }
+
+    // Try all possibilities: how many girls leave before the next note is taken.
+    for(int cnt_girls_leave = 0; cnt_girls_leave <= cnt_girls; cnt_girls_leave++) {
+        int new_cnt_girls = cnt_girls - cnt_girls_leave;         // Girls remaining after leaving.
+        int new_cnt_boys = cnt[pos + 1] - new_cnt_girls;         // Boys needed to match next recorded total.
+
+        // Validate new counts and monotonicity of boys, and avoid revisiting states.
+        if(new_cnt_boys >= cnt_boys && new_cnt_boys <= a &&
+           !visited[pos + 1][new_cnt_boys]) {
+
+            // Record how we reached (pos+1, new_cnt_boys):
+            // from 'cnt_boys' boys, with 'new_cnt_boys - cnt_boys' joining,
+            // and 'cnt_girls_leave' girls leaving.
+            par[pos + 1][new_cnt_boys] = {
+                cnt_boys, new_cnt_boys - cnt_boys, cnt_girls_leave
+            };
+
+            visited[pos + 1][new_cnt_boys] = true;               // Mark as reachable.
+            dfs(pos + 1, new_cnt_boys, visited, par);            // Recurse to next position.
+        }
+    }
+}
+
+void solve() {
+    // visited[pos][boys] indicates we can reach the (pos, boys) state.
+    vector<vector<bool>> visited(n + 1, vector<bool>(a + 1, false));
+
+    // par[pos][boys] stores the parent state and the move used to reach (pos, boys).
+    // Tuple fields: (prev_boys, boys_joined, girls_left); initialize with invalid markers.
+    vector<vector<tuple<int, int, int>>> par(
+        n + 1, vector<tuple<int, int, int>>(a + 1, {-1, -1, -1})
+    );
+
+    // Start DFS from the initial state: pos=0, boys=0 (girls are implicitly cnt[0]-boys = b).
+    dfs(0, 0, visited, par);
+
+    // Among all possible numbers of boys at the end, find any reachable one.
+    for(int cnt_boys = 0; cnt_boys <= a; cnt_boys++) {
+        if(visited[n][cnt_boys]) {
+            vector<pair<int, int>> ans;     // Store (boys_joined, girls_left) for each step.
+            int pos = n, c = cnt_boys;      // Reconstruct backwards from (n, cnt_boys).
+            while(pos > 0) {
+                auto [prev_boys, move_boys, move_girls] = par[pos][c]; // Retrieve how we got here.
+                ans.push_back({move_boys, move_girls});                // Append this step.
+                c = prev_boys;                                         // Move to previous state.
+                pos--;
+            }
+
+            reverse(ans.begin(), ans.end()); // Reverse to get steps 1..n in correct order.
+
+            // Output each step: boys joined, girls left.
+            for(auto [x, y]: ans) {
+                cout << x << ' ' << y << '\n';
+            }
+            return;                           // Any valid solution is acceptable.
+        }
+    }
+    cout << "ERROR" << endl;                  // No reachable ending state found.
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);         // Fast I/O.
+    cin.tie(nullptr);
+
+    int T = 1;                                // Single test case (can be extended).
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();                               // Read input.
+        // cout << "Case #" << test << ": ";
+        solve();                              // Solve and print the answer.
+    }
+
+    return 0;
+}
+
+
+4) Python solution (well-commented)
+
+import sys
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+    a = int(next(it))  # total boys
+    b = int(next(it))  # total girls
+    n = int(next(it))  # number of notes
+    rec = [int(next(it)) for _ in range(n)]  # recorded group sizes
+    # Prepend the implicit initial "note": starting size is exactly b (0 boys, b girls).
+    cnt = [b] + rec
+
+    # dp[pos][boys] is True if we can reach after processing 'pos' notes (pos in [0..n])
+    # having exactly 'boys' boys with the teacher.
+    dp = [[False] * (a + 1) for _ in range(n + 1)]
+
+    # par[pos][boys] = (prev_boys, boys_joined_this_step, girls_left_this_step)
+    # to reconstruct the schedule. Only meaningful when dp[pos][boys] is True and pos > 0.
+    par = [[None] * (a + 1) for _ in range(n + 1)]
+
+    # Initial state: before any recorded note, we are at pos = 0 with 0 boys.
+    # Girls are implicitly cnt[0] - 0 = b.
+    dp[0][0] = True
+
+    # Iterate over positions 0..n-1 and try to reach pos+1.
+    for pos in range(n):
+        for boys in range(a + 1):
+            if not dp[pos][boys]:
+                continue
+            # Compute current girls; this must match the recorded size at pos.
+            girls = cnt[pos] - boys
+            if girls < 0 or girls > b:
+                # This state cannot be valid; skip.
+                continue
+
+            # Try all possibilities for the number of girls leaving before next note.
+            for girls_leave in range(girls + 1):
+                new_girls = girls - girls_leave
+                # Next recorded total fixes the new number of boys.
+                new_boys = cnt[pos + 1] - new_girls
+
+                # Validate non-decreasing boys and bounds.
+                if new_boys < boys or new_boys < 0 or new_boys > a:
+                    continue
+
+                if not dp[pos + 1][new_boys]:
+                    dp[pos + 1][new_boys] = True
+                    par[pos + 1][new_boys] = (boys, new_boys - boys, girls_leave)
+
+    # Find any reachable end state after n notes.
+    end_boys = None
+    for c in range(a + 1):
+        if dp[n][c]:
+            end_boys = c
+            break
+
+    if end_boys is None:
+        print("ERROR")
+        return
+
+    # Reconstruct actions from par.
+    actions = []
+    pos = n
+    boys = end_boys
+    while pos > 0:
+        prev = par[pos][boys]
+        # prev must exist because dp[pos][boys] is True.
+        prev_boys, joined, left = prev
+        actions.append((joined, left))
+        boys = prev_boys
+        pos -= 1
+
+    actions.reverse()
+    for joined, left in actions:
+        print(joined, left)
+
+if __name__ == "__main__":
+    solve()
+
+
+5) Compressed editorial
+
+- Insert an initial “note” cnt[0] = b to represent the starting state with 0 boys and b girls.
+- DP over states (pos, B): after pos notes, B boys are with the teacher; girls are determined as G = cnt[pos] − B.
+- From (pos, B), try all y in [0..G] girls leaving; then G' = G − y and B' = cnt[pos+1] − G'. Require B' ≥ B, 0 ≤ B' ≤ a, 0 ≤ G' ≤ b. Mark (pos+1, B') reachable and store parent (B, B'−B, y).
+- If any (n, B_n) is reachable, backtrack to output per step: boys_joined and girls_left; else print ERROR.
+- Complexity: O(n·a·b) time, O(n·a) memory.
