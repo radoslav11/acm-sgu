@@ -1,197 +1,286 @@
-1. Abridged Problem Statement
-Given N solid circular islands (each defined by center (xi, yi) and radius ri) and a circular ship (center (cx, cy), radius cr) initially not overlapping any island, determine whether the ship can move arbitrarily far from its start without ever intersecting an island. The ship may touch islands but must not overlap them.
+1) Abridged problem statement
+- You are given N solid circular island pieces (xi, yi, ri) in the plane and a circular ship (cx, cy, cr).
+- The ship may move freely (can touch islands, but must never intersect them).
+- Decide whether the ship can move arbitrarily far away from its starting position (escape to infinity). Print YES if it can, otherwise NO.
 
-2. Detailed Editorial
+2) Detailed editorial
+- Geometric reduction (Minkowski sum):
+  - Expand every island radius by the ship radius cr and shift coordinates so the ship starts at the origin.
+  - After this, the ship is a point at (0,0), and the obstacles are discs centered at (xi−cx, yi−cy) with radii (ri+cr). The initial position is guaranteed to be in free space.
 
-Overview  
-We need to decide if the union of islands, after “growing” each by the ship’s radius (so that treating the ship as a point suffices), forms a closed barrier around the start point. If there is any continuous loop of overlapping expanded islands that encloses the starting point, the ship is trapped; otherwise it can escape.
+- Key observation:
+  - The origin is trapped (cannot escape to infinity) if and only if the union of the expanded discs contains a closed curve that winds around the origin. A practical sufficient/necessary certificate is a cycle of pairwise-intersecting discs that encircles the origin.
 
-Key Steps  
-1. Minkowski Expansion  
-   Replace each island radius ri by ri+cr and translate coordinates so that the ship is at the origin. The problem reduces to whether the origin lies inside an enclosed loop formed by these expanded circles.
+- Turning-angle graph:
+  - For each disc i, compute its polar angle θi around the origin.
+  - For any two discs i and j that intersect or touch (distance between centers ≤ sum of radii), consider the minimal signed angular rotation δ(i→j) needed to turn from θi to θj. Normalize δ to be in (−π, π].
+  - Build a directed graph with an edge i→j of weight δ(i→j). Also add j→i with weight −δ(i→j).
 
-2. Intersection Graph with Angular Weights  
-   Build a complete graph on the islands. For every pair (i, j):
-   - Compute squared distance d2 = (xi–xj)²+(yi–yj)².
-   - If d2 > (ri+ rj)², they do not touch: set both dist[i][j] = dist[j][i] = +∞.
-   - Otherwise they touch or overlap. Compute the angles αi, αj of centers i and j around the origin (using atan2). Let Δ = αj–αi normalized to (–π,π]. Then set
-        dist[i][j] = Δ,
-        dist[j][i] = –Δ.
-   These directed weights record how much one must “turn” around the origin when moving from circle i to j along the boundary.
+- Why this works:
+  - Along a chain of overlapping discs, the “view” from the origin cannot jump more than π at each step; the cumulative rotation along a closed loop around the origin must be ±2π. Thus, a loop that surrounds the origin clockwise induces a total δ-sum near −2π; counterclockwise yields +2π. Because we add both directions for each pair, any enclosing loop yields a negative cycle in at least one direction.
+  - Therefore, detecting a negative cycle of magnitude at least about π is enough to conclude entrapment. The provided solution flags entrapment when the shortest i→i cycle sum is < −π.
 
-3. Detecting an Enclosing Cycle  
-   If there is a directed cycle whose total angular sum is nonzero (in fact <0), it means islands wrap around the origin. We detect a negative cycle by running Floyd–Warshall: if at the end dist[i][i] < 0 for any i, there is a negative cycle and the ship cannot escape.
+- Algorithm:
+  - Inflate and shift all discs.
+  - For each pair (i, j), if discs overlap, compute δ(i→j) and set dist[i][j] = δ(i→j), dist[j][i] = −δ(i→j); if they don’t overlap, set dist[i][j] = +∞.
+  - Run Floyd–Warshall on dist with a tiny epsilon in relaxations for numerical robustness.
+  - If any dist[i][i] < −π, print NO (trapped). Otherwise, print YES (can escape).
 
-4. Complexity  
-   N ≤ 300, so Floyd–Warshall in O(N³) ≈ 27·10^6 updates is acceptable in C++ under 0.25 s.
+- Correctness outline:
+  - If there is a cycle of overlapping discs that winds around the origin, following the cycle in the appropriate direction yields a total δ close to −2π; Floyd–Warshall will find a negative cycle with weight < −π, thus we answer NO.
+  - If there is no such enclosing cycle, there is no negative cycle with weight ≤ −π; the union of obstacles does not separate the origin from infinity, hence YES.
 
-3. C++ Solution with Detailed Comments
+- Complexity:
+  - Building the graph: O(N^2).
+  - Floyd–Warshall: O(N^3) = 27e6 updates for N=300, which fits easily in C++ within the limits.
+  - Numerical details: use EPS ~ 1e−6, normalize angles with care. Using atan2 is convenient; the given C++ uses acos with sign fix.
+
+3) Provided C++ solution with detailed comments
 ```cpp
 #include <bits/stdc++.h>
 using namespace std;
 
-// A small epsilon for floating comparisons
-const double eps = 1e-6;
-const double INF = 1e18;
-const double PI = acos(-1.0);
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // stream helper (unused here)
+}
 
-int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // stream helper (unused here)
+}
 
-    int n;
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x; // stream helper (unused here)
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' '; // stream helper (unused here)
+    return out;
+};
+
+const double PI = acos(-1);   // π constant
+const double eps = 1e-6;      // numeric tolerance
+
+int n;                        // number of island circles
+vector<double> x, y, rad;     // centers and radii of islands (to be transformed)
+double cx, cy, cr;            // ship center and radius
+
+void read() {
     cin >> n;
-    vector<double> x(n), y(n), r(n);
-
-    // Read islands
+    x.resize(n);
+    y.resize(n);
+    rad.resize(n);
     for(int i = 0; i < n; i++) {
-        cin >> x[i] >> y[i] >> r[i];
+        cin >> x[i] >> y[i] >> rad[i]; // read island circles
     }
-    // Read ship center and radius
-    double cx, cy, cr;
-    cin >> cx >> cy >> cr;
+    cin >> cx >> cy >> cr;             // read ship circle
+}
 
-    // Translate so ship is at origin and expand each island by cr
+void solve() {
+    // Transform coordinates so that the ship is a point at the origin:
+    // - shift all island centers by subtracting (cx, cy)
+    // - inflate each island radius by cr (Minkowski sum) so the ship is a point
     for(int i = 0; i < n; i++) {
         x[i] -= cx;
         y[i] -= cy;
-        r[i] += cr;
+        rad[i] += cr;
     }
 
-    // dist[i][j] = minimal angular displacement from i to j
+    // Distance matrix between nodes (islands). We will store, for overlapping pairs,
+    // the minimal signed angle change to rotate from i to j. For non-overlapping pairs,
+    // we set a very large value ("infinity").
     vector<vector<double>> dist(n, vector<double>(n, 0));
-
-    // Build graph
     for(int i = 0; i < n; i++) {
         for(int j = i + 1; j < n; j++) {
-            // squared distance between centers
-            double dx = x[i] - x[j];
-            double dy = y[i] - y[j];
-            double d2 = dx*dx + dy*dy;
-            double R = r[i] + r[j];
+            // Squared distance between centers
+            double center_dist_sq =
+                (x[i] - x[j]) * (x[i] - x[j]) + (y[i] - y[j]) * (y[i] - y[j]);
+            // Squared sum of (inflated) radii
+            double sum_rad_sq = (rad[i] + rad[j]) * (rad[i] + rad[j]);
 
-            if (d2 > R*R + eps) {
-                // No overlap: set both directions to +INF
-                dist[i][j] = dist[j][i] = INF;
+            // If centers are farther than sum of radii (with a tiny tolerance), they do not overlap.
+            // Notice this uses squared values; '+ eps' slightly tightens the condition to avoid false positives.
+            if(center_dist_sq + eps > sum_rad_sq) {
+                dist[i][j] = 1e18; // INF for i->j
+                dist[j][i] = 1e18; // INF for j->i
             } else {
-                // Compute angles of points i and j
-                double ai = atan2(y[i], x[i]);
-                double aj = atan2(y[j], x[j]);
-                // Compute minimal signed difference in (–π,π]
-                double d = aj - ai;
-                if (d <= -PI) d += 2*PI;
-                else if (d > PI) d -= 2*PI;
-                // Assign directed weights
-                dist[i][j] = d;
-                dist[j][i] = -d;
+                // Compute polar angles of centers with respect to origin.
+                // The code uses acos(...) with a correction for negative y to replicate atan2 behavior.
+                // Note: if a center is exactly at the origin this would be invalid, but the problem
+                // guarantees the starting position is in free space (so such a case should not occur).
+                double alpha = acos(x[i] / sqrt(x[i] * x[i] + y[i] * y[i]));
+                double beta  = acos(x[j] / sqrt(x[j] * x[j] + y[j] * y[j]));
+                if(y[i] < -eps) {
+                    alpha = 2 * PI - alpha;
+                }
+                if(y[j] < -eps) {
+                    beta = 2 * PI - beta;
+                }
+
+                // Minimal signed angle from i to j:
+                // Start with difference in [−2π, 2π], shift into (−π, π].
+                double angle_diff = beta - alpha;
+                if(angle_diff < 0) {
+                    angle_diff += 2 * PI;
+                }
+                if(angle_diff > PI) {
+                    angle_diff -= 2 * PI;
+                }
+
+                // Set both directed edges: j->i is the negation of i->j.
+                dist[i][j] = angle_diff;
+                dist[j][i] = -angle_diff;
             }
         }
     }
 
-    // Floyd–Warshall to find shortest paths (detect negative cycles)
+    // Floyd–Warshall to compute all-pairs shortest paths on this angle graph.
+    // The '+ eps' in the relaxation helps to overcome borderline rounding and
+    // to not miss slightly negative cycles due to numeric noise.
     for(int k = 0; k < n; k++) {
         for(int i = 0; i < n; i++) {
             for(int j = 0; j < n; j++) {
-                double nd = dist[i][k] + dist[k][j];
-                if (nd + eps < dist[i][j]) {
-                    dist[i][j] = nd;
-                }
+                dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j] + eps);
             }
         }
     }
 
-    // Check if any node has a negative cycle (dist[i][i] < 0)
+    // If there exists a cycle whose total signed rotation is less than −π (in practice −2π),
+    // the origin is enclosed by a loop → the ship cannot escape.
     for(int i = 0; i < n; i++) {
-        if (dist[i][i] < -eps) {
-            cout << "NO\n"; // trapped
-            return 0;
+        if(dist[i][i] < -PI) {
+            cout << "NO" << endl;
+            return;
         }
     }
 
-    cout << "YES\n"; // can escape
+    // Otherwise there is no enclosing loop; the ship can get arbitrarily far.
+    cout << "YES" << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;        // single test
+    // cin >> T;      // (left here in case of multi-tests)
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
     return 0;
 }
 ```
 
-4. Python Solution with Detailed Comments
+4) Python solution (same idea) with detailed comments
 ```python
 import sys
 import math
 
-def can_escape(islands, ship):
-    n = len(islands)
-    x = [xi - ship[0] for xi, yi, ri in islands]
-    y = [yi - ship[1] for xi, yi, ri in islands]
-    r = [ri + ship[2] for xi, yi, ri in islands]
+def can_escape(circles, ship):
+    # circles: list of (x, y, r)
+    # ship: (cx, cy, cr)
+    cx, cy, cr = ship
+    n = len(circles)
 
-    INF = 1e18
-    PI = math.pi
-    eps = 1e-9
+    # Shift centers so the ship's center is at the origin and
+    # inflate radii by the ship radius (Minkowski sum).
+    x = [0.0] * n
+    y = [0.0] * n
+    R = [0.0] * n
+    for i, (xi, yi, ri) in enumerate(circles):
+        x[i] = xi - cx
+        y[i] = yi - cy
+        R[i] = ri + cr
 
-    # Initialize distance matrix
-    dist = [[0.0]*n for _ in range(n)]
+    # Prepare angle for each center using atan2 (robust for all quadrants).
+    # If a center is (0, 0) and R[i] > 0, that would imply the origin is inside a disc,
+    # which contradicts "ship starts in free area". We keep the code robust anyway.
+    theta = [math.atan2(y[i], x[i]) % (2.0 * math.pi) for i in range(n)]
 
-    # Build weighted graph
+    # Build directed graph weights:
+    # w[i][j] = minimal signed angle to rotate from theta[i] to theta[j] if discs i and j intersect, else +inf.
+    INF = 1e100
+    w = [[INF] * n for _ in range(n)]
     for i in range(n):
-        for j in range(i+1, n):
-            dx = x[i] - x[j]
-            dy = y[i] - y[j]
-            d2 = dx*dx + dy*dy
-            R = r[i] + r[j]
-            if d2 > R*R + eps:
-                # No overlap
-                dist[i][j] = dist[j][i] = INF
+        w[i][i] = 0.0
+
+    # Epsilon used both in intersection tests and relaxations
+    EPS = 1e-6
+    for i in range(n):
+        xi, yi, ri = x[i], y[i], R[i]
+        for j in range(i + 1, n):
+            xj, yj, rj = x[j], y[j], R[j]
+            # Squared distance between centers
+            dx = xi - xj
+            dy = yi - yj
+            center_dist_sq = dx * dx + dy * dy
+            sum_rad = ri + rj
+            sum_rad_sq = sum_rad * sum_rad
+
+            # If they intersect/touch: center_dist <= sum_rad (+tiny tolerance).
+            # This check mirrors the C++ logic with squared distances and a small EPS.
+            if center_dist_sq + EPS <= sum_rad_sq:
+                # Compute minimal signed angle difference in (−π, π]
+                diff = theta[j] - theta[i]
+                # Normalize into (−π, π]
+                diff = (diff + math.pi) % (2.0 * math.pi) - math.pi
+                w[i][j] = diff
+                w[j][i] = -diff
             else:
-                # Angles around origin
-                ai = math.atan2(y[i], x[i])
-                aj = math.atan2(y[j], x[j])
-                # Signed difference in (-pi,pi]
-                d = aj - ai
-                if d <= -PI:
-                    d += 2*PI
-                elif d > PI:
-                    d -= 2*PI
-                dist[i][j] = d
-                dist[j][i] = -d
+                # Not intersecting: leave as INF
+                pass
 
-    # Floyd–Warshall to detect negative cycle
+    # Floyd–Warshall to find all-pairs shortest paths in the angle graph.
+    # If a cycle wraps around the origin clockwise, there exists k with w[k][k] < −π after closure.
     for k in range(n):
+        wk = w[k]
         for i in range(n):
-            # small optimization: local references
-            dik = dist[i][k]
-            row_i = dist[i]
-            row_k = dist[k]
+            wik = w[i][k]
+            if wik >= INF:
+                continue
+            wi = w[i]
+            # Relax i->j via k
+            t = wik  # w[i][k]
             for j in range(n):
-                nd = dik + row_k[j]
-                if nd + eps < row_i[j]:
-                    row_i[j] = nd
+                val = t + wk[j] + EPS
+                if val < wi[j]:
+                    wi[j] = val
 
-    # If any dist[i][i] < 0, a negative cycle exists
+    # Detect a sufficiently negative cycle (enclosing the origin)
     for i in range(n):
-        if dist[i][i] < -eps:
-            return False
-    return True
+        if w[i][i] < -math.pi:
+            return False  # cannot escape
+
+    return True  # can escape
+
 
 def main():
-    data = sys.stdin.read().split()
+    data = sys.stdin.read().strip().split()
     it = iter(data)
-    n = int(next(it))
-    islands = []
+    try:
+        n = int(next(it))
+    except StopIteration:
+        return
+    circles = []
     for _ in range(n):
+        # Read xi, yi, ri as floats
         xi = float(next(it)); yi = float(next(it)); ri = float(next(it))
-        islands.append((xi, yi, ri))
+        circles.append((xi, yi, ri))
     cx = float(next(it)); cy = float(next(it)); cr = float(next(it))
-    if can_escape(islands, (cx, cy, cr)):
-        print("YES")
-    else:
-        print("NO")
+    print("YES" if can_escape(circles, (cx, cy, cr)) else "NO")
 
 if __name__ == "__main__":
     main()
 ```
 
-5. Compressed Editorial
-- Grow each island radius by the ship’s radius and shift so ship is at origin.  
-- Build a directed graph: nodes = islands; if two islands overlap, edge weights = signed angle difference of their centers around origin.  
-- Use Floyd–Warshall to find shortest paths and detect any negative cycle (dist[i][i] < 0).  
-- A negative cycle means islands enclose the origin ⇒ NO; otherwise ⇒ YES.
+5) Compressed editorial
+- Inflate each island radius by the ship radius and shift coordinates so the ship becomes a point at the origin.
+- Build a graph on discs: connect i and j if their inflated discs intersect. For each such pair, compute the minimal signed angular difference δ ∈ (−π, π] from the angle of ci to cj (as seen from the origin). Add directed edges i→j with weight δ and j→i with weight −δ.
+- Run Floyd–Warshall on this graph. If any dist[i][i] < −π after closure, there is a cycle whose total rotation is about −2π, i.e., an enclosing loop around the origin; answer NO. Otherwise answer YES.
+- Complexity: O(N^3) with N ≤ 300. Use small eps for numeric stability.

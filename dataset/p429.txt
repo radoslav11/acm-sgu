@@ -1,0 +1,251 @@
+1) Abridged problem statement
+- There are n heaps in a line with sizes a1, a2, ..., an.
+- Players alternate turns. On a turn, a player chooses either the current first or current last heap and removes any positive number of stones from that heap. When a heap becomes empty, it disappears and the next heap becomes the new end.
+- The player who cannot move (all heaps are gone) loses. Fedor moves first.
+- Determine the winner (print "FEDOR" or "SERGEY") assuming optimal play.
+
+2) Detailed editorial
+- Interval view and P-positions:
+  - For 2 heaps, this is exactly Nim on two piles: the next player loses if and only if the two piles are equal.
+  - For more than 2 heaps, only the two ends are accessible at any time. The middle segment [l+1..r-1] acts as a “filter/transform” between the ends l and r.
+
+- Define the middle transform g[l, r]:
+  - Fix the middle segment a[l+1..r-1]. For any x ≥ 1 placed at the left end, let g[l, r](x) be the unique y ≥ 1 (if it exists) such that the position (x, a[l+1..r-1], y) is a P-position (losing for the next player).
+  - If no such y ≥ 1 exists, we will record g[l, r](x) = 0 as a special sentinel meaning “no losing match for this x.”
+  - Uniqueness: If two different y1 < y2 both yielded losing positions, each could move to the other, contradicting the definition of a P-position. So for a fixed x there can be at most one losing y.
+
+- Structure of g[l, r]:
+  - Surprisingly, each function g[l, r] can be encoded by just two integers (L, R).
+  - The induced mapping f(x) = g[l, r](x) behaves as follows:
+    - If x is outside the closed interval [min(L, R), max(L, R)], then f(x) = x (identity).
+    - If x lies inside that interval, f(x) moves one step toward R:
+      - If L ≤ R: f(x) = x + 1 when x < R, and f(R) = 0 (no losing match).
+      - If L > R: f(x) = x − 1 when x > R, and f(R) = 0.
+  - Intuition: Inside the “active” range, every time you increase the left end by 1 you need to increase/decrease the right end by one step in lockstep to preserve a P-position, up to the boundary where no match exists.
+
+- Base case (length 2):
+  - For r = l+1, the middle is empty and the game is exactly two-heap Nim. Losing happens only when the two ends are equal.
+  - This corresponds to the identity mapping f(x) = x. We encode that by the pair (0, 0), because our apply rule with (L, R) = (0, 0) is identity for all positive x.
+
+- Inversion:
+  - The inverse mapping of g[l, r] (mapping “desired right end → losing left end”) is obtained by swapping the pair: inv(L, R) = (R, L).
+  - This follows from the symmetry of the game and the fact that the step function is reversible outside the sentinel at R.
+
+- DP recurrence for pairs:
+  - We build g[l, r] from smaller intervals:
+    - Let L’ = g[l+1, r](a[l+1]). This is the unique losing right-end value if we first clear a[l] completely. We record it as L for g[l, r].
+    - Let R’ = inv(g[l, r−1])(a[r−1]). This is the unique losing left-end value if we first clear a[r] completely. We record it as R for g[l, r].
+    - Thus g[l, r] = (L, R).
+  - With the (L, R) encoding and the apply function described above, this inductive construction matches the behavior of optimal play.
+
+- Final decision:
+  - Compute target = g[1, n](a1) using the constructed pair for the whole interval.
+  - If target equals an (the actual rightmost heap), then the starting position is losing for the next player (Sergey wins), otherwise Fedor wins.
+  - Special case n = 1: Fedor always wins (he takes the only heap).
+
+- Complexity:
+  - We fill an O(n × n) table of pairs; each transition is O(1). Time and memory are O(n^2).
+  - This avoids any dependence on the magnitudes of the ai.
+
+3) Provided C++ solution with detailed comments
+Note: Comments explain every line or compact group of lines.
+
+#include <bits/stdc++.h>   // Pulls in most standard headers
+using namespace std;
+
+// Pretty-printer for pair<T1, T2>, used only for debugging (not essential)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Reader for pair<T1, T2>, unused here but harmless
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector<T> from input
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Print a vector<T> with spaces (unused for final answer)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+int n;            // number of heaps
+vector<int> a;    // heap sizes
+
+// Apply the encoded transform g[l,r] to an input x.
+// The transform is represented by a pair (L, R).
+// Interpretation:
+// - If x ∉ [min(L, R), max(L, R)], return x (identity).
+// - If x is inside, move one step toward R. If x == R, return 0 (sentinel: "no losing y").
+static inline int apply_func(pair<int, int> fn, int x) {
+    // apply_func represents the middle transform g[l,r](x) with a pair (L, R)
+    // and applies it to x as described in the analysis.
+
+    int L = fn.first, R = fn.second;
+    int lo = min(L, R), hi = max(L, R);
+    // If x is outside [lo, hi], return x unchanged (identity)
+    if(max(lo, min(x, hi)) != x) {
+        return x;
+    }
+    // Otherwise step toward R by +1 if L <= R else -1;
+    // hitting R maps to 0 (sentinel: no positive y matches)
+    int step;
+    if(L <= R) {
+        step = 1;
+    } else {
+        step = -1;
+    }
+    if(x != R) {
+        return x + step;
+    } else {
+        return 0;
+    }
+}
+
+// Read input: n and the vector a of heap sizes
+void read() {
+    cin >> n;
+    a.resize(n);
+    cin >> a;
+}
+
+void solve() {
+    // High-level:
+    // Build g[l][r] for all intervals as a pair (L, R) encoding the middle transform.
+    // Base for length 2 is identity (pair (0, 0)).
+    // For length >= 3:
+    //   L_{l,r} = g[l+1,r](a[l+1])
+    //   R_{l,r} = inverse(g[l,r-1])(a[r-1])  i.e., swap(L, R) and apply
+    // Final: compare g[0][n-1](a[0]) to a[n-1].
+
+    if(n == 1) {
+        // Single heap: Fedor takes all and wins
+        cout << "FEDOR\n";
+        return;
+    }
+
+    // g[l][r] stores the pair (L, R) encoding g[l,r]
+    // Initialize all pairs to (0, 0), which acts as identity for positive x.
+    vector<vector<pair<int, int>>> g(n, vector<pair<int, int>>(n, {0, 0}));
+
+    // Build by increasing length
+    for(int len = 3; len <= n; ++len) {          // only lengths >= 3 need computing
+        for(int l = 0; l + len <= n; ++l) {
+            int r = l + len - 1;
+            g[l][r] = {
+                // L_{l,r} = g[l+1,r](a[l+1])  -> losing right-end if left cleared first
+                apply_func(g[l + 1][r], a[l + 1]),
+                // R_{l,r} = inv(g[l,r-1])(a[r-1]) -> losing left-end if right cleared first
+                // inv(g) is obtained by swapping .first and .second
+                apply_func({g[l][r - 1].second, g[l][r - 1].first}, a[r - 1])
+            };
+        }
+    }
+
+    // Compute the unique target right-end that makes the whole position losing for the next player
+    int target = apply_func(g[0][n - 1], a[0]);
+
+    // If the actual right-end equals this target, the starting position is P; otherwise N (winning for Fedor)
+    if(target == a[n - 1]) {
+        cout << "SERGEY\n";
+    } else {
+        cout << "FEDOR\n";
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false); // Faster I/O
+    cin.tie(nullptr);            // Untie cin from cout
+
+    int T = 1;                   // Single test case in this problem
+    // cin >> T;                 // (kept for possible multi-test variants)
+    for(int test = 1; test <= T; test++) {
+        read();                  // Read input
+        // cout << "Case #" << test << ": ";
+        solve();                 // Solve and print answer
+    }
+
+    return 0;
+}
+
+4) Python solution (detailed comments)
+This is a line-for-line translation of the C++ approach, using the same (L, R) encoding and apply function.
+
+import sys
+
+def apply_func(fn, x):
+    """
+    Apply the encoded transform to x.
+    fn is a tuple (L, R) encoding g[l, r].
+    Behavior:
+      - If x not in [min(L, R), max(L, R)], return x.
+      - Else move one step toward R; if x == R, return 0 (sentinel: no losing y).
+    """
+    L, R = fn
+    lo, hi = (L, R) if L <= R else (R, L)
+    if x < lo or x > hi:
+        return x
+    # x is inside the active interval
+    step = 1 if L <= R else -1
+    if x != R:
+        return x + step
+    else:
+        return 0
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+    n = int(next(it))
+    a = [int(next(it)) for _ in range(n)]
+
+    # Edge case: one heap → Fedor wins by taking it
+    if n == 1:
+        print("FEDOR")
+        return
+
+    # g[l][r] is a tuple (L, R). Initialize to (0, 0) which behaves as identity for positive x.
+    g = [[(0, 0) for _ in range(n)] for __ in range(n)]
+
+    # Build DP by increasing interval length
+    for length in range(3, n + 1):
+        for l in range(0, n - length + 1):
+            r = l + length - 1
+            # L_{l,r}: apply g[l+1][r] to a[l+1]
+            L = apply_func(g[l + 1][r], a[l + 1])
+            # R_{l,r}: apply inv(g[l][r-1]) to a[r-1], where inverse swaps L and R
+            inv_pair = (g[l][r - 1][1], g[l][r - 1][0])
+            R = apply_func(inv_pair, a[r - 1])
+            g[l][r] = (L, R)
+
+    # Compute target right-end that makes the whole position losing (if any)
+    target = apply_func(g[0][n - 1], a[0])
+
+    # Compare to actual a[n-1]
+    print("SERGEY" if target == a[n - 1] else "FEDOR")
+
+if __name__ == "__main__":
+    solve()
+
+5) Compressed editorial
+- Reduce the game on an interval [l, r] to a mapping g[l, r] from the left end size x to the unique right end size y making (x, middle, y) a P-position, or 0 if no such y exists.
+- Each g[l, r] can be encoded by a pair (L, R), meaning: outside [min(L, R), max(L, R)] the mapping is identity; inside, it steps one unit toward R; at x = R it returns 0.
+- Base for length 2 is identity (two-heap Nim loses iff equal), i.e., pair (0, 0).
+- Recur for longer intervals:
+  - L = g[l+1, r](a[l+1]) (clear left first),
+  - R = inv(g[l, r−1])(a[r−1]) (clear right first), where inv swaps (L, R).
+- After filling all pairs, compute target = g[1, n](a1). If target equals an, the start is losing for the next player (print SERGEY), otherwise print FEDOR.
+- Time and memory are O(n^2); no dependence on the magnitudes of ai.
