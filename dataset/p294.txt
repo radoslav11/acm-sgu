@@ -1,0 +1,254 @@
+1) Abridged problem statement
+- We write n letters arranged in a circle, each letter being either X or E.
+- Two strings are considered the same if one can be rotated to obtain the other (rotations only; no reflections).
+- Given 1 ≤ n ≤ 200000, compute the number of distinct circular strings (binary necklaces) of length n.
+
+2) Detailed editorial
+- Model: We are counting binary necklaces of length n under the action of the cyclic group C_n (rotations).
+- Tool: Burnside’s Lemma (Cauchy-Frobenius) says the number of distinct objects (orbits) is the average number of configurations fixed by each group action (rotation).
+
+- Fixed configurations under a rotation:
+  - Consider rotation by k positions (k = 0..n-1). This rotation partitions the n positions into gcd(n, k) cycles. Each cycle must be constant in any fixed string, and each cycle can be chosen as X or E independently. Therefore the number of binary strings fixed by rotation k is 2^{gcd(n, k)}.
+
+- Burnside summation:
+  - Answer = (1/n) * sum_{k=0}^{n-1} 2^{gcd(n, k)}.
+
+- Grouping by gcd via Euler’s totient:
+  - The number of k with gcd(n, k) = d (for d | n) equals φ(n/d). Hence we can rewrite:
+    Answer = (1/n) * sum_{d | n} φ(n/d) * 2^d
+    which is equivalent to:
+    Answer = (1/n) * sum_{d | n} φ(d) * 2^{n/d}
+
+- Complexity and implementation:
+  - n ≤ 200000, so both of these are efficient:
+    - Direct sum over k: O(n log n) (due to gcd), perfectly fine in Python.
+    - Divisor/totient form: O(τ(n) + factoring), with τ(n) the number of divisors (≤ ~1500 here).
+  - Big integers are required since the answer is roughly 2^n / n; Python handles this natively; in C++ use boost::multiprecision::cpp_int.
+  - Implementation plan (divisor/totient form):
+    1) Factor n to get its distinct prime divisors.
+    2) Enumerate all divisors d | n.
+    3) For each m = d (or m = n/d, depending on the chosen formula), compute φ(m) using the primes of n:
+       φ(m) = m * Π_{p | m} (1 - 1/p).
+    4) Accumulate φ(d) * 2^{n/d} (or φ(n/d) * 2^d).
+    5) Divide the sum by n and print.
+
+- Correctness check (samples):
+  - n = 3: (1/3)(2^3 + 2^1 + 2^1) = 4.
+  - n = 4: (1/4)(2^4 + 2^1 + 2^2 + 2^1) = 6.
+
+3) C++ solution (with detailed comments)
+Note: No C++ file was provided in the bundle; below is a correct and fully commented C++ implementation using Boost big integers.
+
+```cpp
+// We use a totient-grouped Burnside formula:
+//   answer = (1/n) * sum_{d | n} phi(d) * 2^(n/d)
+//
+// Big integers are necessary because the result can be very large.
+// We use boost::multiprecision::cpp_int for arbitrary precision.
+
+#include <bits/stdc++.h>
+#include <boost/multiprecision/cpp_int.hpp>
+
+using namespace std;
+// Big integer type.
+using boost::multiprecision::cpp_int;
+
+// Return the distinct prime factors of x.
+// We only need distinct primes, not their exponents, because Euler's phi
+// only depends on which primes divide the number.
+static vector<int> distinct_prime_factors(int x) {
+    vector<int> primes;
+    // Work on a copy that we can divide.
+    int n = x;
+
+    // Check factor 2 separately.
+    if (n % 2 == 0) {
+        primes.push_back(2);
+        while (n % 2 == 0) n /= 2;
+    }
+
+    // Check odd factors up to sqrt(n).
+    for (int p = 3; 1LL * p * p <= n; p += 2) {
+        if (n % p == 0) {
+            primes.push_back(p);
+            while (n % p == 0) n /= p;
+        }
+    }
+
+    // If there's a prime factor > sqrt(original x), it's n itself > 1.
+    if (n > 1) primes.push_back(n);
+
+    return primes;
+}
+
+// Enumerate all positive divisors of n.
+static vector<int> divisors_of(int n) {
+    vector<int> divs;
+    for (int i = 1; 1LL * i * i <= n; ++i) {
+        if (n % i == 0) {
+            divs.push_back(i);
+            if (i != n / i) divs.push_back(n / i);
+        }
+    }
+    return divs;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    // Read n; if no input, exit.
+    if (!(cin >> n)) return 0;
+
+    // Get distinct prime divisors of n to help compute φ for any divisor of n.
+    vector<int> primes = distinct_prime_factors(n);
+
+    // Enumerate all divisors d of n.
+    vector<int> divs = divisors_of(n);
+
+    cpp_int sum = 0;  // Will hold the sum of phi(d) * 2^(n/d) over all d | n.
+
+    for (int d : divs) {
+        // We need phi(d). Since d | n, the primes dividing d are a subset of primes.
+        long long m = d;       // We'll compute phi(d) in a 64-bit integer (fits since d <= 200000).
+        long long phi = m;     // Start from phi(d) = d.
+
+        // Reduce phi by each prime dividing d: phi = phi / p * (p - 1).
+        for (int p : primes) {
+            if (m % p == 0) {
+                phi = phi / p * (p - 1);
+                // Remove all factors of p from m (not necessary for correctness,
+                // but cheap and shows we've accounted for this prime).
+                while (m % p == 0) m /= p;
+            }
+        }
+        // If m > 1 here, it would be a prime factor not in 'primes' (shouldn't happen),
+        // but since primes are the distinct primes of n and d | n, m should become 1.
+
+        // Compute term = phi(d) * 2^(n/d).
+        // 2^(n/d) is a large number; use big integer shifts for fast power-of-two.
+        int exponent = n / d;
+        cpp_int pow2 = cpp_int(1) << exponent;  // 1 shifted left by exponent bits = 2^exponent.
+        cpp_int term = cpp_int(phi) * pow2;
+
+        sum += term;  // Accumulate into big integer.
+    }
+
+    // Finally divide by n according to Burnside.
+    cpp_int answer = sum / n;
+
+    // Output the big integer.
+    cout << answer << '\n';
+    return 0;
+}
+```
+
+4) Python solution (with detailed comments)
+Below is a slightly optimized version using the divisor/totient grouping; Python’s big ints handle the size naturally.
+
+```python
+import sys
+from math import isqrt
+
+# On Python 3.11+, printing extremely large integers may require raising this limit.
+if hasattr(sys, "set_int_max_str_digits"):
+    try:
+        sys.set_int_max_str_digits(10**7)
+    except Exception:
+        pass
+
+def distinct_prime_factors(x: int) -> list[int]:
+    """
+    Return the list of distinct prime divisors of x.
+    We only need distinct primes (no multiplicities) to compute Euler's totient.
+    """
+    primes = []
+    n = x
+
+    # Factor out 2.
+    if n % 2 == 0:
+        primes.append(2)
+        while n % 2 == 0:
+            n //= 2
+
+    # Factor out odd primes up to sqrt(n).
+    p = 3
+    while p * p <= n:
+        if n % p == 0:
+            primes.append(p)
+            while n % p == 0:
+                n //= p
+        p += 2
+
+    # If there's a leftover prime factor > 1, it's prime.
+    if n > 1:
+        primes.append(n)
+
+    return primes
+
+def divisors_of(n: int) -> list[int]:
+    """
+    Return the list of all positive divisors of n.
+    """
+    divs = []
+    r = isqrt(n)
+    for i in range(1, r + 1):
+        if n % i == 0:
+            divs.append(i)
+            j = n // i
+            if j != i:
+                divs.append(j)
+    return divs
+
+def euler_phi_of_divisor_using_n_primes(d: int, primes_of_n: list[int]) -> int:
+    """
+    Compute φ(d) for d | n, given the distinct prime divisors of n.
+    Since primes_of_n contains all primes that could divide d, we can compute φ(d)
+    by checking only these primes (others can't divide d).
+    """
+    phi = d
+    m = d
+    for p in primes_of_n:
+        if m % p == 0:
+            phi = phi // p * (p - 1)
+            while m % p == 0:
+                m //= p
+    # m should be 1 here if d | n; otherwise there would be an extra prime not in primes_of_n.
+    return phi
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    n = int(data[0])
+
+    # Precompute distinct prime divisors of n for φ computations.
+    primes = distinct_prime_factors(n)
+
+    # Enumerate divisors d of n.
+    divs = divisors_of(n)
+
+    # Sum φ(d) * 2^(n/d) using big integers (Python ints are arbitrary precision).
+    total = 0
+    for d in divs:
+        phi_d = euler_phi_of_divisor_using_n_primes(d, primes)
+        exponent = n // d
+        # 2^(n/d) can be computed efficiently as 1 << exponent (bit-shift).
+        total += phi_d * (1 << exponent)
+
+    # Final answer by Burnside: divide by n.
+    ans = total // n
+    print(ans)
+
+if __name__ == "__main__":
+    solve()
+```
+
+5) Compressed editorial
+- We count binary necklaces (rotations only) of length n.
+- Burnside’s Lemma: the number of distinct necklaces equals the average number of strings fixed by each rotation.
+- A rotation by k fixes exactly 2^{gcd(n, k)} strings because the positions split into gcd(n, k) cycles, each freely chosen as X or E.
+- Answer = (1/n) * sum_{k=0}^{n-1} 2^{gcd(n, k)}. Group by gcd values to get:
+  Answer = (1/n) * sum_{d | n} φ(d) * 2^{n/d}.
+- Implement by enumerating divisors of n, computing φ(d) via the primes of n, summing φ(d) * 2^{n/d}, and dividing by n. Use big integers.

@@ -1,0 +1,254 @@
+1) Abridged problem statement
+
+- A string of even length L is K-even if the Hamming distance between its first half and second half is at most K.
+- Given an integer K and a cyclic string s (lowercase letters) of odd length n < 2000, find a K-even substring of any cyclic shift of s with the maximum possible even length (≤ n). Among all with the maximum length, output the lexicographically smallest. If none exists, print a blank line.
+
+2) Detailed editorial
+
+Key observations
+- Because s is cyclic, any cyclic substring of s of length ≤ n is a substring of s+s. Let m = len(s), n = 2m after doubling.
+- Any candidate even-length substring is characterized by its start x and length L = 2d. The two halves start at positions x and y = x + d in s+s, and we need Hamming distance between s[x..x+d-1] and s[y..y+d-1] ≤ K.
+- We must search all even L ≤ m (since a cyclic substring cannot be longer than the original cycle), and among all valid substrings of the maximum L choose the lexicographically smallest.
+
+Counting mismatches for all starts efficiently (C++ approach used in the provided code)
+- Represent a candidate by the pair (x, y) of the starting indices of the two halves (with y > x and y − x = d).
+- For every pair of indices (i, j) in s+s (0 ≤ i < j < n), if s[i] ≠ s[j] and j − i = d, then (i, j) contributes 1 to the mismatch count of every (x, y) along the diagonal y − x = d such that:
+  - i − x = j − y (aligned offsets),
+  - and i < y (the character i lies in the first half).
+- A standard trick is to add contributions by 2D difference arrays along diagonals:
+  - For every mismatch pair (i, j) (i < j), with d = j − i, add +1 at the earliest admissible start (min_x, min_y) along that diagonal and add −1 at (i+1, j+1) to cap the range.
+  - Here delta = min(d − 1, i), min_x = i − delta, min_y = j − delta. This ensures the valid range keeps y > i and x ≥ 0.
+  - After processing all (i, j), do a prefix sum along every primary diagonal to recover cnt[x][y], the mismatch counts for every (x, y).
+- For our queries with L = 2d ≤ n/2 = m, cnt[x][x + d] equals exactly the Hamming distance between the two halves s[x..x+d−1] and s[x+d..x+2d−1], since no boundary truncation occurs within s+s.
+
+Selecting the answer
+- Loop L from m down to 2, consider only even L.
+- For each start x (0 ≤ x ≤ n − L), set y = x + L/2 and check if cnt[x][y] ≤ K.
+- Track the lexicographically smallest substring of length L that satisfies the constraint. As soon as you find at least one candidate for the current L, you can finalize the best for that L and stop (since we process lengths from largest to smallest).
+
+Complexity
+- Building cnt via diagonal difference: O(n^2) time and O(n^2) memory, where n = 2m < 4000.
+- Scanning candidates: O(n^2).
+- Total time O(n^2). cnt can be stored in 32-bit ints, though a 16-bit type would suffice since mismatch counts never exceed m.
+
+3) Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+
+using namespace std;
+
+// Overload operator<< for pairs to print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pairs to read "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for vectors to read all elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload operator<< for vectors to print elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, k;     // n - length of doubled string; k - allowed mismatches
+string s;     // will store s+s
+
+// Read input and prepare s+s
+void read() {
+    cin >> k >> s;      // read K and the original string
+    s = s + s;          // double the string to handle cyclic substrings
+    n = s.size();       // n = 2 * original_length
+}
+
+void solve() {
+    // Idea:
+    // We count mismatches for all pairs of half-starts (x, y), y > x,
+    // along diagonals where y - x is constant.
+    // For each pair (i < j), if s[i] != s[j], that pair contributes +1
+    // to every (x, y) with y - x = j - i and with i in the first half,
+    // i.e., i < y. We add these contributions by a diagonal difference array:
+    //   +1 at the earliest valid (x, y) on its diagonal,
+    //   -1 right after the last valid one (at (i+1, j+1)),
+    // then compute diagonal prefix sums.
+
+    // 2D matrix for difference-then-prefix sums (only y > x used).
+    vector<vector<int>> cnt(n, vector<int>(n, 0));
+
+    // For every pair (i < j), if letters differ, update the diagonal range
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            if(s[i] != s[j]) {
+                int d = j - i;                   // diagonal (offset between halves)
+                // delta is the maximum shift backward along the diagonal we can take
+                // while keeping x >= 0 and y > i (so i stays in the first half).
+                int delta = min(d - 1, i);
+                int min_x = i - delta;           // earliest x on this diagonal
+                int min_y = j - delta;           // corresponding y = x + d
+
+                // Start contributing from (min_x, min_y)
+                cnt[min_x][min_y]++;
+
+                // Stop contributing after (i, j), i.e., at (i+1, j+1) if in bounds
+                if(i + 1 < n && j + 1 < n) {
+                    cnt[i + 1][j + 1]--;
+                }
+            }
+        }
+    }
+
+    // Convert difference array to actual counts using prefix sums along diagonals.
+    // On a primary diagonal, indices move (i, j) -> (i+1, j+1).
+    for(int i = 1; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            cnt[i][j] += cnt[i - 1][j - 1];
+        }
+    }
+
+    string ans = "";
+    // Try all even lengths from n/2 (original length) down to 2
+    for(int len = n / 2; len >= 1; len--) {
+        if(len % 2 != 0) {
+            continue; // only even lengths are valid
+        }
+        // Enumerate starts x; ensure substring [x, x+len) stays within [0, n)
+        for(int x = 0; x + len <= n; x++) {
+            int y = x + len / 2;  // start of second half
+
+            // If mismatches exceed k, skip
+            if(cnt[x][y] > k) {
+                continue;
+            }
+
+            // If we already have a longer answer, skip shorter ones
+            if(!ans.empty() && ans.size() > (size_t)len) {
+                continue;
+            }
+
+            // Candidate substring
+            string cand = s.substr(x, len);
+
+            // Choose lexicographically smallest among the current best length
+            if(ans.empty() || cand < ans) {
+                ans = cand;
+            }
+        }
+    }
+
+    // If no candidate found, ans will be empty (print blank line).
+    cout << ans << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;          // Single test in this problem
+    // cin >> T;        // (left here if needed for multi-test variants)
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+4) Python solution (well-commented)
+
+Note: This Python version follows a simpler O(n^2) approach tailored for Python: for each half-shift d we build an array eq[i] = (s2[i] != s2[i + d]) and take sliding window sums of width d to count mismatches for all starts x. It uses O(n) extra memory per d and avoids a full n×n array.
+
+```python
+import sys
+
+def main():
+    data = sys.stdin.read().strip().splitlines()
+    if not data:
+        print()
+        return
+    k = int(data[0].strip())
+    s = data[1].strip()
+    m = len(s)
+
+    # Double the string to model cyclic substrings as contiguous segments
+    s2 = s + s
+    n = len(s2)  # n = 2 * m
+
+    best = None  # best answer string or None
+
+    # We must not exceed the original (cyclic) length m.
+    # Only even lengths are valid: L = 2, 4, ..., up to m (if m even) or m-1 (if m odd).
+    max_even_L = m if (m % 2 == 0) else (m - 1)
+
+    # Try lengths from largest even downwards; stop when we find at least one candidate.
+    for L in range(max_even_L, 1 - 1, -2):
+        d = L // 2  # half-length; shift between halves
+
+        # For this shift d, define eq[i] = 1 if s2[i] != s2[i + d], else 0.
+        # Valid i are 0..n - d - 1.
+        eq_len = n - d
+        eq = [0] * eq_len
+        for i in range(eq_len):
+            eq[i] = 1 if s2[i] != s2[i + d] else 0
+
+        # Build prefix sums to query sum(eq[x .. x + d - 1]) quickly.
+        pref = [0] * (eq_len + 1)
+        for i in range(eq_len):
+            pref[i + 1] = pref[i] + eq[i]
+
+        # For cyclic substrings of length L, valid starts x satisfy x + L <= n
+        # (since we already doubled).
+        # Also we only need x up to n - 2d (because L = 2d).
+        start_max = n - L
+        local_best = None  # best substring for this length L
+
+        for x in range(start_max + 1):
+            # mismatches between halves at this start x:
+            mism = pref[x + d] - pref[x]
+            if mism <= k:
+                cand = s2[x : x + L]
+                if (local_best is None) or (cand < local_best):
+                    local_best = cand
+
+        if local_best is not None:
+            best = local_best
+            break  # we found the maximum possible length; no need to try smaller L
+
+    # If nothing found, print blank line as required.
+    print(best if best is not None else "")
+
+if __name__ == "__main__":
+    main()
+```
+
+Why this Python approach works
+- For fixed d = L/2, the mismatch indicator at offset t for start x is exactly eq[x + t].
+- Summing over t = 0..d − 1 is a length-d window sum of eq.
+- We do this for all starts x via a prefix sum in O(n) time per d.
+- Scanning L from large to small ensures we stop at the first non-empty set of candidates, guaranteeing maximal length; the lexicographically smallest is selected among them.
+
+5) Compressed editorial
+
+- Double s to s+s so every cyclic substring of length ≤ |s| appears contiguously.
+- Characterize an even-length candidate by (x, y) where y = x + L/2: we need Hamming distance between s[x..y−1] and s[y..x+L−1] ≤ K.
+- C++ solution: For every mismatch (i < j) in s+s, add +1 to all (x, y) on diagonal y − x = j − i where i is in the first half (i < y). Implement via diagonal difference: +1 at earliest (min_x, min_y), −1 at (i+1, j+1), then diagonal prefix sums. Scan lengths from |s| downwards (even only), pick lexicographically smallest among valid.
+- Complexity: O(n^2) time and memory, n = 2|s|.
+- Python alternative: For each d, build eq[i] = [s2[i] != s2[i+d]], then use prefix sums to compute mismatch counts for all starts x in O(n), scanning lengths from large to small and taking the lexicographically smallest valid substring.

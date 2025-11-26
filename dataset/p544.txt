@@ -1,0 +1,290 @@
+1) Abridged problem statement
+- There are two teams (Berland A and Byteland B) with n players each, all 2n skill levels are distinct, and the stronger player always wins.
+- A sortition is a perfect matching between A and B (each A plays exactly one B).
+- Count the number of sortitions where Berland wins exactly k more games than Byteland, modulo 1,000,000,009.
+
+2) Detailed editorial
+- Let wins(A) and wins(B) be the wins of A and B in the final matching. We have:
+  - wins(A) + wins(B) = n
+  - wins(A) - wins(B) = k
+  - Hence wins(B) = (n - k) / 2, wins(A) = (n + k) / 2. If n - k is odd, the answer is 0.
+
+- Key observation via sorting:
+  - Put all 2n players into one array as (skill, team), team = 0 for A and 1 for B, and sort by skill ascending.
+  - Any match pairs a weaker earlier player with a stronger later player.
+  - When we scan left-to-right, the only way to form a pair at position i is to connect the current player (as the stronger endpoint) with some unmatched earlier player of the opposite team.
+
+- DP state while scanning the sorted array:
+  - Let cnt_a, cnt_b be the counts of A and B seen so far in the prefix (before the current element).
+  - Let dp[wa][wb] be the number of ways for the processed prefix to have already formed wa A-wins and wb B-wins. Each formed pair consumes exactly one A and one B from the prefix. Thus the number of unmatched earlier A’s is cnt_a - (wa + wb), and unmatched earlier B’s is cnt_b - (wa + wb).
+
+- Transition on current element of team T:
+  - Option 1: Leave current player unmatched (to be the weaker in a future pair).
+    - dp'[wa][wb] += dp[wa][wb]
+  - Option 2: Match current player now (as the stronger) with an earlier unmatched opponent:
+    - If T = A, we can match with any unmatched B: candidates = cnt_b - (wa + wb). For each, we form an A-win:
+      - dp'[wa + 1][wb] += dp[wa][wb] * candidates
+    - If T = B, candidates = cnt_a - (wa + wb), and we form a B-win:
+      - dp'[wa][wb + 1] += dp[wa][wb] * candidates
+  - Move to the next element; finally increment cnt_a or cnt_b according to the current element’s team.
+
+- Why candidates = cnt_opposite - (wa + wb):
+  - After forming wa + wb pairs so far, exactly wa + wb A’s and wa + wb B’s have already been used in those pairs (each pair consumes one A and one B).
+  - So among all earlier opponents of the opposite team, only cnt_opposite - (wa + wb) remain available.
+
+- Answer:
+  - After processing all 2n players, the count is dp[wins(A)][wins(B)] modulo 1e9+9.
+
+- Complexity:
+  - There are 2n steps. The DP table has size (wins(A)+1) × (wins(B)+1) = O(n^2).
+  - Total time O(n · wins(A) · wins(B)) = O(n^3) in worst case; memory O(wins(A) · wins(B)).
+  - With n ≤ 500, this is fine in C++.
+
+3) Provided C++ solution with detailed comments
+#include <bits/stdc++.h>
+#include <vector>
+
+using namespace std;
+
+// Pretty-printer for pairs (unused by the solution logic itself)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Reader for pairs (unused)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Reader for vectors: read all elements of a vector from stream
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Writer for vectors (unused)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Modulus as required by the problem: 1e9 + 9
+const int mod = (int)1e9 + 9;
+
+// Helper to add modulo: a = (a + b) % mod
+void mod_add(int& a, int b) {
+    a += b;
+    if(a >= mod) {
+        a -= mod;
+    }
+}
+
+int n, k;          // number of players per team, and the required gap k
+vector<int> a, b;  // strengths of team A (Berland) and team B (Byteland)
+
+// Read input: n, k, then arrays a and b
+void read() {
+    cin >> n >> k;
+    a.resize(n);
+    b.resize(n);
+    cin >> a >> b;
+}
+
+void solve() {
+    // Let wins(A) - wins(B) = k, wins(A) + wins(B) = n =>
+    // wins(B) = (n - k) / 2, wins(A) = (n + k) / 2.
+    // If (n - k) is odd, no solution.
+    int win_b = (n - k);
+    if(win_b % 2 == 1) {
+        cout << 0 << endl;
+        return;
+    }
+    win_b /= 2;
+    int win_a = win_b + k;  // equals (n + k) / 2
+
+    // Build and sort the combined list of all players:
+    // pair = (strength, team), team = 0 for A, 1 for B.
+    vector<pair<int, int>> elements;
+    for(int i = 0; i < n; i++) {
+        elements.push_back({a[i], 0});
+        elements.push_back({b[i], 1});
+    }
+    sort(elements.begin(), elements.end()); // ascending by strength
+
+    // cnt_a, cnt_b = how many A’s and B’s are in the current prefix (before current element)
+    int cnt_a = 0, cnt_b = 0;
+
+    // dp[wa][wb] = number of ways for the current prefix to have wa A-wins and wb B-wins already formed
+    vector<vector<int>> dp(win_a + 1, vector<int>(win_b + 1, 0));
+    dp[0][0] = 1;
+
+    // Process players in increasing order of strength.
+    for(auto [val, type]: elements) {
+        // new_dp will accumulate transitions after processing this player
+        vector<vector<int>> new_dp(win_a + 1, vector<int>(win_b + 1, 0));
+        for(int curr_win_a = 0; curr_win_a <= win_a; curr_win_a++) {
+            for(int curr_win_b = 0; curr_win_b <= win_b; curr_win_b++) {
+                if(!dp[curr_win_a][curr_win_b]) {
+                    continue; // nothing to transition from
+                }
+
+                // Option 1: keep this player unmatched (will be the weak endpoint of a future pair)
+                mod_add(new_dp[curr_win_a][curr_win_b], dp[curr_win_a][curr_win_b]);
+
+                // Option 2: match this player now (as stronger) with an earlier unmatched opponent.
+                int new_win_a = curr_win_a, new_win_b = curr_win_b;
+
+                // Number of available earlier opponents of the opposite team:
+                // Each formed pair consumes one A and one B among the prefix,
+                // i.e., (curr_win_a + curr_win_b) from each team.
+                int candidates = -(curr_win_a + curr_win_b);
+                if(type == 0) {
+                    // Current is A: can match with earlier unmatched B’s.
+                    candidates += cnt_b;
+                    new_win_a++;
+                } else {
+                    // Current is B: can match with earlier unmatched A’s.
+                    candidates += cnt_a;
+                    new_win_b++;
+                }
+
+                // If there are no candidates, skip.
+                if(candidates < 0) {
+                    continue;
+                }
+
+                // Add ways times number of choices, if within target limits.
+                if(new_win_a <= win_a && new_win_b <= win_b) {
+                    mod_add(
+                        new_dp[new_win_a][new_win_b],
+                        int(dp[curr_win_a][curr_win_b] * 1ll * candidates % mod)
+                    );
+                }
+            }
+        }
+
+        // Move to the next prefix
+        dp = std::move(new_dp);
+
+        // Update prefix counts (we have just processed this player)
+        if(type == 0) {
+            cnt_a++;
+        } else {
+            cnt_b++;
+        }
+    }
+
+    // The desired number of sortitions: exactly win_a A-wins and win_b B-wins.
+    cout << dp[win_a][win_b] << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;      // Single test in this task
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+4) Python solution (same algorithm) with detailed comments
+import sys
+
+MOD = 1_000_000_009
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+    n = int(next(it))
+    k = int(next(it))
+    a = [int(next(it)) for _ in range(n)]
+    b = [int(next(it)) for _ in range(n)]
+
+    # wins(B) = (n - k) / 2 must be integer, else 0
+    if (n - k) % 2 != 0:
+        print(0)
+        return
+
+    win_b = (n - k) // 2
+    win_a = win_b + k  # (n + k) // 2
+
+    # Build combined list: (strength, team), team: 0 = A (Berland), 1 = B (Byteland)
+    elements = [(x, 0) for x in a] + [(x, 1) for x in b]
+    elements.sort()  # increasing by strength
+
+    # dp[wa][wb] = ways after processing the current prefix
+    # to have formed wa A-wins and wb B-wins.
+    dp = [[0] * (win_b + 1) for _ in range(win_a + 1)]
+    dp[0][0] = 1
+
+    cnt_a = 0  # how many A’s seen so far (in the prefix before current element)
+    cnt_b = 0  # how many B’s seen so far
+
+    for value, team in elements:
+        # new dp after incorporating this current element
+        new_dp = [[0] * (win_b + 1) for _ in range(win_a + 1)]
+
+        # Traverse all states of formed wins so far
+        for wa in range(win_a + 1):
+            row = dp[wa]
+            new_row_same = new_dp[wa]  # small speed-up by caching
+            for wb in range(win_b + 1):
+                ways = row[wb]
+                if ways == 0:
+                    continue
+
+                # Option 1: leave current element unmatched
+                new_row_same[wb] = (new_row_same[wb] + ways) % MOD
+
+                # Option 2: match current (as stronger) with an earlier unmatched opponent
+                # Number of earlier unmatched opponents of the opposite team:
+                # equals (count_opposite_in_prefix) - (#pairs_already_closed),
+                # where #pairs_already_closed = wa + wb.
+                if team == 0:
+                    # current is A, can close with B
+                    candidates = cnt_b - (wa + wb)
+                    if candidates > 0 and wa + 1 <= win_a:
+                        new_dp[wa + 1][wb] = (new_dp[wa + 1][wb] + ways * candidates) % MOD
+                else:
+                    # current is B, can close with A
+                    candidates = cnt_a - (wa + wb)
+                    if candidates > 0 and wb + 1 <= win_b:
+                        new_dp[wa][wb + 1] = (new_dp[wa][wb + 1] + ways * candidates) % MOD
+
+        dp = new_dp
+
+        # Update counts of seen players for the next iteration
+        if team == 0:
+            cnt_a += 1
+        else:
+            cnt_b += 1
+
+    print(dp[win_a][win_b] % MOD)
+
+if __name__ == "__main__":
+    solve()
+
+Note: The algorithm is O(n * win_a * win_b) ≈ O(n^3) in the worst case; this is easily fast in C++, but Python may be slow at the upper limits. The implementation is faithful to the intended solution.
+
+5) Compressed editorial
+- Sort all players by strength; a match always connects an earlier weaker to a later stronger.
+- Scan left-to-right. Maintain dp[wa][wb] = ways to have already formed wa A-wins and wb B-wins in the prefix, and counts cnt_a, cnt_b of A/B seen so far.
+- For the current player:
+  - Leave it unmatched: dp'[wa][wb] += dp[wa][wb].
+  - Or match it now (as stronger) with an earlier unmatched opponent of the other team:
+    - Available opponents = (cnt_opposite − (wa + wb)), because wa + wb pairs have already consumed that many players from each team.
+    - If current is A: dp'[wa+1][wb] += dp[wa][wb] * candidates. If B: dp'[wa][wb+1] += dp[wa][wb] * candidates.
+- wins(B) = (n − k)/2 must be integral; answer is dp[(n + k)/2][(n − k)/2] modulo 1e9+9.
+- Complexity: O(n^3) time, O(n^2) memory; passes for n ≤ 500 in C++.

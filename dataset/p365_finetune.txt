@@ -1,0 +1,219 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+365. Ships of the Desert
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+During one of his trips Vasya went to Egypt. He needed to cross the desert. This is pretty easy to do because of caravans furrowing the desert. The only thing Vasya needed was to buy a ticket. Inhabitants told Vasya that he should buy peculiar ticket to get a lot of luck in his life. Vasya found out that peculiar ticket is so-called ticket-dromedary (named after the dromedary camels that are crossing the desert). Ticket can be called dromedary if digits in its number are going in non-descending order and then in non-ascending order (length of any digit group may equals to zero). Vasya has interesting question: how many tickets-dromedaries exist with number consisting of exactly S digits?
+
+Input
+The first line of the input file contains S (1 ≤ S ≤ 20) — amount of digits in the ticket number. Ticket number may have leading zeroes.
+
+Output
+Print amount of tickets-dromedaries with exactly S digits.
+
+Example(s)
+sample input
+sample output
+1
+10
+
+sample input
+sample output
+3
+715
+
+<|response|>
+1) Abridged problem statement
+- Count the number of sequences of length S (1 ≤ S ≤ 20) over digits 0..9 (leading zeros allowed) whose digits first go in non-decreasing order and then in non-increasing order. Either part may be empty. Print the count.
+
+2) Key observations
+- A valid sequence is unimodal with at most one “turn” (up, then down), equal digits allowed anywhere.
+- Allowing empty parts means:
+  - Entire sequence may be non-decreasing, or non-increasing, or even constant; all are valid.
+- A clean digit DP exists:
+  - State by (position, phase, last_digit), where phase=0 means still going up, phase=1 means going down.
+  - Transition:
+    - Up: choose next digit d ≥ last to stay up; choose next digit d < last to switch to down.
+    - Down: choose next digit d ≤ last to stay down.
+  - Start with last=0 because leading zeros are allowed.
+- Each unimodal sequence is counted exactly once: the DP switches to “down” only at the first strict decrease and never switches back.
+- Results fit in 64-bit integers.
+- There is also a closed-form combinatorial formula:
+  - Let m be the maximum digit (0..9) and choose the last occurrence of m as the pivot.
+  - Count how many digits of 0..m-1 go to the left (non-decreasing side), how many extra m’s go to the left (beyond the pivot), and how many 0..m-1 go to the right (non-increasing side). That’s 2m+1 nonnegative variables summing to S−1.
+  - Number of solutions: C(S + 2m − 1, 2m).
+  - Total answer: sum over m=0..9 of C(S + 2m − 1, 2m).
+
+3) Full solution approach
+- We use digit DP with memoization.
+  - State dp[pos][phase][last]:
+    - pos: how many digits have been placed (0..S).
+    - phase: 0 = still in the non-decreasing phase, 1 = already in the non-increasing phase.
+    - last: last placed digit (0..9).
+  - Base case: if pos == S, return 1 (one valid sequence completed).
+  - Transitions:
+    - If phase == 0:
+      - For d in [last..9]: continue in phase 0.
+      - For d in [0..last-1]: switch to phase 1.
+    - If phase == 1:
+      - For d in [0..last]: remain in phase 1.
+  - Initialization: call rec(0, 0, 0). Leading zeros are allowed, so this enumerates all valid sequences.
+- Correctness:
+  - Every valid unimodal sequence has exactly one earliest position where a strict decrease first happens (or never happens if entirely non-decreasing). The DP mirrors this event by switching phase only on a strict decrease, hence no double counting and no omission.
+- Complexity:
+  - States: S * 2 * 10 ≤ 20 * 2 * 10 = 400.
+  - Each state transitions to at most 10 next digits.
+  - Total work is O(S * 10 * 10) ≈ a few thousand operations; memory is tiny.
+- Optional closed form:
+  - Answer = sum_{m=0}^{9} C(S + 2m − 1, 2m). With S ≤ 20, all values fit into 64-bit integers. This is even faster to implement.
+
+4) C++ implementation with detailed comments
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// ---------- Option A: Digit DP (unimodal) ----------
+long long count_unimodal_dp(int S) {
+    // memo[pos][phase][last] stores the number of ways from this state.
+    // pos in [0..S], phase in {0,1}, last in [0..9].
+    static long long memo[21][2][10];
+    // Initialize with -1 (uncomputed) for positions 0..S-1.
+    for (int pos = 0; pos < S; ++pos)
+        for (int ph = 0; ph < 2; ++ph)
+            for (int last = 0; last < 10; ++last)
+                memo[pos][ph][last] = -1;
+
+    function<long long(int,int,int)> rec = [&](int pos, int phase, int last) -> long long {
+        // Base case: placed S digits => 1 valid sequence.
+        if (pos == S) return 1LL;
+
+        long long &res = memo[pos][phase][last];
+        if (res != -1) return res;
+
+        res = 0;
+        if (phase == 0) {
+            // Still in non-decreasing part: can pick d >= last and stay "up",
+            // or pick d < last and switch to "down".
+            for (int d = last; d <= 9; ++d)
+                res += rec(pos + 1, 0, d);
+            for (int d = 0; d < last; ++d)
+                res += rec(pos + 1, 1, d);
+        } else {
+            // Already in non-increasing part: must take d <= last.
+            for (int d = 0; d <= last; ++d)
+                res += rec(pos + 1, 1, d);
+        }
+        return res;
+    };
+
+    // Start at position 0, still "up", last = 0 (leading zeros allowed).
+    return rec(0, 0, 0);
+}
+
+// ---------- Option B: Closed-form using binomial coefficients ----------
+long long count_unimodal_formula(int S) {
+    // We need combinations up to n = S + 2*9 - 1 = S + 17 <= 37.
+    int N = S + 17;
+    static long long C[38][38];
+    for (int n = 0; n <= N; ++n) {
+        C[n][0] = C[n][n] = 1;
+        for (int k = 1; k < n; ++k)
+            C[n][k] = C[n-1][k-1] + C[n-1][k];
+    }
+
+    long long ans = 0;
+    for (int m = 0; m <= 9; ++m) {
+        int n = S + 2*m - 1;   // n >= 0 since S >= 1
+        int k = 2*m;
+        ans += C[n][k];
+    }
+    return ans;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int S;
+    if (!(cin >> S)) return 0;
+
+    // Either approach works. The formula is O(1) and very simple.
+    // Uncomment either line depending on preference:
+    // long long ans = count_unimodal_dp(S);
+    long long ans = count_unimodal_formula(S);
+
+    cout << ans << '\n';
+    return 0;
+}
+```
+
+5) Python implementation with detailed comments
+```python
+import sys
+from functools import lru_cache
+
+def solve_dp(S: int) -> int:
+    # Digit DP with memoization.
+    # State:
+    #   pos   : how many digits have been placed (0..S)
+    #   phase : 0 = non-decreasing so far, 1 = now non-increasing
+    #   last  : last digit placed (0..9)
+    @lru_cache(maxsize=None)
+    def rec(pos: int, phase: int, last: int) -> int:
+        if pos == S:
+            return 1  # one valid sequence completed
+
+        total = 0
+        if phase == 0:
+            # Stay "up" with d >= last
+            for d in range(last, 10):
+                total += rec(pos + 1, 0, d)
+            # Switch to "down" with d < last
+            for d in range(0, last):
+                total += rec(pos + 1, 1, d)
+        else:
+            # Already "down": must keep non-increasing d <= last
+            for d in range(0, last + 1):
+                total += rec(pos + 1, 1, d)
+        return total
+
+    return rec(0, 0, 0)
+
+def solve_formula(S: int) -> int:
+    # Closed form: sum_{m=0}^9 C(S + 2m - 1, 2m)
+    # Use a small Pascal triangle since S <= 20 -> n <= 37.
+    N = S + 17
+    C = [[0] * (N + 1) for _ in range(N + 1)]
+    for n in range(N + 1):
+        C[n][0] = C[n][n] = 1
+        for k in range(1, n):
+            C[n][k] = C[n-1][k-1] + C[n-1][k]
+
+    ans = 0
+    for m in range(10):
+        n = S + 2*m - 1
+        k = 2*m
+        ans += C[n][k]
+    return ans
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    S = int(data[0])
+
+    # Either method is fine; both are extremely fast for S <= 20.
+    # ans = solve_dp(S)
+    ans = solve_formula(S)
+
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+```
