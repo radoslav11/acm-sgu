@@ -1,0 +1,1482 @@
+1. Abridged problem statement
+--------------------------------
+
+We are given a tree of `n` cities (nodes, `3 ≤ n ≤ 200`) with costs `p[i]` to destroy each city.
+
+We must choose:
+- a nonempty connected set of cities for the King (his “kingdom”),
+- a nonempty connected set of cities for the Queen,
+
+such that:
+
+Common constraints:
+- King’s and Queen’s sets are disjoint.
+- No edge goes between King’s and Queen’s sets (i.e., they are at distance ≥ 2 in the original tree).
+- All other cities are destroyed and their costs are summed.
+
+King’s constraints use parameters `D1` and `C1`:
+
+- The diameter of his induced subtree (max distance between any two of his cities) is exactly `D1`.
+- Among all pairs of his cities whose distance is exactly `D1`, count all distinct endpoints appearing in these pairs; that count must be ≤ `C1`.
+  - If his set has 1 city, its diameter is 0 and there are 0 such pairs, so the constraint is trivially OK when `D1 = 0`.
+
+Queen’s constraints are the same with `D2`, `C2`.
+
+Goal: find a valid division minimizing total destruction cost (sum of `p` over cities not taken by either). If impossible, output `-1`. If possible, output the minimal destruction cost, and list (in increasing order) the destroyed city indices.
+
+2. Detailed editorial
+----------------------
+
+### 2.1. High‑level strategy
+
+Key observations:
+
+1. The two chosen subtrees (King’s and Queen’s) must be at graph distance at least 2, so there must be at least one “buffer city” that separates them (possibly more). It’s convenient to explicitly choose one such city and “remove” it from the tree.
+2. Removing a vertex `split` from a tree splits it into several connected components (subtrees). The King and Queen’s subtrees must lie in *different* components (otherwise they would be adjacent to each other or to `split` in a problematic way).
+3. Once `split` is chosen, the King’s subtree must be fully inside a single component, and the Queen’s subtree inside another component; they no longer have to worry about each other because:
+   - they are in different components,
+   - they are not adjacent to `split` (we do not choose `split` itself),
+   - thus they are automatically not adjacent to each other.
+
+So the algorithm:
+
+- Iterate over all potential “split” vertices `split` (0..n-1).
+- Remove `split` and find the resulting components `C_1, C_2, ..., C_m`.
+- For each component `C_k`, independently compute:
+  - the best King‑subtree in `C_k` (meeting `(D1, C1)`), call it `best1[k] = (sum, nodes)`;
+  - the best Queen‑subtree in `C_k` (meeting `(D2, C2)`), call it `best2[k] = (sum, nodes)`.
+- Pair components: for all `i != j`, consider:
+  - King in `C_i` with `best1[i]` and Queen in `C_j` with `best2[j]`,
+  - or King in `C_j` and Queen in `C_i`.
+  - Keep maximum `best1[i].sum + best2[j].sum`.
+- Among all `split`, pick the global maximum total kept sum `best`.
+- If `best < 0` (i.e., impossible everywhere) output `-1`.
+- Otherwise, total destruction cost = total sum of all `p[i]` minus `best`. Recover which cities were chosen for the best configuration and output all remaining ones as destroyed.
+
+Thus the whole difficulty boils down to:
+
+> For a given component (tree `T` with given node set `nodes`), and given parameters `(D, C)`, find the connected subtree `S` ⊆ `nodes` such that:
+> - S is nonempty and connected within T,
+> - diameter(S) = D,
+> - number of distinct diameter endpoints ≤ C,
+> - sum of p over S is maximized.
+
+This is solved by `best_subtree_in_component`.
+
+### 2.2. Handling special case `D = 0`
+
+If `D = 0`, any valid subtree must have diameter zero, which means it contains exactly one vertex. Then:
+
+- If `C ≠ 1`, it’s impossible: a single vertex already has zero diameter and zero diameter-endpoint count, but `C` only limits the maximum allowed number of endpoints (0 ≤ C), so `C` can be anything ≥ 0; however, the code is consistent with problem statement by treating `C = 1, D = 0` as the only feasible case it directly handles. It otherwise uses general logic to detect impossibility.
+- The meaningful special case in code is: `D == 0 && C == 1`.
+  - Then we just pick the maximum `p[v]` in the component and return that vertex.
+
+For other combinations (e.g., `D = 0, C > 1`), the general logic returns `-inf` if it can’t construct a valid subtree.
+
+### 2.3. Characterizing optimal diameter‑constrained subtrees
+
+General idea for any tree T and parameters `(D, C)`:
+
+- Fix some candidate “center(s)” of diameter D:
+  - If D is even => any tree with diameter D has a central vertex (unique or not), at distance `D/2` from all diameter endpoints.
+  - If D is odd  => any such tree has a central *edge*, i.e., two central adjacent vertices, each at distance `(D-1)/2` from diameter endpoints.
+
+- Once the center is fixed:
+  - Every vertex at distance < floor(D/2) from the center is “strictly inside” the diameter ball and is free to include (they do not affect the maximum distance).
+  - Vertices at exactly floor(D/2) distance are “boundary”; any pair of them in different branches may form diameter endpoints.
+  - To ensure the diameter is *exactly* D and not less:
+    - we must pick at least two boundary vertices so that the maximum distance achieves D, and
+    - these two endpoints must be in different branches (child subtrees of the center / different sides of the central edge).
+  - The count of distinct diameter endpoints is exactly the number of boundary vertices we end up selecting that belong to any diameter‑forming pairs; that number must be ≤ C.
+
+Given that all p[i] are positive, once we fix the center and its diameter constraint, the optimal strategy is:
+
+- Include all vertices at distance < target radius (for D even, `target = D/2`; for D odd, `target = (D-1)/2`) — they don’t increase the diameter and only add positive weight.
+- Among vertices at exactly that distance:
+  - pick some that ensure the required diameter and respect the maximum endpoints C.
+  - pick them greedily by value.
+
+The code has two main cases: even D and odd D, and for each there are two implementations:
+
+- “Slow but local DFS” version: `best_subtree_from_root` and `best_subtree_from_edge`, which work inside one component and a given `split`.
+- “Fast all‑pairs precomputation” version: `best_subtree_from_root_fast` and `best_subtree_from_edge_fast`, using precomputed distances and first steps, allowing re-use across many components.
+
+`best_subtree_in_component` uses the *fast* versions.
+
+### 2.4. Precomputations: all‑pairs distances and first steps
+
+We do:
+
+```cpp
+dist_all[s][v] = distance from s to v
+first_step[s][v] = neighbor of s that is the first hop on a shortest path from s to v
+```
+
+Algorithm: BFS from each `s`:
+
+- Initialize `dist_all[s][*] = INT_MAX`.
+- Set `dist_all[s][s] = 0`.
+- For each neighbor `u` of `s`:
+  - `dist_all[s][u] = 1`
+  - `first_step[s][u] = u`
+  - push `u` into queue.
+- BFS: whenever we reach a new node `u` via `v`:
+  - `dist_all[s][u] = dist_all[s][v] + 1`
+  - `first_step[s][u] = first_step[s][v]`, i.e. propagate which first child we took.
+
+Complexity: O(n * (n + n-1)) = O(n²). For n ≤ 200, it is cheap.
+
+This is used in `best_subtree_from_root_fast` / `best_subtree_from_edge_fast` to:
+
+- group vertices by distances quickly, and
+- know to which child-subtree of the root each boundary vertex belongs (via `first_step`).
+
+### 2.5. Best subtree for even D: root‑center case
+
+Goal: for a given `root`, nodes set `nodes`, diameter `D` even, and C:
+
+- Ensure diameter is exactly D, centered at `root`.
+- Use fast distances.
+
+Let `target = D/2` (integer, since D even):
+
+1. Base cases:
+   - If `D == 0`:
+     - If `C ≥ 1`: answer is just that root (it’s a single-node subtree).
+     - Else impossible.
+   - If `C == 1` and `D > 0`: impossible (diameter D > 0 requires at least two endpoints).
+2. Start with `sum = p[root]`, `selected = {root}`.
+3. Loop over all `v in nodes, v != root`:
+   - `dv = dist_all[root][v]`.
+   - If `dv < target`: always take `v` (strict interior) => sum and push.
+   - If `dv == target`: push to `boundary`.
+4. If `boundary.size() < 2`: can’t form diameter D endpoints ⇒ impossible.
+5. We must pick boundary vertices from *at least two different child subtrees* of `root`. Use arrays:
+   - `best_val[cid]` = best value among boundary vertices that have `first_step[root][v] == cid` (child id).
+   - `best_node[cid]` = corresponding vertex.
+   - Only track cids that appear (`touched` list).
+6. If number of distinct cids used < 2: impossible.
+7. Let `first_v` = best candidate overall, `second_v` = best candidate from a different cid.
+8. Add `first_v` and `second_v` to the sum and selected.
+9. Now we already ensured diameter D and 2 endpoints from different branches. Remaining boundary vertices can be used only constrained by `C`:
+   - We have currently `2` endpoints for D > 0. If `C > 2`, we can select more among `boundary \ {first_v, second_v}`.
+   - Make vector `rem` of these remaining boundary vertices, find up to `to_take = min(rem.size(), C - 2)` best by value with `nth_element`.
+   - Add them to sum and selected.
+
+If successful, we return the pair `(sum, selected)`; otherwise `(-inf, {})`.
+
+`best_subtree_in_component` for even D:
+
+- iterates `root` over all `nodes` and calls this function;
+- keeps maximum sum across roots.
+
+### 2.6. Best subtree for odd D: center edge case
+
+Now D is odd => central object is an edge `(u, v)`.
+
+For `best_subtree_from_edge_fast(u, v, nodes, D, C)`:
+
+Let `target = (D - 1)/2`:
+
+1. Base cases:
+   - If `D == 0 or C == 1`: impossible (for odd D>0, we need ≥ 2 endpoints).
+2. Start with `sum = p[u] + p[v]`, `selected = {u, v}`: we always include the two center vertices; they are at distance 1 from each other, but final diameter is D > 1; we’ll add more.
+3. If `target == 0`: D == 1
+   - A diameter 1 subtree is just an edge between u and v. If C ≥ 2, we’re done; otherwise impossible (but this is filtered by earlier checks).
+4. For each `w in nodes`, `w ≠ u, v`:
+   - Compute `du = dist_all[u][w]`, `dv = dist_all[v][w]`.
+   - Node w is considered to belong to the side where it is strictly closer:
+     - If `du < dv`:
+       - if `du < target`: interior of u-side => always include.
+       - if `du == target`: boundary on u-side ⇒ add to `bound_u`.
+     - Else (du ≥ dv):
+       - symmetric for v-side: if `dv < target` => interior, if `dv == target` => add to `bound_v`.
+   - Note: because the component is itself a tree, each node is strictly closer to one side, except the centers themselves.
+5. If either `bound_u` or `bound_v` is empty, we can’t get endpoints on both sides => impossible.
+6. Choose best endpoints:
+   - `bu` = vertex in `bound_u` with max p.
+   - `bv` = vertex in `bound_v` with max p.
+   - Add them to sum and selected.
+7. Additional endpoints if `C > 2`:
+   - Collect all remaining boundary vertices excluding `bu` and `bv` into `rem`.
+   - Take up to `to_take = min(rem.size(), C - 2)` highest values via `nth_element`.
+   - Add them.
+
+Again, `best_subtree_in_component` for odd D:
+
+- marks membership of nodes in component via `in_comp`.
+- For every edge `(u, v)` inside this component (u < v and `in_comp[v]`):
+  - call `best_subtree_from_edge_fast(u, v, nodes, D, C)`,
+  - keep the best.
+
+### 2.7. Slower DFS-based functions and why they exist
+
+There are also `best_subtree_from_root` and `best_subtree_from_edge` in the code, which do similar logic but:
+
+- They are used with an explicit `split` that is not allowed to be inside the subtree (we never use `split` as a vertex).
+- They operate by DFS from `root` / `u` or `v` to group nodes by distance and mark subtrees (`subtree_mark`).
+
+However, `best_subtree_in_component` only calls the *fast* variants `*_fast` using `dist_all` and `first_step`. The DFS versions are dead code in this solution (left from a more direct tree-based version). They are not needed to understand the final complexity.
+
+### 2.8. Building components for each split
+
+For each chosen `split`:
+
+- Use DFS ignoring `split` to build connected components:
+
+```cpp
+void get_component(int v, int split, vector<bool>& vis, vector<int>& comp)
+```
+
+- For every neighbor `u` of split:
+  - if not visited, start a DFS to get a component containing that neighbor.
+
+Thus we get `components` = list of vector<int> each listing nodes of a component.
+
+Inside a component, we only consider subtrees entirely within it (so King’s and Queen’s sets cannot use `split` or cross components).
+
+### 2.9. Complexity
+
+- Precompute all pairs BFS: O(n²).
+- Outer loop: for each split (`n` choices):
+  - building components: O(n).
+  - Suppose the entire tree is a single component other than `split`; in the worst case we handle at most `n` nodes per component, and at most `n-1` components (star) but total nodes is always `n-1`.
+  - For each component with `k` nodes:
+
+    Even D:
+    - For each `root in nodes` (k roots):
+      - scanning `nodes` to classify by distance / boundary: O(k).
+      - plus small overhead of child grouping (constant degree).
+    - So ~O(k²) per (D,C) pair per component.
+
+    Odd D:
+    - For each edge inside the component; there are `k-1` edges.
+      - scanning all `nodes`: O(k).
+    - So ~O(k²) again per (D,C).
+
+  - So per (D,C) pair per split: O(∑comp k²) ≤ O(n²).
+
+- We have two pairs (for king and queen) and n splits: total ~O(n³).
+
+With n ≤ 200, `200³ = 8e6` operations scale easily.
+
+### 2.10. Constructing the final answer
+
+After computing best `best` (maximum sum of p in King+Queen subtrees) and the corresponding `best_selected` nodes:
+
+- If best < 0 → no valid configuration → print -1.
+- Else:
+  - Build `kept[v] = true` for all v in `best_selected`.
+  - For every city i (0..n-1) that is not kept:
+    - add i+1 to `destroyed` list,
+    - add `p[i]` to cost.
+  - Print cost.
+  - Print destroyed list in arbitrary order (the code prints them in ascending order because it traverses i from 0 to n-1).
+
+Note: the cost computed this way equals `total_sum - best`.
+
+3. Original C++ solution with detailed line-by-line comments
+-------------------------------------------------------------
+
+```cpp
+#include <bits/stdc++.h>          // include all standard headers
+
+using namespace std;
+
+// Overload operator<< for printing pairs
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for reading pairs
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for reading vectors
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {            // read each element
+        in >> x;
+    }
+    return in;
+};
+
+// Overload operator<< for printing vectors (space separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int64_t inf = 1e18;        // large value for "infinity"
+
+// Global variables
+int n, d1, c1, d2, c2;           // n, and King's (d1,c1), Queen's (d2,c2)
+vector<int> p;                   // destruction cost per city
+vector<vector<int>> adj;         // adjacency list (tree)
+vector<vector<int>> dist_all;    // all-pairs shortest distances
+vector<vector<int>> first_step;  // first step from s towards v on shortest path
+
+// Read input and build graph
+void read() {
+    cin >> n >> d1 >> c1 >> d2 >> c2; // read n and King's / Queen's params
+    p.resize(n);
+    cin >> p;                         // read p[0..n-1]
+    adj.resize(n);
+    for(int i = 0; i < n - 1; i++) {
+        int a, b;
+        cin >> a >> b;
+        a--;                          // convert to 0-based indexing
+        b--;
+        adj[a].push_back(b);
+        adj[b].push_back(a);
+    }
+}
+
+// Precompute all-pairs shortest distances and first steps using BFS per source
+void precompute_all_pairs() {
+    // initialize dist_all to INT_MAX, first_step to -1
+    dist_all.assign(n, vector<int>(n, INT_MAX));
+    first_step.assign(n, vector<int>(n, -1));
+    queue<int> q;                     // BFS queue
+    for(int s = 0; s < n; s++) {      // BFS from each source s
+        while(!q.empty()) {
+            q.pop();                  // clear queue
+        }
+        dist_all[s][s] = 0;           // distance to itself is 0
+        for(int u: adj[s]) {          // initialize neighbors of s
+            dist_all[s][u] = 1;
+            first_step[s][u] = u;     // first step from s to u is u itself
+            q.push(u);
+        }
+        // BFS layer by layer
+        while(!q.empty()) {
+            int v = q.front();
+            q.pop();
+            for(int u: adj[v]) {
+                if(dist_all[s][u] == INT_MAX) { // not visited yet
+                    dist_all[s][u] = dist_all[s][v] + 1;
+                    // propagate first step from s through v
+                    first_step[s][u] = first_step[s][v];
+                    q.push(u);
+                }
+            }
+        }
+    }
+}
+
+// Fast version: best subtree of given component if diameter is even, centered at root
+pair<int64_t, vector<int>> best_subtree_from_root_fast(
+    int root, const vector<int>& nodes, int d, int c
+) {
+    // Handle diameter 0 special case: only root possible
+    if(d == 0) {
+        return c >= 1 ? make_pair((int64_t)p[root], vector<int>{root})
+                      : make_pair(-inf, vector<int>{});
+    }
+    // If c == 1 and d > 0, impossible (need at least two endpoints)
+    if(c == 1) {
+        return {-inf, {}};
+    }
+
+    int target = d / 2;               // radius from center to diameter endpoints
+    int64_t sum = p[root];            // current sum including root
+    vector<int> selected = {root};    // selected nodes
+    vector<int> boundary;             // nodes at distance exactly target
+    boundary.reserve(nodes.size());
+
+    // Classify nodes by distance from root
+    for(int v: nodes) {
+        if(v == root) {
+            continue;                 // already counted
+        }
+        int dv = dist_all[root][v];
+        if(dv < target) {
+            // strictly inside radius: always take
+            sum += p[v];
+            selected.push_back(v);
+        } else if(dv == target) {
+            // boundary candidate
+            boundary.push_back(v);
+        }
+    }
+
+    // Need at least two boundary vertices to form diameter D
+    if(boundary.size() < 2) {
+        return make_pair(-inf, vector<int>{});
+    }
+
+    // best_val[cid] = best p[v] among boundary vertices that go through child cid
+    // best_node[cid] = corresponding vertex
+    static vector<int> best_val, best_node;
+    if((int)best_val.size() < n) {    // allocate once
+        best_val.assign(n, INT_MIN);
+        best_node.assign(n, -1);
+    }
+    vector<int> touched;              // child ids that have at least one boundary node
+    touched.reserve(adj[root].size());
+    for(int v: boundary) {
+        int cid = first_step[root][v]; // which child of root is on path root->v
+        if(cid < 0) {
+            continue;                 // should not happen inside same component
+        }
+        // Keep best valued vertex for this child
+        if(p[v] > best_val[cid]) {
+            if(best_node[cid] == -1) {
+                touched.push_back(cid);
+            }
+            best_val[cid] = p[v];
+            best_node[cid] = v;
+        }
+    }
+    // We need boundary vertices in at least two different child-subtrees
+    if(touched.size() < 2) {
+        // Clear temporary arrays for these children
+        for(int cid: touched) {
+            best_val[cid] = INT_MIN;
+            best_node[cid] = -1;
+        }
+        return {-inf, {}};
+    }
+
+    // Find the absolute best boundary vertex (first_v) and its child id
+    int first_cid = -1, first_v = -1, fv = INT_MIN;
+    for(int cid: touched) {
+        if(best_val[cid] > fv) {
+            fv = best_val[cid];
+            first_cid = cid;
+            first_v = best_node[cid];
+        }
+    }
+    // Find the best boundary vertex from a different child (second_v)
+    int second_v = -1, sv = INT_MIN;
+    for(int cid: touched) {
+        if(cid != first_cid && best_val[cid] > sv) {
+            sv = best_val[cid];
+            second_v = best_node[cid];
+        }
+    }
+    if(second_v == -1) {
+        // Only one subtree had candidates => impossible
+        for(int cid: touched) {
+            best_val[cid] = INT_MIN;
+            best_node[cid] = -1;
+        }
+        return {-inf, {}};
+    }
+    // Take these two boundary vertices
+    sum += p[first_v];
+    selected.push_back(first_v);
+    sum += p[second_v];
+    selected.push_back(second_v);
+
+    // If we can have more endpoints (C > 2), choose extra boundary vertices
+    if(c > 2) {
+        vector<int> rem;
+        rem.reserve(boundary.size());
+        for(int v: boundary) {
+            if(v != first_v && v != second_v) {
+                rem.push_back(v);
+            }
+        }
+        int to_take = min((int)rem.size(), c - 2);  // we already used 2 endpoints
+        if(to_take > 0) {
+            // nth_element partially sorts so first to_take elements are largest
+            nth_element(
+                rem.begin(), rem.begin() + to_take, rem.end(),
+                [](int a, int b) { return p[a] > p[b]; }
+            );
+            for(int i = 0; i < to_take; i++) {
+                sum += p[rem[i]];
+                selected.push_back(rem[i]);
+            }
+        }
+    }
+    // Clear temporary best_val / best_node for future calls
+    for(int cid: touched) {
+        best_val[cid] = INT_MIN;
+        best_node[cid] = -1;
+    }
+    return {sum, selected};
+}
+
+// Fast version: best subtree when diameter is odd and center is edge (u, v)
+pair<int64_t, vector<int>> best_subtree_from_edge_fast(
+    int u, int v, const vector<int>& nodes, int d, int c
+) {
+    // If D = 0 or C = 1, impossible in odd case
+    if(d == 0 || c == 1) {
+        return {-inf, {}};
+    }
+    int target = (d - 1) / 2;    // distance from center edge endpoints to diameter endpoints
+    int64_t sum = p[u] + p[v];   // we include the central edge endpoints
+    vector<int> selected = {u, v};
+    if(target == 0) {
+        // D == 1: diameter-1 subtree is just {u,v} edge; we've included both
+        return {sum, selected};
+    }
+
+    vector<int> bound_u, bound_v;    // boundary vertices on side u and v
+    bound_u.reserve(nodes.size());
+    bound_v.reserve(nodes.size());
+    for(int w: nodes) {
+        if(w == u || w == v) {
+            continue;                // already included
+        }
+        int du = dist_all[u][w];
+        int dv = dist_all[v][w];
+        if(du < dv) {                // w is closer to u-side
+            if(du < target) {
+                // strictly interior on u-side: always take
+                sum += p[w];
+                selected.push_back(w);
+            } else if(du == target) {
+                // boundary candidate on u-side
+                bound_u.push_back(w);
+            }
+        } else {                     // dv <= du => belongs to v-side
+            if(dv < target) {
+                sum += p[w];
+                selected.push_back(w);
+            } else if(dv == target) {
+                bound_v.push_back(w);
+            }
+        }
+    }
+    // Need endpoints from both sides
+    if(bound_u.empty() || bound_v.empty()) {
+        return {-inf, {}};
+    }
+    // Best boundary vertex on u-side
+    int bu = bound_u[0];
+    for(int x: bound_u) {
+        if(p[x] > p[bu]) {
+            bu = x;
+        }
+    }
+    // Best boundary vertex on v-side
+    int bv = bound_v[0];
+    for(int x: bound_v) {
+        if(p[x] > p[bv]) {
+            bv = x;
+        }
+    }
+    // Include these endpoints
+    sum += p[bu];
+    selected.push_back(bu);
+    sum += p[bv];
+    selected.push_back(bv);
+    if(c > 2) {
+        // Additional endpoints if allowed by C
+        vector<int> rem;
+        rem.reserve(bound_u.size() + bound_v.size());
+        for(int x: bound_u) {
+            if(x != bu) {
+                rem.push_back(x);
+            }
+        }
+        for(int x: bound_v) {
+            if(x != bv) {
+                rem.push_back(x);
+            }
+        }
+        int to_take = min((int)rem.size(), c - 2);  // 2 endpoints already used
+        if(to_take > 0) {
+            nth_element(
+                rem.begin(), rem.begin() + to_take, rem.end(),
+                [](int a, int b) { return p[a] > p[b]; }
+            );
+            for(int i = 0; i < to_take; i++) {
+                sum += p[rem[i]];
+                selected.push_back(rem[i]);
+            }
+        }
+    }
+    return {sum, selected};
+}
+
+// DFS helper to collect nodes by distance, not crossing a "split" vertex
+void dfs_collect(
+    int v, int par, int dist, int split, vector<vector<int>>& by_dist,
+    int max_dist
+) {
+    if(v == split) {                   // don't cross split
+        return;
+    }
+    if(dist > max_dist) {              // cut off search beyond needed radius
+        return;
+    }
+    if(dist >= (int)by_dist.size()) {
+        by_dist.resize(dist + 1);
+    }
+    by_dist[dist].push_back(v);        // record node at this distance
+    for(int u: adj[v]) {
+        if(u != par && u != split) {   // avoid parent and split
+            dfs_collect(u, v, dist + 1, split, by_dist, max_dist);
+        }
+    }
+}
+
+// DFS that marks nodes by subtree id and collects by distance, not crossing split
+void dfs_mark_subtree(
+    int v, int par, int dist, int split, int subtree_id,
+    vector<vector<int>>& by_dist, vector<int>& subtree_mark, int max_dist
+) {
+    if(v == split) {
+        return;                        // do not include split
+    }
+    if(dist > max_dist) {
+        return;                        // beyond needed depth
+    }
+    if(dist >= (int)by_dist.size()) {
+        by_dist.resize(dist + 1);
+    }
+    by_dist[dist].push_back(v);        // record node
+    subtree_mark[v] = subtree_id;      // mark which child-subtree it belongs to
+    for(int u: adj[v]) {
+        if(u != par && u != split) {
+            dfs_mark_subtree(
+                u, v, dist + 1, split, subtree_id, by_dist, subtree_mark,
+                max_dist
+            );
+        }
+    }
+}
+
+// Slower version: best subtree for even diameter, center is root, using DFS and split
+pair<int64_t, vector<int>> best_subtree_from_root(
+    int root, int split, int d, int c
+) {
+    // D=0: single-node subtree at root if c>=1
+    if(d == 0) {
+        return c >= 1 ? make_pair((int64_t)p[root], vector<int>{root})
+                      : make_pair(-inf, vector<int>{});
+    }
+    // c=1 and D>0 impossible
+    if(c == 1) {
+        return {-inf, {}};
+    }
+
+    vector<vector<int>> by_dist;  // nodes grouped by distance from root (excluding split)
+    vector<int> subtree_mark(n, -1); // which root-child-subtree each node belongs to
+
+    int subtree_id = 0;
+    // For every child of root (except split), DFS and mark its subtree
+    for(int child: adj[root]) {
+        if(child != split) {
+            dfs_mark_subtree(
+                child, root, 1, split, subtree_id++, by_dist, subtree_mark,
+                d / 2
+            );
+        }
+    }
+
+    if(by_dist.empty()) {
+        // no nodes beyond root - can't get positive diameter
+        return {-inf, {}};
+    }
+
+    subtree_mark[root] = -1; // root not in any subtree
+
+    int64_t sum = p[root];   // include root
+    vector<int> selected = {root};
+    int target_dist = d / 2;
+
+    // Take all nodes with distance < target_dist
+    for(int dist = 1; dist < (int)by_dist.size() && dist < target_dist; dist++) {
+        for(int v: by_dist[dist]) {
+            sum += p[v];
+            selected.push_back(v);
+        }
+    }
+
+    // Now handle boundary layer (distance == target_dist)
+    if(target_dist < (int)by_dist.size()) {
+        vector<int>& cands = by_dist[target_dist];
+
+        if(d > 0) {
+            // For positive diameter, need at least 2 candidates
+            if((int)cands.size() < 2) {
+                return {-inf, {}};
+            }
+
+            // best_per[sid] = best (value, vertex) in subtree sid
+            vector<pair<int, int>> best_per(subtree_id, {INT_MIN, -1});
+            int distinct = 0;         // number of subtrees that have at least one candidate
+            for(int v: cands) {
+                int sid = subtree_mark[v];
+                if(sid < 0 || sid >= subtree_id) {
+                    continue;         // invalid mark (shouldn't happen)
+                }
+                if(p[v] > best_per[sid].first) {
+                    if(best_per[sid].second == -1) {
+                        distinct++;   // new subtree that contributes
+                    }
+                    best_per[sid] = {p[v], v};
+                }
+            }
+            // Need endpoints from at least 2 different subtrees
+            if(distinct < 2) {
+                return {-inf, {}};
+            }
+
+            // Pick the best candidate among all subtrees
+            int first_subtree = -1, first_v = -1, best_val = INT_MIN;
+            for(int sid = 0; sid < subtree_id; sid++) {
+                if(best_per[sid].second == -1) {
+                    continue;
+                }
+                if(best_per[sid].first > best_val) {
+                    best_val = best_per[sid].first;
+                    first_subtree = sid;
+                    first_v = best_per[sid].second;
+                }
+            }
+            sum += p[first_v];
+            selected.push_back(first_v);
+
+            // Pick the second-best from a different subtree
+            int second_v = -1, second_val = INT_MIN;
+            for(int sid = 0; sid < subtree_id; sid++) {
+                if(sid == first_subtree) {
+                    continue;
+                }
+                if(best_per[sid].second == -1) {
+                    continue;
+                }
+                if(best_per[sid].first > second_val) {
+                    second_val = best_per[sid].first;
+                    second_v = best_per[sid].second;
+                }
+            }
+            if(second_v == -1) {
+                return {-inf, {}};
+            }
+            sum += p[second_v];
+            selected.push_back(second_v);
+
+            // If we can have more endpoints (C>2), take more boundary nodes
+            if(c > 2) {
+                vector<int> rem;
+                rem.reserve(cands.size());
+                for(int v: cands) {
+                    if(v != first_v && v != second_v) {
+                        rem.push_back(v);
+                    }
+                }
+                int to_take = min((int)rem.size(), c - 2);
+                if(to_take > 0) {
+                    nth_element(
+                        rem.begin(), rem.begin() + to_take, rem.end(),
+                        [](int a, int b) { return p[a] > p[b]; }
+                    );
+                    for(int i = 0; i < to_take; i++) {
+                        sum += p[rem[i]];
+                        selected.push_back(rem[i]);
+                    }
+                }
+            }
+        } else {
+            // d == 0 (should be handled earlier), but here code treats C>0
+            int to_select = min((int)cands.size(), c);
+            if(to_select > 0) {
+                nth_element(
+                    cands.begin(), cands.begin() + to_select, cands.end(),
+                    [](int a, int b) { return p[a] > p[b]; }
+                );
+            }
+            for(int i = 0; i < to_select; i++) {
+                sum += p[cands[i]];
+                selected.push_back(cands[i]);
+            }
+        }
+    } else {
+        return {-inf, {}};
+    }
+
+    return {sum, selected};
+}
+
+// Slower version: best subtree for odd diameter, center edge (u,v), using DFS and split
+pair<int64_t, vector<int>> best_subtree_from_edge(
+    int u, int v, int split, int d, int c
+) {
+    if(d == 0 || c == 1) {  // trivial impossibility checks
+        return {-inf, {}};
+    }
+    if(u == split || v == split) {    // cannot use split as center
+        return {-inf, {}};
+    }
+
+    vector<vector<int>> by_dist_u, by_dist_v;
+    // Collect nodes at all distances from u and v, not crossing split
+    dfs_collect(u, v, 0, split, by_dist_u, (d - 1) / 2);
+    dfs_collect(v, u, 0, split, by_dist_v, (d - 1) / 2);
+
+    int64_t sum = p[u] + p[v];        // include edge endpoints
+    vector<int> selected = {u, v};
+    int target_dist = (d - 1) / 2;
+
+    if(target_dist == 0) {
+        // D==1, just the edge
+        return {sum, selected};
+    }
+
+    // Take all nodes at distances < target on each side
+    for(int dist = 1; dist < target_dist; dist++) {
+        if(dist < (int)by_dist_u.size()) {
+            for(int w: by_dist_u[dist]) {
+                sum += p[w];
+                selected.push_back(w);
+            }
+        }
+        if(dist < (int)by_dist_v.size()) {
+            for(int w: by_dist_v[dist]) {
+                sum += p[w];
+                selected.push_back(w);
+            }
+        }
+    }
+
+    // Boundary candidates at distance == target
+    vector<int> cands_u, cands_v;
+    if(target_dist < (int)by_dist_u.size()) {
+        cands_u = by_dist_u[target_dist];
+    }
+    if(target_dist < (int)by_dist_v.size()) {
+        cands_v = by_dist_v[target_dist];
+    }
+
+    if(cands_u.empty() || cands_v.empty()) {
+        // need endpoints on both sides
+        return {-inf, {}};
+    }
+
+    // Best candidate on u-side
+    int best_u = cands_u[0];
+    for(int x: cands_u) {
+        if(p[x] > p[best_u]) {
+            best_u = x;
+        }
+    }
+    // Best candidate on v-side
+    int best_v = cands_v[0];
+    for(int x: cands_v) {
+        if(p[x] > p[best_v]) {
+            best_v = x;
+        }
+    }
+
+    sum += p[best_u];
+    selected.push_back(best_u);
+    sum += p[best_v];
+    selected.push_back(best_v);
+
+    if(c > 2) {
+        // Additional endpoints within C limit
+        vector<int> rem;
+        rem.reserve((int)cands_u.size() + (int)cands_v.size());
+        for(int x: cands_u) {
+            if(x != best_u) {
+                rem.push_back(x);
+            }
+        }
+        for(int x: cands_v) {
+            if(x != best_v) {
+                rem.push_back(x);
+            }
+        }
+        int to_take = min((int)rem.size(), c - 2);
+        if(to_take > 0) {
+            nth_element(
+                rem.begin(), rem.begin() + to_take, rem.end(),
+                [](int a, int b) { return p[a] > p[b]; }
+            );
+            for(int i = 0; i < to_take; i++) {
+                sum += p[rem[i]];
+                selected.push_back(rem[i]);
+            }
+        }
+    }
+
+    return {sum, selected};
+}
+
+// Core function: best subtree inside a component (set of nodes), ignoring a given split
+pair<int64_t, vector<int>> best_subtree_in_component(
+    const vector<int>& nodes, int split, int d, int c
+) {
+    if(nodes.empty()) {
+        return {-inf, {}};
+    }
+
+    // Special case: D=0 and C=1 => choose a single best node
+    if(d == 0 && c == 1) {
+        int64_t res = -inf;
+        int best = -1;
+        for(int v: nodes) {
+            if(p[v] > res) {
+                res = p[v];
+                best = v;
+            }
+        }
+        return {res, {best}};
+    }
+
+    pair<int64_t, vector<int>> res = {-inf, {}};
+
+    if(d % 2 == 0) {
+        // Even diameter => center is a vertex
+        for(int root: nodes) {
+            auto cur = best_subtree_from_root_fast(root, nodes, d, c);
+            if(cur.first > res.first) {
+                res = cur;
+            }
+        }
+    } else {
+        // Odd diameter => center is an edge
+        vector<char> in_comp(n, 0);   // mark which global nodes are part of this component
+        for(int v: nodes) {
+            in_comp[v] = 1;
+        }
+        for(int u: nodes) {
+            for(int v: adj[u]) {
+                // Only consider edges fully inside this component and u < v to avoid duplicates
+                if(u < v && in_comp[v]) {
+                    auto cur = best_subtree_from_edge_fast(u, v, nodes, d, c);
+                    if(cur.first > res.first) {
+                        res = cur;
+                    }
+                }
+            }
+        }
+    }
+
+    return res;   // may be (-inf,{}) if impossible
+}
+
+// DFS to get a whole connected component when 'split' is removed
+void get_component(int v, int split, vector<bool>& vis, vector<int>& comp) {
+    if(vis[v] || v == split) {
+        return;                      // visited or is the split (excluded)
+    }
+    vis[v] = true;
+    comp.push_back(v);
+    for(int u: adj[v]) {
+        get_component(u, split, vis, comp);  // recursively visit neighbors
+    }
+}
+
+void solve() {
+    // Explanation comment block in the original code summarizing the approach
+
+    int64_t total_sum = 0;
+    for(int x: p) {
+        total_sum += x;              // sum of all p[i]
+    }
+
+    int64_t best = -inf;             // best total kept sum of King+Queen
+    int best_split = -1;             // which split city achieves this best
+    vector<int> best_selected;       // which vertices are chosen (King+Queen)
+
+    // Try each city as the "split" removed city
+    for(int split = 0; split < n; split++) {
+        vector<bool> vis(n);
+        vector<vector<int>> components;
+
+        // Build components formed by neighbors of split (excluding split)
+        for(int u: adj[split]) {     // each neighbor lies in some component
+            if(!vis[u]) {
+                vector<int> comp;
+                get_component(u, split, vis, comp);
+                components.push_back(comp);
+            }
+        }
+
+        int m = (int)components.size();  // number of components
+        // For each component, precompute best King-subtree and Queen-subtree
+        vector<pair<int64_t, vector<int>>> best1(m), best2(m);
+        for(int i = 0; i < m; i++) {
+            best1[i] = best_subtree_in_component(components[i], split, d1, c1);
+            best2[i] = best_subtree_in_component(components[i], split, d2, c2);
+        }
+
+        // Choose two different components: one for King, one for Queen
+        for(int i = 0; i < m; i++) {
+            for(int j = i + 1; j < m; j++) {
+                // Case 1: King in comp i (best1[i]), Queen in comp j (best2[j])
+                int64_t total = best1[i].first + best2[j].first;
+                if(total > best) {
+                    best = total;
+                    best_split = split;
+                    best_selected = best1[i].second;
+                    best_selected.insert(
+                        best_selected.end(), best2[j].second.begin(),
+                        best2[j].second.end()
+                    );
+                }
+                // Case 2: King in comp j, Queen in comp i
+                total = best2[i].first + best1[j].first;
+                if(total > best) {
+                    best = total;
+                    best_split = split;
+                    best_selected = best2[i].second;
+                    best_selected.insert(
+                        best_selected.end(), best1[j].second.begin(),
+                        best1[j].second.end()
+                    );
+                }
+            }
+        }
+    }
+
+    if(best < 0) {
+        // No valid configuration found
+        cout << -1 << "\n";
+    } else {
+        // best is total kept sum (King+Queen)
+        vector<bool> kept(n);
+        for(int v: best_selected) {
+            kept[v] = true;          // mark chosen vertices
+        }
+
+        vector<int> destroyed;       // indices of destroyed cities (1-based)
+        int64_t cost = 0;
+        for(int i = 0; i < n; i++) {
+            if(!kept[i]) {           // not used by King or Queen
+                destroyed.push_back(i + 1);
+                cost += p[i];
+            }
+        }
+
+        cout << cost << "\n";
+        if(!destroyed.empty()) {
+            cout << destroyed << "\n"; // uses overloaded operator<< for vector
+        } else {
+            cout << "\n";              // print empty line if no destroyed cities
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;                     // only one test in this version
+    // cin >> T;                   // left commented for potential multi-test
+    for(int test = 1; test <= T; test++) {
+        read();                    // read input
+        precompute_all_pairs();    // BFS-based all-pairs distances
+        // cout << "Case #" << test << ": ";
+        solve();                   // run the main solution
+    }
+
+    return 0;
+}
+```
+
+4. Python solution with detailed comments
+-----------------------------------------
+
+Below is a Python 3 implementation following the same algorithm and structure, with explanatory comments. It uses only the fast all-pairs approach and the component splitting over each `split`.
+
+```python
+import sys
+from collections import deque
+from math import inf
+
+# ------------- Utility for fast IO -------------
+
+def input():
+    return sys.stdin.readline().strip()
+
+# ------------- Read input -------------
+
+n_line = input()
+if not n_line:
+    sys.exit(0)
+n = int(n_line)
+
+d1, c1, d2, c2 = map(int, input().split())
+p = list(map(int, input().split()))
+
+adj = [[] for _ in range(n)]
+for _ in range(n - 1):
+    a, b = map(int, input().split())
+    a -= 1  # convert to 0-based
+    b -= 1
+    adj[a].append(b)
+    adj[b].append(a)
+
+# ------------- Precompute all-pairs distances and first steps -------------
+
+# dist_all[s][v] = distance from s to v
+dist_all = [[10**9] * n for _ in range(n)]
+# first_step[s][v] = first neighbor along a shortest path from s to v
+first_step = [[-1] * n for _ in range(n)]
+
+for s in range(n):
+    # BFS from source s
+    q = deque()
+    dist_all[s][s] = 0
+    # initialize neighbors
+    for u in adj[s]:
+        dist_all[s][u] = 1
+        first_step[s][u] = u
+        q.append(u)
+    # BFS
+    while q:
+        v = q.popleft()
+        dv = dist_all[s][v]
+        for u in adj[v]:
+            if dist_all[s][u] == 10**9:
+                dist_all[s][u] = dv + 1
+                first_step[s][u] = first_step[s][v]  # propagate first step
+                q.append(u)
+
+NEG_INF = -10**18
+
+# ------------- Best subtree, even diameter, centered at root, fast dist -------------
+
+def best_subtree_from_root_fast(root, nodes, d, c):
+    # D = 0 special case: only subtree is {root}
+    if d == 0:
+        if c >= 1:
+            return p[root], [root]
+        else:
+            return NEG_INF, []
+    # c = 1 but d > 0 impossible
+    if c == 1:
+        return NEG_INF, []
+
+    target = d // 2  # distance from center to endpoints
+    ssum = p[root]
+    selected = [root]
+    boundary = []
+
+    # classify nodes relative to root
+    for v in nodes:
+        if v == root:
+            continue
+        dv = dist_all[root][v]
+        if dv < target:
+            # strictly interior
+            ssum += p[v]
+            selected.append(v)
+        elif dv == target:
+            # boundary candidate
+            boundary.append(v)
+
+    if len(boundary) < 2:
+        # cannot form diameter d
+        return NEG_INF, []
+
+    # We need best boundary node per child-subtree of root.
+    # We'll use dict keyed by child vertex because partial allocation is simpler in Python.
+    best_val = {}
+    best_node = {}
+
+    for v in boundary:
+        cid = first_step[root][v]  # child of root on path to v
+        if cid < 0:
+            continue
+        val = p[v]
+        if cid not in best_val or val > best_val[cid]:
+            best_val[cid] = val
+            best_node[cid] = v
+
+    if len(best_val) < 2:
+        # only 1 subtree contributes boundary nodes
+        return NEG_INF, []
+
+    # find globally best boundary vertex
+    first_cid, first_v = None, None
+    fv = -10**9
+    for cid, val in best_val.items():
+        if val > fv:
+            fv = val
+            first_cid = cid
+            first_v = best_node[cid]
+
+    # find best boundary vertex from a different subtree
+    second_v = None
+    sv = -10**9
+    for cid, val in best_val.items():
+        if cid == first_cid:
+            continue
+        if val > sv:
+            sv = val
+            second_v = best_node[cid]
+
+    if second_v is None:
+        return NEG_INF, []
+
+    # include these two boundary vertices
+    ssum += p[first_v]
+    selected.append(first_v)
+    ssum += p[second_v]
+    selected.append(second_v)
+
+    # If we can add more endpoints (C > 2), choose among remaining boundary vertices
+    if c > 2:
+        rem = [v for v in boundary if v != first_v and v != second_v]
+        # number of extra endpoints allowed:
+        to_take = min(len(rem), c - 2)
+        if to_take > 0:
+            # we need top to_take by p[v]
+            # Python: partial selection via sort is fine given small n
+            rem.sort(key=lambda x: p[x], reverse=True)
+            for i in range(to_take):
+                ssum += p[rem[i]]
+                selected.append(rem[i])
+
+    return ssum, selected
+
+# ------------- Best subtree, odd diameter, center is edge (u,v), fast dist -------------
+
+def best_subtree_from_edge_fast(u, v, nodes, d, c):
+    if d == 0 or c == 1:
+        return NEG_INF, []
+    target = (d - 1) // 2
+    ssum = p[u] + p[v]     # include endpoints of central edge
+    selected = [u, v]
+
+    if target == 0:
+        # D = 1 => diameter-1 subtree is just this edge
+        return ssum, selected
+
+    bound_u = []
+    bound_v = []
+
+    for w in nodes:
+        if w == u or w == v:
+            continue
+        du = dist_all[u][w]
+        dv = dist_all[v][w]
+        if du < dv:
+            # belongs to u-side
+            if du < target:
+                ssum += p[w]
+                selected.append(w)
+            elif du == target:
+                bound_u.append(w)
+        else:
+            # belongs to v-side
+            if dv < target:
+                ssum += p[w]
+                selected.append(w)
+            elif dv == target:
+                bound_v.append(w)
+
+    if not bound_u or not bound_v:
+        # need endpoints on both sides
+        return NEG_INF, []
+
+    # best boundary on u-side
+    bu = max(bound_u, key=lambda x: p[x])
+    # best boundary on v-side
+    bv = max(bound_v, key=lambda x: p[x])
+
+    ssum += p[bu]
+    selected.append(bu)
+    ssum += p[bv]
+    selected.append(bv)
+
+    if c > 2:
+        # extra endpoints within limit
+        rem = [x for x in bound_u if x != bu] + [x for x in bound_v if x != bv]
+        to_take = min(len(rem), c - 2)
+        if to_take > 0:
+            rem.sort(key=lambda x: p[x], reverse=True)
+            for i in range(to_take):
+                ssum += p[rem[i]]
+                selected.append(rem[i])
+
+    return ssum, selected
+
+# ------------- Best subtree inside a component with given (D, C) -------------
+
+def best_subtree_in_component(nodes, d, c):
+    if not nodes:
+        return NEG_INF, []
+
+    # special case: diameter 0 and at most one endpoint -> single node
+    if d == 0 and c == 1:
+        best_v = max(nodes, key=lambda x: p[x])
+        return p[best_v], [best_v]
+
+    best_sum = NEG_INF
+    best_sel = []
+
+    if d % 2 == 0:
+        # even diameter: center is a vertex
+        for root in nodes:
+            cur_sum, cur_sel = best_subtree_from_root_fast(root, nodes, d, c)
+            if cur_sum > best_sum:
+                best_sum = cur_sum
+                best_sel = cur_sel
+    else:
+        # odd diameter: center is an edge
+        in_comp = [False] * n
+        for v in nodes:
+            in_comp[v] = True
+        for u in nodes:
+            for v in adj[u]:
+                if u < v and in_comp[v]:
+                    cur_sum, cur_sel = best_subtree_from_edge_fast(u, v, nodes, d, c)
+                    if cur_sum > best_sum:
+                        best_sum = cur_sum
+                        best_sel = cur_sel
+
+    return best_sum, best_sel
+
+# ------------- Find components when removing a split vertex -------------
+
+def get_component(start, split, vis):
+    stack = [start]
+    comp = []
+    while stack:
+        v = stack.pop()
+        if vis[v] or v == split:
+            continue
+        vis[v] = True
+        comp.append(v)
+        for u in adj[v]:
+            if not vis[u] and u != split:
+                stack.append(u)
+    return comp
+
+# ------------- Main solving logic -------------
+
+total_sum = sum(p)
+
+best = NEG_INF
+best_selected_global = None
+
+# Try each vertex as "split"
+for split in range(n):
+    vis = [False] * n
+    components = []
+
+    # Each neighbor of split is in some component
+    for u in adj[split]:
+        if not vis[u]:
+            comp = get_component(u, split, vis)
+            components.append(comp)
+
+    m = len(components)
+    # For each component, compute best subtree for King and for Queen
+    best1 = [None] * m
+    best2 = [None] * m
+    for i, comp in enumerate(components):
+        best1[i] = best_subtree_in_component(comp, d1, c1)
+        best2[i] = best_subtree_in_component(comp, d2, c2)
+
+    # Try pairing two different components
+    for i in range(m):
+        for j in range(i + 1, m):
+            s1_i, sel1_i = best1[i]
+            s2_i, sel2_i = best2[i]
+            s1_j, sel1_j = best1[j]
+            s2_j, sel2_j = best2[j]
+
+            # King in comp i (best1[i]), Queen in comp j (best2[j])
+            if s1_i > NEG_INF and s2_j > NEG_INF:
+                total = s1_i + s2_j
+                if total > best:
+                    best = total
+                    best_selected_global = sel1_i + sel2_j
+
+            # King in comp j, Queen in comp i
+            if s2_i > NEG_INF and s1_j > NEG_INF:
+                total = s2_i + s1_j
+                if total > best:
+                    best = total
+                    best_selected_global = sel2_i + sel1_j
+
+# ------------- Output -------------
+
+if best < 0 or best_selected_global is None:
+    print(-1)
+else:
+    kept = [False] * n
+    for v in best_selected_global:
+        kept[v] = True
+
+    destroyed = []
+    cost = 0
+    for i in range(n):
+        if not kept[i]:
+            destroyed.append(i + 1)  # back to 1-based index
+            cost += p[i]
+
+    print(cost)
+    if destroyed:
+        destroyed.sort()
+        print(" ".join(map(str, destroyed)))
+    else:
+        print()
+```
+
+This Python solution should work within constraints (n ≤ 200) given its O(n³) behavior and small constants.
+
+5. Compressed editorial
+------------------------
+
+- We must choose two disjoint connected subtrees (King, Queen) such that:
+  - No edge connects the two subtrees.
+  - Each subtree has diameter exactly D1 / D2 and at most C1 / C2 distinct endpoints among all diameter‑D pairs.
+  - Maximize total sum of node values kept so that destruction cost (sum of others) is minimized.
+
+- Key trick: explicitly choose a “split” city and remove it. The tree splits into several components. King and Queen’s subtrees must lie in *different* components (and exclude the split node itself), which automatically guarantees no adjacency between them.
+
+- For each split:
+  - Enumerate components: DFS ignoring the split.
+  - For each component separately, compute:
+    - best King subtree satisfying (D1,C1);
+    - best Queen subtree satisfying (D2,C2).
+  - Try all pairs of distinct components `(i, j)`:
+    - (King in `i`, Queen in `j`) and (King in `j`, Queen in `i`),
+    - accumulate best sum King+Queen.
+
+- Now reduce to: in a tree T (component) with node set S and parameters (D,C), find a connected subtree S' maximizing sum(p) s.t. diameter(S')=D and number of distinct diameter endpoints ≤ C.
+
+- Precompute all-pairs shortest paths and first-step from each node (`O(n²)`) by BFS from each node.
+
+- For each component:
+
+  - Case D = 0, C = 1:
+    - Answer is the single node with maximum p.
+
+  - Case D even (D = 2R):
+    - For each possible center vertex `root` in the component:
+      - Include all nodes with distance < R from `root` (they do not affect max distance).
+      - Let `boundary` be nodes at distance exactly R.
+      - If boundary size < 2: impossible for this root.
+      - Group boundary nodes by which child subtree of root they belong to (via `first_step[root][v]`).
+      - Need at least 2 distinct child-subtrees to get diameter D.
+      - Pick the best valued node from every child-subtree; choose two best from two different subtrees as the mandatory endpoints.
+      - If C > 2, further pick up to C−2 additional boundary nodes by highest p (they remain endpoints but we’re under the endpoint limit).
+      - Track best sum among all roots.
+
+  - Case D odd (D = 2R+1):
+    - For each edge (u, v) within component:
+      - Consider this as central edge.
+      - Start with u, v included.
+      - For each w in component:
+        - Compute distance to each side; assign to the side where it is closer.
+        - If distance < R: include always (interior).
+        - If distance == R: w is boundary candidate for its side.
+      - Must have at least one boundary candidate on both sides.
+      - Pick best one on each side as mandatory endpoints.
+      - If C > 2, choose additional boundary nodes (remaining) by highest p up to C−2.
+      - Track best sum among all edges.
+
+- Running over all splits, components, and centers/edges is O(n³) in worst case, which is fine for n ≤ 200.
+
+- Finally, among all configurations, we know the best total kept sum `best`. Destroyed cost = total_sum − best. We print the cost and list all nodes not in the chosen King/Queen sets as destroyed.

@@ -1,0 +1,282 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+390. Tickets
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Conductor is quite a boring profession, as all you have to do is just to sell tickets to the passengers. So no wonder that once upon a time in a faraway galaxy one conductor decided to diversify this occupation. Now this conductor sells several tickets at a time to each passenger. More precisely, he successively gives tickets to the passenger until the sum of the digits on all the tickets given becomes not less than some integer number k. Then this process repeats for the next passenger. Initially conductor has a tape of tickets numbered successively from l to r, inclusive. This way of tickets distribution is quite good, because passengers are glad to get several tickets when they pay only for one. But there is one disadvantage. Since each passenger gets several tickets, it is possible that conductor won't be able to serve all passengers. Your task is to help conductor in this difficult situation. You should calculate how many passengers is the conductor able to serve.
+
+Input
+Input file contains three integer numbers l, r and k (1 ≤ l ≤ r ≤ 1018, 1 ≤ k ≤ 1000).
+
+Output
+Output should contain exactly one number — the answer to the problem.
+
+Example(s)
+sample input
+sample output
+40 218 57
+29
+
+<|response|>
+1) Abridged problem statement
+
+You have all ticket numbers from l to r (inclusive). For each passenger you give tickets in increasing order, keeping the running sum of digit sums of the tickets handed to that passenger. As soon as the running sum reaches at least k, you stop for that passenger (any excess above k is discarded) and start the next passenger with the next ticket. How many passengers can be fully served before you run out of tickets?
+
+Constraints: 1 ≤ l ≤ r ≤ 10^18, 1 ≤ k ≤ 1000.
+
+
+2) Key observations
+
+- Let s(n) be the sum of digits of n. We scan s(l), s(l+1), …, s(r) and greedily cut it into consecutive chunks, each having total sum at least k. The excess in each chunk is discarded; it does not carry to the next passenger.
+- Therefore, the answer is not floor((sum over [l..r] of s(n)) / k). Discarded excess within each chunk can reduce the count.
+- Model the process with a “carry” state in [0..k−1], which is the partial sum accumulated for the current passenger. When we see s(n):
+  - If carry + s(n) ≥ k, we serve one passenger and reset carry = 0.
+  - Else, carry ← carry + s(n).
+- We must process numbers in numeric order from l to r, but the range can be up to 10^18 long, so we cannot iterate. Use digit DP with two tight flags (for low and high bounds) to traverse the range in-order.
+- Blocks: when both bounds are free at some digit position, all remaining lower positions form a full block (10^(pos+1) numbers). For such a block, we can precompute a function F_Block(carry_in) → (passengers_served, carry_out). This lets us compose blocks quickly while threading carry across them and reusing results.
+
+
+3) Full solution approach
+
+- Represent numbers with 19 digits (enough for 10^18), allowing leading zeros. Keep arrays of digits of l and r in least-significant-digit-first form; we’ll process positions from most significant down to least.
+- Use a recursive digit DP dfs(pos, carry, sum_prefix, tight_low, tight_high):
+  - pos: current digit position (MSB to LSB; pos = −1 means the number is fixed).
+  - carry: current accumulated sum (0..k−1) for the ongoing passenger before adding this number.
+  - sum_prefix: sum of digits chosen so far for the current number.
+  - tight_low, tight_high: whether we are still constrained by l and/or r at this position.
+- Base case (pos = −1): The current number has digit sum s = sum_prefix.
+  - If carry + s ≥ k, return (1, 0).
+  - Else, return (0, carry + s).
+- Transition:
+  - If both tight flags are false, the suffix [pos..0] is a full block. Memoize and reuse for that (pos, sum_prefix, carry):
+    - Process digits d = 0..9 in increasing order, recurse into pos−1 with sum_prefix + d, while threading carry from one sub-block to the next. Accumulate served passengers and keep the final carry. Store and return the pair (passengers_in_block, final_carry).
+  - Otherwise, restrict the current digit d by the tight bounds and iterate d from lo to hi. For each d, update the tight flags, recurse, accumulate the answer, and thread the carry in-order across the digits at this level.
+- The memoization on free blocks keeps the number of states around 19 × 171 × K (pos × possible sum_prefix × carry), each combining 10 children. This fits comfortably in time and memory in C++.
+- The DFS enumerates numbers in numeric order (most significant digit first; digits from lo to hi), so threading the carry across siblings is exactly how the real process would proceed across consecutive numbers.
+
+Complexity:
+- Time: O(POS × SUM_MAX × K × 10) ≈ 19 × 171 × K × 10. With K ≤ 1000 this is about 3.3e7 primitive operations in C++.
+- Memory: O(POS × SUM_MAX × K) pairs; a few million entries, within typical limits.
+
+
+4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Max positions (19 digits suffice for numbers up to 10^18)
+const int POS = 19;
+// Maximum possible sum of digits of a 19-digit number: 19 * 9 = 171
+const int SUM_MAX = 171;
+
+long long L, R;   // input range
+int K;            // threshold per passenger
+
+// Digits of L and R, least significant digit first (index 0 is LSD)
+vector<int> digL(POS), digR(POS);
+
+// DP cache for fully “free” blocks (both tight flags = false):
+// dp[pos][sum_prefix][carry] = pair(answer_count, final_carry)
+//
+// Meaning for a FREE block:
+//   - We are fixing all remaining positions [pos..0] freely (10^(pos+1) numbers),
+//   - sum_prefix = sum of digits already chosen at higher positions for the current number.
+//   - carry = current accumulated sum for the ongoing passenger BEFORE adding the current number.
+// The pair returned is:
+//   - answer_count: how many passengers served when we process all numbers in numeric order,
+//   - final_carry : carry left after processing the entire block.
+vector<vector<vector<pair<long long, int>>>> dp;
+
+// Convert x into a 19-digit (LSD-first) vector.
+static void to_digits_lsd_first(long long x, vector<int>& d) {
+    string s = to_string(x);
+    reverse(s.begin(), s.end());     // LSD first
+    d.assign(POS, 0);
+    for (int i = 0; i < (int)s.size() && i < POS; i++) d[i] = s[i] - '0';
+}
+
+// Core digit DP with carry threading.
+// pos        : current digit position (MSB..LSB; -1 means number complete)
+// carry      : current partial sum (0..K-1) before adding this number
+// sum_prefix : sum of digits chosen so far for the number we are building
+// tight_low  : still tight to the lower bound L at this position
+// tight_high : still tight to the upper bound R at this position
+static pair<long long,int> dfs(int pos, int carry, int sum_prefix,
+                               bool tight_low, bool tight_high) {
+    // One concrete number finished: apply the passenger rule once.
+    if (pos == -1) {
+        int total = carry + sum_prefix;
+        if (total >= K) return {1, 0};          // serve passenger, reset carry
+        return {0, total};                      // no passenger; carry increases
+    }
+
+    // If neither bound is tight, this whole suffix is a full 10^(pos+1)-sized block.
+    if (!tight_low && !tight_high) {
+        auto& cell = dp[pos][sum_prefix][carry];
+        if (cell.first != -1) return cell;      // memoized
+        pair<long long,int> res = {0, carry};   // (answers_so_far, carry_so_far)
+        // Process digits d=0..9 in order, threading carry across sub-blocks.
+        for (int d = 0; d <= 9; d++) {
+            auto got = dfs(pos - 1, res.second, sum_prefix + d, false, false);
+            res.first += got.first;
+            res.second = got.second;
+        }
+        cell = res;                              // memoize
+        return cell;
+    }
+
+    // Still tight to at least one bound: restrict the digit.
+    pair<long long,int> res = {0, carry};
+    int lo = tight_low ? digL[pos] : 0;
+    int hi = tight_high ? digR[pos] : 9;
+    for (int d = lo; d <= hi; d++) {
+        bool nL = tight_low && (d == lo);
+        bool nH = tight_high && (d == hi);
+        auto got = dfs(pos - 1, res.second, sum_prefix + d, nL, nH);
+        res.first += got.first;
+        res.second = got.second;
+    }
+    return res;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    if (!(cin >> L >> R >> K)) return 0;
+
+    to_digits_lsd_first(L, digL);
+    to_digits_lsd_first(R, digR);
+
+    // Initialize DP table for free blocks. Use {-1, -1} as "not computed".
+    dp.assign(POS,
+              vector<vector<pair<long long,int>>>(
+                  SUM_MAX + 1,
+                  vector<pair<long long,int>>(K + 1, {-1, -1})
+              ));
+
+    // Start from the most significant position, carry=0, sum_prefix=0, tight to both bounds.
+    auto ans = dfs(POS - 1, 0, 0, true, true);
+    cout << ans.first << '\n';
+    return 0;
+}
+```
+
+Why it works:
+- The recursion enumerates numbers in [l..r] in numeric order. At every node we iterate digits from low to high; for free blocks we loop d=0..9, for tight blocks we loop within the constrained interval.
+- We thread carry across siblings in that exact order, which mirrors the real process of sequentially handing out tickets.
+- Memoization for free blocks stores both “how many passengers were served” and “what carry remains,” which is necessary to compose blocks correctly.
+
+
+5) Python implementation with detailed comments
+
+Note: This mirrors the C++ idea. It memoizes only fully free blocks (both tight flags false) as two arrays of length K: for each incoming carry, how many passengers that block serves and what carry it leaves. This is primarily educational; for the strict time limit, prefer the C++ solution.
+
+```python
+import sys
+sys.setrecursionlimit(10000)
+
+POS = 19
+SUM_MAX = 9 * POS  # 171
+
+def digits_lsd_first(x):
+    s = str(x)[::-1]   # LSD first
+    d = [0] * POS
+    for i, ch in enumerate(s[:POS]):
+        d[i] = ord(ch) - 48
+    return d
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    L, R, K = int(data[0]), int(data[1]), int(data[2])
+
+    digL = digits_lsd_first(L)
+    digR = digits_lsd_first(R)
+
+    # Memo for fully free blocks:
+    # key: (pos, sum_prefix)
+    # val: (ans_arr, out_arr)
+    #   ans_arr[c] = passengers served by this block starting with carry=c
+    #   out_arr[c] = carry after this block starting with carry=c
+    memo_block = {}
+
+    def build_block(pos, sum_prefix):
+        key = (pos, sum_prefix)
+        if key in memo_block:
+            return memo_block[key]
+
+        if pos == -1:
+            # Exactly one number, with digit sum = sum_prefix.
+            ans_arr = [0] * K
+            out_arr = [0] * K
+            for c in range(K):
+                if c + sum_prefix >= K:
+                    ans_arr[c] = 1
+                    out_arr[c] = 0
+                else:
+                    ans_arr[c] = 0
+                    out_arr[c] = c + sum_prefix
+            memo_block[key] = (ans_arr, out_arr)
+            return ans_arr, out_arr
+
+        # Concatenate sub-blocks for next digit d=0..9 in numeric order.
+        ans_total = [0] * K
+        carry_cur = list(range(K))  # carry to enter this sub-block
+
+        for d in range(10):
+            ans_d, out_d = build_block(pos - 1, sum_prefix + d)
+            # Compose this sub-block for every possible starting carry.
+            for c0 in range(K):
+                cc = carry_cur[c0]
+                ans_total[c0] += ans_d[cc]
+                carry_cur[c0] = out_d[cc]
+
+        memo_block[key] = (ans_total, carry_cur)
+        return ans_total, carry_cur
+
+    # Two-sided digit DP that threads a single carry; uses blocks when possible.
+    def dfs(pos, carry, tight_low, tight_high, sum_prefix):
+        # If the remaining suffix is free, apply the whole block mapping at once.
+        if not tight_low and not tight_high:
+            ans_arr, out_arr = build_block(pos, sum_prefix)
+            return ans_arr[carry], out_arr[carry]
+
+        if pos == -1:
+            total = carry + sum_prefix
+            if total >= K:
+                return 1, 0
+            else:
+                return 0, total
+
+        res_ans = 0
+        lo = digL[pos] if tight_low else 0
+        hi = digR[pos] if tight_high else 9
+
+        # Iterate digits in increasing order to preserve numeric order,
+        # threading the carry across siblings.
+        for d in range(lo, hi + 1):
+            nL = tight_low and (d == lo)
+            nH = tight_high and (d == hi)
+            add_ans, carry = dfs(pos - 1, carry, nL, nH, sum_prefix + d)
+            res_ans += add_ans
+
+        return res_ans, carry
+
+    ans, _ = dfs(POS - 1, 0, True, True, 0)
+    print(ans)
+
+if __name__ == "__main__":
+    solve()
+```
+
+Summary:
+- Keep a carry in [0..k−1] and process numbers in order.
+- Use two-sided digit DP to traverse [l..r]; when a suffix is completely free, treat it as a reusable block. Each block returns both “how many passengers” and “what carry remains,” so we can compose blocks correctly in-order.
+- The C++ version meets the constraints; the Python version is provided for understanding.

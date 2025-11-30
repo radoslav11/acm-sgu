@@ -1,0 +1,353 @@
+1) Abridged problem statement
+- You are given an n×m grid of blocks (beauty values 0–9), separated by streets/avenues (n+1 horizontal lines, m+1 vertical lines).
+- A pedestrian starts at the north-west corner (top-left corner of the grid), facing east. A path is given as a string of:
+  - L: turn left 90 degrees
+  - R: turn right 90 degrees
+  - M: move forward by one block along the current street/avenue
+- When moving one segment (on M), the pedestrian “passes” the block(s) adjacent to that street segment:
+  - If the segment is internal, they pass 2 blocks (one on each side).
+  - If it lies on the border, they pass only 1 block.
+- The first time a block is passed, add its beauty bij to the total. Each subsequent pass of the same block adds floor(bij/2).
+- The path never goes outside the map. Compute the final total satisfaction.
+
+Constraints: 1 ≤ n, m ≤ 100; path length ≤ 500; bij are digits 0–9.
+
+2) Detailed editorial
+Key idea:
+- The pedestrian moves along gridlines connecting intersections. Each move M traverses exactly one street segment.
+- That segment is adjacent to one or two blocks. For each adjacent block, you apply:
+  - +bij if it is the first time this block is passed,
+  - +floor(bij/2) if it has been passed before.
+- Track how many times each block was passed (or whether it was passed before) and sum contributions.
+
+Coordinate system and direction:
+- Let intersections be addressed by (x, y) where:
+  - x in [0, m], y in [0, n]
+  - (0, 0) is the north-west (top-left) corner (start position), facing east.
+- Let blocks be addressed by 0-based indices grid[row][col] where:
+  - row in [0, n-1] (0 = north/top row), col in [0, m-1] (0 = west/left column).
+- Use directions encoded as:
+  - 0: east  (dx=+1, dy= 0)
+  - 1: south (dx= 0, dy=+1)
+  - 2: west  (dx=-1, dy= 0)
+  - 3: north (dx= 0, dy=-1)
+- Turning:
+  - L: dir = (dir + 3) % 4
+  - R: dir = (dir + 1) % 4
+
+Which blocks are adjacent to a moved segment?
+- Suppose we move from (x, y) to (nx, ny) = (x + dx[dir], y + dy[dir]).
+- Horizontal move (y constant):
+  - Let cx = min(x, nx).
+  - Above block (if y > 0):     grid[y-1][cx]
+  - Below block (if y < n):     grid[y][cx]
+- Vertical move (x constant):
+  - Let cy = min(y, ny).
+  - Left block  (if x > 0):     grid[cy][x-1]
+  - Right block (if x < m):     grid[cy][x]
+- The sample C++ code implements the same logic via four direction-specific if-branches.
+
+Algorithm:
+- Read n, m, the n grid lines of digits, and the path string.
+- Maintain:
+  - current intersection (x, y) = (0, 0),
+  - current direction dir = 0 (east),
+  - visited[n][m] (count or boolean), initialized to 0,
+  - total satisfaction = 0.
+- For each character in the path:
+  - If L or R: change dir accordingly.
+  - If M:
+    - Compute (nx, ny) = (x + dx[dir], y + dy[dir]).
+    - Identify the adjacent block(s) using the cases above.
+    - For each adjacent block (r, c):
+      - beauty = grid[r][c] (as an integer 0..9).
+      - If visited[r][c] == 0: add beauty; else add beauty // 2.
+      - visited[r][c] += 1.
+    - Set (x, y) = (nx, ny).
+- Output total satisfaction.
+
+Correctness:
+- Every street segment traversal is counted exactly once, and each adjacent block receives a pass count increment.
+- Border segments naturally contribute only one adjacent block due to bounds checks.
+- The rules for first vs subsequent passes are enforced via visited.
+
+Complexity:
+- Path length ≤ 500, so O(|path|) operations.
+- Memory O(nm) for visited.
+
+3) Provided C++ solution with detailed comments explaining each line
+```cpp
+#include <bits/stdc++.h>     // Pulls in standard C++ library headers in one include
+
+using namespace std;
+
+// Overload for printing pair<T1, T2> to an output stream (unused here, but provided)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload for reading pair<T1, T2> from an input stream (unused here)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload for reading a vector<T> from an input stream (unused here)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;             // Read each element sequentially
+    }
+    return in;
+};
+
+// Overload for printing a vector<T> to an output stream (unused here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';     // Print each element separated by spaces
+    }
+    return out;
+};
+
+// Problem globals
+int n, m;                    // Number of block rows (n) and block columns (m)
+vector<string> grid;         // Grid of digits as strings (size n, each length m)
+string path;                 // Path consisting of 'L', 'R', 'M'
+
+// Read input: n, m, grid lines, and the path
+void read() {
+    cin >> n >> m;           // Read dimensions
+    grid.resize(n);          // Prepare grid with n rows
+    for(int i = 0; i < n; i++) {
+        cin >> grid[i];      // Read each row as a string of m digits
+    }
+    cin >> path;             // Read the path string
+}
+
+void solve() {
+    // We simulate the movement along intersections (x, y), tracking a direction
+    // and a per-block "visited" count to decide whether to add full or half beauty.
+
+    int x = 0, y = 0;        // Start at north-west corner (top-left intersection)
+    int dir = 0;             // 0:east, 1:south, 2:west, 3:north (clockwise order)
+    int satisfaction = 0;    // Total satisfaction to accumulate
+
+    // Direction vectors for dir = 0..3 as above
+    int dx[] = {1, 0, -1, 0};
+    int dy[] = {0, 1, 0, -1};
+
+    // visited[r][c] = how many times block at row r, col c has been passed
+    vector<vector<int>> visited(n, vector<int>(m, 0));
+
+    // Process each instruction in the path
+    for(char c: path) {
+        if(c == 'L') {
+            // Turn left: dir - 1 modulo 4
+            dir = (dir + 3) % 4;
+        } else if(c == 'R') {
+            // Turn right: dir + 1 modulo 4
+            dir = (dir + 1) % 4;
+        } else {
+            // Move forward one block in the current direction
+            int nx = x + dx[dir];
+            int ny = y + dy[dir];
+
+            // Determine the block(s) adjacent to the traversed segment and add contributions
+            if(dir == 0) {
+                // Moving east: horizontal segment from (x,y) to (x+1,y)
+                // Adjacent blocks: above (y-1, x) and below (y, x), if they exist
+                if(y > 0 && x < m) {
+                    int beauty = grid[y - 1][x] - '0';   // Convert digit char to int
+                    satisfaction +=
+                        (visited[y - 1][x] == 0) ? beauty : beauty / 2;
+                    visited[y - 1][x]++;                 // Mark block as passed
+                }
+                if(y < n && x < m) {
+                    int beauty = grid[y][x] - '0';
+                    satisfaction += (visited[y][x] == 0) ? beauty : beauty / 2;
+                    visited[y][x]++;
+                }
+            } else if(dir == 1) {
+                // Moving south: vertical segment from (x,y) to (x,y+1)
+                // Adjacent blocks: left (y, x-1) and right (y, x), if they exist
+                if(y < n && x > 0) {
+                    int beauty = grid[y][x - 1] - '0';
+                    satisfaction +=
+                        (visited[y][x - 1] == 0) ? beauty : beauty / 2;
+                    visited[y][x - 1]++;
+                }
+                if(y < n && x < m) {
+                    int beauty = grid[y][x] - '0';
+                    satisfaction += (visited[y][x] == 0) ? beauty : beauty / 2;
+                    visited[y][x]++;
+                }
+            } else if(dir == 2) {
+                // Moving west: horizontal segment from (x,y) to (x-1,y)
+                // Adjacent blocks: above (y-1, x-1) and below (y, x-1), if they exist
+                if(y > 0 && x > 0) {
+                    int beauty = grid[y - 1][x - 1] - '0';
+                    satisfaction +=
+                        (visited[y - 1][x - 1] == 0) ? beauty : beauty / 2;
+                    visited[y - 1][x - 1]++;
+                }
+                if(y < n && x > 0) {
+                    int beauty = grid[y][x - 1] - '0';
+                    satisfaction +=
+                        (visited[y][x - 1] == 0) ? beauty : beauty / 2;
+                    visited[y][x - 1]++;
+                }
+            } else {
+                // dir == 3, moving north: vertical segment from (x,y) to (x,y-1)
+                // Adjacent blocks: left (y-1, x-1) and right (y-1, x), if they exist
+                if(y > 0 && x > 0) {
+                    int beauty = grid[y - 1][x - 1] - '0';
+                    satisfaction +=
+                        (visited[y - 1][x - 1] == 0) ? beauty : beauty / 2;
+                    visited[y - 1][x - 1]++;
+                }
+                if(y > 0 && x < m) {
+                    int beauty = grid[y - 1][x] - '0';
+                    satisfaction +=
+                        (visited[y - 1][x] == 0) ? beauty : beauty / 2;
+                    visited[y - 1][x]++;
+                }
+            }
+
+            // Update current position to the next intersection
+            x = nx;
+            y = ny;
+        }
+    }
+
+    // Output the total satisfaction
+    cout << satisfaction << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up cin/cout
+    cin.tie(nullptr);                 // Untie cin from cout for faster IO
+
+    int T = 1;                        // Single test case (kept as a variable for structure)
+    // cin >> T;                      // Could be used if multiple test cases were given
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read input
+        // cout << "Case #" << test << ": "; // Not needed
+        solve();                      // Solve the single test
+    }
+
+    return 0;                         // Exit program
+}
+```
+
+4) Python solution (with detailed comments)
+```python
+import sys
+
+def main():
+    data = sys.stdin.read().strip().splitlines()
+    it = iter(data)
+
+    # Read dimensions
+    n_m = next(it).split()
+    n = int(n_m[0])
+    m = int(n_m[1])
+
+    # Read grid rows as strings of digits
+    grid_strs = [next(it).strip() for _ in range(n)]
+
+    # Convert to integer grid (0..9)
+    grid = [[ord(ch) - ord('0') for ch in row] for row in grid_strs]
+
+    # Read path
+    path = next(it).strip()
+
+    # Directions: 0:east, 1:south, 2:west, 3:north
+    dx = [1, 0, -1, 0]
+    dy = [0, 1, 0, -1]
+
+    # Start at top-left intersection, facing east
+    x, y = 0, 0
+    dir = 0
+
+    # visited[r][c] = number of times block (r,c) has been passed
+    visited = [[0] * m for _ in range(n)]
+
+    satisfaction = 0
+
+    for c in path:
+        if c == 'L':
+            dir = (dir + 3) % 4  # turn left
+        elif c == 'R':
+            dir = (dir + 1) % 4  # turn right
+        else:
+            # Move one segment forward
+            nx = x + dx[dir]
+            ny = y + dy[dir]
+
+            if dir == 0:
+                # East: adjacent blocks above (y-1, x) and below (y, x)
+                if y > 0 and x < m:
+                    r, c0 = y - 1, x
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+                if y < n and x < m:
+                    r, c0 = y, x
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+            elif dir == 1:
+                # South: adjacent blocks left (y, x-1) and right (y, x)
+                if y < n and x > 0:
+                    r, c0 = y, x - 1
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+                if y < n and x < m:
+                    r, c0 = y, x
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+            elif dir == 2:
+                # West: adjacent blocks above (y-1, x-1) and below (y, x-1)
+                if y > 0 and x > 0:
+                    r, c0 = y - 1, x - 1
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+                if y < n and x > 0:
+                    r, c0 = y, x - 1
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+            else:
+                # North: adjacent blocks left (y-1, x-1) and right (y-1, x)
+                if y > 0 and x > 0:
+                    r, c0 = y - 1, x - 1
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+                if y > 0 and x < m:
+                    r, c0 = y - 1, x
+                    beauty = grid[r][c0]
+                    satisfaction += beauty if visited[r][c0] == 0 else beauty // 2
+                    visited[r][c0] += 1
+
+            # Advance to the next intersection
+            x, y = nx, ny
+
+    print(satisfaction)
+
+if __name__ == "__main__":
+    main()
+```
+
+5) Compressed editorial
+- Model intersections as (x, y), blocks as grid[row][col]. Start at (0,0) facing east.
+- On each M, move to (x+dx[dir], y+dy[dir]) and score the adjacent block(s) of that segment:
+  - Horizontal: use row y−1 (above) and y (below), col = min(x, nx).
+  - Vertical: use col x−1 (left) and x (right), row = min(y, ny).
+- For each adjacent block, if first time: add bij; else add floor(bij/2). Track with visited[n][m].
+- Complexity O(|path|), with straightforward boundary checks for border segments.

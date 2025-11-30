@@ -7,7 +7,7 @@ This repository contains solutions to ACM SGU (Saratov State University) competi
 The repository consists of three main components:
 
 1. **Original Solutions**: Competitive programming solutions to SGU problems in C++ or Python.
-2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using gpt5 thinking.
+2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using gpt5.1 thinking.
 3. **Finetuned Model**: A basic pipeline with MLX for finetuning an LLM based on the above (still WIP).
 
 ## Dataset Structure
@@ -41,8 +41,8 @@ The editorials follow a structured format:
 ## Model Finetuning
 
 ### Dataset Preparation
-- **221 problems** (and slowly increasing) from the SGU archive solved by me ([radoslav11](https://codeforces.com/problemsets/acmsguru/standings)).
-- Enhanced with detailed editorials using GPT gpt5 thinking.
+- **229 problems** (and slowly increasing) from the SGU archive solved by me ([radoslav11](https://codeforces.com/problemsets/acmsguru/standings)).
+- Enhanced with detailed editorials using GPT gpt5.1 thinking.
 
 ### Training Configuration
 - **Base Model**: OlympicCoder-7B (MLX format, fp16)
@@ -123,6 +123,6 @@ If you use this dataset please cite, maybe I will add an actual PDF later:
 ## Acknowledgments
 
 - SGU (Saratov State University) for the original problem set.
-- OpenAI for the GPT gpt5 thinking model used in editorial generation.
+- OpenAI for the GPT gpt5.1 thinking model used in editorial generation.
 - Apple MLX team for the training framework.
 - OlympicCoder project for the base model architecture.

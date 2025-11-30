@@ -1,0 +1,628 @@
+1. Abridged problem statement
+------------------------------
+
+We work in base `b` (2 ≤ b ≤ 36). Digits are `0..9,A..Z` = `0..35`.  
+An `n`-digit number `X` in base `b` is **self‑replicating** if the last `n` digits of `X²` (in base `b`) equal `X` itself.
+
+Formally, write
+- `X = x₀ + x₁ b + x₂ b² + ... + x_{n-1} b^{n-1}` (least significant digit `x₀`),
+- and consider `X² mod bⁿ`.  
+`X` is self‑replicating if `X² ≡ X (mod bⁿ)` and `x_{n-1} ≠ 0` (exactly `n` digits).
+
+Input: `b n`.  
+Output: all `n`-digit base‑`b` self‑replicating numbers, any order, with letters `A..Z` for digits 10..35; first output how many there are.
+
+Example: In base 10, length 4, the only answer is `9376`.
+
+
+2. Detailed editorial
+---------------------
+
+### 2.1. Algebraic formulation
+
+Let
+
+\[
+X = \sum_{i=0}^{n-1} x_i b^i, \quad 0 \le x_i < b, \ x_{n-1} \ne 0.
+\]
+
+Self‑replicating means:
+
+\[
+X^2 \equiv X \pmod{b^n}.
+\]
+
+That is:
+
+\[
+X^2 - X \equiv 0 \pmod{b^n}.
+\]
+
+Expand:
+
+\[
+X^2 = \left(\sum_{i=0}^{n-1} x_i b^i\right)^2
+= \sum_{i=0}^{n-1} \sum_{j=0}^{n-1} x_i x_j b^{i+j}.
+\]
+
+But when we take `mod bⁿ`, any term with `i + j ≥ n` vanishes. So:
+
+\[
+X^2 \equiv \sum_{i=0}^{n-1} \sum_{j=0}^{n-1,\ i+j < n} x_i x_j b^{i+j}.
+\]
+
+Equivalently, grouping by power `k = i + j`:
+
+\[
+X^2 \equiv \sum_{k=0}^{n-1} \left(\sum_{i+j = k} x_i x_j\right) b^k.
+\]
+
+Meanwhile,
+
+\[
+X = \sum_{k=0}^{n-1} x_k b^k.
+\]
+
+Comparing base‑`b` digits of `X²` (mod `bⁿ`) and `X`, we get `n` equations:
+
+For each `k` (0 ≤ k < n):
+
+> digit of `X²` at position `k`, plus potential carry into this position from lower powers, must equal `x_k`.
+
+This can be viewed like “squaring with carry” in base `b`, but truncated after `n` digits.
+
+### 2.2. Carry representation
+
+When you multiply numbers digitwise in base `b`, each coefficient can produce a carry to the next digits.
+
+Define an array `carry[0..n-1]`. We interpret:
+
+- At step when we have processed contributions to coefficient `b^k`, `carry[k]` is the **raw sum** of all contributions whose power is exactly `k` (before reducing by base `b`).
+- The actual digit at position `k` is `carry[k] mod b`, and `carry[k] / b` is carried to position `k+1`, etc.
+
+For `X²`, contributions to `b^{i+j}` come from terms `x_i x_j`.  
+Note that for `i ≠ j`, we get the same term twice: `x_i x_j` and `x_j x_i`.  
+So the total contribution is:
+
+- For `i = j`: only one term: `x_i²`.
+- For `i ≠ j`: `2 x_i x_j`.
+
+Hence, the digit equation for position `k` is:
+
+\[
+\mathrm{digit}_k(X^2) = \left(\sum_{i+j = k} (1 + [i\ne j]) x_i x_j + \text{(carry from lower positions)}\right) \bmod b.
+\]
+
+We want:
+
+\[
+\mathrm{digit}_k(X^2) = x_k.
+\]
+
+The program constructs `X` **digit by digit from least significant to most**, keeping `carry[]` consistent with partial contributions of `X²`.
+
+### 2.3. Recursive construction
+
+We build digits `x[0], x[1], ..., x[n-1]` in recursion:
+
+- Parameter `pos` = number of digits already fixed (0..n).
+- So digits known are `x[0..pos-1]`. Next we choose `x[pos]`.
+
+We maintain `carry[0..n-1]` such that:
+
+> For every completed position `k < pos`, `carry[k]` has already been normalized (i.e., we have propagated carries so `carry[k] < b`), and satisfies `carry[k] == x[k]`.
+
+So at the recursion start: `pos=0`, `carry` all 0.
+
+When we choose a new digit `d = x[pos]`, we must:
+
+1. Check *local modular constraint* for position `pos`.
+2. Add contributions of this new digit to `carry`.
+3. Normalize (propagate) carry.
+4. Check full equality at this position.
+
+#### 2.3.1. Range of digits
+
+In base `b`, digits are 0..b-1, but we need exactly `n` digits:
+
+- Most significant digit (`pos == n-1`) cannot be 0, except if `n == 1`.  
+
+So, for `pos == n - 1` and `n != 1`, try digits from 1..b-1.  
+Otherwise, 0..b-1.
+
+In code:
+
+```cpp
+for (int d = (pos == n - 1) && (n != 1); d < b; d++)
+```
+
+When `pos == n-1` and `n>1`, `d` starts from 1; else from 0.
+
+#### 2.3.2. Immediate modular test
+
+When adding a new digit `x[pos]`, some contributions to position `pos` are already known:
+
+- Terms involving `x[pos]` and earlier digits:
+
+  - With `j = 0..pos-1`:
+
+    - If `j ≠ pos`, contribution is `2 * x[pos] * x[j]`, placed at `b^{pos+j}`.
+    - In particular, for `j = 0`, we get contribution to `b^{pos}`: `2 * x[0] * x[pos]`.
+
+- Additionally, if `pos = 0`, we have term `x[0]^2` at `b^0`.
+
+But the code uses a very clever **pre‑filter** for speed:
+
+```cpp
+if ((carry[pos] + (1 + (pos != 0)) * x[0] * x[pos]) % b != x[pos]) {
+    x.pop_back();
+    continue;
+}
+```
+
+Why is this correct?
+
+- When choosing `x[pos]`, currently `carry[pos]` already contains all contributions to index `pos` coming from **pairs of digits with indices < pos** (i.e., terms from previously chosen digits).
+- The **new** contributions that definitely go to index `pos` itself (before we add all general `i+j=pos` terms) come from combining `x[pos]` with `x[0]`:
+
+  - For `pos = 0`: pair `(0,0)` appears once → contribution `x[0]*x[0]`, factor `1 + (pos != 0) = 1`.
+  - For `pos > 0`: pairs `(pos,0)` and `(0,pos)` → `2 * x[0] * x[pos]`, factor `1 + (pos != 0) = 2`.
+
+- Other new products `(pos, j)` with `j > 0` have exponents `pos + j > pos`, so they don’t affect the digit at `pos`.
+
+Thus, **before** full carry propagation, the intermediate sum at position `pos` relevant for the digit mod `b` is:
+
+\[
+\text{temp} = carry[pos] + (1 + [pos \ne 0])\cdot x_0 \cdot x_{pos}.
+\]
+
+Its digit mod `b` must equal `x_{pos}`; otherwise this digit choice is impossible, no matter what further digits we choose.
+
+So we check this quickly to prune branches.
+
+This is the key observation from comments in the code:
+
+> For i > 0:
+> (carry[i] + 2 * x[i] * x[0]) ≡ x[i] (mod b)  
+> carry[i] ≡ (1 - 2 * x[0]) * x[i] (mod b).
+
+Thus, once `x[0]` is fixed, each subsequent `x[i]` is almost uniquely determined (0 or 1 possibilities), hence search is tiny.
+
+#### 2.3.3. Adding full contributions and propagating carry
+
+If the quick test passes, we then actually add all contributions involving `x[pos]` to `carry`:
+
+```cpp
+for (int j = 0; j <= pos; j++) {
+    int val = (1 + (pos != j)) * x[pos] * x[j];
+    if (pos + j < n) {
+        carry[j + pos] += val;
+    }
+    pop_carry(pos + j, carry);
+}
+```
+
+Explanation:
+
+- Loop over `j = 0..pos`, combining the new digit `x[pos]` with every existing digit `x[j]`.
+- If `pos == j`, factor is 1 (term `x[pos]^2`).
+- Else factor is 2 (terms `(pos,j)` and `(j,pos)`).
+- Exponent is `pos + j`. If it is ≥ n, we discard it (mod `bⁿ`).
+- After adding to `carry[pos + j]`, we normalize carries beginning at index `pos + j` using `pop_carry`.
+
+`pop_carry`:
+
+```cpp
+void pop_carry(int pos, vector<int>& carry) {
+    if (pos >= n || carry[pos] < b) {
+        return;
+    }
+
+    int full = carry[pos] / b;
+    carry[pos] %= b;
+    if (pos + 1 < n) {
+        carry[pos + 1] += full;
+        pop_carry(pos + 1, carry);
+    }
+}
+```
+
+- If carry at this position is ≥ b, we propagate the integer division to next position.
+- Recursively propagate until `carry[k] < b` and/or `k ≥ n`.
+- Note we never care about carry beyond position `n-1` since we are working modulo `bⁿ`.
+
+After adding all contributions, the coefficient at position `pos` (i.e., `carry[pos]`) must now be **exactly equal** to the digit `x[pos]` for consistency:
+
+```cpp
+if (carry[pos] == x[pos]) {
+    rec(pos + 1, carry, x, ans);
+}
+```
+
+If that fails, branch is invalid; revert `carry` to saved state and try next digit.
+
+To support backtracking:
+
+```cpp
+vector<int> carry_save = carry;
+// ...
+carry = carry_save;
+```
+
+We save the current carry before trying digit candidates, so any changes are undone when we move to next candidate.
+
+#### 2.3.4. Base case and result construction
+
+When `pos == n`, we have chosen all digits `x[0..n-1]` and satisfied all constraints. We must output the number.
+
+Digits in `x` are in **little endian** order (`x[0]` is least significant). For printing we must reverse:
+
+```cpp
+string candidate = "";
+for (int i = n - 1; i >= 0; i--) {
+    if (x[i] >= 10) {
+        candidate.push_back(x[i] - 10 + 'A');
+    } else {
+        candidate.push_back(x[i] + '0');
+    }
+}
+ans.push_back(candidate);
+```
+
+All valid numbers are collected; finally we print the count and all numbers.
+
+### 2.4. Complexity
+
+Key insight: once `x[0]` is fixed, for each `pos > 0` the modular condition
+
+\[
+(carry[pos] + 2 x[0] x[pos]) \equiv x[pos] \pmod{b}
+\]
+
+usually restricts `x[pos]` to at most one value.
+
+Thus number of valid sequences is very small; branching factor is ~O(b) only at `pos=0` or `pos=1` and then almost 1 after that. Depth is `n ≤ 2000`. Each step does O(pos) arithmetic with tiny integers (<= 36² per product). Overall this is easily within time for given constraints.
+
+Memory: O(n) for `carry` and digits.
+
+So the solution is effectively a backtracking with strong pruning and incremental square construction.
+
+
+3. Commented C++ solution
+-------------------------
+
+```cpp
+#include <bits/stdc++.h>          // Include standard library headers (GNU extension)
+using namespace std;
+
+// Overload operator<< for pairs, for convenient debug printing (not used in final logic)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pairs, for convenient reading (not used in final logic)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for vectors: read all elements in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload operator<< for vectors: print all elements separated by space
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Global parameters: base b and length n
+int b, n;
+
+// Read input b and n
+void read() { cin >> b >> n; }
+
+// Propagate carry from position 'pos' upwards in the 'carry' array
+void pop_carry(int pos, vector<int>& carry) {
+    // If pos is outside range or value is already less than base, nothing to do
+    if (pos >= n || carry[pos] < b) {
+        return;
+    }
+
+    // How many full 'b's fit into carry[pos]
+    int full = carry[pos] / b;
+    // Keep only remainder at this position
+    carry[pos] %= b;
+    // Add the carry to the next position if within bounds
+    if (pos + 1 < n) {
+        carry[pos + 1] += full;
+        // Recursively propagate further if needed
+        pop_carry(pos + 1, carry);
+    }
+}
+
+// Recursive backtracking to construct digits of the self-replicating number
+// pos   - index of digit we are currently choosing (0-based, least significant first)
+// carry - current array of "raw" coefficients for X^2 (already normalized up to pos-1)
+// x     - digits of X chosen so far, x[0] = least significant
+// ans   - list of answers as strings
+void rec(int pos, vector<int>& carry, vector<int>& x, vector<string>& ans) {
+    // Base case: we have chosen all n digits successfully
+    if (pos == n) {
+        // Convert digits x[] (little-endian) to a string in big-endian
+        string candidate = "";
+        for (int i = n - 1; i >= 0; i--) {
+            if (x[i] >= 10) {
+                // Map 10..35 to 'A'..'Z'
+                candidate.push_back(x[i] - 10 + 'A');
+            } else {
+                // Map 0..9 to '0'..'9'
+                candidate.push_back(x[i] + '0');
+            }
+        }
+        // Store this valid self-replicating number
+        ans.push_back(candidate);
+        return;
+    }
+
+    // Save current carry state so we can backtrack after trying a digit
+    vector<int> carry_save = carry;
+
+    // Determine starting digit:
+    // - If we are at the most significant digit (pos == n-1) and n != 1,
+    //   we cannot choose 0 (to ensure exactly n digits), so start at 1.
+    // - Otherwise, we can start from 0.
+    for (int d = (pos == n - 1) && (n != 1); d < b; d++) {
+        // Choose digit d for x[pos]
+        x.push_back(d);
+
+        // Quick modular test:
+        //   Let current coefficient at position 'pos' be carry[pos].
+        //   New contributions that still affect digit 'pos' come only from pairs
+        //   involving x[pos] and x[0] (because their exponent is pos+0 = pos).
+        //
+        //   If pos == 0: only (0,0) → factor 1
+        //   If pos > 0: (pos,0) and (0,pos) → factor 2
+        //
+        // So we check:
+        //     (carry[pos] + (1 + (pos != 0)) * x[0] * x[pos]) mod b == x[pos]
+        // If this fails, digit d is impossible and we skip further processing.
+        if ((carry[pos] + (1 + (pos != 0)) * x[0] * x[pos]) % b != x[pos]) {
+            x.pop_back();
+            continue;
+        }
+
+        // If the quick test passes, we now add all contributions from the new digit
+        // x[pos] with every existing digit x[j], for j = 0..pos.
+        for (int j = 0; j <= pos; j++) {
+            // Factor is 1 for j == pos (square term), else 2 (symmetry)
+            int val = (1 + (pos != j)) * x[pos] * x[j];
+            // The exponent is pos + j; only keep if < n (we work mod b^n)
+            if (pos + j < n) {
+                carry[j + pos] += val;
+            }
+            // Normalize the coefficient at position pos+j (propagating higher carries)
+            pop_carry(pos + j, carry);
+        }
+
+        // After adding and normalizing, the coefficient for b^pos (carry[pos])
+        // must exactly equal x[pos], or this branch is invalid
+        if (carry[pos] == x[pos]) {
+            // Recurse to choose the next digit
+            rec(pos + 1, carry, x, ans);
+        }
+
+        // Backtrack:
+        // - Restore the carry array to the state it had before trying digit d
+        // - Remove last digit from x
+        carry = carry_save;
+        x.pop_back();
+    }
+}
+
+void solve() {
+    // Prepare arrays:
+    // carry: coefficients of X^2 up to b^{n-1}, initially all zero
+    // x:     digits chosen so far, empty at start
+    // ans:   all self-replicating numbers we find
+    vector<int> carry(n, 0), x;
+    vector<string> ans;
+
+    // Start recursive construction from position 0
+    rec(0, carry, x, ans);
+
+    // Output count, then each number on its own line
+    cout << ans.size() << endl;
+    for (int i = 0; i < (int)ans.size(); i++) {
+        cout << ans[i] << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up I/O
+    cin.tie(nullptr);                 // Untie cin from cout
+
+    int T = 1;
+    // Problem has a single test case; code is structured for multiple.
+    // cin >> T;
+    for (int test = 1; test <= T; test++) {
+        read();   // Read base b and length n
+        // cout << "Case #" << test << ": ";
+        solve();  // Solve and print answers
+    }
+
+    return 0;
+}
+```
+
+
+4. Python solution with detailed comments
+-----------------------------------------
+
+```python
+import sys
+sys.setrecursionlimit(10000)  # Ensure recursion is allowed up to depth ~2000
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    b = int(data[0])  # base
+    n = int(data[1])  # length
+
+    # carry[k] will store the coefficient for b^k in the "raw" sum of X^2
+    # (possibly >= b before normalization).
+    carry = [0] * n
+
+    # x will store digits of X in little-endian: x[0] is least significant.
+    x = []
+
+    # List of resulting self-replicating numbers as strings
+    ans = []
+
+    # Function to propagate carries starting from index pos
+    def pop_carry(pos):
+        # While we are inside the array and value at pos >= b, normalize
+        while pos < n and carry[pos] >= b:
+            full = carry[pos] // b      # number of base units to carry upwards
+            carry[pos] %= b             # keep the remainder at this position
+            pos += 1
+            if pos < n:
+                carry[pos] += full      # add carried part to next position
+
+    # Recursive backtracking: build x[pos], x[pos+1], ...
+    def rec(pos):
+        # If we've chosen all digits, we have a valid self-replicating number
+        if pos == n:
+            # Convert x (little-endian) to big-endian base-b string with A..Z digits
+            s = []
+            for d in reversed(x):
+                if d >= 10:
+                    s.append(chr(ord('A') + d - 10))
+                else:
+                    s.append(chr(ord('0') + d))
+            ans.append(''.join(s))
+            return
+
+        # Save current carry state for backtracking
+        carry_save = carry[:]
+
+        # Determine starting digit:
+        # - For the most significant digit (pos == n-1) and n != 1, we can't pick 0
+        # - Otherwise we can pick from 0
+        start_digit = 1 if (pos == n - 1 and n != 1) else 0
+
+        for d in range(start_digit, b):
+            x.append(d)
+
+            # Quick modular feasibility check:
+            # For position pos, the new contributions that alter its digit come
+            # only from the pair(s) with x[0]:
+            #   if pos == 0:      factor = 1  -> x[0] * x[0]
+            #   if pos > 0:       factor = 2  -> 2 * x[0] * x[pos]
+            #
+            # So we check whether:
+            #    (carry[pos] + factor * x[0] * x[pos]) mod b == x[pos]
+            if pos == 0:
+                factor = 1
+            else:
+                factor = 2
+
+            # Note: x[0] is always defined because pos >= 0,
+            # and when pos == 0 we just appended x[0] = d.
+            if (carry[pos] + factor * x[0] * x[pos]) % b != x[pos]:
+                x.pop()
+                continue
+
+            # The small test passed; add full contributions from this new digit
+            # with all previous digits x[j], 0 <= j <= pos.
+            for j in range(pos + 1):
+                # factor = 1 if j == pos (square term), else 2 (symmetry)
+                if j == pos:
+                    pair_factor = 1
+                else:
+                    pair_factor = 2
+
+                val = pair_factor * x[pos] * x[j]
+                idx = pos + j
+                if idx < n:
+                    carry[idx] += val
+                    # Normalize carry starting at this index
+                    pop_carry(idx)
+
+            # After adding and normalizing, we require that the coefficient
+            # at position pos equals the chosen digit x[pos].
+            if carry[pos] == x[pos]:
+                rec(pos + 1)
+
+            # Backtrack: restore carry, remove last digit
+            for i in range(n):
+                carry[i] = carry_save[i]
+            x.pop()
+
+    rec(0)
+
+    # Output: number of solutions, then each solution
+    out_lines = [str(len(ans))]
+    out_lines.extend(ans)
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes on Python implementation:
+
+- Logic mirrors the C++ exactly: same carry handling and pruning.
+- `pop_carry` uses a loop instead of recursion for simplicity.
+- `carry_save = carry[:]` copies the entire carry array so we can fully restore state after trying each digit.
+- Recursion depth is at most `n` (≤ 2000), which is safe with the increased recursion limit.
+
+
+5. Compressed editorial
+-----------------------
+
+We need all `n`-digit base‑`b` numbers `X` such that: `X² ≡ X (mod bⁿ)`.  
+Write `X = Σxᵢbⁱ`. When we expand `X²`, each term `xᵢxⱼ` contributes to power `i+j`. Terms with `i+j ≥ n` vanish modulo `bⁿ`. For `i ≠ j`, we get two symmetric terms, so coefficient at `bᵏ` is:
+
+\[
+c_k = \sum_{i+j=k} (1 + [i \ne j]) x_i x_j.
+\]
+
+Squaring in base `b` yields carries: we maintain an array `carry[0..n-1]` that stores raw coefficients (`c_k` plus carried values). Normalizing: `digit = carry[k] mod b`, then `carry[k+1] += carry[k] / b`, etc. The constraint `X² ≡ X (mod bⁿ)` is exactly: after full normalization, `digit_k(X²) = x_k` for all `k`.
+
+We construct digits `x[0..n-1]` recursively from least significant to most, maintaining `carry` consistent up to the previous position: after deciding `x[0..pos-1]`, we enforce that for all `k < pos`, `carry[k]` is normalized and equals `x_k`.
+
+When trying a new digit `x[pos]`, most contributions affect higher positions. The only new contributions to digit at position `pos` itself come from combining `x[pos]` with `x[0]`:
+
+- If `pos = 0`: only `(0,0)` → coefficient `x₀²`.
+- If `pos > 0`: pairs `(pos,0)` and `(0,pos)` → `2x₀x_pos`.
+
+So we quickly test:
+
+\[
+(carry[pos] + (1 + [pos \ne 0]) x_0 x_{pos}) \bmod b = x_{pos}.
+\]
+
+If this fails, that digit is impossible: prune. If it passes, we add all contributions `x[pos]*x[j]` for `j = 0..pos` to `carry[pos+j]`, multiplied by 2 if `j ≠ pos`, and propagate carries. Then we require `carry[pos] == x[pos]`. If OK, recurse to `pos+1`. Before each digit trial we snapshot `carry` to restore on backtracking.
+
+Digits are taken from 0..b-1, except the most significant (`pos = n-1`) must be non-zero if `n>1`. At `pos == n`, we’ve built a full solution; we convert digits (little-endian) to a string (big-endian) using `0..9,A..Z`.
+
+Complexity: once `x[0]` is fixed, the condition
+
+\[
+(carry[i] + 2x_0x_i) \equiv x_i \pmod{b}
+\]
+
+essentially fixes each `x[i]` (0 or 1 choice). Therefore the search tree is tiny, and n ≤ 2000 is easily handled with this backtracking plus pruning.

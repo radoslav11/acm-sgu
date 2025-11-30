@@ -1,0 +1,490 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+159. Self-Replicating Numbers
+time limit per test: 0.5 sec.
+memory limit per test: 65536 KB
+input: standard input
+output: standard output
+
+
+
+Vasya's younger brother Misha is fond of playing with numbers. Two days ago he discovered that 9376^2 = 87909376 - the last four digits constitute 9376 again. He called such numbers self-replicating.
+More precisely, an n-digit number is called self-replicating if it is equal to the number formed by the last n digits of its square. Now Misha often asks Vasya to help him to find new such numbers. To make the things worse, Vasya's brother already knows what the scales of notation are, so he asks Vasya to find, for example, hexadecimal or binary self-replicating numbers.
+Vasya wants to help his brother, but unfortunately he is very busy now: he is seriously preparing and training for the next ACM Regional Contest. So he asked you to write a program that for a given base b and length n will find all n-digit self-replicating numbers in the scale of notation with base b.
+
+Input
+The only line of the input contains two integer numbers b and n separated by a single space, the base b of the scale of notation (2 <= b <= 36) and the required length n (1 <= n <= 2000).
+
+Output
+The first line of the output contains K - the total number of self-replicating numbers of length n in base b. Next K lines contain one n-digit number in base b each. Uppercase Latin letters from A to Z must be used to represent digits from 10 to 35. The self-replicating numbers can be listed in arbitrary order.
+
+Sample test(s)
+
+Input
+Sample input #1
+10 4
+
+Sample input #2
+12 6
+
+Output
+Sample output #1
+1
+9376
+
+Sample output #2
+2
+1B3854
+A08369
+
+Note
+Author:	Nikolay Durov
+Resource:	ACM ICPC 2002-2003 NEERC, Northern Subregion
+Date:	November, 2002
+
+<|response|>
+1. Abridged problem statement
+-----------------------------
+
+We work in base `b` (2 ≤ b ≤ 36). Digits are `0..9,A..Z` = `0..35`.  
+An `n`‑digit number `X` (most significant digit non‑zero, except possibly when `n = 1`) is called **self‑replicating** if the last `n` digits of `X²` in base `b` equal `X` itself.
+
+Equivalently, if `bⁿ` is the base power, then:
+
+- `0 ≤ X < bⁿ`,
+- the most significant digit of `X` is non‑zero,
+- and `X² ≡ X (mod bⁿ)`.
+
+Input: integers `b, n`.  
+Output: all `n`‑digit self‑replicating numbers in base `b` in any order, and first output their count. Use uppercase `A..Z` as digits for 10..35.
+
+
+2. Key observations
+-------------------
+
+1. **Algebraic form**  
+   Let
+
+   \[
+   X = \sum_{i=0}^{n-1} x_i b^i,\quad 0 \le x_i < b,\ x_{n-1}\ne 0\ (n>1).
+   \]
+
+   Self‑replicating means
+
+   \[
+   X^2 \equiv X \pmod{b^n}.
+   \]
+
+2. **Digitwise comparison via multiplication with carries**  
+   When you square `X` in base `b`, each term `x_i x_j` contributes to digit position `i + j`.  
+   For `i ≠ j`, there are two equal terms (`i,j` and `j,i`), so contribution is `2 x_i x_j`.  
+   For `i = j`, contribution is `x_i²`.
+
+   After adding all contributions, we normalize via base `b` (like usual “carry propagation”): a digit is `sum % b`, and we pass `sum / b` to the next position.  
+   We need that, after normalization, the digit at each position `k` equals `x_k`.
+
+3. **Incremental construction of digits**  
+   We can build `X` digit‑by‑digit from least significant to most:
+
+   - Suppose we have chosen digits `x[0..pos-1]`.
+   - We maintain an array `carry[0..n-1]` of current raw coefficients for `X²` up to `b^{n-1}`, already normalized up to position `< pos` so that:
+     - For every `k < pos`, `carry[k]` is exactly the final digit of `X²` at position `k`, and it equals `x_k`.
+
+   Then we try all possibilities for the next digit `x[pos]`, update the carries, and check consistency.
+
+4. **Crucial local condition for pruning**  
+   When we choose a new digit `x[pos]`, which new terms can affect **position `pos` itself** before normalization?
+
+   - From existing digits `x[0..pos-1]`, we already accounted their pairwise contributions in `carry[pos]`.
+   - New digit `x[pos]` will form products with all digits, but:
+     - For `j > 0`, `x[pos] x[j]` contributes to position `pos + j > pos` (does not affect digit at `pos`).
+     - Only the product with `x[0]` affects position `pos`:
+       - If `pos = 0`: term `(0,0)` → coefficient `x₀²`, factor 1.
+       - If `pos > 0`: pairs `(pos,0)` and `(0,pos)` → `2 x₀ x_pos`, factor 2.
+
+   So the digit at position `pos`, **before full carry propagation to higher positions**, is:
+
+   \[
+   \text{tmp} = carry[pos] + (1 + [pos \ne 0]) \cdot x_0 \cdot x_{pos}
+   \]
+
+   Its digit modulo `b` must equal `x_{pos}`; otherwise no later digits can fix it:
+
+   \[
+   (\text{tmp} \bmod b) = x_{pos}
+   \]
+
+   This is a very strong constraint and dramatically prunes the search space.
+
+   For `pos > 0` it can be written as:
+
+   \[
+   (carry[pos] + 2 x_0 x_{pos}) \equiv x_{pos} \pmod{b}
+   \quad\Rightarrow\quad
+   carry[pos] \equiv (1 - 2 x_0) x_{pos} \pmod{b}.
+   \]
+
+   Thus, once `x[0]` is fixed, each further `x[pos]` is essentially determined (0 or 1 choices) for a given `carry[pos]`.
+
+5. **Complexity intuition**
+
+   - We branch over digits for `x[0]` (`0..b-1`, with the eventual leading‑zero restriction at the last position).
+   - After that, each next digit is almost fixed by the modular condition.  
+   - Depth of recursion is `n ≤ 2000`.
+   - Each step does `O(pos)` small integer operations (`≤ 36²` per product).  
+   This is efficient enough for the limits.
+
+
+3. Full solution approach
+-------------------------
+
+1. **Representation**
+
+   Store digits `x` in little‑endian: `x[0]` is least significant, `x[n-1]` most significant.  
+   Keep an array `carry[0..n-1]` of integers (not reduced modulo `b` until we propagate), representing raw coefficients for powers of `b` in `X²` modulo `bⁿ`.
+
+2. **`pop_carry` function**
+
+   Given an index `pos`, normalize carries starting from `pos`:
+
+   - While `pos < n` and `carry[pos] ≥ b`:
+     - Let `full = carry[pos] / b`, `carry[pos] %= b`.
+     - If `pos+1 < n`, add `full` to `carry[pos+1]`.
+     - Increase `pos` and continue.
+
+   Any carry that would go beyond position `n-1` can be ignored because we work modulo `bⁿ`.
+
+3. **Recursive function `rec(pos)`**
+
+   Parameters (conceptually):
+
+   - `pos`: next digit index to choose (`0..n`).
+   - `x`: digits chosen so far (`x[0..pos-1]`).
+   - `carry`: current coefficients for `X²`, normalized at all positions `< pos` so that `carry[k] == x[k]` for all `k < pos`.
+
+   Steps:
+
+   - **Base case**: if `pos == n`:
+     - All digits picked and conditions satisfied. Convert `x` to output string:
+       - Traverse `x` from `x[n-1]` to `x[0]`.
+       - Map `0..9` to `'0'..'9'`, `10..35` to `'A'..'Z'`.
+       - Save this string as one answer.
+     - Return.
+
+   - **Backtracking setup**:
+     - Copy current `carry` to `carry_save` to restore after each trial digit.
+
+   - **Digit range**:
+     - For the most significant position `pos == n-1` and `n != 1`, digit cannot be `0` (otherwise number would have fewer than `n` digits).
+     - So:
+       - If `pos == n-1` and `n != 1`: `d` goes from `1` to `b-1`.
+       - Otherwise: `d` goes from `0` to `b-1`.
+
+   - For each candidate digit `d`:
+     1. Append `d` to `x` as `x[pos]`.
+
+     2. **Quick modular check at position `pos`**  
+        Factor is `1` if `pos == 0`, else `2`. Let:
+
+        \[
+        \text{tmp} = carry[pos] + \text{factor} \cdot x[0] \cdot x[pos]
+        \]
+
+        If `(tmp mod b) != x[pos]`, this digit cannot lead to a valid self‑replicating number:
+        - Remove `x[pos]` and try next `d`.
+
+     3. **Add all contributions of the new digit to `carry`**:
+
+        For `j` from `0` to `pos`:
+
+        - factor = `1` if `j == pos` (square term), else `2`.
+        - `val = factor * x[pos] * x[j]`.
+        - Target index: `idx = pos + j`.
+        - If `idx < n`:  
+          - `carry[idx] += val`.
+          - call `pop_carry(idx)` to normalize from there upward.
+
+        This accounts for all `(pos,j)` and `(j,pos)` terms in `X²`.
+
+     4. **Exact equality check at position `pos`**  
+        After adding contributions and propagating carries, the final digit at position `pos` in `X²` is now `carry[pos]` (normalized). It must equal `x[pos]`. If not, branch is invalid.
+
+        If `carry[pos] == x[pos]`:
+        - Recurse: `rec(pos + 1)`.
+
+     5. **Backtrack**:
+        - Restore `carry` from `carry_save`.
+        - Pop `x[pos]`.
+
+4. **Initialization and output**
+
+   - Read `b, n`.
+   - Initialize `carry` as an array of size `n` filled with `0`, `x` as empty vector, `ans` as empty list.
+   - Call `rec(0)`.
+   - Print:
+     - Number of answers, `ans.size()`.
+     - Then each answer on its own line (any order is allowed).
+
+This fully implements the mathematical condition `X² ≡ X (mod bⁿ)` with backtracking over digits and strong local pruning, and is efficient enough for the given constraints.
+
+
+4. C++ implementation with detailed comments
+--------------------------------------------
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Base b and length n (global for simplicity)
+int b, n;
+
+// Read input
+void read_input() {
+    cin >> b >> n;
+}
+
+// Propagate carry starting from position 'pos' in the 'carry' array.
+// We want every carry[k] < b by pushing overflow to higher positions,
+// but only up to index n-1 (since we work modulo b^n).
+void pop_carry(int pos, vector<int>& carry) {
+    // While we are inside the array and have overflow
+    while (pos < n && carry[pos] >= b) {
+        int full = carry[pos] / b;  // number of base units to carry
+        carry[pos] %= b;            // keep remainder at this position
+
+        ++pos;
+        if (pos < n) {
+            carry[pos] += full;     // add carried value to next position
+        }
+    }
+}
+
+// Recursive backtracking to construct all valid self-replicating numbers.
+// pos   : index of the digit we are choosing now (0-based, least significant first)
+// carry : partial information about X^2 modulo b^n
+// x     : digits chosen so far (x[0] is least significant digit)
+// ans   : list of resulting numbers as strings
+void rec(int pos, vector<int>& carry, vector<int>& x, vector<string>& ans) {
+    // If we have chosen all n digits, we have a complete candidate X.
+    // Our invariant guarantees it is valid (X^2 digits match X up to n-1),
+    // so we convert it to a string and store it.
+    if (pos == n) {
+        // Build string from most significant digit to least
+        string s;
+        s.reserve(n);
+        for (int i = n - 1; i >= 0; --i) {
+            int d = x[i];
+            if (d < 10) {
+                s.push_back(char('0' + d));
+            } else {
+                s.push_back(char('A' + (d - 10)));
+            }
+        }
+        ans.push_back(s);
+        return;
+    }
+
+    // Save current carry state so we can backtrack after trying a digit
+    vector<int> carry_save = carry;
+
+    // Determine the range of possible digits at this position.
+    // For the most significant digit (pos == n - 1) of an n-digit number (n > 1),
+    // the digit cannot be 0, or we'd have fewer than n digits.
+    int start_digit = 0;
+    if (pos == n - 1 && n != 1) {
+        start_digit = 1;
+    }
+
+    for (int d = start_digit; d < b; ++d) {
+        // Choose digit d for x[pos].
+        x.push_back(d);
+
+        // Quick feasibility check based only on the contribution with x[0].
+        // For position pos, the only new pair that still lands at power b^pos
+        // is with index 0:
+        //   pos == 0 -> (0,0) once -> factor = 1
+        //   pos > 0  -> (pos,0) and (0,pos) -> factor = 2
+        int factor = (pos == 0 ? 1 : 2);
+
+        // x[0] is always defined: when pos == 0, x[0] is the digit we just pushed.
+        long long tmp = carry[pos] + 1LL * factor * x[0] * x[pos];
+
+        // The digit at position pos (mod b) must equal x[pos].
+        if (tmp % b != x[pos]) {
+            x.pop_back();
+            continue;  // impossible digit, try next d
+        }
+
+        // Quick check passed. Now we add all new contributions from pairs
+        // (pos, j) and (j, pos) for j = 0..pos.
+        for (int j = 0; j <= pos; ++j) {
+            int pair_factor = (j == pos ? 1 : 2);  // 1 if i=j, else 2
+            long long val = 1LL * pair_factor * x[pos] * x[j];
+            int idx = pos + j;  // exponent of b in this product
+
+            if (idx < n) {
+                carry[idx] += (int)val;  // add to raw coefficient
+                // Normalize from this position upward
+                pop_carry(idx, carry);
+            }
+            // If idx >= n, this contribution is beyond b^n and can be ignored
+            // because we work modulo b^n.
+        }
+
+        // After we have fully added and normalized, the coefficient (digit)
+        // at position pos *must* be equal to x[pos] for this branch to be valid.
+        if (carry[pos] == x[pos]) {
+            rec(pos + 1, carry, x, ans);
+        }
+
+        // Backtrack: restore carry and remove last chosen digit.
+        carry = carry_save;
+        x.pop_back();
+    }
+}
+
+void solve() {
+    vector<int> carry(n, 0);   // all coefficients initially zero
+    vector<int> x;             // digits chosen so far
+    vector<string> ans;        // resulting self-replicating numbers
+
+    rec(0, carry, x, ans);
+
+    // Output results: count, then each number
+    cout << ans.size() << '\n';
+    for (const string& s : ans) {
+        cout << s << '\n';
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+5. Python implementation with detailed comments
+-----------------------------------------------
+
+```python
+import sys
+sys.setrecursionlimit(10000)  # Ensure recursion depth is safe for n <= 2000
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    b = int(data[0])  # base
+    n = int(data[1])  # length
+
+    # carry[k] stores the raw coefficient for b^k in X^2 (may be >= b before normalization)
+    carry = [0] * n
+
+    # x will store digits of X in little-endian order: x[0] is least significant
+    x = []
+
+    # List of answer strings
+    ans = []
+
+    # Propagate carries starting from index 'pos' upwards
+    def pop_carry(pos: int) -> None:
+        # While inside the array and we have overflow at carry[pos]
+        while pos < n and carry[pos] >= b:
+            full = carry[pos] // b   # how many base-b units to carry up
+            carry[pos] %= b          # keep remainder as the digit here
+
+            pos += 1
+            if pos < n:
+                carry[pos] += full   # add carried amount to next position
+
+    def rec(pos: int) -> None:
+        # Base case: all digits chosen
+        if pos == n:
+            # Convert X from little-endian digits to a base-b string
+            # with 0..9 and A..Z for digits 10..35.
+            chars = []
+            for d in reversed(x):
+                if d < 10:
+                    chars.append(chr(ord('0') + d))
+                else:
+                    chars.append(chr(ord('A') + d - 10))
+            ans.append(''.join(chars))
+            return
+
+        # Save current carry state so we can backtrack exactly
+        carry_save = carry[:]  # shallow copy of the list
+
+        # Determine starting digit: the most significant digit of an n-digit
+        # number (n > 1) cannot be zero.
+        if pos == n - 1 and n != 1:
+            start_digit = 1
+        else:
+            start_digit = 0
+
+        for d in range(start_digit, b):
+            x.append(d)  # choose digit d at position pos
+
+            # Quick modular feasibility check focusing on index 0 contribution.
+            # For position pos, the new contributions to its digit come only
+            # from the pair(s) involving x[0]:
+            #   pos == 0 -> (0,0) => factor = 1
+            #   pos > 0  -> (pos,0) and (0,pos) => factor = 2
+            if pos == 0:
+                factor = 1
+            else:
+                factor = 2
+
+            # x[0] is always defined since pos >= 0 (and we just appended x[0] when pos==0).
+            tmp = carry[pos] + factor * x[0] * x[pos]
+
+            # The resulting digit at 'pos' modulo b must match x[pos].
+            if tmp % b != x[pos]:
+                x.pop()  # revert digit
+                continue  # try the next digit candidate
+
+            # Now add full contributions from new digit x[pos] with all digits x[j], j=0..pos
+            for j in range(pos + 1):
+                if j == pos:
+                    pair_factor = 1  # square term x[pos]^2
+                else:
+                    pair_factor = 2  # symmetric pair x[pos]*x[j] + x[j]*x[pos]
+
+                val = pair_factor * x[pos] * x[j]
+                idx = pos + j
+
+                if idx < n:
+                    carry[idx] += val
+                    # normalize from this position
+                    pop_carry(idx)
+                # if idx >= n, contribution is beyond b^n and is ignored
+
+            # After adding and normalizing, the digit at position pos (carry[pos])
+            # must exactly equal the chosen digit x[pos].
+            if carry[pos] == x[pos]:
+                rec(pos + 1)
+
+            # Backtrack: restore carry and remove last digit
+            for i in range(n):
+                carry[i] = carry_save[i]
+            x.pop()
+
+    # Start recursion from the least significant digit
+    rec(0)
+
+    # Output: first the count, then each number on its own line
+    out_lines = [str(len(ans))]
+    out_lines.extend(ans)
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This Python solution follows exactly the same logic as the C++ one: incremental digit construction, carry maintenance, a strong local constraint to prune impossible branches, and final output in the required base‑`b` representation.

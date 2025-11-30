@@ -1,0 +1,372 @@
+1. **Concise, abridged problem statement**
+
+There are `M` service windows (1..M) and `N` people.  
+Person `i` arrives at time `k_i` and needs a service time of `t_i`. People are given in non-decreasing arrival time order.
+
+When a person arrives:
+
+- First, all people whose service has just started at that exact time are considered to have left their queues (i.e., we don’t count them as standing in a queue anymore).
+- Then, the newcomer chooses a queue:
+  - Count how many people are still in each window’s queue (including ones currently being served).
+  - Pick the window with the smallest number of people; if several, choose the one with the smallest window index.
+- Once a person chooses a window, they never switch.
+- At a window, people are served strictly one by one in queue order, starting at the max of (arrival time, previous person’s finish time). A person leaves the queue at their service finish time.
+
+For each person, output:
+- The chosen window number.
+- The time they leave the queue (i.e., when their service finishes).
+
+
+2. **Detailed editorial**
+
+### Key points of the problem
+
+- Up to `N = 100` people, `M = 100` windows.
+- Arrival times are non-decreasing.
+- The queue length comparison is done *at the moment just after* any people starting service at exactly that moment are considered removed from the queue.
+- For each person, we need:
+  - Which window they choose.
+  - When they finish their service.
+
+The constraints are very small, so an `O(N * M * N)` solution still passes; but we can do better in design and still stay simple.
+
+### Understanding the model precisely
+
+Each window has a queue of people to be served. For each person:
+- They stand in a queue from the moment they join it until their service ends.
+- The service at that window is strictly sequential:
+  - The first person in that queue for that window starts service at:
+    - Either their arrival time, or
+    - After the previous person at that window finishes,
+    whichever is later.
+  - Their finish time = start time + service time.
+
+The statement has one tricky line:
+
+> If new person come in the moment when one or several people have just proceeded to their windows, he or she waits first until these people will leave their queues and then he or she chooses the queue.
+
+This means: at time `t`, if some people start service at exactly time `t`, we treat them as already “not standing in the queue” for the purpose of the newcomer’s decision. Another way to see it:
+
+- A person is “in queue” during the time interval `(arrival_time, finish_time]`.  
+- If someone’s service start time = `t`, and a newcomer arrives also at `t`, the one who starts service at `t` is no longer counted in queue when we choose for the newcomer.
+
+The simplest way to implement this logic given arrivals are processed in order:
+
+- For each window, maintain a list of finish times (in increasing order).
+- At arrival time `k`, to know how many people are still in window `w`’s queue, count how many of its finish times are strictly greater than `k`. That includes:
+  - People currently being served (finish > now).
+  - People waiting whose yet-to-start service will finish later.
+
+This matches the problem’s description: anyone whose service finishes at or before `k` has left the queue, and anyone whose service will finish after `k` is still in queue.
+
+Once we choose a window:
+- The newcomer’s service can’t begin before:
+  - Their arrival time `k`, and
+  - The finish time of the last person assigned to that window (if any).
+- So `start_time = max(k, last_finish_for_that_window)`,  
+  `end_time = start_time + t_i`.
+
+We append the `end_time` to that window’s list of finish times.
+
+### Data structures
+
+Given the small constraints, we can use:
+
+- `vector<vector<int>> finish_times(m);`
+
+`finish_times[w]` is a list of finish times for all people served at window `w`, in chronological order of assignment.
+
+Processing each person `i`:
+
+```text
+k = arrival[i]; t = service[i]
+
+// 1. Count queue lengths
+for each window w:
+    queue_count[w] = number of finish times > k in finish_times[w]
+
+// 2. Pick best window (minimum queue_count, then minimum index)
+best_window = argmin(queue_count)
+
+// 3. Compute service start/finish times
+if finish_times[best_window] is empty:
+    start_time = k
+else:
+    start_time = max(k, finish_times[best_window].back())
+end_time = start_time + t
+
+// 4. Store and output results
+finish_times[best_window].push_back(end_time)
+print best_window + 1, end_time
+```
+
+Time complexity upper bound:
+
+- Each person:
+  - For each window (`M ≤ 100`), we scan its `finish_times` list.
+  - Overall, `finish_times[w]` across all windows contain exactly `N` entries.
+  - Worst-case scanning them all repeatedly: `O(N * M * (N / M)) = O(N^2) = 10^4`, totally fine.
+
+### Correctness argument
+
+1. **Queue size calculation is correct**  
+   For each window `w`, we count how many persons have `finish > k`:
+   - If `finish ≤ k`: this person completed service at or before `k`, so they have left the queue and should not be counted.
+   - If `finish > k`: by the problem’s definition, they are still counted as being in queue (serving or waiting).  
+   Thus we get the exact number of people in that window’s queue.
+
+2. **Tie-breaking is correct**  
+   We scan windows 0..M-1 and choose the one with minimal queue_count. The code only updates `best_window` when `queue_count[w] < queue_count[best_window]` (strict), so if counts are equal, we keep the earlier index, satisfying “if several such queues then the one with lowest number”.
+
+3. **Service timing at a window is correct**  
+   At each window, issuance is FIFO by construction: we append people in the order they choose that window.
+   - For the first person in the window:
+     - `start_time = max(k, 0) = k`, so they start at arrival.
+   - For each subsequent person:
+     - They cannot start before the last person at that window finishes, so `start_time ≥ last_finish`.
+     - They also can’t start before arriving, so `start_time ≥ k`.
+     - The code uses `start_time = max(k, last_finish)`, which is exactly that.
+
+   Thus, the finishing time is `start_time + t`, correctly modeling sequential service without overlap.
+
+4. **Ordering of “instant” events**  
+   Because we only use `finish > k` when counting queue length, people whose finish time equals the arrival time `k` are already removed from the queue before the new person chooses. That matches the text: the new person waits for those who have “just proceeded” (just left the line to be served / completed) to leave the queue first.
+
+Everything matches the problem’s rules.
+
+---
+
+3. **C++ solution with detailed comments**
+
+```cpp
+#include <bits/stdc++.h> // Includes most standard headers (iostream, vector, etc.)
+using namespace std;
+
+// Overload operator<< to print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> to read a pair as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> to read all elements of a vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;          // read each element
+    }
+    return in;
+};
+
+// Overload operator<< to print all elements of a vector separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';  // print each element followed by a space
+    }
+    return out;
+};
+
+int n, m;                 // n = number of people, m = number of windows
+vector<int> arrival;      // arrival[i] = arrival time of person i
+vector<int> service;      // service[i] = service time of person i
+
+// Read input
+void read() {
+    cin >> n >> m;        // read n, m
+    arrival.resize(n);
+    service.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> arrival[i] >> service[i];  // read arrival and service time for person i
+    }
+}
+
+// Simulate the process and output results
+void solve() {
+    // finish_times[w] will store the finish times of all people assigned
+    // to window w (0-based index), in order of assignment (chronological).
+    vector<vector<int>> finish_times(m);
+
+    // Process each person in input order (arrival times are non-decreasing)
+    for(int i = 0; i < n; i++) {
+        int k = arrival[i];   // arrival time of person i
+        int t = service[i];   // service time of person i
+
+        // For each window, we will count how many people are still in its queue
+        // at time k. A person is "still in queue" if their finish time > k.
+        vector<int> queue_count(m, 0);  // queue_count[w] = number of people in window w
+
+        // Compute queue sizes at time k for all windows
+        for(int w = 0; w < m; w++) {
+            // Look at all people (finish times) at window w
+            for(int finish: finish_times[w]) {
+                // If this person finishes strictly after k, they are still counted
+                if(finish > k) {
+                    queue_count[w]++;
+                }
+            }
+        }
+
+        // Choose the best window:
+        // smallest queue_count, and among ties, smallest index
+        int best_window = 0;   // assume window 0 is best initially
+        for(int w = 1; w < m; w++) {
+            // If current window has strictly fewer people, it becomes the best
+            if(queue_count[w] < queue_count[best_window]) {
+                best_window = w;
+            }
+            // If queue_count[w] == queue_count[best_window], we keep the smaller index (best_window),
+            // so tie-breaking is handled automatically by not changing best_window.
+        }
+
+        // Determine when this person can start service at best_window
+        int start_time = k;    // earliest possible start is arrival time
+        if(!finish_times[best_window].empty()) {
+            // If there are people already assigned to this window,
+            // the new person must wait for the last one to finish.
+            int last_finish = finish_times[best_window].back();
+            // They start at the later of their arrival and last_finish
+            start_time = max(start_time, last_finish);
+        }
+
+        // Compute when this person will finish service
+        int end_time = start_time + t;
+
+        // Record this finish time in the window's finish list
+        finish_times[best_window].push_back(end_time);
+
+        // Output:
+        // Window numbers are 1-based in the problem statement, so add 1
+        cout << (best_window + 1) << ' ' << end_time << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speedup for cin/cout
+    cin.tie(nullptr);                 // Untie cin from cout
+
+    int T = 1;                        // Only one test case is used here
+    // cin >> T;                      // (Disabled: problem has a single test per input)
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read input for this test
+        // cout << "Case #" << test << ": ";  // (Disabled: problem expects plain output)
+        solve();                      // Run the simulation and print the result
+    }
+
+    return 0;                         // Indicate successful execution
+}
+```
+
+---
+
+4. **Python solution with detailed comments**
+
+```python
+import sys
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+
+    it = iter(data)
+    # Read number of people N and number of windows M
+    n = int(next(it))
+    m = int(next(it))
+
+    arrival = [0] * n
+    service = [0] * n
+
+    # Read arrival and service times
+    for i in range(n):
+        arrival[i] = int(next(it))
+        service[i] = int(next(it))
+
+    # finish_times[w] will store a list of finish times of all people
+    # who have chosen window w (0-based index), in the order they are served.
+    finish_times = [[] for _ in range(m)]
+
+    out_lines = []
+
+    # Process each person in input order (arrival times are non-decreasing)
+    for i in range(n):
+        k = arrival[i]   # arrival time
+        t = service[i]   # service duration
+
+        # Compute how many people are currently in each window's queue at time k.
+        # A person is in queue if their finish time > k.
+        queue_count = [0] * m
+        for w in range(m):
+            # Count how many finish times are strictly greater than k
+            count = 0
+            for finish in finish_times[w]:
+                if finish > k:
+                    count += 1
+            queue_count[w] = count
+
+        # Choose the window with minimal queue size, and with smallest index on ties.
+        best_window = 0
+        for w in range(1, m):
+            if queue_count[w] < queue_count[best_window]:
+                best_window = w
+            # If equal, we keep the older best_window, yielding smallest index.
+
+        # Compute the start time at this window.
+        # Person cannot start before arrival time k or before the last finish in that window.
+        if finish_times[best_window]:
+            last_finish = finish_times[best_window][-1]
+            start_time = max(k, last_finish)
+        else:
+            # No one assigned to this window yet; can start immediately at arrival.
+            start_time = k
+
+        # End time is start time plus service duration
+        end_time = start_time + t
+
+        # Record this finish time in the chosen window's schedule
+        finish_times[best_window].append(end_time)
+
+        # Window number is 1-based in output
+        out_lines.append(f"{best_window + 1} {end_time}")
+
+    # Print all lines at once
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+5. **Compressed editorial**
+
+We simulate queues per window. For each window `w`, store a list of finish times `finish_times[w]` in order of assignment.
+
+Process each person `i` (arrival `k_i`, service `t_i`) in given order:
+
+1. For each window `w`, compute its current queue size at time `k_i` as:
+
+   - `queue_count[w] = number of finish_times[w] entries > k_i`.
+
+   Anyone with `finish <= k_i` has finished service and is not in queue. Anyone with `finish > k_i` is still counted (serving or waiting).
+
+2. Choose window `best` with minimal `queue_count`, breaking ties by choosing the smallest index.
+
+3. The person’s start time at that window is:
+
+   - `start = k_i` if `finish_times[best]` is empty,  
+   - `start = max(k_i, finish_times[best].back())` otherwise.
+
+   This ensures:
+   - They can’t start before arriving.
+   - They can’t start before the previous person at that window finishes.
+   Service is strictly sequential.
+
+4. Their finish time is `end = start + t_i`. Append `end` to `finish_times[best]` and output `(best + 1, end)` (windows are 1-based in output).
+
+Counting with `finish > k_i` ensures that agents who start service exactly at `k_i` (finish > k_i) are removed from the queue before the new person chooses, as required by the problem’s event order. Complexity is `O(N^2)` in worst case (`N ≤ 100`), easily within limits.

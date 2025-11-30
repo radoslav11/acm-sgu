@@ -1,0 +1,247 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+357. Remote Control
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+A couple of years ago Peter Berlandin bought a brand new “Berlony” TV set. The TV set supports 100 channels, numbered from 0 to 99. The remote control of the TV set has 13 buttons:
+1	2	3	↑
+4	5	6	↓
+7	8	9
+--	0
+When pressing the button "↑" the number of the current channel increases by 1 (if the current channel is the 99th, it switches to 0). If you press the button "↓" the number of the current channel decreases by 1 (if the number of the current channel is 0, it switches to the 99th). Switching to the channel from 0 to 9 can be done by pressing the button at the remote control with the corresponding number. Switching to the channel from 10 to 99 can be done by pressing the "--" button followed by two buttons in accordance with the number of the channel required. Casual handling and time don't do good to any of us! Finally the remote control was damaged and went out of order. Now some of the buttons are not functioning. Your task is to switch from X channel to Y using the minimum number of clicks.
+
+Input
+The first 4 lines contain information about the productivity of every button at the remote control. 0 stands for the broken button and 1 stands for the one that is functioning. The first line describes "1", "2", "3" and "↑" buttons accordingly. The second line describes "4", "5", "6" and "↓" buttons accordingly. The third line describes "7", "8" and "9" buttons accordingly. The fourth line describes "--" and "0" buttons accordingly. The fifth line describes X and Y.
+
+Output
+Print the answer to the problem — the minimum number of clicks to switch from X to Y — in the output file. Print -1 if it is impossible to switch from X to Y.
+
+Example(s)
+sample input
+sample output
+1 1 1 1
+1 1 1 1
+1 1 1
+1 1
+23 52
+3
+
+sample input
+sample output
+0 0 1 1
+1 1 1 1
+1 1 1
+1 1
+23 52
+4
+
+<|response|>
+1) Abridged problem statement
+- TV has channels 0..99.
+- Remote has buttons: digits 0..9, Up (↑), Down (↓), and “--”.
+- Some buttons are broken (0 = broken, 1 = working).
+- Actions:
+  - If ↑ works: c → (c+1) mod 100 in 1 click.
+  - If ↓ works: c → (c+99) mod 100 in 1 click.
+  - If digit d works: jump to channel d (0..9) in 1 click.
+  - If “--” works and both digits are available: jump to any two-digit channel 10..99 in exactly 3 clicks (“--”, tens, ones).
+- Starting from channel X, find the minimum clicks to reach Y, or -1 if impossible.
+
+2) Key observations
+- There are only 100 states (channels 0..99).
+- From any channel:
+  - Up/Down edges (if available) always exist with cost 1.
+  - If a digit button works, you can jump to that digit’s channel (0..9) in 1 click from anywhere.
+  - If “--” works and both digits exist, you can jump to any 10..99 in exactly 3 clicks from anywhere.
+- This is a shortest path problem on a tiny weighted directed graph (edge weights 1 or 3).
+- Modeling “-- + two digits” as one edge with cost 3 is valid: you can’t beneficially interleave other actions mid-sequence.
+
+3) Full solution approach
+- Build an implicit graph over nodes 0..99 (channels).
+- From node u, add these edges if the corresponding buttons work:
+  - u → (u+1)%100 with cost 1 (↑).
+  - u → (u+99)%100 with cost 1 (↓).
+  - For every digit d with working button: u → d with cost 1.
+  - If “--” works: for every two-digit channel ab (10..99) whose tens digit a (1..9) and ones digit b (0..9) buttons both work: u → (10*a + b) with cost 3.
+- Run Dijkstra’s algorithm from X to compute the minimum clicks to every channel.
+- The answer is the final distance to Y, or -1 if unreachable.
+- Complexity: V = 100, edges per node ≤ 2 (Up/Down) + 10 (digits) + up to 90 (two-digits) → at most about 10^4 edges overall. Dijkstra is trivial and fast.
+
+4) C++ implementation with detailed comments
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+Button indexing:
+- 0..9  : digit buttons '0'..'9'
+- 10    : Up (↑)
+- 11    : Down (↓)
+- 12    : "--"
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    vector<int> btn(13, 0);
+
+    // Read buttons by the layout described
+    // Line 1: "1", "2", "3", "↑"
+    cin >> btn[1] >> btn[2] >> btn[3] >> btn[10];
+    // Line 2: "4", "5", "6", "↓"
+    cin >> btn[4] >> btn[5] >> btn[6] >> btn[11];
+    // Line 3: "7", "8", "9"
+    cin >> btn[7] >> btn[8] >> btn[9];
+    // Line 4: "--", "0"
+    cin >> btn[12] >> btn[0];
+
+    int X, Y;
+    cin >> X >> Y;
+
+    const int INF = 1e9;
+    vector<int> dist(100, INF);
+    dist[X] = 0;
+
+    // Min-heap for Dijkstra: (distance, node)
+    priority_queue<pair<int,int>, vector<pair<int,int>>, greater<pair<int,int>>> pq;
+    pq.push({0, X});
+
+    while (!pq.empty()) {
+        auto [d, u] = pq.top();
+        pq.pop();
+        if (d != dist[u]) continue; // stale entry
+
+        // Up: cost 1
+        if (btn[10]) {
+            int v = (u + 1) % 100;
+            if (dist[v] > d + 1) {
+                dist[v] = d + 1;
+                pq.push({dist[v], v});
+            }
+        }
+
+        // Down: cost 1
+        if (btn[11]) {
+            int v = (u + 99) % 100; // (u-1+100)%100
+            if (dist[v] > d + 1) {
+                dist[v] = d + 1;
+                pq.push({dist[v], v});
+            }
+        }
+
+        // Jump to single-digit channels 0..9: cost 1 if that digit works
+        for (int dig = 0; dig <= 9; ++dig) {
+            if (!btn[dig]) continue;
+            int v = dig;
+            if (dist[v] > d + 1) {
+                dist[v] = d + 1;
+                pq.push({dist[v], v});
+            }
+        }
+
+        // Jump to two-digit channels 10..99 via "--": cost 3 if all needed buttons work
+        if (btn[12]) { // "--" works
+            for (int tens = 1; tens <= 9; ++tens) {
+                if (!btn[tens]) continue; // tens digit button must work
+                for (int ones = 0; ones <= 9; ++ones) {
+                    if (!btn[ones]) continue; // ones digit button must work
+                    int v = tens * 10 + ones; // 10..99
+                    if (dist[v] > d + 3) {
+                        dist[v] = d + 3;
+                        pq.push({dist[v], v});
+                    }
+                }
+            }
+        }
+    }
+
+    cout << (dist[Y] >= INF ? -1 : dist[Y]) << '\n';
+    return 0;
+}
+```
+
+5) Python implementation with detailed comments
+```python
+import sys
+import heapq
+
+def main():
+    data = list(map(int, sys.stdin.read().split()))
+    it = iter(data)
+
+    # Button indices:
+    # 0..9: digits '0'..'9', 10: Up, 11: Down, 12: "--"
+    btn = [0] * 13
+
+    # Read in the specified layout
+    btn[1] = next(it); btn[2] = next(it); btn[3] = next(it); btn[10] = next(it)  # 1 2 3 Up
+    btn[4] = next(it); btn[5] = next(it); btn[6] = next(it); btn[11] = next(it)  # 4 5 6 Down
+    btn[7] = next(it); btn[8] = next(it); btn[9] = next(it)                      # 7 8 9
+    btn[12] = next(it); btn[0] = next(it)                                        # -- 0
+
+    X = next(it); Y = next(it)
+
+    INF = 10**9
+    dist = [INF] * 100
+    dist[X] = 0
+
+    # Min-heap for Dijkstra: (distance, node)
+    heap = [(0, X)]
+
+    while heap:
+        d, u = heapq.heappop(heap)
+        if d != dist[u]:
+            continue  # stale
+
+        # Up
+        if btn[10]:
+            v = (u + 1) % 100
+            nd = d + 1
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+        # Down
+        if btn[11]:
+            v = (u + 99) % 100
+            nd = d + 1
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+        # Single-digit jumps
+        for dig in range(10):
+            if not btn[dig]:
+                continue
+            v = dig
+            nd = d + 1
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+        # Two-digit jumps via "--": require "--" and both digit buttons
+        if btn[12]:
+            for tens in range(1, 10):
+                if not btn[tens]:
+                    continue
+                for ones in range(10):
+                    if not btn[ones]:
+                        continue
+                    v = tens * 10 + ones
+                    nd = d + 3
+                    if nd < dist[v]:
+                        dist[v] = nd
+                        heapq.heappush(heap, (nd, v))
+
+    print(-1 if dist[Y] >= INF else dist[Y])
+
+if __name__ == "__main__":
+    main()
+```

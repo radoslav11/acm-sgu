@@ -1,0 +1,301 @@
+1) Abridged problem statement
+- You have a TV with channels 0..99 and a damaged remote with 13 buttons: digits 1..9, 0, Up (↑), Down (↓), and “--”.
+- Button functionality is given (1 = works, 0 = broken).
+- Allowed operations:
+  - If ↑ works: move from c to (c+1) mod 100 in 1 click.
+  - If ↓ works: move from c to (c+99) mod 100 in 1 click.
+  - If digit d (0..9) works: jump directly to channel d in 1 click.
+  - If “--” works and both digits are available: jump directly to any two-digit channel 10..99 by pressing “--”, then tens digit, then ones digit (3 clicks).
+- Starting from channel X, find the minimum number of clicks to reach Y. Print -1 if impossible.
+
+2) Detailed editorial
+- Modeling:
+  - There are only 100 states: channels 0..99.
+  - From any state u:
+    - If Up works: edge u → (u+1) mod 100 with cost 1.
+    - If Down works: edge u → (u+99) mod 100 with cost 1.
+    - If digit d works: edge u → d (for d in 0..9) with cost 1.
+    - If “--” works: for any two-digit number 10..99 whose two digits are individually working, edge u → that number with cost 3.
+  - All edges have positive weight (1 or 3), so shortest path is well-defined.
+- Algorithm:
+  - Run Dijkstra’s algorithm from source X over this 100-node graph.
+  - Keep dist[0..99] initialized to INF, dist[X] = 0.
+  - Use a min-heap (priority queue). Pop (d,u); if d is stale skip. Relax all edges listed above.
+  - Answer is dist[Y] if finite, else -1.
+- Correctness:
+  - Every legal single button press or valid sequence “--, tens, ones” (3 presses) is represented as a single edge with corresponding cost.
+  - Any optimal sequence of presses corresponds to a path of the same total cost in this graph, and vice versa.
+  - Modeling the “-- + two digits” jump as one edge of weight 3 is valid because the intermediate steps are not states we can meaningfully branch from (you can’t do another action mid-sequence and still complete the same operation).
+- Complexity:
+  - V = 100, E ≤ 100 × (2 + up to 10 + up to 90) ≈ at most about 10,000.
+  - Dijkstra with a binary heap runs in O(E log V) and is trivial for these constraints.
+- Edge cases:
+  - If X == Y, the answer is 0.
+  - If all reachable edges are blocked (broken buttons), return -1.
+  - For two-digit channels require both digits and the “--” button to be working; the tens digit must be 1..9.
+
+3) Provided C++ solution with detailed line-by-line comments
+```cpp
+#include <bits/stdc++.h>              // Pulls in most standard C++ headers (iostream, vector, queue, etc.)
+using namespace std;
+
+// Overload stream operator<< for pair<T1, T2>, unused here but handy for debugging.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload stream operator>> for pair<T1, T2>, unused here as well.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload stream operator>> for vector<T>, reads elements in sequence. Not used directly in this solution.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload stream operator<< for vector<T>, prints elements separated by spaces. Not used directly here.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// button[i] says whether button i works (1) or is broken (0).
+// Index mapping used:
+// 0..9 -> digit buttons '0'..'9' (note: '0' at index 0)
+// 10 -> Up (↑)
+// 11 -> Down (↓)
+// 12 -> "--"
+vector<int> button(13);
+
+// Start and target channels
+int X, Y;
+
+// Read input according to the problem’s layout.
+void read() {
+    // First line: "1", "2", "3", "↑"
+    cin >> button[1] >> button[2] >> button[3] >> button[10];
+    // Second line: "4", "5", "6", "↓"
+    cin >> button[4] >> button[5] >> button[6] >> button[11];
+    // Third line: "7", "8", "9"
+    cin >> button[7] >> button[8] >> button[9];
+    // Fourth line: "--", "0"
+    cin >> button[12] >> button[0];
+    // Fifth line: X, Y
+    cin >> X >> Y;
+}
+
+void solve() {
+    // We'll run Dijkstra on a graph of 100 nodes (channels 0..99).
+    // dist[c] = minimal number of clicks to reach channel c
+    vector<int> dist(100, INT_MAX);
+
+    // Min-heap of pairs (distance, node). 'greater<>' turns it into a min-heap.
+    priority_queue<
+        pair<int, int>, vector<pair<int, int>>, greater<pair<int, int>>>
+        pq;
+
+    // Start from channel X with 0 clicks
+    dist[X] = 0;
+    pq.push({0, X});
+
+    // Standard Dijkstra loop
+    while(!pq.empty()) {
+        auto [d, u] = pq.top(); // Extract node u with current best known distance d
+        pq.pop();
+
+        // If this entry is stale (we have already found a better dist), skip it
+        if(d > dist[u]) {
+            continue;
+        }
+
+        // If Up (↑) works, we can go to (u + 1) mod 100 in 1 click
+        if(button[10]) {
+            int v = (u + 1) % 100;
+            if(dist[v] > dist[u] + 1) {
+                dist[v] = dist[u] + 1;
+                pq.push({dist[v], v});
+            }
+        }
+
+        // If Down (↓) works, we can go to (u - 1 + 100) mod 100 in 1 click
+        if(button[11]) {
+            int v = (u - 1 + 100) % 100;
+            if(dist[v] > dist[u] + 1) {
+                dist[v] = dist[u] + 1;
+                pq.push({dist[v], v});
+            }
+        }
+
+        // If digit d works, we can directly jump to channel d (0..9) in 1 click
+        for(int d = 0; d <= 9; d++) {
+            if(button[d]) {
+                int v = d;
+                if(dist[v] > dist[u] + 1) {
+                    dist[v] = dist[u] + 1;
+                    pq.push({dist[v], v});
+                }
+            }
+        }
+
+        // If "--" works, and both digits are available, we can jump to any 10..99
+        // in exactly 3 clicks: "--", tens digit, ones digit
+        if(button[12]) {
+            for(int d1 = 1; d1 <= 9; d1++) {  // tens digit must be 1..9
+                if(!button[d1]) {
+                    continue; // tens digit button broken
+                }
+                for(int d2 = 0; d2 <= 9; d2++) { // ones digit 0..9
+                    if(!button[d2]) {
+                        continue; // ones digit button broken
+                    }
+                    int v = d1 * 10 + d2; // resulting two-digit channel
+                    if(dist[v] > dist[u] + 3) {
+                        dist[v] = dist[u] + 3;
+                        pq.push({dist[v], v});
+                    }
+                }
+            }
+        }
+    }
+
+    // Output: minimal clicks to reach Y, or -1 if unreachable
+    if(dist[Y] == INT_MAX) {
+        cout << -1 << '\n';
+    } else {
+        cout << dist[Y] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O
+    cin.tie(nullptr);                 // Untie cin from cout
+
+    int T = 1;                        // Single test case as per problem statement / solution
+    // cin >> T;                      // (Disabled; would be used if multiple test cases existed)
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read one test case
+        // cout << "Case #" << test << ": ";
+        solve();                      // Solve and print answer
+    }
+
+    return 0;                         // Program finished successfully
+}
+```
+
+4) Python solution with detailed comments
+```python
+import sys
+import heapq
+
+def main():
+    # Read all integers from stdin in one go, to be robust to line breaks/spaces
+    data = list(map(int, sys.stdin.read().split()))
+    it = iter(data)
+
+    # button[i] indicates whether button i works:
+    # 0..9 digits '0'..'9', 10:'Up', 11:'Down', 12:'--'
+    button = [0] * 13
+
+    # First 4 integers: "1", "2", "3", "↑"
+    button[1] = next(it)
+    button[2] = next(it)
+    button[3] = next(it)
+    button[10] = next(it)
+
+    # Next 4 integers: "4", "5", "6", "↓"
+    button[4] = next(it)
+    button[5] = next(it)
+    button[6] = next(it)
+    button[11] = next(it)
+
+    # Next 3 integers: "7", "8", "9"
+    button[7] = next(it)
+    button[8] = next(it)
+    button[9] = next(it)
+
+    # Next 2 integers: "--", "0"
+    button[12] = next(it)
+    button[0] = next(it)
+
+    # Finally: X and Y
+    X = next(it)
+    Y = next(it)
+
+    # Dijkstra's algorithm on 100 nodes (channels 0..99)
+    INF = 10**9
+    dist = [INF] * 100
+    dist[X] = 0
+
+    # Min-heap of (distance, node)
+    heap = [(0, X)]
+
+    while heap:
+        d, u = heapq.heappop(heap)
+        # Skip if this is a stale entry
+        if d != dist[u]:
+            continue
+
+        # Up: (u + 1) mod 100, cost 1
+        if button[10]:
+            v = (u + 1) % 100
+            nd = d + 1
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+        # Down: (u + 99) mod 100, cost 1
+        if button[11]:
+            v = (u + 99) % 100
+            nd = d + 1
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(heap, (nd, v))
+
+        # Single-digit jumps: to channel d in 1 click if digit button works
+        for dig in range(10):  # 0..9
+            if button[dig]:
+                v = dig
+                nd = d + 1
+                if nd < dist[v]:
+                    dist[v] = nd
+                    heapq.heappush(heap, (nd, v))
+
+        # Two-digit jumps via "--" + two digits: cost 3
+        if button[12]:
+            for d1 in range(1, 10):  # tens digit 1..9
+                if not button[d1]:
+                    continue
+                for d2 in range(10):  # ones digit 0..9
+                    if not button[d2]:
+                        continue
+                    v = d1 * 10 + d2  # 10..99
+                    nd = d + 3
+                    if nd < dist[v]:
+                        dist[v] = nd
+                        heapq.heappush(heap, (nd, v))
+
+    # Output result
+    print(-1 if dist[Y] >= INF else dist[Y])
+
+if __name__ == "__main__":
+    main()
+```
+
+5) Compressed editorial
+- Model channels 0..99 as a graph. From any channel u:
+  - If Up works: edge to (u+1)%100 with cost 1.
+  - If Down works: edge to (u+99)%100 with cost 1.
+  - If digit d works: edge to d (0..9) with cost 1.
+  - If “--” works: for all two-digit channels ab (10..99) whose digits a,b work, edge to ab with cost 3.
+- Run Dijkstra from X. The minimum clicks to reach Y is dist[Y] (or -1 if unreachable).
+- Complexity is tiny (≈10^4 edges).
