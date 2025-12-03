@@ -1,0 +1,538 @@
+1. **Abridged problem statement**
+
+You start with an integer `A` (2 ≤ A < B ≤ 10¹²).  
+In one move, if the current number is `x`, you must choose a divisor `d` of `x` such that `1 < d < x`, and replace `x` with `x + d`.
+
+You want to reach `B` from `A` by repeating this operation.
+
+Output:
+- `"Impossible"` if there is no sequence of moves.
+- Otherwise, output all numbers in the sequence from `A` to `B` inclusive, one per line, with at most 500 numbers in total (any valid sequence ≤ 500 is accepted).
+
+
+---
+
+2. **Detailed editorial**
+
+### 2.1. Observations
+
+**Move rule:**  
+From `x` you can go to `x + d` where `d` is a proper divisor: `1 < d < x` and `d | x`.
+
+- If `x` is **prime**, then it has no divisors strictly between 1 and itself.  
+  So from a prime `x` you cannot move at all.
+- Any **odd** number has only **odd** divisors. So adding such a divisor preserves parity:  
+  - odd + odd = even  
+  - even + even = even  
+So:
+- From **odd** you always move to **even** (since divisor must be >1 and <x, hence odd, sum becomes even).
+- From **even** you always move to **even** (sum of two evens).
+Thus:
+- After at most one step, you reach an **even** number.
+- Once you are even, you remain **even** forever.
+
+So any path except the first step is entirely in even numbers.
+
+This leads to a natural decomposition:
+1. Handle parity / primality at the endpoints `A` and `B`.
+2. Then solve the problem for **even A and even B**.
+
+---
+
+### 2.2. Smallest nontrivial divisor
+
+Define:
+
+```cpp
+int64_t min_divisor(int64_t x) {
+    for (int64_t d = 2; d * d <= x; d++) {
+        if (x % d == 0) return d;
+    }
+    return -1; // means x is prime
+}
+```
+
+- If `min_divisor(x) == -1`, then `x` is prime → no moves possible from `x`.
+
+We will use `min_divisor` to make an odd number even with one step:
+- If `A` is odd and composite: we can do `A → A + min_divisor(A)` (this will be even).
+- If `B` is odd and composite: we might want to step **backwards in construction** by considering the last move to be `B - min_divisor(B) → B`.
+
+But from the problem’s perspective, we need a **forward** sequence from `A` to `B`. We can think like this:
+
+- We will build a sequence:
+  - Possibly one step from odd `A` to an even `adjusted_A`.
+  - Then several steps between even numbers, from `adjusted_A` to `adjusted_B`.
+  - Possibly one final step from an even predecessor to odd `B`.
+
+We precompute:
+
+```text
+d1 = min_divisor(A)
+dk = min_divisor(B)
+adjusted_A = (A is odd ? A + d1 : A)
+adjusted_B = (B is odd ? B - dk : B)
+```
+
+Why `adjusted_B = B - dk`?
+
+- If `B` is odd and composite, a plausible **last step** could be `adjusted_B → B`, with move `+dk` (since `dk` divides `B` and `1 < dk < B`).
+- In that last step, the number before `B` must be `B - dk`.
+
+So we solve the even-equal problem for `adjusted_A` and `adjusted_B` and then sandwich with `A` and `B` if they differ.
+
+**Failure conditions:**
+
+- If `A` is odd and `d1 == -1` → `A` is prime, and no first step possible.
+- If `B` is odd and `dk == -1` → no valid last step can end exactly at `B`.
+- If `adjusted_A > adjusted_B` → even after making `A` larger and `B` smaller, the interval is empty, so no sequence.
+
+In any of those cases, output `"Impossible"`.
+
+Note: if `A` is even but `d1 == -1`, that never happens since any even number ≥ 4 has `2` as divisor. Similarly, an odd composite has some divisor, only primes give `-1`.
+
+---
+
+### 2.3. Even-to-even core: `solve_even(A, B)`
+
+Now assume:
+
+- `A` and `B` are both even.
+- We must generate a sequence of valid moves from A to B.
+
+The helper function `solve_even` implements the strategy. Its invariant:
+
+- Keep `A` even.
+- At each step choose a power of two `2^K` as the added divisor `d`.
+
+Why is a power of two always a valid divisor?
+
+We need to ensure:
+1. `2^K` divides the current `A` (i.e., `A % 2^K == 0`).
+2. `1 < 2^K < A` (proper divisor limitation).
+3. And we must not overshoot `B`, so `A + 2^K <= B`.
+
+If we can always choose such a `2^K`, and each step increases `A`, we will eventually reach `B`.
+
+The algorithm’s idea:
+
+- Use an increasing power of two while:
+  - It remains a proper divisor of `A`.
+  - The next step does not overshoot `B`.
+
+- If the current `2^K` is too big to add (would overshoot `B`), halve it until it fits (`2^K <= B - A`).
+
+The key property:  
+When both `A` and `B` are even, we can always perform a sequence of such steps in at most O(log B) moves, by a reasoning about binary representation of `(B - A)` and low bits of `A`.
+
+#### 2.3.1. Detailed reasoning from the comments
+
+Let `A < B` be even.
+
+We claim there exists some `K ≥ 1` such that:
+- `A % 2^K == 0` (2^K divides A),
+- `A + 2^K <= B`,
+- and `2^K < A` (so 2^K is a proper divisor: >1 and <A).
+
+Among all such K, choose the **largest**.
+
+After choosing this K and performing `A ← A + 2^K`, two possibilities:
+
+1. **K is limited by divisibility:**
+   - That is, `2^(K+1)` does not divide original `A`.
+   - Then `A % 2^(K+1) = 2^K`.
+   - After adding `2^K`, the new `A` satisfies `A % 2^(K+1) = 0`, so `2^(K+1)` divides new `A`.
+   - Therefore next step we can pick at least exponent `K+1` (i.e., a larger power of two is now available).
+   - Intuitively, we are “shifting” the 1-bit at position K into a higher divisibility.
+
+   This case can occur at most O(log A) times, because K strictly increases each time.
+
+2. **K is limited by `A + 2^K <= B`:**
+   - That means divisibility is not the bottleneck; rather we’re approaching B and cannot add bigger powers without overshooting.
+   - Consider the difference `D = B - A` when we first hit this case.
+   - Each step we choose the largest power of two that:
+     - divides current `A`, and
+     - fits within remaining distance to `B`.
+   - Due to divisibility properties, we can think of these steps as removing one bit at a time from the binary representation of `D`, using powers of two.
+   - Because `D` is even, and divisibility for smaller powers is retained, we can resolve the remaining difference in fewer than K steps.
+
+Combining both cases:
+- At most O(log B) “case 1” steps to grow the usable power of two.
+- Then at most O(log B) “case 2” steps to consume the remaining difference.
+- Total < 2 log₂(B) < 500 for all B up to 10¹² (log₂10¹² ≈ 40).
+
+Thus the method respects the ≤500 constraint.
+
+---
+
+### 2.4. Implementation of `solve_even`
+
+```cpp
+vector<int64_t> solve_even(int64_t A, int64_t B) {
+    assert(A % 2 == 0 && B % 2 == 0);
+
+    int64_t pw2 = 2;          // current power of 2 we try to use
+    vector<int64_t> steps;
+    while (A < B) {
+        // Increase pw2 while:
+        //  1) adding 2*pw2 still doesn't overshoot B: A + 2*pw2 <= B
+        //  2) 2*pw2 is still a proper divisor candidate: 2*pw2 < A
+        //  3) 2*pw2 divides A: A % (2*pw2) == 0
+        while (A + 2 * pw2 <= B && 2 * pw2 < A && A % (2 * pw2) == 0) {
+            pw2 *= 2;
+        }
+
+        // If pw2 is too large to add (A + pw2 > B), shrink it
+        while (A + pw2 > B) {
+            pw2 /= 2;
+        }
+
+        steps.push_back(A);  // record the current A
+        A += pw2;            // make a move: A -> A + pw2
+    }
+
+    steps.push_back(B);      // final B
+    return steps;
+}
+```
+
+This always returns a sequence of even numbers from `A` to `B`, using only powers of two as the added divisors. Each intermediate step satisfies the rules.
+
+---
+
+### 2.5. Putting it all together: `solve()`
+
+1. Compute `d1 = min_divisor(A)`, `dk = min_divisor(B)`.
+2. Compute `adjusted_A` and `adjusted_B`:
+   - If `A` is odd: `adjusted_A = A + d1`; else `adjusted_A = A`.
+   - If `B` is odd: `adjusted_B = B - dk`; else `adjusted_B = B`.
+3. Check for impossible:
+   - `d1 == -1` and `A` odd: no first move.
+   - `dk == -1` and `B` odd: no last move into `B`.
+   - `adjusted_A > adjusted_B`: impossible to bridge.
+4. Otherwise:
+   - Run `solve_even(adjusted_A, adjusted_B)` → vector of numbers already including endpoints.
+   - Print:
+     - If `adjusted_A != A`, first print `A` (original starting number).
+     - Print every number in `ans` (from `adjusted_A` to `adjusted_B`).
+     - If `adjusted_B != B`, finally print `B`.
+
+Note: `solve_even` already prints the starting and ending even numbers. The odd endpoints are handled separately, before and after.
+
+This yields a valid sequence of moves from original `A` to `B`, respecting the rules, in ≤ 500 steps.
+
+---
+
+3. **Line-by-line commented C++ solution**
+
+```cpp
+#include <bits/stdc++.h>   // Includes almost all standard library headers
+using namespace std;
+
+// Overload operator<< to print a pair<T1, T2> as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> to read a pair<T1, T2> as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> to read a vector<T> by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload operator<< to print a vector<T> with spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Global variables to store input A and B
+int64_t A, B;
+
+// Simple input function to read A and B
+void read() { cin >> A >> B; }
+
+// Solve the problem for the case when both A and B are even.
+// Returns a vector containing a sequence of numbers from A to B inclusive,
+// where each transition is a valid move as per the problem statement.
+vector<int64_t> solve_even(int64_t A, int64_t B) {
+    // Sanity check: both numbers must be even here
+    assert(A % 2 == 0 && B % 2 == 0);
+
+    int64_t pw2 = 2;            // Current power of 2 that we consider to add
+    vector<int64_t> steps;      // Sequence of numbers from A to B
+
+    // Continue until we reach B
+    while (A < B) {
+        // Try to increase pw2 (double it) while it still satisfies:
+        //   1) A + 2 * pw2 <= B  : we don't overshoot B by adding 2*pw2
+        //   2) 2 * pw2 < A       : 2*pw2 remains a proper divisor (< A)
+        //   3) A % (2 * pw2) == 0: 2*pw2 divides A
+        // This loop attempts to use the largest power of 2 that divides A
+        // and can still be used without overshooting B.
+        while (A + 2 * pw2 <= B && 2 * pw2 < A && A % (2 * pw2) == 0) {
+            pw2 *= 2;           // Increase power of two
+        }
+
+        // If with the current pw2 we would overshoot B, shrink pw2.
+        // This ensures that the move A -> A + pw2 is still valid w.r.t B.
+        while (A + pw2 > B) {
+            pw2 /= 2;           // Decrease power of two
+        }
+
+        // Record the current value of A in the result sequence
+        steps.push_back(A);
+        // Make a move: add pw2 to A (pw2 is a valid divisor and doesn't overshoot)
+        A += pw2;
+    }
+
+    // Finally push B itself into the sequence
+    steps.push_back(B);
+    return steps;
+}
+
+// Returns the smallest non-trivial divisor of x (d >= 2 and d < x)
+// If x is prime, returns -1
+int64_t min_divisor(int64_t x) {
+    // Trial division up to sqrt(x)
+    for (int64_t d = 2; d * d <= x; d++) {
+        if (x % d == 0) {
+            return d;           // Found a divisor
+        }
+    }
+    // No divisor found: x is prime
+    return -1;
+}
+
+// Main solving function for general A and B
+void solve() {
+    // Long comment block in the code explains the theory - see editorial above.
+
+    // Compute minimum divisors of A and B
+    int64_t d1 = min_divisor(A), dk = min_divisor(B);
+
+    // Initialize adjusted_A and adjusted_B to original values
+    int64_t adjusted_A = A, adjusted_B = B;
+
+    // If A is odd, we'll take one step: A -> A + d1
+    if (A % 2 == 1) {
+        adjusted_A = A + d1;
+    }
+    // If B is odd, we interpret the last step as:
+    // adjusted_B -> adjusted_B + dk = B, so adjusted_B = B - dk
+    if (B % 2 == 1) {
+        adjusted_B = B - dk;
+    }
+
+    // Check impossibility conditions:
+    // 1) d1 == -1 and A is odd => A is prime odd -> no first move possible
+    // 2) dk == -1 and B is odd => B is prime odd -> cannot have last move at B
+    // 3) adjusted_A > adjusted_B => no way to bridge even segment
+    if (d1 == -1 || dk == -1 || adjusted_A > adjusted_B) {
+        cout << "Impossible" << endl;
+        return;
+    }
+
+    // Now both adjusted_A and adjusted_B are even and adjusted_A <= adjusted_B
+    // Find an even-only path between them
+    vector<int64_t> ans = solve_even(adjusted_A, adjusted_B);
+
+    // If we changed A (i.e., A was odd), print original A first
+    // because our sequence must start with the original A.
+    if (adjusted_A != A) {
+        cout << A << endl;
+    }
+
+    // Print the even sequence from adjusted_A to adjusted_B
+    for (int64_t x : ans) {
+        cout << x << endl;
+    }
+
+    // If we changed B (i.e., B was odd), print final B as the last element
+    if (adjusted_B != B) {
+        cout << B << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast IO
+    cin.tie(nullptr);                 // Untie cin from cout
+
+    int T = 1;            // Number of test cases; here it's fixed to 1
+    // cin >> T;          // (Disabled: problem uses a single test case)
+    for (int test = 1; test <= T; test++) {
+        read();           // Read A and B
+        // cout << "Case #" << test << ": "; // Not used
+        solve();          // Solve for this test case
+    }
+
+    return 0;             // Successful program termination
+}
+```
+
+---
+
+4. **Python solution with detailed comments**
+
+```python
+import sys
+from math import isqrt
+
+# Read A and B from standard input
+data = sys.stdin.read().strip().split()
+A = int(data[0])
+B = int(data[1])
+
+def min_divisor(x: int) -> int:
+    """
+    Return the smallest non-trivial divisor of x (2 <= d < x).
+    If x is prime, return -1.
+    """
+    # Try all integers d from 2 up to sqrt(x)
+    # If any divides x, it's the smallest non-trivial divisor found.
+    limit = isqrt(x)
+    for d in range(2, limit + 1):
+        if x % d == 0:
+            return d
+    # If we reached here, x has no non-trivial divisor: x is prime
+    return -1
+
+def solve_even(A: int, B: int):
+    """
+    Solve the problem for even A and even B.
+    Return a list of integers representing a valid sequence
+    from A to B (inclusive) under the rules.
+    """
+    assert A % 2 == 0 and B % 2 == 0
+
+    pw2 = 2              # current power of two to try
+    steps = []           # store the path from A to B
+
+    # Continue while we haven't reached B
+    while A < B:
+        # Try doubling pw2 as long as:
+        #  1) A + 2*pw2 <= B   (does not overshoot B)
+        #  2) 2*pw2 < A        (remains a proper divisor)
+        #  3) A % (2*pw2) == 0 (2*pw2 divides A)
+        while A + 2 * pw2 <= B and 2 * pw2 < A and A % (2 * pw2) == 0:
+            pw2 *= 2      # increase to the next power of two
+
+        # Now ensure pw2 is not too big to add.
+        # While A + pw2 > B, shrink pw2 by halving it.
+        while A + pw2 > B:
+            pw2 //= 2
+
+        # Record current A as part of the sequence
+        steps.append(A)
+        # Perform the move A -> A + pw2
+        A += pw2
+
+    # Finally include B itself
+    steps.append(B)
+    return steps
+
+def main():
+    global A, B
+
+    # Compute smallest non-trivial divisors of A and B
+    d1 = min_divisor(A)
+    dk = min_divisor(B)
+
+    # Start with adjusted values equal to the originals
+    adjusted_A = A
+    adjusted_B = B
+
+    # If A is odd, we want to first do A -> A + d1
+    if A % 2 == 1:
+        adjusted_A = A + d1
+
+    # If B is odd, we want the last move to be
+    # adjusted_B -> adjusted_B + dk = B, so adjusted_B = B - dk
+    if B % 2 == 1:
+        adjusted_B = B - dk
+
+    # Check for impossibilities:
+    # - If A is odd prime: d1 == -1 and we can't take the first step
+    # - If B is odd prime: dk == -1 and we can't end at B
+    # - If adjusted_A > adjusted_B: even interval can't be traversed
+    if d1 == -1 or dk == -1 or adjusted_A > adjusted_B:
+        print("Impossible")
+        return
+
+    # Now adjusted_A and adjusted_B are even and adjusted_A <= adjusted_B
+    seq_even = solve_even(adjusted_A, adjusted_B)
+
+    out_lines = []
+
+    # If A was modified (odd), print original A first
+    if adjusted_A != A:
+        out_lines.append(str(A))
+
+    # Then print the even sequence from adjusted_A to adjusted_B
+    for x in seq_even:
+        out_lines.append(str(x))
+
+    # If B was modified (odd), finally print B
+    if adjusted_B != B:
+        out_lines.append(str(B))
+
+    # Output result
+    sys.stdout.write("\n".join(out_lines) + "\n")
+
+if __name__ == "__main__":
+    main()
+```
+
+This Python program faithfully implements the same logic as the C++ solution and respects the problem’s constraints.
+
+---
+
+5. **Compressed editorial**
+
+We must transform `A` into `B` by repeatedly adding a proper divisor of the current number. Proper divisor means `1 < d < x` and `d | x`.
+
+Key parity observation:
+- Divisors of odd numbers are odd → from odd you go to even (odd + odd = even).
+- From even, all divisors are even → you stay even (even + even = even).
+So the path is at most: odd → even → even → ... → even → maybe odd, but under the rules, once you’re even you never become odd again. This means:
+- If `B` is odd and there is a valid sequence, the last step must be from some even `X = B - d`, where `d` is a proper divisor of `B`.
+
+We define `min_divisor(x)` as the smallest non-trivial divisor of `x`, or `-1` if `x` is prime (no moves from a prime). Set:
+
+- `adjusted_A = (A is odd ? A + min_divisor(A) : A)`
+- `adjusted_B = (B is odd ? B - min_divisor(B) : B)`
+
+Each adjustment is exactly one valid step (if divisor exists). If:
+- `min_divisor(A) == -1` and A is odd → cannot move from A.
+- `min_divisor(B) == -1` and B is odd → cannot end at B.
+- Or `adjusted_A > adjusted_B` → no way to bridge between them.
+
+Then the answer is `"Impossible"`.
+
+Otherwise `adjusted_A` and `adjusted_B` are even and `adjusted_A ≤ adjusted_B`. Now we only need to solve the even-to-even problem.
+
+For even numbers, we use powers of two as divisors: `d = 2^K`. We maintain a current power `pw2` and repeatedly:
+- Try to increase `pw2` while `2*pw2` divides the current `A`, is less than `A`, and `A + 2*pw2 ≤ B`. This finds the largest power of two that is a valid move and doesn’t overshoot.
+- If current `pw2` overshoots (`A + pw2 > B`), halve it until it fits.
+
+At each step we record `A`, then do `A += pw2`. We continue until `A == B`. This sequence is valid because each `pw2` divides `A` and is a proper divisor. Analysis shows this uses at most `O(log B)` steps: we either increase the maximum usable power of two due to better divisibility, or we are in the phase where the difference `(B - A)` is consumed by successively removing its highest power-of-two contributions. Total steps < 2 log₂ B < 500 for B ≤ 10¹².
+
+The final sequence is:
+- Optional original `A` (if odd),
+- The even sequence from `adjusted_A` to `adjusted_B`,
+- Optional final `B` (if odd).
+
+This meets the problem’s sequence-length guarantee and either prints `"Impossible"` or a valid sequence.

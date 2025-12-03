@@ -1,0 +1,816 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+383. Caravans
+Time limit per test: 4.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+In this task your goal is to prey upon caravans.
+
+There are n oases in the desert (for our purposes they are points on the plane). Sometimes caravans go from one oasis to another one. In order to prey upon them, you should predict their paths. But how to do it? The answer was given by Nomad. Caravans' velocity is constant, and they try to minimize maximal period of time outside oases. So, you can conclude, that the optimal path is a polyline. You are given several pairs of oases, and you are to output length of the maximal segment of the optimal path of a caravan which starts its way from the first oasis of the pair and ends in the second one. All oases have distinct locations and there are three oases that do not belong to one line.
+
+Input
+First line of the input contains n — amount of oases (). The following n lines describe them. Each line contains two integer numbers — xi and yi (). Next line contains one integer number q — amount of caravans (). The next q lines contain start and end oases of caravans — si and ti (1 ≤ si, ti ≤ n).
+
+Output
+Output q lengths with relative or absolute error 10-9 — one number at a line.
+
+Example(s)
+sample input
+sample output
+3
+0 0
+50 10
+150 0
+3
+1 2
+1 3
+2 3
+50.9901951359
+100.4987562112
+100.4987562112
+
+<|response|>
+1. **Abridged problem statement**
+
+- You are given `n` distinct points in the plane (oases), `n` up to about `10^5`.
+- A caravan must travel from oasis `s` to oasis `t` along a polyline that goes through some sequence of oases.
+- The caravan moves at constant speed and wants to **minimize the longest straight segment** it ever travels between consecutive oases on its chosen route.
+- For each of `q` queries `(s_i, t_i)`, compute this minimal possible longest segment length, with absolute or relative error ≤ `1e-9`.
+
+Equivalently:  
+Model the oases as vertices of a complete graph with edge weights = Euclidean distances. For each query `(s, t)`, find the minimal possible value of `max edge weight on a path from s to t`.
+
+
+---
+
+2. **Key observations**
+
+1. **Minimax path = MST path bottleneck**
+
+   In any connected, undirected graph with positive edge weights:
+
+   > For any two vertices `u, v`, if you take **any Minimum Spanning Tree (MST)** of the graph, then the **unique path** between `u` and `v` within that MST minimizes the maximum edge weight among all `u–v` paths in the original graph.
+
+   So for our problem:
+
+   - Let `G` be the complete Euclidean graph on the oases.
+   - Build an MST of `G` (Euclidean MST).
+   - For each query `(s, t)`, the answer is:
+     \[
+     \text{ans}(s, t) = \max\{\text{edge length on the unique path between } s \text{ and } t \text{ in the MST}\}
+     \]
+
+2. **We cannot build the complete graph**
+
+   The complete graph on `n` points has `O(n^2)` edges, which is impossible to enumerate when `n` is large (e.g., `10^5` → `10^{10}` edges).
+
+   We must avoid considering all pairs of points.
+
+3. **Euclidean MST is a subgraph of the Delaunay triangulation**
+
+   For points in 2D with Euclidean distance:
+
+   - The **Delaunay triangulation** is a planar graph with only `O(n)` edges.
+   - The Euclidean MST is a subgraph of the Delaunay triangulation.
+   - So if we get the Delaunay triangulation edges, we can run Kruskal’s MST algorithm on that much smaller set of edges. That gives the correct Euclidean MST.
+
+4. **Voronoi diagram ↔ Delaunay triangulation**
+
+   - The Delaunay triangulation is the planar dual of the Voronoi diagram.
+   - If two sites’ Voronoi cells share an edge, there is a Delaunay edge between those two points.
+   - A sweep‑line implementation of the Voronoi diagram (Fortune’s algorithm) can be used to enumerate all Delaunay edges.
+
+   In the provided C++ code, `VoronoiDiagram` is exactly such an implementation; it outputs all Delaunay edges.
+
+5. **Answering many minimax path queries efficiently**
+
+   Once we have MST edges or at least the sorted Delaunay edges, we need, for each query `(s, t)`, the value of the largest edge on the MST path.
+
+   Two main ways:
+
+   - **MST + LCA**:
+     - Build MST using Kruskal, then root it.
+     - Precompute binary lifting tables to answer maximum edge on path `s–t` with LCA in `O(log n)` per query.
+   - **Parallel binary search on sorted edges**:
+     - Sort all candidate edges by length (non-decreasing).
+     - For every query, find the smallest index `k` such that, if we add edges in order `0..k`, vertices `s` and `t` become connected in the DSU.
+     - This index corresponds to the largest edge on their MST path in terms of edge order.
+
+   The provided solution uses the **parallel binary search** technique, which fits nicely with Kruskal-style DSU processing.
+
+6. **Parallel binary search idea**
+
+   - Let `edges[0..m-1]` be all Delaunay edges sorted by squared length.
+   - For a fixed index `K`:
+     - When we union edges `0..K`, then:
+       - `s` and `t` are connected iff the maximum weight on their MST path ≤ weight(edges[K]).
+   - For each query, we want the minimum `K` where `s` and `t` become connected.
+
+   Instead of doing `q` separate binary searches, we:
+
+   - Maintain a search interval `[low[i], high[i]]` for each query `i` over edge indices.
+   - Repeatedly:
+     - Group all active queries by their current midpoint `mid`.
+     - Sweep edges from `0` upward once, unioning them in DSU.
+     - At edge `i`, answer all queries with midpoint `i`:
+       * If `s` and `t` are connected → answer index ≤ `i` → move `high` down.
+       * Otherwise → answer index > `i` → move `low` up.
+   - After `O(log m)` iterations, all intervals collapse and we’ve found the index for each query.
+
+7. **Special case `s == t`**
+
+   - If the start and end oases are the same, no travel is needed.
+   - So the maximum segment length is `0.0`.
+
+---
+
+3. **Full solution approach**
+
+We combine all the observations into a concrete algorithm.
+
+### Step 1: Read input
+
+- Read `n` and the `n` points `(x_i, y_i)`.
+- Read `q` and the `q` queries `(s_i, t_i)`, convert them to 0-based indices.
+
+### Step 2: Build Delaunay triangulation via Voronoi
+
+- Use a Voronoi diagram implementation (Fortune’s algorithm) to process the points.
+- For each pair of sites whose Voronoi regions share a border, emit a Delaunay edge `(u, v)`.
+- The `VoronoiDiagram` class in the C++ reference code:
+  - Rotates points slightly (by 1 radian) to avoid degenerate configurations.
+  - Maintains a beach line (a `multiset<Arc>`) and a priority queue of site and circle events.
+  - As it processes site and circle events, it adds the correct Delaunay edges.
+
+Complexity: `O(n log n)`.
+
+### Step 3: Sort Delaunay edges by length
+
+- For each edge `(u, v)`, compute squared Euclidean distance `|p[u] - p[v]|^2` (we can use squared distances for sorting; actual distance is only needed at the very end).
+- Sort `edges` by squared length.
+
+Let `m = edges.size()`.
+
+### Step 4: Parallel binary search over edge indices
+
+We want, for each query `i`, to find the minimal index `idx_i` such that:
+
+- If we run DSU and union edges `edges[0]..edges[idx_i]`, then `s_i` and `t_i` are in the same component.
+
+Procedure:
+
+1. Initialize, for each query `i`:
+   - If `s_i == t_i`, we can already mark answer `0.0` and skip from search, or handle specially at the end.
+   - Otherwise, set `low[i] = 0`, `high[i] = m - 1`. These are inclusive bounds on possible indices.
+
+2. While some query `i` still has `low[i] ≤ high[i]`:
+   - Create a vector `queries_at_pos` of length `m`, each an empty list.
+   - For each unresolved query `i` (i.e., `low[i] ≤ high[i]` and `s_i != t_i`):
+     - Compute `mid = (low[i] + high[i]) / 2` (integer).
+     - Append `i` into `queries_at_pos[mid]`.
+   - Initialize a fresh DSU for `n` nodes.
+   - Sweep `i` from `0` to `m-1`:
+     - Union the endpoints of `edges[i]` in the DSU.
+     - For each query index `qi` in `queries_at_pos[i]`:
+       * Let `(s, t)` be this query’s endpoints.
+       * If `dsu.connected(s, t)` is true:
+         + We know that with edges `0..i`, s and t are already connected, so the minimal index where they’re connected is ≤ `i`.
+         + Update `high[qi] = i - 1`.
+       * Else:
+         + Even using edges `0..i`, they are not connected, so we need a larger index.
+         + Update `low[qi] = i + 1`.
+
+3. Each iteration halves the interval width for active queries. After `O(log m)` iterations, each non-degenerate query will have:
+
+   - `low[i] = high[i] + 1`, and the “border” index where they become connected is `idx_i = high[i] + 1`.
+
+### Step 5: Convert index to distance
+
+For each query `i`:
+
+- If `s_i == t_i`:
+  - Output `0.0`.
+- Else:
+  - Let `idx_i = high[i] + 1`.
+  - The edge at that index is `(u, v) = edges[idx_i]`.
+  - The answer is the Euclidean distance `dist = sqrt( (x[u] - x[v])^2 + (y[u] - y[v])^2 )`.
+  - Print `dist` with, say, `std::setprecision(10)` and `std::fixed`.
+
+Why is this correct?
+
+- Kruskal’s MST algorithm scans edges from smallest to largest, unioning them when they connect different components. That process ensures that when two vertices `s` and `t` first become connected, the largest edge on their MST path is exactly the current edge.
+- Since we use the same sorted edge order and DSU unions, the first time when `s` and `t` can be connected in DSU is when we have included the maximum edge on their MST path.
+- Parallel binary search is just an optimization that avoids rebuilding DSU from scratch for every single query and every mid separately.
+
+Complexity:
+
+- Voronoi / Delaunay: `O(n log n)` (hidden constant is large due to geometry).
+- Sorting edges: `O(m log m)` where `m = O(n)`.
+- Parallel binary search:
+  - Each iteration: `O(m + q)` DSU operations.
+  - Iterations: `O(log m)`.
+  - Total: `O((m + q) log m)`, fine for `n, q ≤ 10^5`.
+
+---
+
+4. **C++ implementation with detailed comments**
+
+This is essentially the provided solution, with explanatory comments.
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// ====================== Geometry: 2D Point ======================
+
+using coord_t = long double;
+
+// 2D point / vector with many helper operations
+struct Point {
+    static constexpr coord_t eps = 1e-12;
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (scalar in 2D)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons for sorting
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return !(*this == p); }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+
+    coord_t norm2() const { return x * x + y * y; }   // squared length
+    coord_t norm() const { return sqrtl(norm2()); }    // Euclidean length
+
+    // Rotate by angle a (in radians) around origin
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector (-y, x)
+    Point perp() const { return Point(-y, x); }
+
+    // I/O
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+};
+
+// Orientation test: ccw(a, b, c)
+// returns 0 if collinear, 1 if counter-clockwise, -1 if clockwise
+int ccw(const Point& a, const Point& b, const Point& c) {
+    coord_t v = (b - a) ^ (c - a);
+    if (fabsl(v) <= Point::eps) return 0;
+    return v > 0 ? 1 : -1;
+}
+
+// Are vectors a and b collinear?
+bool collinear(const Point& a, const Point& b) {
+    return fabsl(a ^ b) < Point::eps;
+}
+
+// Intersection of lines (a1,b1) and (a2,b2), assuming not parallel
+Point line_line_intersection(
+    const Point& a1, const Point& b1, const Point& a2, const Point& b2
+) {
+    return a1 + (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+}
+
+// Circumcenter of triangle (a, b, c)
+Point circumcenter(const Point& a, const Point& b, const Point& c) {
+    Point mid_ab = (a + b) / 2.0;
+    Point mid_ac = (a + c) / 2.0;
+    Point perp_ab = (b - a).perp();
+    Point perp_ac = (c - a).perp();
+    return line_line_intersection(
+        mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+    );
+}
+
+// ====================== Voronoi / Delaunay (Fortune's alg.) ======================
+
+class VoronoiDiagram {
+  private:
+    static constexpr coord_t INF = 1e100;
+    // Current sweep-line x position (static so Arc comparator can see it)
+    static inline coord_t sweep_x;
+
+    // Beach-line "arc" structure used in Fortune's algorithm
+    struct Arc {
+        mutable Point p, q; // arc between sites p and q
+        mutable int id = 0; // event id (0: none, negative: circle event)
+        mutable int i;      // index of site p in vertices (-1: artificial)
+
+        Arc(const Point& p, const Point& q, int i) : p(p), q(q), i(i) {}
+
+        // y-coordinate of this arc at vertical line x
+        coord_t get_y(coord_t x) const {
+            if (q.y == INF) {
+                // Infinite arc
+                return INF;
+            }
+            x += Point::eps; // slight shift to avoid precision issues
+
+            // Chord midpoint and direction for arc geometry
+            Point mid = (p + q) / 2.0;
+            Point dir = (p - mid).perp();
+
+            coord_t D = (x - p.x) * (x - q.x);
+            if (D < 0) {
+                // No intersection with this parabola at this x → treat as -INF
+                return -INF;
+            }
+
+            if (fabsl(dir.y) < Point::eps) {
+                // Degenerate: horizontal direction
+                return (x < mid.x) ? -INF : INF;
+            }
+
+            // Derived formula from parabola intersection geometry
+            return mid.y +
+                   ((mid.x - x) * dir.x + sqrtl(D) * dir.norm()) / dir.y;
+        }
+
+        // For ordering arcs in beach-line multiset by y-coordinate at sweep_x
+        bool operator<(const coord_t& y) const {
+            return get_y(sweep_x) < y;
+        }
+        bool operator<(const Arc& o) const {
+            return get_y(sweep_x) < o.get_y(sweep_x);
+        }
+    };
+
+    using Beach = multiset<Arc, less<>>;
+
+    // Events in the sweep-line algorithm
+    struct Event {
+        coord_t x;          // x-coordinate where event happens
+        int id;             // >=0: site index; <0: circle event id
+        Beach::iterator it; // arc associated with circle event
+
+        Event(coord_t x, int id, Beach::iterator it) : x(x), id(id), it(it) {}
+
+        // priority_queue is max-heap → reverse comparison
+        bool operator<(const Event& e) const { return x > e.x; }
+    };
+
+    Beach beach_line;
+    vector<pair<Point, int>> vertices; // (rotated point, original index)
+    priority_queue<Event> event_queue;
+    vector<pair<int, int>> edges;      // Delaunay edges (original indices)
+    vector<bool> valid;                // validity flags for circle events
+    int n;
+    int next_vertex_id;                // negative IDs for circle events
+
+    // Schedule or update a circle event for arc "it"
+    void update_vertex_event(Beach::iterator it) {
+        if (it->i == -1) {
+            // Artificial arc (bounding), no events
+            return;
+        }
+
+        // Invalidate previous event for this arc
+        valid[-it->id] = false;
+        auto prev_it = prev(it);
+
+        // If three points are collinear, no circle event
+        if (collinear(it->q - it->p, prev_it->p - it->p)) {
+            return;
+        }
+
+        // New negative id for this circle event
+        it->id = --next_vertex_id;
+        valid.push_back(true);
+
+        // Circle through sites it->p, it->q, prev_it->p
+        Point center = circumcenter(it->p, it->q, prev_it->p);
+        coord_t event_x = center.x + (center - it->p).norm(); // rightmost point
+
+        // Check if event is valid at the current sweep position
+        bool ok = event_x > sweep_x - Point::eps &&
+                  prev_it->get_y(event_x) + Point::eps > it->get_y(event_x);
+        if (ok) {
+            event_queue.push(Event(event_x, it->id, it));
+        }
+    }
+
+    // Add a Delaunay edge between sites i and j if they are real sites
+    void add_edge(int i, int j) {
+        if (i == -1 || j == -1) return;
+        // Convert from local vertex index to original point index
+        edges.push_back({vertices[i].second, vertices[j].second});
+    }
+
+    // Process a new site at index i
+    void add_point(int i) {
+        Point p = vertices[i].first;
+
+        // Find which arc is above this new point
+        auto split_it = beach_line.lower_bound(p.y);
+
+        // Insert new arc for site i
+        auto new_it = beach_line.insert(split_it, Arc(p, split_it->p, i));
+        // Left part of the split arc
+        auto prev_it =
+            beach_line.insert(new_it, Arc(split_it->p, p, split_it->i));
+
+        // New site is neighbor with the split site
+        add_edge(i, split_it->i);
+
+        // Recompute circle events for affected arcs
+        update_vertex_event(prev_it);
+        update_vertex_event(new_it);
+        update_vertex_event(split_it);
+    }
+
+    // Process a circle event: remove arc "it"
+    void remove_arc(Beach::iterator it) {
+        auto prev_it = prev(it);
+        auto next_it = next(it);
+
+        beach_line.erase(it);
+        // Merge breakpoint
+        prev_it->q = next_it->p;
+
+        // Delaunay edge between neighbors
+        add_edge(prev_it->i, next_it->i);
+
+        // Update circle events
+        update_vertex_event(prev_it);
+        update_vertex_event(next_it);
+    }
+
+  public:
+    // Constructor: optionally rotate points to avoid degeneracies
+    VoronoiDiagram(const vector<Point>& points, bool fix_coordinates = true) {
+        n = (int)points.size();
+        vertices.resize(n);
+        for (int i = 0; i < n; i++) {
+            vertices[i] = {points[i], i};
+        }
+
+        if (fix_coordinates && n > 0) {
+            // Rotate all points by 1 radian around origin
+            for (int i = 0; i < n; i++) {
+                vertices[i].first = vertices[i].first.rotate(1.0);
+            }
+        }
+
+        // Sort by x, then y
+        sort(vertices.begin(), vertices.end());
+    }
+
+    // Compute Voronoi diagram; return all Delaunay edges (as pairs of site indices)
+    vector<pair<int, int>> compute(coord_t X = 1e9) {
+        edges.clear();
+        beach_line.clear();
+        event_queue = priority_queue<Event>();
+
+        // Add two artificial arcs spanning a huge range to bound the diagram
+        X *= 3;
+        beach_line.insert(Arc(Point(-X, -X), Point(-X, X), -1));
+        beach_line.insert(Arc(Point(-X, X), Point(INF, INF), -1));
+
+        // Insert all site events
+        for (int i = 0; i < n; i++) {
+            event_queue.push(Event(vertices[i].first.x, i, beach_line.end()));
+        }
+
+        next_vertex_id = 0;
+        valid.assign(1, false); // valid[0] is dummy
+
+        // Sweep line processing
+        while (!event_queue.empty()) {
+            Event e = event_queue.top();
+            event_queue.pop();
+            sweep_x = e.x;
+
+            if (e.id >= 0) {
+                // Site event
+                add_point(e.id);
+            } else if (valid[-e.id]) {
+                // Circle event still valid
+                remove_arc(e.it);
+            }
+        }
+
+        return edges;
+    }
+};
+
+coord_t VoronoiDiagram::sweep_x = 0; // static member definition
+
+// ====================== DSU (Union-Find) ======================
+
+class DSU {
+  public:
+    int n;
+    vector<int> par, sz;
+
+    DSU(int n = 0) { init(n); }
+
+    void init(int _n) {
+        n = _n;
+        par.resize(n);
+        sz.resize(n);
+        for (int i = 0; i < n; i++) {
+            par[i] = i;
+            sz[i] = 1;
+        }
+    }
+
+    int root(int x) {
+        if (par[x] == x) return x;
+        return par[x] = root(par[x]);
+    }
+
+    bool connected(int a, int b) {
+        return root(a) == root(b);
+    }
+
+    void unite(int a, int b) {
+        a = root(a);
+        b = root(b);
+        if (a == b) return;
+        if (sz[a] > sz[b]) swap(a, b);
+        par[a] = b;
+        sz[b] += sz[a];
+    }
+};
+
+// ====================== Main solve ======================
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    if (!(cin >> n)) return 0;
+    vector<Point> pnts(n);
+    for (int i = 0; i < n; i++) {
+        cin >> pnts[i];
+    }
+
+    int q;
+    cin >> q;
+    vector<pair<int,int>> queries(q);
+    for (int i = 0; i < q; i++) {
+        int s, t;
+        cin >> s >> t;
+        --s; --t; // 0-based
+        queries[i] = {s, t};
+    }
+
+    // Build Delaunay edges via Voronoi diagram
+    VoronoiDiagram voronoi(pnts);
+    vector<pair<int,int>> edges = voronoi.compute();
+
+    // Sort edges by squared Euclidean length
+    sort(edges.begin(), edges.end(),
+         [&](const pair<int,int>& e1, const pair<int,int>& e2) {
+             Point d1 = pnts[e1.first] - pnts[e1.second];
+             Point d2 = pnts[e2.first] - pnts[e2.second];
+             return d1.norm2() < d2.norm2();
+         });
+
+    int m = (int)edges.size();
+    vector<int> low(q, 0), high(q, m - 1);
+
+    // Parallel binary search
+    while (true) {
+        bool has_queries = false;
+        vector<vector<int>> queries_at_pos(m);
+
+        // Assign each unresolved query to a midpoint
+        for (int i = 0; i < q; i++) {
+            if (low[i] <= high[i] && queries[i].first != queries[i].second) {
+                has_queries = true;
+                int mid = (low[i] + high[i]) / 2;
+                queries_at_pos[mid].push_back(i);
+            }
+        }
+
+        if (!has_queries) break;
+
+        // Run DSU over growing prefix of edges
+        DSU dsu(n);
+        for (int i = 0; i < m; i++) {
+            dsu.unite(edges[i].first, edges[i].second);
+
+            for (int qi : queries_at_pos[i]) {
+                int s = queries[qi].first;
+                int t = queries[qi].second;
+                if (dsu.connected(s, t)) {
+                    // s and t connected with edges [0..i] → answer index <= i
+                    high[qi] = i - 1;
+                } else {
+                    // still disconnected → index > i
+                    low[qi] = i + 1;
+                }
+            }
+        }
+    }
+
+    cout.setf(ios::fixed);
+    cout << setprecision(10);
+
+    // Output answers
+    for (int i = 0; i < q; i++) {
+        int s = queries[i].first;
+        int t = queries[i].second;
+        if (s == t) {
+            cout << 0.0L << "\n";
+        } else {
+            int idx = high[i] + 1;
+            auto [u, v] = edges[idx];
+            Point d = pnts[u] - pnts[v];
+            long double dist = sqrtl(d.norm2());
+            cout << dist << "\n";
+        }
+    }
+
+    return 0;
+}
+```
+
+---
+
+5. **Python implementation with detailed comments**
+
+Python does not have a Voronoi/Delaunay implementation in the standard library. The simplest practical approach is to use `scipy.spatial.Delaunay` if you’re running locally. On a typical online judge, you would need to port a triangulation algorithm (complex and long), so below code assumes `scipy` is available.
+
+If `scipy` is *not* allowed, the overall algorithm is the same, but you must replace the Delaunay part with your own implementation or switch to a C++ solution.
+
+```python
+import sys
+import math
+from collections import defaultdict
+
+# Try to import Delaunay triangulation from scipy
+try:
+    from scipy.spatial import Delaunay
+except ImportError:
+    Delaunay = None  # Placeholder; see note above.
+
+
+class DSU:
+    """Disjoint Set Union (Union-Find) with path compression and union by size."""
+
+    def __init__(self, n):
+        self.par = list(range(n))
+        self.sz = [1] * n
+
+    def root(self, x):
+        if self.par[x] != x:
+            self.par[x] = self.root(self.par[x])
+        return self.par[x]
+
+    def unite(self, a, b):
+        a = self.root(a)
+        b = self.root(b)
+        if a == b:
+            return
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.par[a] = b
+        self.sz[b] += self.sz[a]
+
+    def connected(self, a, b):
+        return self.root(a) == self.root(b)
+
+
+def main():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+
+    n = int(next(it))
+    points = []
+    for _ in range(n):
+        x = float(next(it))
+        y = float(next(it))
+        points.append((x, y))
+
+    q = int(next(it))
+    queries = []
+    for _ in range(q):
+        s = int(next(it)) - 1
+        t = int(next(it)) - 1
+        queries.append((s, t))
+
+    # Edge case: no or single point
+    if n <= 1:
+        # All answers are 0 because we can't move anywhere
+        out = ["0.0000000000"] * q
+        sys.stdout.write("\n".join(out))
+        return
+
+    if Delaunay is None:
+        raise RuntimeError("scipy.spatial.Delaunay not available. "
+                           "You need a Delaunay implementation to run this.")
+
+    # Build Delaunay triangulation
+    coords = points
+    tri = Delaunay(coords)
+
+    # Extract undirected edges from Delaunay triangles
+    edge_set = set()
+    for simplex in tri.simplices:
+        i, j, k = simplex
+        # Add the 3 undirected edges (i,j), (j,k), (k,i)
+        a, b = sorted((i, j))
+        c, d = sorted((j, k))
+        e, f = sorted((i, k))
+        edge_set.add((a, b))
+        edge_set.add((c, d))
+        edge_set.add((e, f))
+
+    edges = list(edge_set)
+
+    # Sort edges by squared Euclidean distance
+    def sqdist(e):
+        u, v = e
+        dx = coords[u][0] - coords[v][0]
+        dy = coords[u][1] - coords[v][1]
+        return dx * dx + dy * dy
+
+    edges.sort(key=sqdist)
+    m = len(edges)
+
+    # Parallel binary search over edge indices
+    low = [0] * q
+    high = [m - 1] * q
+
+    # Mark queries with s == t, for which answer is 0
+    same = [queries[i][0] == queries[i][1] for i in range(q)]
+
+    while True:
+        has_queries = False
+        queries_at_pos = [[] for _ in range(m)]
+
+        for i in range(q):
+            if same[i]:
+                continue  # skip, answer is 0
+            if low[i] <= high[i]:
+                has_queries = True
+                mid = (low[i] + high[i]) // 2
+                queries_at_pos[mid].append(i)
+
+        if not has_queries:
+            break
+
+        dsu = DSU(n)
+        # Sweep edges 0..m-1
+        for ei in range(m):
+            u, v = edges[ei]
+            dsu.unite(u, v)
+
+            for qi in queries_at_pos[ei]:
+                s, t = queries[qi]
+                if dsu.connected(s, t):
+                    # They connect at or before ei → answer index <= ei
+                    high[qi] = ei - 1
+                else:
+                    low[qi] = ei + 1
+
+    # Construct answers
+    out_lines = []
+    for i in range(q):
+        if same[i]:
+            out_lines.append(f"{0.0:.10f}")
+        else:
+            idx = high[i] + 1
+            u, v = edges[idx]
+            dx = coords[u][0] - coords[v][0]
+            dy = coords[u][1] - coords[v][1]
+            dist = math.hypot(dx, dy)
+            out_lines.append(f"{dist:.10f}")
+
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Summary:**
+
+- Model the problem as a minimax path problem on a complete Euclidean graph.
+- Use the MST minimax property: the answer is the maximum edge on the MST path between the two nodes.
+- Avoid `O(n^2)` edges by constructing the Euclidean MST using only Delaunay edges obtained via a Voronoi diagram (in C++) or via `scipy.spatial.Delaunay` (in Python).
+- Answer many queries by parallel binary search combined with a Kruskal-style DSU sweep over sorted edges.
