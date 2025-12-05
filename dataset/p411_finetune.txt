@@ -1,0 +1,648 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+411. Petya the Hero
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+Petya has come back from the Berland-Birland War, and now he is fond of gathering his friends and narrating his heroic deeds. You have probably heard the story telling that Petya, being isolated, captured two Birland officers single-handed, than, using their clothes and having got to know the password, penetrated into the army base of the enemy, forced the controlling system out of action and helped Berland army to seize the base. This story was also heard by Colonel Kruglyakovsky, who was especially interested in a detail. That is the way Petya managed to find out the password for entering the army base with his poor knowledge of Birland language. Called by the colonel young hero explained, that although Birland speech wasn't clear to him, it wasn't too difficult to write it down. At first Petya interrogated the captives and wrote down the speech of each one as a string of latin letters. He knew that Birland valid passwords could be read the same way in either direction, i.e. they were palindromes. So he had to use the program, searching for the longest common substring of two strings, which was valid as a password. After hearing the answer, Colonel Kruglyakovsky declared, that this program could be very useful for interrogation captives and for decoding secret messages... As far as Petya certanly hadn't any program, he asked you for help.
+Input
+The input file contains two non-empty strings that consist of lowercase latin letters ('a'-'z'). The length of each string doesn't exceed 2000 symbols. The strings contain at least one common letter.
+Output
+Output the password obtained by the program Petya has described. If there are several possible passwords, output any of them.
+Example(s)
+sample input
+sample output
+abacaba
+abracab
+aca
+
+sample input
+sample output
+abbab
+babbab
+abba
+
+<|response|>
+1. Abridged problem statement
+-----------------------------
+
+You are given two non-empty strings `A` and `B`, each of length at most 2000 and consisting of lowercase Latin letters.
+
+A password is any substring that:
+
+- is a palindrome (reads the same forwards and backwards), and
+- appears as a contiguous substring in both `A` and `B`.
+
+Your task: find and print any **longest** such palindrome. If several maximal-length answers exist, printing any one of them is acceptable.  
+It is guaranteed that there is at least one common letter (so at least an answer of length 1 exists).
+
+
+2. Key observations
+-------------------
+
+1. **Brute force is too slow if done naively**  
+   - There are O(n²) substrings in each string (`n ≤ 2000`).
+   - Checking each substring for palindrome and for being common with the other string naively would be O(n³) or worse.
+
+2. **Palindromes are substrings that equal their reverse**  
+   Instead of checking each substring by scanning characters, we can:
+   - precompute hashes of prefixes,
+   - compare hashes of a substring and its reversed counterpart to check if it’s a palindrome in O(1).
+
+3. **Longest common palindromic substring** can be found by:
+   - Fixing a length `L`,
+   - Finding all palindromic substrings of length `L` in `A`,
+   - Storing their hashes in a set/map,
+   - Checking if `B` has any substring of length `L` with the same hash.
+
+   If yes, a common palindromic substring of length `L` exists.
+
+4. **Rolling hash** lets us:
+   - Get the hash of any substring in O(1) after O(n) preprocessing.
+   - Do palindrome check via comparing forward and reverse hashes.
+
+5. **Searching for the maximum length**  
+   We could scan all possible lengths L from largest to smallest (O(n) choices) and use the above check (O(n) work). That’s O(n²) checks total — borderline but feasible for n=2000.
+
+   The editorial solution uses binary search on a “radius” and does **two separate searches**:
+   - odd-length palindromes (lengths 1,3,5,...),
+   - even-length palindromes (lengths 2,4,6,...).
+   
+   For a given radius `mid`, length is either `2*mid-1` (odd) or `2*mid` (even). For each length we call the checker once.
+
+6. **Checking if a substring of `A` is a palindrome using reversed `A`**  
+   If `A[l..r]` is a substring, then in the reversed string `A_rev` it appears as `A_rev[n-1-r .. n-1-l]`.  
+   So:
+   - `fh = hash(A[l..r])` from forward hash array,
+   - `rh = hash(A_rev[n-1-r .. n-1-l])` from reverse hash array,  
+   - `fh == rh` ⇒ `A[l..r]` is (with very high probability) a palindrome.
+
+7. **Hash collisions**  
+   Using a 61-bit prime-like modulus `2^61-1` and a random base makes collisions extremely unlikely; for competitive programming, this is accepted.
+
+
+3. Full solution approach
+-------------------------
+
+We will describe the rolling-hash based solution.
+
+### 3.1. Preprocessing: hashes and powers
+
+1. Choose:
+   - MOD = \(2^{61} - 1\),
+   - a random `base` in [1, MOD-1].
+
+2. Precompute powers:
+   - `base_pow[i] = base^i mod MOD` for all i up to `|A| + |B|`.
+
+3. For any string `S`, build prefix hashes `h`:
+   - `h[i]` = hash of substring `S[0..i]`:
+     - `h[0] = value(S[0])` (e.g. its ASCII or `ch - 'a' + 1`),
+     - `h[i] = h[i-1] * base + value(S[i]) (mod MOD)`.
+
+4. Hash of substring `S[l..r]` (0-based):
+   - if `l == 0`, `hash(S[l..r]) = h[r]`,
+   - else `hash(S[l..r]) = h[r] - h[l-1] * base_pow[r-l+1] (mod MOD)`.
+
+We build:
+
+- `ha` = prefix hashes of `A`,
+- `ha_rev` = prefix hashes of reversed `A`,
+- `hb` = prefix hashes of `B`.
+
+### 3.2. Checking if there exists a common palindromic substring of length `L`
+
+Define a function `check(L)`:
+
+Input: length `L`.  
+Output: indices `(l, r)` in `A` of some substring `A[l..r]` of length `L` that is palindromic and appears also in `B`; or `(-1, -1)` if none exists.
+
+Steps:
+
+1. Create a map (or unordered_map) `vis` from hash → `(l, r)`.
+
+2. Enumerate all substrings of `A` of length `L`:
+   - for `i` from `L-1` to `|A|-1`:
+     - `l = i - L + 1`, `r = i`.
+     - Map to reversed indices:
+       - `rev_l = |A|-1 - r`,
+       - `rev_r = |A|-1 - l`.
+     - Compute:
+       - `fh = hash(A[l..r])` from `ha`,
+       - `rh = hash(A_rev[rev_l..rev_r])` from `ha_rev`.
+     - If `fh == rh`, then `A[l..r]` is a palindrome. Store it:
+       - `vis[fh] = {l, r}` (we can overwrite; any one is fine).
+
+3. Enumerate all substrings of `B` of length `L`:
+   - for `i` from `L-1` to `|B|-1`:
+     - `l = i-L+1`, `r = i`,
+     - `fh = hash(B[l..r])` from `hb`,
+     - if `fh` in `vis`, we have found a common palindromic substring; return that `(l, r)` from `A`.
+
+4. If we finish without success, return `(-1, -1)`.
+
+Complexity of `check(L)` is O(|A| log K + |B| log K) with `map`, or roughly O(|A|+|B|) with `unordered_map`. For given constraints, both are fine.
+
+### 3.3. Searching for the maximum length
+
+We want the maximum `L` such that `check(L)` succeeds.
+
+The editorial code uses binary search on a “radius” for both odd and even lengths:
+
+- Odd lengths: `len = 2*mid - 1`, mid ≥ 1.
+- Even lengths: `len = 2*mid`, mid ≥ 1.
+
+Procedure:
+
+1. Initialize `ans = (-1, -1)` for best substring in `A`.
+
+2. **Odd palindromes**:
+
+   - `low = 1`, `high = min(|A|, |B|)` (max possible radius, though exact maximum odd length is limited).
+   - While `low <= high`:
+     - `mid = (low + high) // 2`,
+     - `len = 2*mid - 1`,
+     - `res = check(len)`.
+     - If `res` is valid (`res.first != -1`):
+       - if this palindrome is longer than current best, update `ans`.
+       - set `low = mid + 1` (try longer).
+     - else:
+       - set `high = mid - 1` (try shorter).
+
+3. **Even palindromes**:
+
+   - Same as above, but `len = 2*mid`.
+
+4. After both searches, `ans` contains some longest (or tied longest) common palindromic substring indices in `A`.
+
+5. Output `A.substr(ans.first, ans.second - ans.first + 1)`.
+
+Note: Strict monotonicity (“if length L works then all smaller lengths must work”) does not strictly hold for palindromes. But the contest solution uses binary search as a heuristic and updates `ans` whenever it finds a valid length; coupled with small constraints, this is acceptable and passes. If you prefer, you can also simply iterate length `L` from `min(|A|,|B|)` down to 1 and call `check(L)` for each until you find one that works; that’s simpler conceptually and still O(n³) in the worst theoretical case but actually O(n²) checks with O(1) per substring, which is fine for n=2000. We’ll stick to the editorial’s approach for consistency.
+
+---
+
+4. C++ implementation with detailed comments
+--------------------------------------------
+
+This is essentially the given C++ solution, but commented and structured educationally.
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+ We use a 61-bit modular rolling hash: modulus = 2^61 - 1.
+
+ HashMeta encapsulates:
+   - random base selection
+   - precomputation of base powers
+   - prefix hash construction
+   - substring hash extraction
+*/
+
+class HashMeta {
+  private:
+    // Choose a random base in [0, mod-1]
+    void set_random_base() {
+        seed_seq seed{
+            (uint32_t)chrono::duration_cast<chrono::nanoseconds>(
+                chrono::high_resolution_clock::now().time_since_epoch()
+            ).count(),
+            (uint32_t)random_device()(), (uint32_t)42
+        };
+        mt19937 rng(seed);
+        base = uniform_int_distribution<uint64_t>(1, mod - 1)(rng);
+    }
+
+    // Precompute base^i for i = 0..n-1
+    void precompute_base_pow(size_t n) {
+        base_pow.assign(n, 0);
+        base_pow[0] = 1; // base^0 = 1
+        for (size_t i = 1; i < n; i++) {
+            base_pow[i] = mul(base_pow[i - 1], base);
+        }
+    }
+
+    // Modular addition under mod = 2^61-1
+    static constexpr uint64_t add(uint64_t a, uint64_t b) {
+        a += b + 1;                // prevent overflow tricks
+        a = (a & mod) + (a >> 61); // fold top bits
+        return a - 1;
+    }
+
+    // Modular subtraction (a - b) under same mod
+    static constexpr uint64_t sub(uint64_t a, uint64_t b) {
+        return add(a, mod - b);
+    }
+
+    // Modular multiplication under mod = 2^61-1
+    static constexpr uint64_t mul(uint64_t a, uint64_t b) {
+        // Split a and b into 32-bit parts
+        uint64_t l1 = (uint32_t)a, h1 = a >> 32;
+        uint64_t l2 = (uint32_t)b, h2 = b >> 32;
+        uint64_t l = l1 * l2;
+        uint64_t m = l1 * h2 + l2 * h1;
+        uint64_t h = h1 * h2;
+
+        // Combine and reduce
+        uint64_t ret =
+            (l & mod) + (l >> 61) + (h << 3) + (m >> 29) + (m << 35 >> 3) + 1;
+        ret = (ret & mod) + (ret >> 61);
+        ret = (ret & mod) + (ret >> 61);
+        return ret - 1;
+    }
+
+  public:
+    // Wrapper type for hash values, so we can overload operators
+    class hash_t {
+        uint64_t h;
+      public:
+        hash_t() : h(0) {}
+        hash_t(uint64_t _h) : h(_h) {}
+        operator uint64_t() const { return h; }
+
+        hash_t& operator+=(const hash_t &other) {
+            h = add(h, other.h);
+            return *this;
+        }
+        hash_t& operator-=(const hash_t &other) {
+            h = sub(h, other.h);
+            return *this;
+        }
+        hash_t& operator*=(const hash_t &other) {
+            h = mul(h, other.h);
+            return *this;
+        }
+
+        hash_t operator+(const hash_t &other) const {
+            return hash_t(*this) += other;
+        }
+        hash_t operator-(const hash_t &other) const {
+            return hash_t(*this) -= other;
+        }
+        hash_t operator*(const hash_t &other) const {
+            return hash_t(*this) *= other;
+        }
+
+        bool operator==(const hash_t &other) const { return h == other.h; }
+        bool operator!=(const hash_t &other) const { return h != other.h; }
+        bool operator<(const hash_t &other) const { return h < other.h; }
+    };
+
+    uint64_t base;
+    vector<hash_t> base_pow;
+    static constexpr uint64_t mod = (1ull << 61) - 1;
+
+    // Initialize with enough capacity to cover both strings
+    void init(size_t n) {
+        set_random_base();
+        precompute_base_pow(n);
+    }
+
+    // Build prefix hashes for any container (string, vector<int>, etc.)
+    template<typename T>
+    vector<hash_t> rabin_karp(const T &container) {
+        vector<hash_t> h(container.size());
+        for (size_t i = 0; i < container.size(); i++) {
+            hash_t cur_val(container[i]); // convert element to hash_t
+            if (i == 0) {
+                h[i] = cur_val;
+            } else {
+                h[i] = h[i - 1] * hash_t(base) + cur_val;
+            }
+        }
+        return h;
+    }
+
+    // Get hash of substring [l..r] using prefix array h
+    hash_t hash_range(int l, int r, const vector<hash_t> &h) {
+        if (l == 0) {
+            return h[r];
+        }
+        int len = r - l + 1;
+        return h[r] - h[l - 1] * base_pow[len];
+    }
+};
+
+HashMeta hash_meta;
+using hash_t = HashMeta::hash_t;
+
+string A, B;
+vector<hash_t> ha, ha_rev, hb;
+
+// Check if there is any common palindromic substring of length len.
+// Returns (l, r) in A if exists, or (-1, -1) otherwise.
+pair<int,int> check(int len) {
+    map<hash_t, pair<int,int>> vis; // hash of palindrome in A -> its indices
+
+    int n = (int)A.size();
+
+    // Find all palindromic substrings of length len in A
+    for (int i = len - 1; i < n; i++) {
+        int l = i - len + 1;
+        int r = i;
+        int rev_l = n - 1 - r;
+        int rev_r = n - 1 - l;
+
+        hash_t fh = hash_meta.hash_range(l, r, ha);
+        hash_t rh = hash_meta.hash_range(rev_l, rev_r, ha_rev);
+
+        if (fh == rh) {
+            // A[l..r] is a palindrome
+            vis[fh] = {l, r};
+        }
+    }
+
+    // Now check substrings of B of length len
+    int m = (int)B.size();
+    for (int i = len - 1; i < m; i++) {
+        int l = i - len + 1;
+        int r = i;
+        hash_t fh = hash_meta.hash_range(l, r, hb);
+
+        auto it = vis.find(fh);
+        if (it != vis.end()) {
+            // Found a substring in B with same hash as a palindromic substring in A
+            return it->second; // (l, r) from A
+        }
+    }
+
+    return {-1, -1};
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    if (!(cin >> A >> B)) {
+        return 0;
+    }
+
+    int n = (int)A.size();
+    int m = (int)B.size();
+
+    // Prepare hashing
+    hash_meta.init(n + m + 5);
+    ha = hash_meta.rabin_karp(A);
+    string A_rev(A.rbegin(), A.rend());
+    ha_rev = hash_meta.rabin_karp(A_rev);
+    hb = hash_meta.rabin_karp(B);
+
+    pair<int,int> ans = {-1, -1};
+
+    // Binary search on odd-length palindromes
+    {
+        int low = 1, high = min(n, m);
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            int len = 2 * mid - 1; // odd length
+            if (len > min(n, m)) {
+                high = mid - 1;
+                continue;
+            }
+
+            auto res = check(len);
+            if (res.first != -1) {
+                // Found some palindrome of this length
+                if (ans.first == -1 ||
+                    res.second - res.first + 1 > ans.second - ans.first + 1) {
+                    ans = res;
+                }
+                low = mid + 1; // try to find a longer odd palindrome
+            } else {
+                high = mid - 1;
+            }
+        }
+    }
+
+    // Binary search on even-length palindromes
+    {
+        int low = 1, high = min(n, m);
+        while (low <= high) {
+            int mid = (low + high) / 2;
+            int len = 2 * mid; // even length
+            if (len > min(n, m)) {
+                high = mid - 1;
+                continue;
+            }
+
+            auto res = check(len);
+            if (res.first != -1) {
+                if (ans.first == -1 ||
+                    res.second - res.first + 1 > ans.second - ans.first + 1) {
+                    ans = res;
+                }
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+    }
+
+    // By problem statement, there must be at least one common character
+    // => at least a length-1 palindrome exists
+    assert(ans.first != -1);
+
+    cout << A.substr(ans.first, ans.second - ans.first + 1) << '\n';
+    return 0;
+}
+```
+
+---
+
+5. Python implementation with detailed comments
+-----------------------------------------------
+
+This Python version mirrors the C++ logic, using the same modulus and hashing tricks. Python’s big integers simplify some aspects, but we keep the same structure.
+
+```python
+import sys
+import random
+from typing import List, Tuple
+
+# 61-bit modulus: 2^61 - 1
+MOD = (1 << 61) - 1
+
+
+def mod_add(a: int, b: int) -> int:
+    """
+    Modular addition under modulus 2^61 - 1.
+    Same trick as in the C++ code.
+    """
+    a += b + 1
+    a = (a & MOD) + (a >> 61)
+    return a - 1
+
+
+def mod_sub(a: int, b: int) -> int:
+    """
+    Modular subtraction: (a - b) mod MOD.
+    """
+    return mod_add(a, MOD - b)
+
+
+def mod_mul(a: int, b: int) -> int:
+    """
+    Modular multiplication under modulus 2^61 - 1.
+    This mimics the 64-bit trick in C++ but Python supports big ints anyway.
+    """
+    # Split a and b into 32-bit parts
+    l1 = a & 0xFFFFFFFF
+    h1 = a >> 32
+    l2 = b & 0xFFFFFFFF
+    h2 = b >> 32
+
+    l = l1 * l2
+    m = l1 * h2 + l2 * h1
+    h = h1 * h2
+
+    ret = (l & MOD) + (l >> 61) + (h << 3) + (m >> 29) + ((m << 35) >> 3) + 1
+    ret = (ret & MOD) + (ret >> 61)
+    ret = (ret & MOD) + (ret >> 61)
+    return ret - 1
+
+
+class Hasher:
+    """
+    Rolling hash helper for strings using modulus 2^61-1.
+    """
+
+    def __init__(self, max_len: int):
+        # Choose random base in [1, MOD-1]
+        self.base = random.randrange(1, MOD - 1)
+        # Precompute powers of base up to max_len
+        self.base_pow = [1] * (max_len + 1)
+        for i in range(1, max_len + 1):
+            self.base_pow[i] = mod_mul(self.base_pow[i - 1], self.base)
+
+    def build(self, s: str) -> List[int]:
+        """
+        Build prefix hash array for string s:
+        h[i] = hash of s[0..i].
+        """
+        n = len(s)
+        h = [0] * n
+        for i, ch in enumerate(s):
+            x = ord(ch)  # map char to integer
+            if i == 0:
+                h[i] = x % MOD
+            else:
+                h[i] = mod_add(mod_mul(h[i - 1], self.base), x)
+        return h
+
+    def hash_range(self, h: List[int], l: int, r: int) -> int:
+        """
+        Compute hash of substring s[l..r] given prefix array h.
+        """
+        if l == 0:
+            return h[r]
+        length = r - l + 1
+        return mod_sub(h[r], mod_mul(h[l - 1], self.base_pow[length]))
+
+
+def check_len(length: int,
+              a: str, ha: List[int], a_rev: str, ha_rev: List[int],
+              b: str, hb: List[int],
+              hasher: Hasher) -> Tuple[int, int]:
+    """
+    For a given length, check if there exists a palindrome substring of 'a'
+    of length 'length' that also appears in 'b'.
+    Return (l, r) in 'a' or (-1, -1).
+    """
+    vis = {}  # hash -> (l, r) in a
+    n = len(a)
+
+    # Collect palindromes of given length in a
+    for i in range(length - 1, n):
+        l = i - length + 1
+        r = i
+        rev_l = n - 1 - r
+        rev_r = n - 1 - l
+
+        fh = hasher.hash_range(ha, l, r)
+        rh = hasher.hash_range(ha_rev, rev_l, rev_r)
+
+        if fh == rh:
+            # a[l..r] is palindrome
+            vis[fh] = (l, r)
+
+    # Check for common substrings in b
+    m = len(b)
+    for i in range(length - 1, m):
+        l = i - length + 1
+        r = i
+        fh = hasher.hash_range(hb, l, r)
+        if fh in vis:
+            return vis[fh]
+
+    return -1, -1
+
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if len(data) < 2:
+        return
+    a, b = data[0], data[1]
+
+    n, m = len(a), len(b)
+    max_len = n + m + 5
+
+    hasher = Hasher(max_len)
+
+    # Build prefix hashes
+    ha = hasher.build(a)
+    a_rev = a[::-1]
+    ha_rev = hasher.build(a_rev)
+    hb = hasher.build(b)
+
+    best_l, best_r = -1, -1
+
+    # Binary search odd-length palindromes
+    lo, hi = 1, min(n, m)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        length = 2 * mid - 1
+        if length > min(n, m):
+            hi = mid - 1
+            continue
+
+        l, r = check_len(length, a, ha, a_rev, ha_rev, b, hb, hasher)
+        if l != -1:
+            # update best
+            if best_l == -1 or (r - l) > (best_r - best_l):
+                best_l, best_r = l, r
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    # Binary search even-length palindromes
+    lo, hi = 1, min(n, m)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        length = 2 * mid
+        if length > min(n, m):
+            hi = mid - 1
+            continue
+
+        l, r = check_len(length, a, ha, a_rev, ha_rev, b, hb, hasher)
+        if l != -1:
+            if best_l == -1 or (r - l) > (best_r - best_l):
+                best_l, best_r = l, r
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    # Problem guarantees at least one common character
+    assert best_l != -1
+
+    print(a[best_l:best_r + 1])
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This Python solution follows exactly the same idea as the C++ one and should run comfortably within the given constraints.
