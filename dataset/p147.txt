@@ -1,0 +1,642 @@
+1. **Abridged problem statement**
+
+We have an \(N \times N\) chessboard and three kings:
+
+- Black king at \((x_1, y_1)\)
+- White king at \((x_2, y_2)\)
+- Invisible “black‑white” king at \((x_3, y_3)\)
+
+Move order in every step: **white**, then **black**, then **black‑white**.  
+Each king moves like a regular chess king: to any of the 8 neighboring cells (or can stay still in effect by choosing a path, but in this problem they always follow shortest paths).
+
+The black and white kings choose some shortest paths so that they meet *face‑to‑face*: they end up on two neighboring cells. The black‑white king also moves optimally along a non‑detour path (no zigzags that could be shortened).
+
+The black‑white king **wins** if it can ever move onto a square currently occupied by one of the other two kings (i.e., it “attacks” that king) **before** black and white end up on neighboring cells. If one of black/white moves onto the black‑white’s cell, no capture happens.
+
+We must determine:
+
+- If the black‑white king has a nonzero chance to win (i.e., at least one consistent choice of shortest paths for black & white and a non‑detour path for black‑white where it intercepts).
+  - Output:  
+    `YES`  
+    and the **minimum number of black‑white moves** needed for a possible interception.
+- Otherwise:
+  - Output:  
+    `NO`  
+    and the **minimum total number of moves of black + white** needed until they become neighbors (under optimal shortest paths).
+
+
+---
+
+2. **Detailed editorial**
+
+### 2.1. Geometry and timing
+
+Distance between two kings (using king moves) is the **Chebyshev distance**:
+
+\[
+D = \max(|x_1 - x_2|, |y_1 - y_2|)
+\]
+
+This is the minimum number of moves **each** of black and white must make to **reach the same square**.  
+But they only need to become **neighbors**, so effectively they will meet after `D - 1` moves each (they can stop one step apart).
+
+Total moves of both together until they are neighbors:
+\[
+\text{total} = 2(D - 1)
+\]
+But the problem asks just for “minimal total number of moves of black and white kings necessary to meet”. Because they move one after another, that is just `D-1` moves of each king; the solution prints `D-1`.
+
+Time is discrete with move order:
+
+1. White moves.
+2. Black moves.
+3. Black‑white moves.
+
+We only care about the position of kings at **the moment when black‑white moves**, because:
+
+- An interception happens only when **black‑white** moves onto the cell of some king.
+- If black or white moves onto black‑white, nothing happens.
+
+So we consider “time steps” indexed by **t** = number of moves made by the black‑white king so far.  
+At each such step \(t\):
+
+- White has made \(t\) moves.
+- Black has made \(t\) moves.
+- Black‑white is about to make his \(t\)-th move.
+
+So all three make the same number of moves up to that point.
+
+### 2.2. Black & white’s motion structure
+
+Two ordinary kings move along some shortest paths. For any two positions \((x_1, y_1)\), \((x_2, y_2)\):
+
+- Minimal meeting time if they wanted to share the same square is \(D = \max(dx, dy)\) where \(dx = |x_1 - x_2|\), \(dy = |y_1 - y_2|\).
+- On a shortest path, in each move they reduce either \(|x_1 - x_2|\), or \(|y_1 - y_2|\), or both, and they never “go back”.
+
+However, the problem is tricky because:
+
+- They don’t aim to reach each other’s initial squares; they just aim to end up neighboring.
+- There are many possible shortest paths.
+
+We don’t want to enumerate all paths. Instead we want to characterize **what squares are reachable** at step \(t\) by each king, consistent with moving along some shortest path to meet the other.
+
+The official solution idea (which this code implements) can be described like this:
+
+1. Assume w.l.o.g. that the **x‑axis difference is at least as big** as the y‑axis difference:  
+   If \(|x_1 - x_2| < |y_1 - y_2|\), swap x and y for all three kings to ensure \(dx \ge dy\).  
+   This simplifies direction / range considerations.
+
+2. Let:
+   - \(D = \max(dx, dy) = dx\).
+   - They can become neighbors roughly after \(D-1\) moves each.
+   - Because black‑white moves once per “pair” of moves (one white + one black), if we think in “paired steps” then the number of black‑white moves before that is about \(D/2\). The code uses
+     \[
+     \text{max\_steps} = \frac{D}{2} - 1
+     \]
+   - If `max_steps <= 0`, then black‑white has **no time** to intersect **before** black and white are already neighbors (we’ll justify later).
+
+So we only need to check times \(t = 1, 2, ..., \text{max\_steps}\). If interception hasn’t happened by then, it can never happen before black & white meet.
+
+### 2.3. Black‑white king’s reachable region
+
+The black‑white king starts at \(c = (x_3, y_3)\).
+
+It also moves along a shortest (non‑detour) path; that simply means it always reduces its Chebyshev distance to some final target, and in t moves it cannot be outside the t‑radius king metric.
+
+So after \(t\) moves, black‑white can be in any cell within Chebyshev distance \(t\) of \((x_3, y_3)\):
+
+\[
+x_3 - t \le x \le x_3 + t \\
+y_3 - t \le y \le y_3 + t
+\]
+
+This is an axis‑aligned square (in Chebyshev metric) centered at `c` with radius `t`. In the code:
+
+```cpp
+int x3 = c.first - t, x4 = c.first + t;
+int y3 = c.second - t, y4 = c.second + t;
+```
+
+So black‑white’s possible positions at time `t` form the rectangle `[x3, x4] × [y3, y4]`.
+
+### 2.4. Ranges of black & white kings at time t
+
+We want to know: at time \(t\), what cells can black or white be on if they are:
+
+- Moving along some shortest path (length `D`) to meet the other king.
+- With the constraint that their final distance becomes 1 at time `D-1`.
+
+The core simplification the author uses:
+
+- After we ensure \(dx \ge dy\), the x‑coordinate difference controls the meeting.
+- Each of the two kings essentially moves along a straight line in x (direction either +1 or −1) on their shortest paths.
+
+Let’s define:
+
+- `x_dir` is +1 if black’s x is to the right of white’s x, otherwise −1:
+  
+  ```cpp
+  int x_dir = (b.first > a.first) ? 1 : -1;
+  ```
+
+We only check **interception with paths where at each step they move roughly straight in x**. That’s correct because the problem only needs to know if **some** shortest path choice leads to interception: if interception is possible at all, we can assume this kind of “monotone” path in x.
+
+After `t` moves, a king starting at `(kx, ky)` and moving in x with direction `dir` will have x-coordinate:
+
+\[
+x = kx + dir \cdot t
+\]
+
+The y coordinate can vary, subject to:
+
+- King can move at most `t` steps from its original y: `ky - t` to `ky + t`, clamped by 1..N (board bounds).
+- Also, it must stay on some shortest path to the other king.
+
+The “shortest path to other king” y‑constraint is encoded as:
+
+- The initial vertical distance is `dy`.
+- Over the entire D steps, they can only move so that the sum of absolute differences is consistent with decreasing the Chebyshev distance.
+- Effectively, at time `t` the y-coordinate must be within some strip depending on the opponent’s position and `D`.
+
+In code, for king `king` and opponent `other`:
+
+```cpp
+int y_min =
+    max(clamp(king.second - t, 1, n),
+        clamp(other.second - D + t, 1, n));
+int y_max =
+    min(clamp(king.second + t, 1, n),
+        clamp(other.second + D - t, 1, n));
+```
+
+Intuition:
+
+- `king.second ± t` is the natural t-step vertical reach.
+- `other.second - D + t` and `other.second + D - t` come from the fact that along a shortest path of length `D`, the vertical distance between king and other evolves within certain bounds; by time `t` the king cannot be too far above or below the opponent if it still wants to end at distance at most 1 when time reaches `D-1`.
+
+So at step t, each king’s **possible y values** are in `[y_min, y_max]` with a **fixed x** as above.
+
+### 2.5. Checking intersection at time t
+
+Given a candidate king at time `t`:
+
+- Its x is fixed: `x = king.first + dir * t`
+- Its y can be anywhere in `[y_min, y_max]`.
+
+We must determine whether **any** cell in its reachable vertical segment intersects the black‑white king’s t-radius square `[x3,x4] × [y3,y4]`.
+
+The code function:
+
+```cpp
+auto check = [&](pair<int, int> king, pair<int, int> other, int dir) {
+    int x = king.first + dir * t;
+    int y_min = ...;
+    int y_max = ...;
+
+    if(x < x3 || x > x4) {
+        return false;
+    }
+    if(x == x3 || x == x4) {
+        return max(y_min, y3) <= min(y_max, y4);
+    }
+    return (y_min <= y3 && y3 <= y_max) || (y_min <= y4 && y4 <= y_max);
+};
+```
+
+Interpretation:
+
+1. If the king’s x at time t lies **outside** the black‑white square’s x span (`x3..x4`), no intersection is possible.
+
+2. If `x` is exactly at the left or right boundary of the square (`x == x3 || x == x4`):
+   - Intersection exists if the king’s vertical segment `[y_min, y_max]` overlaps the square’s vertical range `[y3, y4]`.
+
+3. If `x` is strictly inside `(x3, x4)`:
+   - Then for an intersection it suffices that there is a y in `[y_min, y_max]` that’s within `[y3,y4]`.  
+   - Since black‑white controls a full vertical interval in that x‑range, we just need to see if either `y3` or `y4` lies in the king’s segment:  
+     `(y_min <= y3 && y3 <= y_max) || (y_min <= y4 && y4 <= y_max)`.
+   - This is equivalent to standard segment intersection but simplified under the assumption of monotonic movement.
+
+We run this `check` for **both kings**, because black‑white could intercept either:
+
+- First: black moving toward white:
+  ```cpp
+  check(a, b, x_dir)   // a = black, b = white (or vice versa, depending on names)
+  ```
+- Second: white moving toward black:
+  ```cpp
+  check(b, a, -x_dir)
+  ```
+
+If either returns true, interception is possible at step `t`, so we answer:
+
+```cpp
+cout << "YES\n" << t << "\n";
+```
+
+and terminate.
+
+### 2.6. Why limit to `max_steps = D/2 - 1`?
+
+The code sets:
+
+```cpp
+int D = max(dx, dy);
+int max_steps = D / 2 - 1;
+if(max_steps <= 0) {
+    cout << "NO\n" << D - 1 << "\n";
+    return;
+}
+```
+
+Reasoning:
+
+- White and black need about `D - 1` moves each to come within distance 1.
+- By time `D/2` (roughly half that), the distance between them is already substantially reduced; in particular, if black‑white has not gotten close to the line of motion early enough, then later the squares in which they move shrink in y and narrow in x so much that there is no new intersection opportunity that wasn’t already present earlier.
+- A rigorous geometric proof is nontrivial, but the intended solution observes that the earliest possible interception will necessarily be at `t ≤ D/2 - 1`. If we haven’t intercepted by then, it is too late: from then on, black & white’s paths are too constrained and close to each other for black‑white to insert itself without having had a previous opportunity.
+
+If `max_steps <= 0`, i.e. `D ≤ 2`, then black and white start extremely close:
+
+- They can become neighbors essentially immediately.
+- Black‑white has no time for a proactive interception except possibly at t=0, but the problem disallows capture without movement.
+
+Thus we directly answer:
+
+```cpp
+NO
+D - 1
+```
+
+since black‑white cannot win.
+
+### 2.7. Complexity
+
+- We perform one loop over `t` from 1 to at most `D/2 - 1`.  
+  Note: D ≤ 10^6 (since coordinates in [1, N] and N ≤ 10^6).
+- Each iteration constant time.  
+  Overall \(O(D)\) which is \(O(N)\), acceptable for N up to 10^6 in 0.25s in C++.
+
+Memory usage is O(1).
+
+---
+
+3. **C++ solution with line-by-line comments**
+
+```cpp
+#include <bits/stdc++.h>      // Include all standard headers (GCC extension)
+using namespace std;
+
+// Overload operator<< for pair to print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pair to read "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for vector: read each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;             // Read each element from stream
+    }
+    return in;
+};
+
+// Overload operator<< for vector: print elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';     // Print each element followed by space
+    }
+    return out;
+};
+
+// Global variables: board size and three kings' positions
+int n;
+pair<int, int> a, b, c;       // a: first king, b: second king, c: black-white king
+
+// Read input
+void read() {
+    cin >> n;                 // Size of board N
+    cin >> a >> b >> c;       // Positions of the three kings
+}
+
+void solve() {
+    // If black-white king already on top of any other king at time 0,
+    // it is considered immediate possible victory in 0 moves.
+    // (Problem statement actually has distinct positions, but we keep this check.)
+    if(a == c || b == c) {
+        cout << "YES\n0\n";
+        return;
+    }
+
+    // Compute horizontal and vertical distances between the two visible kings
+    int dx = abs(a.first - b.first);
+    int dy = abs(a.second - b.second);
+
+    // Ensure |dx| >= |dy| by swapping x and y coordinates if needed.
+    // This simplifies reasoning: the main motion direction is along x.
+    if(dx < dy) {
+        // Swap x and y for king a
+        swap(a.first, a.second);
+        // Swap x and y for king b
+        swap(b.first, b.second);
+        // Swap x and y for king c
+        swap(c.first, c.second);
+        // Note: n is unchanged because board is square
+    }
+
+    // Now dx >= dy and D is the Chebyshev distance between a and b
+    int D = max(dx, dy);
+
+    // Maximum number of steps (time units for the black-white king)
+    // in which it can possibly intercept before a and b meet.
+    // Derived from geometry: after D/2 - 1 steps, no new opportunities.
+    int max_steps = D / 2 - 1;
+
+    // Direction along x-axis in which king b is relative to a.
+    // +1 if b is to the right of a, -1 if b is to the left.
+    int x_dir = (b.first > a.first) ? 1 : -1;
+
+    // If max_steps <= 0, there is no time interval where black-white
+    // could possibly intercept before a and b become neighbors.
+    if(max_steps <= 0) {
+        cout << "NO\n" << D - 1 << "\n";   // Return minimal moves for a and b to meet
+        return;
+    }
+
+    // Helper lambda: clamp value v into [lo, hi]
+    auto clamp = [](int v, int lo, int hi) { return max(lo, min(hi, v)); };
+
+    // Try all possible times t (number of black-white moves)
+    // from 1 to max_steps for an interception.
+    for(int t = 1; t <= max_steps; t++) {
+        // At time t, the black-white king can be within Chebyshev distance t
+        // from its start position c. Thus its reachable x is in [c.x - t, c.x + t],
+        // reachable y is in [c.y - t, c.y + t].
+        int x3 = c.first - t, x4 = c.first + t;
+        int y3 = c.second - t, y4 = c.second + t;
+
+        // Check if one of the two visible kings can be in any cell of the
+        // black-white's t-radius square at time t.
+        auto check = [&](pair<int, int> king, pair<int, int> other, int dir) {
+            // x-coordinate of `king` at time t if it moves monotonically in direction dir
+            int x = king.first + dir * t;
+
+            // y-coordinate range of `king` at time t:
+            // 1) It can move vertically at most t cells: [king.y - t, king.y + t]
+            // 2) It must stay on some shortest path to `other`,
+            //    which restricts y further based on other.y, D and t.
+            int y_min =
+                max(
+                    clamp(king.second - t, 1, n),           // board + vertical move limit
+                    clamp(other.second - D + t, 1, n)       // path to other king
+                );
+            int y_max =
+                min(
+                    clamp(king.second + t, 1, n),           // board + vertical move limit
+                    clamp(other.second + D - t, 1, n)       // path to other king
+                );
+
+            // If king's x is entirely outside black-white's [x3, x4] at time t, no overlap
+            if(x < x3 || x > x4) {
+                return false;
+            }
+
+            // If king's x lies exactly on the left or right boundary of the square
+            if(x == x3 || x == x4) {
+                // Then intersection exists if the king's y-interval
+                // overlaps black-white's y-interval [y3, y4].
+                return max(y_min, y3) <= min(y_max, y4);
+            }
+
+            // If x is strictly inside (x3, x4):
+            // We just need some y in both [y_min, y_max] and [y3, y4].
+            // Checking if y3 or y4 lies in [y_min, y_max] suffices.
+            return (y_min <= y3 && y3 <= y_max) ||
+                   (y_min <= y4 && y4 <= y_max);
+        };
+
+        // Try interception with king a moving toward b
+        // or king b moving toward a.
+        if(check(a, b, x_dir) || check(b, a, -x_dir)) {
+            // If either is possible, black-white can intercept in t moves.
+            cout << "YES\n" << t << "\n";
+            return;
+        }
+    }
+
+    // If we exit the loop: no interception is possible before a and b meet.
+    cout << "NO\n" << D - 1 << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);  // Fast IO (untie C and C++ streams)
+    cin.tie(nullptr);                  // Disable automatic flush on cin
+
+    int T = 1;                         // Number of test cases (fixed to 1 here)
+    // cin >> T;                       // Could be used if multiple tests
+    for(int test = 1; test <= T; test++) {
+        read();                        // Read input for each test
+        // cout << "Case #" << test << ": ";
+        solve();                       // Solve and output answer
+    }
+
+    return 0;                          // Successful program termination
+}
+```
+
+---
+
+4. **Python solution with detailed comments**
+
+This Python code mirrors the C++ logic as closely as possible, preserving the same geometric reasoning and time complexity.
+
+```python
+import sys
+from typing import Tuple
+
+def clamp(v: int, lo: int, hi: int) -> int:
+    """Clamp integer v into [lo, hi]."""
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+def solve_one(n: int, a: Tuple[int, int], b: Tuple[int, int], c: Tuple[int, int]) -> str:
+    """
+    Solve one instance of the Black-white king problem.
+
+    n: board size (N x N)
+    a: (x, y) of first king (call it black)
+    b: (x, y) of second king (call it white)
+    c: (x, y) of black-white (invisible) king
+
+    Returns the output string with two lines.
+    """
+    # If black-white king starts on same cell as one of the kings
+    # (should not happen with valid input, but we keep the C++ logic)
+    if a == c or b == c:
+        return "YES\n0\n"
+
+    ax, ay = a
+    bx, by = b
+    cx, cy = c
+
+    # Distances in x and y between the two visible kings
+    dx = abs(ax - bx)
+    dy = abs(ay - by)
+
+    # If vertical distance is larger, swap x and y for all three kings
+    # to enforce dx >= dy.
+    if dx < dy:
+        # swap coordinates: (x, y) -> (y, x)
+        ax, ay = ay, ax
+        bx, by = by, bx
+        cx, cy = cy, cx
+        # Note: n remains same as board is square
+        dx = abs(ax - bx)
+        dy = abs(ay - by)
+
+    # Chebyshev distance between the two visible kings
+    D = max(dx, dy)
+
+    # Max number of black-white steps we need to check
+    max_steps = D // 2 - 1
+
+    # Direction of motion along x for king b relative to king a
+    # +1 if b is to the right of a, -1 if to the left (or same x, but then dx=0).
+    x_dir = 1 if bx > ax else -1
+
+    # If there's no positive time when interception is possible before meet
+    if max_steps <= 0:
+        # Minimal number of moves for each of the two visible kings
+        # to become neighbors is D - 1.
+        return f"NO\n{D - 1}\n"
+
+    # Loop over time steps t = 1..max_steps
+    for t in range(1, max_steps + 1):
+        # Black-white king's reachable x-range and y-range
+        x3 = cx - t
+        x4 = cx + t
+        y3 = cy - t
+        y4 = cy + t
+
+        def check(king_x: int, king_y: int, other_x: int, other_y: int, dir_: int) -> bool:
+            """
+            Check if a given visible king starting at (king_x, king_y),
+            moving along shortest path to (other_x, other_y) with x-direction dir_,
+            can be in any cell of the black-white king's reachable square
+            at time t.
+            """
+            # x-position after t steps
+            x = king_x + dir_ * t
+
+            # y-position range after t steps, combining:
+            #  1) up to t vertical steps
+            #  2) constraints imposed by shortest path to (other_x, other_y)
+            y_min = max(
+                clamp(king_y - t, 1, n),
+                clamp(other_y - D + t, 1, n)
+            )
+            y_max = min(
+                clamp(king_y + t, 1, n),
+                clamp(other_y + D - t, 1, n)
+            )
+
+            # If x is outside [x3, x4], there's no overlap in x
+            if x < x3 or x > x4:
+                return False
+
+            # If x is exactly on the left or right boundary of black-white's square
+            if x == x3 or x == x4:
+                # Intersection if vertical ranges intersect
+                return max(y_min, y3) <= min(y_max, y4)
+
+            # If x is strictly inside the x-interval:
+            # Intersection if there's some y in the overlap of [y_min,y_max] and [y3,y4].
+            # Checking if y3 or y4 lies in [y_min, y_max] is sufficient.
+            if y_min <= y3 <= y_max:
+                return True
+            if y_min <= y4 <= y_max:
+                return True
+            return False
+
+        # Try intercepting king a moving toward b
+        if check(ax, ay, bx, by, x_dir):
+            return f"YES\n{t}\n"
+        # Try intercepting king b moving toward a (opposite x direction)
+        if check(bx, by, ax, ay, -x_dir):
+            return f"YES\n{t}\n"
+
+    # If for all t <= max_steps interception is impossible,
+    # black-white king cannot win.
+    return f"NO\n{D - 1}\n"
+
+
+def main() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    # Single test case as in provided C++ code
+    n = int(next(it))
+    a = (int(next(it)), int(next(it)))
+    b = (int(next(it)), int(next(it)))
+    c = (int(next(it)), int(next(it)))
+
+    sys.stdout.write(solve_one(n, a, b, c))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+5. **Compressed editorial**
+
+- Distance between black and white kings is \(D = \max(|x_1 - x_2|, |y_1 - y_2|)\). They can become neighbors in `D-1` moves each; if black‑white cannot intercept, answer is `NO` and `D-1`.
+
+- Black‑white moves after both visible kings each step; at black‑white’s t‑th move, each visible king has also made t moves.
+
+- W.l.o.g. enforce \(|dx| ≥ |dy|\) by swapping x,y of all 3 if needed. Now main motion is along x.
+
+- There exists an optimal shortest‑path meeting strategy where each of the visible kings moves monotonically along x. Let `x_dir` be direction of king `b` relative to `a` (+1 or −1).
+
+- Black‑white king at time t can occupy any square within Chebyshev distance t of its start: `[cx − t, cx + t] × [cy − t, cy + t]`.
+
+- For a visible king at `(kx, ky)` moving towards `(ox, oy)` in x‑direction `dir`, at time t:
+
+  - Its x is fixed: `x = kx + dir * t`.
+  - Its y is constrained by two conditions:
+    1. Vertical speed: `ky - t ≤ y ≤ ky + t`.
+    2. Being on some shortest path of total length D to the other king:  
+       `oy - (D - t) ≤ y ≤ oy + (D - t)`.  
+    After clamping to board [1, N], its feasible y‐interval is:
+    ```text
+    y_min = max(clamp(ky - t), clamp(oy - D + t))
+    y_max = min(clamp(ky + t), clamp(oy + D - t))
+    ```
+
+- Now we need to check if this vertical segment at fixed x intersects black‑white’s t‑square. Let black‑white’s t‑square be `[x3,x4]×[y3,y4]`.
+
+  - If `x < x3` or `x > x4`: no intersection.
+  - Else if `x == x3 or x == x4`: intersection iff `[y_min,y_max]` intersects `[y3,y4]`.
+  - Else (`x3 < x < x4`): intersection iff there exists y ∈ `[y_min,y_max] ∩ [y3,y4]` (e.g. if y3 or y4 lies in `[y_min,y_max]`).
+
+- We perform this check for both visible kings for each time t.
+
+- How long to check? After approximately `D/2` black‑white moves, the opportunity to get between the visible kings disappears. It suffices to check
+  \[
+  t = 1..(\lfloor D/2 \rfloor - 1).
+  \]
+  If this upper bound `max_steps` ≤ 0, interception is impossible; answer `NO` and `D-1`.
+
+- Complexity is O(D) per test, D ≤ 10^6 → fast enough in C++ and in optimized Python.

@@ -1,0 +1,687 @@
+1. Abridged problem statement
+------------------------------
+
+You are given N (4 ≤ N ≤ 10 000) points with integer coordinates (xi, yi), −10 000 ≤ xi, yi ≤ 10 000.
+
+You must determine whether it is possible to draw a *closed* polyline (polygonal chain) that:
+
+1. Uses **all** given points as vertices, each point exactly once.
+2. Has all edges axis-aligned (horizontal or vertical).
+3. At every vertex, the angle between consecutive edges is exactly 90° (no straight segments).
+4. Has no self-intersection and no self-touching (edges can meet only at common endpoints along the chain).
+5. Has **minimum possible total length** among all such closed polylines.
+
+Output the total length if such a polyline exists, otherwise output 0.
+
+(The minimum-length structure, if it exists under these constraints, turns out to be uniquely determined by pairing points with the same x or y.)
+
+
+2. Detailed editorial
+---------------------
+
+### 2.1. Geometry and structure constraints
+
+We want a closed, rectilinear (axis-aligned) polygonal chain that alternates horizontal and vertical edges with 90° turns at every vertex, using each point exactly once, with no self-crossing or touching.
+
+Key observations:
+
+1. **Even number of vertices.**  
+   In a closed rectilinear polygon, horizontal and vertical edges must alternate. Therefore, the total number of edges (and thus vertices) must be even.  
+   → If N is odd, answer is immediately 0.
+
+2. **Edges must connect points with same x or same y.**  
+   Every edge is either vertical (same x, different y) or horizontal (same y, different x). So vertices sharing the same x-coordinate might be connected by vertical edges, and those with the same y-coordinate might be connected by horizontal edges.
+
+3. **Parity per coordinate line.**  
+   Consider all points that share a fixed x = X. They must be connected in pairs vertically along that line, otherwise some point on that line would have an odd degree in the vertical sense, which can’t happen in a closed 2-regular chain (every vertex has degree 2 in total; one horizontal, one vertical edge).  
+   Thus, for each distinct x, the number of points with that x must be **even** (0, 2, 4, …). Similarly, for each distinct y, the number of points with that y must be even.  
+   If not, impossible → answer 0.
+
+4. **How can vertical edges on same x be drawn?**  
+   Fix some x, with points at y1 < y2 < … < y(2k).  
+   They must be connected as vertical segments pairwise. But how?  
+   Possible matchings: (y1–y2, y3–y4, …, y(2k−1)–y(2k)) or (y1–y4, y2–y3, …) etc.  
+
+   However, if we connect non-adjacent pairs, e.g. y1–y3 and y2–y4, then on the same x-line, the segments overlap or touch, causing self-intersections or self-contacts, which are forbidden.
+
+   Therefore, the only non-overlapping, non-touching way is to pair them by **sorted order neighbors**:
+   - (y1–y2), (y3–y4), …, (y(2k−1)–y(2k)).
+
+   Same logic applies for horizontal segments on a fixed y: sort x's and pair adjacent neighbors.
+
+5. **Uniqueness and minimality.**  
+   Given the constraints above, vertical edges are uniquely determined: for each x, sort points by y and pair (1–2, 3–4, …). Horizontal edges are also uniquely determined: for each y, sort by x and pair (1–2, 3–4, …).
+
+   There is no choice left: if a solution exists, it must be this particular set of segments. Also, among all possible rectilinear connections that use all points and respect vertical/horizontal lines, any “crossing” or “zig-zag” that deviates from neighbor-pairing makes some segments longer and/or causes intersections. So the constructed pairing is the **only candidate** and is also minimal-length.
+
+   So the problem reduces to:
+   - Construct all segments as above.
+   - Check whether resulting shape is a single closed, simple (non-self-intersecting, non-self-touching) curve.
+   - If yes, output its total length; otherwise 0.
+
+### 2.2. Building the candidate polygon
+
+Algorithm:
+
+1. Read N and all points.
+
+2. If N is odd, print 0.
+
+3. Group points:
+   - `pnts_on_x[x]`: list of (y, index) for points with given x.
+   - `pnts_on_y[y]`: list of (x, index) for points with given y.
+   Index is the position of the point in the original array (0..N−1).
+
+4. For each `x` in `pnts_on_x`:
+   - Sort `pnts_on_x[x]` by y.
+   - If its size is odd → impossible → 0.
+   - Pair consecutive entries:
+     - For i = 0,2,4,…: pair `(y_i, y_{i+1})` as a vertical segment.
+     - If `y_i == y_{i+1}`, that would be a zero-length segment (two points at same coordinates) → this either duplicates a point or creates a degenerate edge that may collapse the polygon. The given solution treats this as invalid and returns 0.
+   - Add the vertical segment to a list `edges`.
+   - Add its length |y2 − y1| to `total_length`.
+   - Use DSU (disjoint set union) to unite the indices of the two endpoints (to track connectivity).
+
+5. For each `y` in `pnts_on_y`:
+   - Sort `pnts_on_y[y]` by x.
+   - Size must be even, else → 0.
+   - Pair consecutive entries:
+     - For i = 0,2,4,…: pair `(x_i, x_{i+1})` as a horizontal segment.
+     - If `x_i == x_{i+1}`, invalid → 0.
+   - Add the horizontal segment to `edges`.
+   - Add |x2 − x1| to `total_length`.
+   - Unite the indices of the endpoints.
+
+At this point, we’ve built all candidate edges and computed their total length.
+
+### 2.3. Checking global connectivity
+
+To represent a single closed polyline that visits every vertex exactly once:
+
+- The graph of vertices and edges must be connected.
+- Also, every vertex must have degree 2 (one vertical and one horizontal neighbor). That degree condition is already implicitly enforced by the construction:
+  - Each point appears in exactly 1 vertical pair (since count per x is even and pairing covers all).
+  - Each appears in exactly 1 horizontal pair (for same reason on y).
+  - Hence degree = 2 for each vertex.
+
+We still must ensure **only one** connected component (a single cycle, not multiple cycles or chains).
+
+- Use DSU:
+  - Every time we create an edge between points with indices i and j, call `unite(i, j)`.
+- After processing all edges, check that all vertices share the same DSU root as vertex 0.
+  - If any vertex has a different root → not a single component → 0.
+
+Note: Multiple disjoint cycles would also be “2-regular” but not connected; DSU catches this.
+
+### 2.4. Checking for intersections / self-touching
+
+We have a set of axis-aligned segments. We must ensure:
+- No two segments intersect in their interiors.
+- No overlapping segments on same line.
+- No “touching” at points other than the endpoints used by the chain.
+
+Given N ≤ 10 000, each point participates in exactly 2 segments, so number of edges is O(N). A naive O(M²) segment-pair check (where M is number of edges) is about (2N)² ≈ 4·10^8 worst-case operations, which is borderline but probably acceptable in optimized C++ with simple checks and the small time limit. The provided solution uses this naive approach.
+
+Segment intersection logic for axis-aligned segments:
+
+- Each segment is either:
+  - Vertical: (x, y1) to (x, y2)
+  - Horizontal: (x1, y) to (x2, y)
+
+Cases to consider:
+
+1. **Two vertical segments:**
+   - Same x coordinate:
+     - If their projections on y-axis overlap in *open* interval, they intersect/overlap.
+     - Use strict inequality overlap (no touching at endpoints allowed unless they share a vertex of the chain; this code forbids any overlap/touching between distinct edges).
+
+2. **Two horizontal segments:**
+   - Same y coordinate:
+     - Same as above, check overlap on x.
+
+3. **One vertical, one horizontal:**
+   - They intersect if:
+     - The x of the vertical lies strictly between min(x1, x2) and max(x1, x2) of the horizontal; and
+     - The y of the horizontal lies strictly between min(y1, y2) and max(y1, y2) of the vertical.
+   - This is a proper interior intersection, not just at endpoints.
+
+Note: The code’s `segments_intersect` uses strictly `<` comparisons for overlap and intersection, intentionally rejecting any form of touching except possibly when segments share endpoints of the same segment—but they never call it with identical segments, and they treat any meeting (including endpoint meeting) between two different segments as invalid. That matches the “no self-contact” requirement: the only locations where two edges may meet are the standard consecutive edges at polygon vertices, which is already implicit in the construction, but the intersection test may also catch some of those. However, the way pairings are arranged, consecutive segments meet only at their shared vertex in a way that does not count as intersection since those segments are not checked as overlapping on the same line or on crossing coordinates.
+
+Implementation:
+
+- Loop over all pairs i < j of segments:
+  - If `segments_intersect(edges[i], edges[j])` → 0.
+
+If we escape all checks successfully, then:
+
+- Graph is a single connected 2-regular component → one simple cycle.
+- No segment intersections or self-contacts.
+- By construction, the polygon alternates vertical/horizontal and uses all points.
+
+Thus print `total_length`.
+
+### 2.5. Complexity
+
+- Grouping points: O(N).
+- Sorting x-groups and y-groups: overall O(N log N).
+- Pairing and DSU unions: O(N α(N)) ~ O(N).
+- Intersection checking: O(M²), with M ~ N edges, so O(N²).
+
+Given N ≤ 10 000, N² = 10^8 comparisons. Each comparison is a couple of integer operations; in fast C++ this is borderline but likely fine within 0.25s in a good judge; this is the given solution so presumably accepted.
+
+Memory: all containers are O(N).
+
+### 2.6. Edge cases
+
+- N odd: 0.
+- Two points with identical coordinates: they would form zero-length "edge" if grouped; the code forbids that by checking equal coordinates while pairing.
+- A line of four points on same x or y, but also others with unique coordinates: parity checks or connectivity will catch impossible setups.
+- Multiple disconnected components formed by separate rectangles: DSU connectivity fails → 0.
+- Overlapping collinear segments due to some weird configuration: overlap checks on same x or y detect them → 0.
+
+
+3. Commented C++ solution
+-------------------------
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload operator<< for printing pairs (for debugging; not really used in solution)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for reading pairs
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for reading vectors
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload operator<< for printing vectors (for debugging; not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int MAXC = (int)1e4 + 42; // Not actually used, leftover
+
+// Disjoint Set Union (Union-Find) structure to track connectivity
+class DSU {
+  public:
+    int n;              // number of elements
+    vector<int> par;    // parent array
+    vector<int> sz;     // size of each component
+
+    DSU(int _n = 0) { init(_n); }
+
+    // Initialize DSU with n elements: 0..n
+    void init(int _n) {
+        n = _n;
+        par.assign(n + 1, 0);
+        sz.assign(n + 1, 0);
+        for(int i = 0; i <= n; i++) {
+            par[i] = i;   // each element is its own parent
+            sz[i] = 1;    // component size 1
+        }
+    }
+
+    // Find with path compression
+    int root(int u) { 
+        return par[u] = ((u == par[u]) ? u : root(par[u])); 
+    }
+
+    // Check if two elements are in same set
+    bool connected(int x, int y) { return root(x) == root(y); }
+
+    // Unite two sets; return new root
+    int unite(int x, int y) {
+        x = root(x), y = root(y);
+        if(x == y) {
+            return x; // already in same set
+        }
+        // Union by size: attach smaller tree to larger
+        if(sz[x] > sz[y]) {
+            swap(x, y);
+        }
+        par[x] = y;
+        sz[y] += sz[x];
+        return y;
+    }
+
+    // Return list of components (not used in solution)
+    vector<vector<int>> components() {
+        vector<vector<int>> comp(n + 1);
+        for(int i = 0; i <= n; i++) {
+            comp[root(i)].push_back(i);
+        }
+        return comp;
+    }
+};
+
+int n;                              // number of points
+vector<pair<int, int>> pnts;        // points (x, y)
+
+// Read input points
+void read() {
+    cin >> n;
+    pnts.resize(n);
+    cin >> pnts;
+}
+
+// Check if two axis-aligned segments intersect in their interiors or overlap
+bool segments_intersect(
+    pair<int, int> a1, pair<int, int> a2, // endpoints of first segment
+    pair<int, int> b1, pair<int, int> b2  // endpoints of second segment
+) {
+    // Helper lambda to check open interval overlap on 1D
+    auto overlap = [](int a1, int a2, int b1, int b2) {
+        // overlap in (max(min endpoints), min(max endpoints)) strictly
+        return max(min(a1, a2), min(b1, b2)) < min(max(a1, a2), max(b1, b2));
+    };
+
+    // Case 1: both segments vertical (same x)
+    if(a1.first == a2.first && b1.first == b2.first) {
+        // They intersect/overlap if x is same and y-projections overlap
+        return a1.first == b1.first &&
+               overlap(a1.second, a2.second, b1.second, b2.second);
+    }
+
+    // Case 2: both segments horizontal (same y)
+    if(a1.second == a2.second && b1.second == b2.second) {
+        // They intersect/overlap if y is same and x-projections overlap
+        return a1.second == b1.second &&
+               overlap(a1.first, a2.first, b1.first, b2.first);
+    }
+
+    // Normalize: ensure (a1,a2) is vertical and (b1,b2) is horizontal
+    // If first is horizontal and second is vertical, swap them
+    if(a1.second == a2.second && b1.first == b2.first) {
+        swap(a1, b1);
+        swap(a2, b2);
+    }
+
+    // Case 3: a is vertical, b is horizontal
+    if(a1.first == a2.first && b1.second == b2.second) {
+        // Intersection if:
+        // - horizontal y lies strictly between a's y endpoints
+        // - vertical x lies strictly between b's x endpoints
+        return min(a1.second, a2.second) < b1.second &&
+               b1.second < max(a1.second, a2.second) &&
+               min(b1.first, b2.first) < a1.first &&
+               a1.first < max(b1.first, b2.first);
+    }
+
+    // Other combinations can't occur for strictly axis-aligned segments,
+    // or there is no intersection.
+    return false;
+}
+
+void solve() {
+    // If number of points is odd, impossible
+    if(n % 2 != 0) {
+        cout << 0 << endl;
+        return;
+    }
+
+    // Group points by same x and same y
+    // For each x: vector of (y, index)
+    map<int, vector<pair<int, int>>> pnts_on_x;
+    // For each y: vector of (x, index)
+    map<int, vector<pair<int, int>>> pnts_on_y;
+    for(int i = 0; i < n; i++) {
+        pnts_on_x[pnts[i].first].push_back({pnts[i].second, i});
+        pnts_on_y[pnts[i].second].push_back({pnts[i].first, i});
+    }
+
+    DSU dsu(n); // DSU indices are 0..n-1
+    long long total_length = 0; // total perimeter length
+    // List of all segments: ((x1,y1), (x2,y2))
+    vector<pair<pair<int, int>, pair<int, int>>> edges;
+
+    // Process vertical segments (same x)
+    for(auto& it: pnts_on_x) {
+        int x = it.first;
+        auto& vec = it.second;
+
+        // Sort by y-coordinate
+        sort(vec.begin(), vec.end());
+
+        // Need even number of points on this x
+        if(vec.size() % 2 != 0) {
+            cout << 0 << endl;
+            return;
+        }
+
+        // Pair neighbors (y0-y1, y2-y3, ...)
+        for(int i = 0; i < (int)vec.size(); i += 2) {
+            // If two points have same y, they coincide → invalid
+            if(vec[i].first == vec[i + 1].first) {
+                cout << 0 << endl;
+                return;
+            }
+
+            int y1 = vec[i].first;
+            int y2 = vec[i + 1].first;
+
+            // Add vertical edge ((x,y1) - (x,y2))
+            edges.push_back({{x, y1}, {x, y2}});
+            // Accumulate length
+            total_length += abs(y2 - y1);
+            // Union their indices in DSU
+            dsu.unite(vec[i].second, vec[i + 1].second);
+        }
+    }
+
+    // Process horizontal segments (same y)
+    for(auto& it: pnts_on_y) {
+        int y = it.first;
+        auto& vec = it.second;
+
+        // Sort by x-coordinate
+        sort(vec.begin(), vec.end());
+
+        // Need even number of points on this y
+        if(vec.size() % 2 != 0) {
+            cout << 0 << endl;
+            return;
+        }
+
+        // Pair neighbors (x0-x1, x2-x3, ...)
+        for(int i = 0; i < (int)vec.size(); i += 2) {
+            // If two points have same x, they coincide → invalid
+            if(vec[i].first == vec[i + 1].first) {
+                cout << 0 << endl;
+                return;
+            }
+
+            int x1 = vec[i].first;
+            int x2 = vec[i + 1].first;
+
+            // Add horizontal edge ((x1,y) - (x2,y))
+            edges.push_back({{x1, y}, {x2, y}});
+            // Accumulate length
+            total_length += abs(x2 - x1);
+            // Union their indices in DSU
+            dsu.unite(vec[i].second, vec[i + 1].second);
+        }
+    }
+
+    // Check that all points belong to one connected component
+    int root0 = dsu.root(0);
+    for(int i = 1; i < n; i++) {
+        if(dsu.root(i) != root0) {
+            cout << 0 << endl;
+            return;
+        }
+    }
+
+    // Check all pairs of segments for intersection
+    for(int i = 0; i < (int)edges.size(); i++) {
+        for(int j = i + 1; j < (int)edges.size(); j++) {
+            if(segments_intersect(
+                   edges[i].first, edges[i].second, 
+                   edges[j].first, edges[j].second
+               )) {
+                // If any two segments intersect/touch in forbidden way, no solution
+                cout << 0 << endl;
+                return;
+            }
+        }
+    }
+
+    // All checks passed: print total perimeter length
+    cout << total_length << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Problem has a single test; T left here for template purposes
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+
+4. Python solution with detailed comments
+-----------------------------------------
+
+```python
+import sys
+from collections import defaultdict
+
+# Fast IO
+input_data = sys.stdin.read().strip().split()
+it = iter(input_data)
+
+def read_int():
+    return int(next(it))
+
+def main():
+    # Read number of points
+    try:
+        n = read_int()
+    except StopIteration:
+        return
+
+    points = []
+    for _ in range(n):
+        x = read_int()
+        y = read_int()
+        points.append((x, y))
+
+    # If odd number of points, impossible to form a closed rectilinear polygon
+    if n % 2 == 1:
+        print(0)
+        return
+
+    # Group points by same x and same y
+    # For each x: list of (y, index)
+    pnts_on_x = defaultdict(list)
+    # For each y: list of (x, index)
+    pnts_on_y = defaultdict(list)
+
+    for idx, (x, y) in enumerate(points):
+        pnts_on_x[x].append((y, idx))
+        pnts_on_y[y].append((x, idx))
+
+    # DSU (Disjoint Set Union) implementation
+    parent = list(range(n))   # parent[i] = parent of i
+    size = [1] * n            # size[i] = size of component with root i
+
+    def find(u):
+        # Path compression
+        while parent[u] != u:
+            parent[u] = parent[parent[u]]
+            u = parent[u]
+        return u
+
+    def unite(a, b):
+        # Union by size
+        ra = find(a)
+        rb = find(b)
+        if ra == rb:
+            return
+        if size[ra] > size[rb]:
+            ra, rb = rb, ra
+        parent[ra] = rb
+        size[rb] += size[ra]
+
+    # List of edges: ((x1,y1), (x2,y2))
+    edges = []
+    total_length = 0
+
+    # Process vertical segments on each x
+    for x, vec in pnts_on_x.items():
+        # vec is list of (y, index)
+        vec.sort(key=lambda p: p[0])  # sort by y
+
+        # Must have even count of points on this x
+        if len(vec) % 2 == 1:
+            print(0)
+            return
+
+        # Pair consecutive entries
+        for i in range(0, len(vec), 2):
+            y1, idx1 = vec[i]
+            y2, idx2 = vec[i + 1]
+
+            # Points with exactly same (x,y) would imply zero-length segment: invalid
+            if y1 == y2:
+                print(0)
+                return
+
+            # Add vertical edge
+            edges.append(((x, y1), (x, y2)))
+            total_length += abs(y2 - y1)
+            # Union indices
+            unite(idx1, idx2)
+
+    # Process horizontal segments on each y
+    for y, vec in pnts_on_y.items():
+        # vec is list of (x, index)
+        vec.sort(key=lambda p: p[0])  # sort by x
+
+        # Must have even count of points on this y
+        if len(vec) % 2 == 1:
+            print(0)
+            return
+
+        for i in range(0, len(vec), 2):
+            x1, idx1 = vec[i]
+            x2, idx2 = vec[i + 1]
+
+            # Zero-length horizontal segment is invalid
+            if x1 == x2:
+                print(0)
+                return
+
+            # Add horizontal edge
+            edges.append(((x1, y), (x2, y)))
+            total_length += abs(x2 - x1)
+            # Union indices
+            unite(idx1, idx2)
+
+    # Check that all vertices are in one connected component
+    root0 = find(0)
+    for i in range(1, n):
+        if find(i) != root0:
+            print(0)
+            return
+
+    # Helper function to check if two axis-aligned segments intersect improperly
+    def segments_intersect(a1, a2, b1, b2):
+        x1a, y1a = a1
+        x2a, y2a = a2
+        x1b, y1b = b1
+        x2b, y2b = b2
+
+        # Helper: check strict 1D overlap of segments [a1,a2] and [b1,b2]
+        def overlap_1d(a1, a2, b1, b2):
+            # open interval overlap
+            return max(min(a1, a2), min(b1, b2)) < min(max(a1, a2), max(b1, b2))
+
+        # Detect whether segment is vertical or horizontal
+        a_vertical = (x1a == x2a)
+        b_vertical = (x1b == x2b)
+        a_horizontal = (y1a == y2a)
+        b_horizontal = (y1b == y2b)
+
+        # Case 1: both vertical
+        if a_vertical and b_vertical:
+            # same x and overlapping y-ranges => invalid
+            if x1a == x1b and overlap_1d(y1a, y2a, y1b, y2b):
+                return True
+            return False
+
+        # Case 2: both horizontal
+        if a_horizontal and b_horizontal:
+            # same y and overlapping x-ranges => invalid
+            if y1a == y1b and overlap_1d(x1a, x2a, x1b, x2b):
+                return True
+            return False
+
+        # Normalize so that 'a' is vertical and 'b' is horizontal if possible
+        if a_horizontal and b_vertical:
+            # swap segments
+            (x1a, y1a, x2a, y2a, x1b, y1b, x2b, y2b) = (x1b, y1b, x2b, y2b,
+                                                        x1a, y1a, x2a, y2a)
+            a_vertical, b_vertical = True, False
+            a_horizontal, b_horizontal = False, True
+
+        # Case 3: a is vertical, b is horizontal
+        if a_vertical and b_horizontal:
+            # vertical at x = x1a between y1a,y2a; horizontal at y = y1b between x1b,x2b
+            # check proper intersection in interiors (strict inequalities)
+            if (min(y1a, y2a) < y1b < max(y1a, y2a) and
+                min(x1b, x2b) < x1a < max(x1b, x2b)):
+                return True
+            return False
+
+        # Other orientation combos shouldn't occur for valid axis-aligned segments
+        return False
+
+    m = len(edges)
+
+    # Check all pairs of edges; O(m^2)
+    for i in range(m):
+        a1, a2 = edges[i]
+        for j in range(i + 1, m):
+            b1, b2 = edges[j]
+            if segments_intersect(a1, a2, b1, b2):
+                print(0)
+                return
+
+    # All checks passed: output total length
+    print(total_length)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+5. Compressed editorial
+-----------------------
+
+- Because the polygon is rectilinear and closed with 90° at every vertex, the number of edges (and thus vertices) must be even → if N is odd, answer is 0.
+
+- Each edge is vertical (same x) or horizontal (same y). For each distinct x, the number of points with that x must be even; otherwise some point cannot be paired vertically. Similarly, for each y, we need an even number of points.
+
+- On a fixed x with 2k points at y1 < y2 < … < y2k, possible vertical edges must connect pairs. Any non-adjacent pairing (like y1–y3 and y2–y4) would cause overlapping or crossing vertical segments, violating the no self-crossing/touching condition. So the only valid choice is to pair consecutive points: (y1–y2), (y3–y4), … This is unique and minimal-length for that column. Same reasoning applies to horizontal edges on each y.
+
+- Thus the entire set of edges is uniquely determined:
+  - For each x: sort by y, pair adjacent → vertical segments.
+  - For each y: sort by x, pair adjacent → horizontal segments.
+  If any pair has identical coordinates (zero-length edge), reject.
+
+- While creating edges, use DSU to union their endpoints. After all edges are created, check all points belong to a single DSU component. If not, the graph is not a single cycle → 0.
+
+- The degree of each vertex is automatically 2 (exactly one vertical and one horizontal edge incident) because both x- and y-groups are fully paired.
+
+- Finally, check for invalid intersections/contacts:
+  - For each pair of vertical segments on same x, ensure their y-ranges do not overlap in open interval (forbidden overlap).
+  - For each pair of horizontal segments on same y, same on x-ranges.
+  - For vertical vs horizontal, ensure they do not intersect in the interior (strictly within ranges).
+  Any such intersection/touch implies no valid polygon → 0.
+
+- If all checks pass, sum of all segment lengths is the perimeter of the unique minimal polygon, output that length.

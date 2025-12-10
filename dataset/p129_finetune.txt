@@ -1,0 +1,861 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+129. Inheritance
+
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+
+
+The old King decided to divide the Kingdom into parts among his three sons. Each part is a polygonal area. Taking into account the bad temper of the middle son the King gave him a part of Kingdom such that moving straight from any place of this part to any other place of this part he will not cross the boundary.
+There are several mineral deposits in the Kingdom. Each mineral deposit looks like a straight line segment. The middle son wants to know what part of mineral deposits is located inside his territory (not including the boundaries).
+
+
+Input
+
+The first line contains an integer N (3<=N<=400) - the number of vertexes of the polygon boundaring the territory of King's middle son. Each i-th line of the next N lines contains pair of integers xi, yi (0<=xi,yi<=30000) - a position of the i-th vertex (3<=i<=400). The vertexes are given in random order. There are no any three vertexes laying on a straight line. The next line includes the only integer M (2<=M<=1000) - the number of mineral deposits in the Kingdom. Each j-th line of the next M lines contains two pairs of integers aj1, bj1 - point of the beginning and aj2, bj2 - point of the end of the j-th mineral deposit (0<=aj1,bj1,aj2,bj2<=30000, for 1<=j<=M). The numbers in each line are divided by spaces.
+
+
+Output
+
+Output file should contain M lines. Each j-th line should contain a real number Lj calculated with precision 0.01 - the lehgth of the middle son's part of j-th mineral deposit.
+
+
+Sample Input
+
+3
+1 1
+6 1
+1 6
+4
+1 2 1 4
+2 2 2 4
+4 2 4 4 
+6 2 6 4
+Sample Output
+
+0
+2
+1
+0
+Author	: Sergey V. Mironov, Paul "Stingray" Komkoff
+Resource	: 5th Southern Subregional Contest. Saratov 2002
+Date	: 2002-10-10
+
+<|response|>
+1. Abridged problem statement
+-----------------------------
+
+- You are given \(N\) points that are vertices of a convex polygon, but in random order (no three collinear).
+- This polygon is the territory of the middle son.
+- You are given \(M\) line segments (mineral deposits).
+- For each segment, compute the total length that lies **strictly inside** the polygon (points on the polygon boundary are not counted).
+- Print each length with precision 0.01.
+
+Constraints:  
+- \(3 \le N \le 400\), \(2 \le M \le 1000\), all coordinates are integers in \([0, 30000]\).
+
+---
+
+2. Key observations
+-------------------
+
+1. **The polygon is convex.**  
+   The statement says any two points inside can be connected by a line segment that does not cross the boundary. That is exactly the definition of convexity. Vertices are given in random order, so we must reconstruct the polygon as the **convex hull** of the points.
+
+2. **Segment vs convex polygon intersection.**  
+   For a line segment and a convex polygon, the intersection (with interior) is:
+   - empty,
+   - a single segment (possibly degenerate to a point, which has length 0),
+   - or the entire segment (if the segment is fully inside).
+
+   But we must exclude boundary points.
+
+3. **Clipping by “breakpoints”.**  
+   If we collect all points where the segment “changes” its relationship to the polygon:
+   - its endpoints,
+   - intersections with polygon edges,
+   - polygon vertices on the segment,
+   - endpoints that lie on polygon edges,
+   and then sort these along the segment, each consecutive pair of points defines a small subsegment that is entirely in one region: inside, outside, or on the boundary. A single interior test on the midpoint is enough to classify each small subsegment.
+
+4. **Interior vs boundary.**
+   - We will first build a data structure for **point in convex polygon** that treats boundary as “inside or on boundary”.
+   - Then for strict interior we additionally check if the point lies on any polygon edge; if yes, exclude it.
+
+5. **Complexity is acceptable.**
+   - Convex hull: \(O(N \log N)\), \(N \le 400\).
+   - For each segment, we check it vs all polygon edges: \(O(N)\) per segment, \(M \le 1000\) ⇒ about \(4 \times 10^5\) edge checks.
+   - Sorting at most \(O(N)\) points per segment ⇒ \(O(N \log N)\) with small constants.
+   - This fits easily within limits.
+
+---
+
+3. Full solution approach
+-------------------------
+
+### Step 1: Read and build the convex polygon (convex hull)
+
+- Read the \(N\) given vertices.
+- Sort them lexicographically by (x, y).
+- Remove duplicates (though problem practically doesn’t give duplicates; it’s safer).
+- Compute convex hull using **Andrew’s monotone chain**:
+  - Build lower hull from left to right.
+  - Build upper hull from right to left.
+  - Combine, removing the duplicate starting point at the end.
+- The resulting sequence of hull points is the convex polygon boundary in order (clockwise or counterclockwise, both fine if used consistently).
+
+Because the given polygon is convex and all vertices are provided, the convex hull we compute is exactly the son’s territory.
+
+### Step 2: Preprocess for point-in-convex-polygon (PIP)
+
+We want fast “inside or on boundary” tests.
+
+One convenient approach:
+
+1. Take the convex hull points `H[0..K-1]`.
+2. Find the point `P0` with minimal (x, y). Remove it from the list.
+3. Sort the remaining points by the polar angle around `P0`; that gives an ordered list `[P1, P2, ..., P_{K-1}]` in counterclockwise order.
+4. For any query point `Q`:
+   - Consider the “fan” of triangles that all share apex `P0`: triangles \((P0, P1, P2), (P0, P2, P3), ..., (P0, P_{K-2}, P_{K-1})\).
+   - Binary search by angle (using orientation / cross product) to find indices `l` and `r` such that `Q` lies between rays `P0->Pl` and `P0->Pr`.
+   - Then check if `Q` is inside the triangle `(P0, Pl, Pr)` (using orientation signs). If yes, Q is inside or on boundary.
+
+This gives \(O(\log K)\) point containment queries.
+
+### Step 3: Strict interior test
+
+We must exclude the boundary.
+
+Define `strictly_inside(Q)`:
+
+1. If `pip.contains(Q)` is false ⇒ outside ⇒ return false.
+2. Else, for each edge `(Hi, H_{i+1})` in the hull:
+   - If `Q` is on segment `[Hi, H_{i+1}]` (collinear and within bounding box with epsilon), then Q lies on boundary ⇒ return false.
+3. If no edge contained Q, return true.
+
+This is \(O(K)\), with \(K \le 400\). We will call this only a small number of times per mineral segment (for midpoints of subsegments).
+
+### Step 4: Process each mineral segment
+
+For each given segment \([A, B]\):
+
+1. **Collect all relevant points along [A,B].**
+
+   Let `points = {A, B}` initially.
+
+   For each polygon edge \([P1, P2]\):
+
+   - Check **proper intersection** of segments \([A,B]\) and \([P1,P2]\):
+     - Using orientations:
+       - \(d1 = \text{ccw}(P1, P2, A)\),
+       - \(d2 = \text{ccw}(P1, P2, B)\),
+       - \(d3 = \text{ccw}(A, B, P1)\),
+       - \(d4 = \text{ccw}(A, B, P2)\).
+     - Proper intersection if \(d1 \cdot d2 < 0\) and \(d3 \cdot d4 < 0\).
+   - If they intersect properly:
+     - Compute the intersection of the infinite lines using the cross-product formula.
+     - This intersection also lies on both segments by definition of proper intersection; still we can sanity-check with `point_on_segment(A,B,inter)`.
+     - Add the intersection point to `points`.
+
+   - Additionally handle “touching” cases:
+     - If polygon vertex `P1` lies on segment `[A,B]`, add `P1`.
+     - If segment endpoint `A` lies on edge `[P1,P2]`, add `A`.
+     - If endpoint `B` lies on edge `[P1,P2]`, add `B`.
+
+   These extra checks guarantee we capture all “entry/exit” and “boundary contact” events along the segment.
+
+2. **Sort points along the segment.**
+
+   Each point `X` on the segment can be parameterized as:
+   \[
+   X = A + t(B - A), \quad t \in \mathbb{R}.
+   \]
+
+   So we define a scalar `t` for sorting:
+
+   - If \(|B_x - A_x| > \varepsilon\), use  
+     \( t = \frac{X_x - A_x}{B_x - A_x} \);
+   - Else (vertical segment), use  
+     \( t = \frac{X_y - A_y}{B_y - A_y} \).
+
+   Sort all collected points by this `t` value.
+
+3. **Deduplicate near-identical points.**
+
+   Because of numerical issues, a single geometric event (like a vertex lying on the segment and the segment-edge intersection at exactly that vertex) may create several extremely close but not bit-equal points.
+
+   - Walk through the sorted array; maintain `unique_points`.
+   - For each `p`:
+     - If `unique_points` is empty or `distance(p, unique_points.back()) > eps`, append `p`.
+     - This removes duplicated or nearly duplicated entries.
+
+4. **Classify subsegments and accumulate length.**
+
+   Now `unique_points` is sorted along [A,B] and lists all potential boundary changes.
+
+   For each consecutive pair `p1 = unique_points[i]`, `p2 = unique_points[i+1]`:
+
+   - Compute midpoint `mid = (p1 + p2) / 2`.
+   - Conditions to count `[p1, p2]`:
+     - `pip.contains(p1)` is true (inside or on boundary),
+     - `pip.contains(p2)` is true,
+     - `strictly_inside(mid)` is true (midpoint is in interior, not on boundary).
+   - If all true, add distance `|p2 - p1|` to the answer for this mineral.
+
+   This works because:
+   - Between two consecutive “breakpoints” along a line, the polygon’s relationship (inside/outside/boundary) is constant or changes only at those breakpoints.
+   - If midpoint is inside, the whole subsegment is inside except possibly endpoints; but we already know endpoints are not outside (via `contains`).
+   - Subsegments that lie exactly on polygon edges will have midpoints on the edge, and `strictly_inside(mid)` will be false, so such boundary pieces are not counted.
+
+5. Print the total length with 2 decimal places.
+
+---
+
+4. C++ implementation with detailed comments
+--------------------------------------------
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// We will use double for geometric coordinates.
+using coord_t = double;
+
+// 2D point / vector structure
+struct Point {
+    static constexpr coord_t eps = 1e-6;
+
+    coord_t x, y;
+
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector addition
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    // Vector subtraction
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    // Scalar multiplication
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    // Scalar division
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (z-component of 2D cross)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Lexicographic comparison (for sorting)
+    bool operator<(const Point& p) const {
+        if (x != p.x) return x < p.x;
+        return y < p.y;
+    }
+
+    // Squared length
+    coord_t norm2() const { return x * x + y * y; }
+    // Length
+    coord_t norm() const { return sqrt(norm2()); }
+
+    // Input / output convenience
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+
+    // Orientation test: >0 left turn, <0 right turn, 0 collinear
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if (-eps <= v && v <= eps) return 0;
+        return (v > 0) ? 1 : -1;
+    }
+
+    // Check if point p lies on segment [a,b] (including endpoints)
+    friend bool point_on_segment(const Point& a, const Point& b, const Point& p) {
+        // Must be collinear and within bounding box (with epsilon)
+        if (ccw(a, b, p) != 0) return false;
+        if (p.x < min(a.x, b.x) - eps || p.x > max(a.x, b.x) + eps) return false;
+        if (p.y < min(a.y, b.y) - eps || p.y > max(a.y, b.y) + eps) return false;
+        return true;
+    }
+
+    // Check if p is inside or on edges of triangle abc
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        // Same sign (all >=0 or all <=0) means inside or on edges.
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection of infinite lines (a1,b1) and (a2,b2); assumes not parallel
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        // a1 + (b1-a1) * ((a2-a1) x (b2-a2)) / ((b1-a1) x (b2-a2))
+        coord_t num = (a2 - a1) ^ (b2 - a2);
+        coord_t den = (b1 - a1) ^ (b2 - a2);
+        coord_t t   = num / den;
+        return a1 + (b1 - a1) * t;
+    }
+};
+
+// Simple polygon: just a list of points in order.
+struct Polygon {
+    vector<Point> points;
+
+    Polygon() {}
+    Polygon(const vector<Point>& pts) : points(pts) {}
+
+    int size() const { return (int)points.size(); }
+};
+
+// Convex hull (monotone chain). Inherits Polygon: hull points stored in .points.
+struct ConvexHull : public Polygon {
+    ConvexHull(const vector<Point>& pts) {
+        // Start from all points, sort, and remove duplicates
+        points = pts;
+        sort(points.begin(), points.end());
+        points.erase(
+            unique(points.begin(), points.end(),
+                   [](const Point& a, const Point& b) {
+                       return fabs(a.x - b.x) < Point::eps &&
+                              fabs(a.y - b.y) < Point::eps;
+                   }),
+            points.end()
+        );
+
+        int n = points.size();
+        if (n <= 2) {
+            // Hull is trivial
+            return;
+        }
+
+        vector<Point> lower, upper;
+
+        // Build lower hull
+        for (int i = 0; i < n; ++i) {
+            while (lower.size() >= 2 &&
+                   Point::ccw(lower[lower.size()-2],
+                              lower[lower.size()-1],
+                              points[i]) >= 0) {
+                lower.pop_back();
+            }
+            lower.push_back(points[i]);
+        }
+
+        // Build upper hull
+        for (int i = n - 1; i >= 0; --i) {
+            while (upper.size() >= 2 &&
+                   Point::ccw(upper[upper.size()-2],
+                              upper[upper.size()-1],
+                              points[i]) >= 0) {
+                upper.pop_back();
+            }
+            upper.push_back(points[i]);
+        }
+
+        // Remove last point of each list (duplicate of first of the other)
+        if (!lower.empty()) lower.pop_back();
+        if (!upper.empty()) upper.pop_back();
+
+        // Concatenate lower and upper to get full hull
+        points.clear();
+        points.insert(points.end(), lower.begin(), lower.end());
+        points.insert(points.end(), upper.begin(), upper.end());
+    }
+};
+
+// Helper for point-in-convex-polygon using fan triangulation.
+class PointInConvexPolygon {
+    Point min_point;              // pivot
+    vector<Point> by_angle;       // other hull vertices sorted by angle
+public:
+    Polygon polygon;
+
+    PointInConvexPolygon(const Polygon& poly) : polygon(poly) {
+        prepare();
+    }
+
+    void prepare() {
+        by_angle = polygon.points;
+        // Find point with minimum (x,y)
+        int idx = 0;
+        for (int i = 1; i < (int)by_angle.size(); ++i) {
+            if (by_angle[i].x < by_angle[idx].x - Point::eps ||
+               (fabs(by_angle[i].x - by_angle[idx].x) < Point::eps &&
+                by_angle[i].y < by_angle[idx].y)) {
+                idx = i;
+            }
+        }
+        min_point = by_angle[idx];
+        // Remove it from list
+        by_angle.erase(by_angle.begin() + idx);
+
+        // Sort remaining points by polar angle around min_point
+        sort(by_angle.begin(), by_angle.end(),
+             [&](const Point& a, const Point& b) {
+                 int orient = Point::ccw(min_point, a, b);
+                 if (orient != 0) return orient > 0; // CCW first
+                 // Collinear: closer to min_point first
+                 return (a - min_point).norm2() < (b - min_point).norm2();
+             });
+    }
+
+    // Test if p is inside or on boundary of convex polygon
+    bool contains(const Point& p) const {
+        int k = (int)by_angle.size();
+        if (k < 2) return false; // degenerate (should not happen here)
+
+        int l = 0, r = k - 1;
+        // Binary search for wedge (min_point, by_angle[l], by_angle[r])
+        while (r - l > 1) {
+            int m = (l + r) / 2;
+            if (Point::ccw(min_point, by_angle[m], p) >= 0)
+                l = m;
+            else
+                r = m;
+        }
+
+        return point_in_triangle(min_point, by_angle[l], by_angle[r], p);
+    }
+};
+
+// Global helpers
+int n, m;
+vector<Point> vertices;
+ConvexHull* hull_ptr;
+PointInConvexPolygon* pip_ptr;
+
+// Check proper intersection of segments [a1,a2] and [b1,b2]
+bool segments_intersect(const Point& a1, const Point& a2,
+                        const Point& b1, const Point& b2) {
+    int d1 = Point::ccw(b1, b2, a1);
+    int d2 = Point::ccw(b1, b2, a2);
+    int d3 = Point::ccw(a1, a2, b1);
+    int d4 = Point::ccw(a1, a2, b2);
+    return (d1 * d2 < 0 && d3 * d4 < 0);
+}
+
+// Strictly inside the convex hull (not on boundary)
+bool strictly_inside(const Point& p) {
+    if (!pip_ptr->contains(p)) return false;
+
+    const vector<Point>& H = hull_ptr->points;
+    int k = (int)H.size();
+    for (int i = 0; i < k; ++i) {
+        Point a = H[i];
+        Point b = H[(i + 1) % k];
+        if (Point::point_on_segment(a, b, p)) {
+            return false; // lies on edge -> not strictly inside
+        }
+    }
+    return true;
+}
+
+// Compute length of part of segment [a,b] inside polygon (strict interior)
+coord_t segment_length_inside(const Point& a, const Point& b) {
+    const coord_t eps = Point::eps;
+    vector<Point> pts;
+    pts.push_back(a);
+    pts.push_back(b);
+
+    const vector<Point>& H = hull_ptr->points;
+    int k = (int)H.size();
+
+    // Collect all intersection and boundary points
+    for (int i = 0; i < k; ++i) {
+        Point p1 = H[i];
+        Point p2 = H[(i + 1) % k];
+
+        // Proper intersection between [a,b] and [p1,p2]
+        if (segments_intersect(a, b, p1, p2)) {
+            Point inter = Point::line_line_intersection(a, b, p1, p2);
+            if (Point::point_on_segment(a, b, inter)) {
+                pts.push_back(inter);
+            }
+        }
+
+        // Hull vertex on [a,b]
+        if (Point::point_on_segment(a, b, p1)) {
+            pts.push_back(p1);
+        }
+        // Endpoint a on [p1,p2]
+        if (Point::point_on_segment(p1, p2, a)) {
+            pts.push_back(a);
+        }
+        // Endpoint b on [p1,p2]
+        if (Point::point_on_segment(p1, p2, b)) {
+            pts.push_back(b);
+        }
+    }
+
+    // Sort along segment [a,b] by parameter t
+    sort(pts.begin(), pts.end(), [&](const Point& x, const Point& y) {
+        coord_t tx, ty;
+        if (fabs(b.x - a.x) > eps) {
+            tx = (x.x - a.x) / (b.x - a.x);
+            ty = (y.x - a.x) / (b.x - a.x);
+        } else {
+            tx = (x.y - a.y) / (b.y - a.y);
+            ty = (y.y - a.y) / (b.y - a.y);
+        }
+        return tx < ty;
+    });
+
+    // Deduplicate very close points
+    vector<Point> uniq;
+    for (const Point& p : pts) {
+        if (uniq.empty() || (p - uniq.back()).norm() > eps) {
+            uniq.push_back(p);
+        }
+    }
+
+    coord_t total = 0.0;
+    // Classify each subsegment
+    for (int i = 0; i + 1 < (int)uniq.size(); ++i) {
+        Point p1 = uniq[i];
+        Point p2 = uniq[i + 1];
+        Point mid = (p1 + p2) / 2.0;
+
+        if (pip_ptr->contains(p1) && pip_ptr->contains(p2) &&
+            strictly_inside(mid)) {
+            total += (p2 - p1).norm();
+        }
+    }
+
+    return total;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n;
+    vertices.resize(n);
+    for (int i = 0; i < n; ++i) cin >> vertices[i];
+
+    // Build convex hull and point-in-convex-polygon structure
+    hull_ptr = new ConvexHull(vertices);
+    pip_ptr  = new PointInConvexPolygon(*hull_ptr);
+
+    cin >> m;
+    cout.setf(ios::fixed);
+    cout << setprecision(2);
+
+    for (int i = 0; i < m; ++i) {
+        Point a, b;
+        cin >> a >> b;
+        coord_t ans = segment_length_inside(a, b);
+        cout << ans << '\n';
+    }
+
+    return 0;
+}
+```
+
+---
+
+5. Python implementation with detailed comments
+-----------------------------------------------
+
+```python
+import sys
+import math
+
+EPS = 1e-6
+
+class Point:
+    """2D point / vector with basic operations."""
+
+    __slots__ = ("x", "y")
+
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    # Vector addition
+    def __add__(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+    # Vector subtraction
+    def __sub__(self, other):
+        return Point(self.x - other.x, self.y - other.y)
+
+    # Scalar multiplication or dot product
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return Point(self.x * other, self.y * other)
+        # Dot product if multiplying by another Point
+        return self.x * other.x + self.y * other.y
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    # Scalar division
+    def __truediv__(self, c):
+        return Point(self.x / c, self.y / c)
+
+    # Cross product z-component (2D)
+    def cross(self, other):
+        return self.x * other.y - self.y * other.x
+
+    def norm2(self):
+        return self.x * self.x + self.y * self.y
+
+    def norm(self):
+        return math.sqrt(self.norm2())
+
+    # For lexicographic sort by (x,y)
+    def __lt__(self, other):
+        if abs(self.x - other.x) > EPS:
+            return self.x < other.x
+        return self.y < other.y
+
+
+def ccw(a, b, c):
+    """Orientation test: >0 left, <0 right, 0 collinear."""
+    v = (b - a).cross(c - a)
+    if -EPS <= v <= EPS:
+        return 0
+    return 1 if v > 0 else -1
+
+
+def point_on_segment(a, b, p):
+    """Check if p lies on the segment [a,b] (including endpoints)."""
+    if ccw(a, b, p) != 0:
+        return False
+    if p.x < min(a.x, b.x) - EPS or p.x > max(a.x, b.x) + EPS:
+        return False
+    if p.y < min(a.y, b.y) - EPS or p.y > max(a.y, b.y) + EPS:
+        return False
+    return True
+
+
+def point_in_triangle(a, b, c, p):
+    """Check if p is inside or on the edges of triangle abc."""
+    d1 = ccw(a, b, p)
+    d2 = ccw(b, c, p)
+    d3 = ccw(c, a, p)
+    return (d1 >= 0 and d2 >= 0 and d3 >= 0) or (d1 <= 0 and d2 <= 0 and d3 <= 0)
+
+
+def line_line_intersection(a1, b1, a2, b2):
+    """Intersection of infinite lines (a1,b1) and (a2,b2). Assumes non-parallel."""
+    num = (a2 - a1).cross(b2 - a2)
+    den = (b1 - a1).cross(b2 - a2)
+    t = num / den
+    return a1 + (b1 - a1) * t
+
+
+class ConvexHull:
+    """Monotone chain convex hull. Stores hull points in self.points."""
+
+    def __init__(self, points):
+        # Sort and remove near-duplicates
+        pts = sorted(points, key=lambda p: (p.x, p.y))
+        uniq = []
+        for p in pts:
+            if not uniq or abs(p.x - uniq[-1].x) > EPS or abs(p.y - uniq[-1].y) > EPS:
+                uniq.append(p)
+        pts = uniq
+        n = len(pts)
+
+        if n <= 2:
+            self.points = pts
+            return
+
+        # Lower hull
+        lower = []
+        for p in pts:
+            while len(lower) >= 2 and ccw(lower[-2], lower[-1], p) >= 0:
+                lower.pop()
+            lower.append(p)
+
+        # Upper hull
+        upper = []
+        for p in reversed(pts):
+            while len(upper) >= 2 and ccw(upper[-2], upper[-1], p) >= 0:
+                upper.pop()
+            upper.append(p)
+
+        # Remove last point (duplicate of first)
+        lower.pop()
+        upper.pop()
+
+        self.points = lower + upper
+
+
+class PointInConvexPolygon:
+    """Uses fan triangulation around min point to test point inclusion."""
+
+    def __init__(self, polygon):
+        self.polygon = polygon
+        pts = polygon.points[:]
+        if not pts:
+            self.min_point = None
+            self.by_angle = []
+            return
+
+        # Find point with minimal (x,y)
+        min_idx = 0
+        for i in range(1, len(pts)):
+            if (pts[i].x < pts[min_idx].x - EPS or
+               (abs(pts[i].x - pts[min_idx].x) <= EPS and pts[i].y < pts[min_idx].y)):
+                min_idx = i
+        self.min_point = pts[min_idx]
+        del pts[min_idx]
+
+        # Sort remaining by polar angle around min_point
+        # We can simply use atan2; no 3 points are collinear, so it's safe.
+        mp = self.min_point
+        pts.sort(key=lambda p: math.atan2(p.y - mp.y, p.x - mp.x))
+        self.by_angle = pts
+
+    def contains(self, p):
+        """Return True if p is inside or on boundary of convex polygon."""
+        pts = self.by_angle
+        if not pts or self.min_point is None:
+            return False
+        k = len(pts)
+        if k < 2:
+            return False
+
+        l, r = 0, k - 1
+        mp = self.min_point
+        # Binary search for wedge (mp, pts[l], pts[r]) containing p
+        while r - l > 1:
+            m = (l + r) // 2
+            if ccw(mp, pts[m], p) >= 0:
+                l = m
+            else:
+                r = m
+
+        return point_in_triangle(mp, pts[l], pts[r], p)
+
+
+def segments_intersect(a1, a2, b1, b2):
+    """Proper intersection of segments [a1,a2] and [b1,b2]."""
+    d1 = ccw(b1, b2, a1)
+    d2 = ccw(b1, b2, a2)
+    d3 = ccw(a1, a2, b1)
+    d4 = ccw(a1, a2, b2)
+    return d1 * d2 < 0 and d3 * d4 < 0
+
+
+def strictly_inside(p, hull, pip):
+    """Strict interior of hull (not on boundary)."""
+    if not pip.contains(p):
+        return False
+    H = hull.points
+    k = len(H)
+    for i in range(k):
+        a = H[i]
+        b = H[(i + 1) % k]
+        if point_on_segment(a, b, p):
+            return False
+    return True
+
+
+def segment_length_inside(a, b, hull, pip):
+    """Return length of part of [a,b] lying strictly inside hull."""
+    pts = [a, b]
+    H = hull.points
+    k = len(H)
+
+    # Collect intersection / boundary points
+    for i in range(k):
+        p1 = H[i]
+        p2 = H[(i + 1) % k]
+
+        # Proper intersection between [a,b] and edge [p1,p2]
+        if segments_intersect(a, b, p1, p2):
+            inter = line_line_intersection(a, b, p1, p2)
+            if point_on_segment(a, b, inter):
+                pts.append(inter)
+
+        # Vertex on segment
+        if point_on_segment(a, b, p1):
+            pts.append(p1)
+        # Endpoint a on edge
+        if point_on_segment(p1, p2, a):
+            pts.append(a)
+        # Endpoint b on edge
+        if point_on_segment(p1, p2, b):
+            pts.append(b)
+
+    # Parameterize and sort along the segment
+    ax, ay = a.x, a.y
+    bx, by = b.x, b.y
+    if abs(bx - ax) > EPS:
+        def key_t(p):
+            return (p.x - ax) / (bx - ax)
+    else:
+        def key_t(p):
+            return (p.y - ay) / (by - ay)
+
+    pts.sort(key=key_t)
+
+    # Deduplicate near-identical points
+    uniq = []
+    for p in pts:
+        if not uniq:
+            uniq.append(p)
+        else:
+            dx = p.x - uniq[-1].x
+            dy = p.y - uniq[-1].y
+            if dx * dx + dy * dy > EPS * EPS:
+                uniq.append(p)
+
+    total = 0.0
+    # Classify subsegments between consecutive points
+    for i in range(len(uniq) - 1):
+        p1 = uniq[i]
+        p2 = uniq[i + 1]
+        mid = Point((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5)
+        if pip.contains(p1) and pip.contains(p2) and strictly_inside(mid, hull, pip):
+            dx = p2.x - p1.x
+            dy = p2.y - p1.y
+            total += math.hypot(dx, dy)
+
+    return total
+
+
+def main():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+
+    n = int(next(it))
+    vertices = []
+    for _ in range(n):
+        x = float(next(it))
+        y = float(next(it))
+        vertices.append(Point(x, y))
+
+    hull = ConvexHull(vertices)
+    pip = PointInConvexPolygon(hull)
+
+    m = int(next(it))
+    out_lines = []
+
+    for _ in range(m):
+        ax = float(next(it))
+        ay = float(next(it))
+        bx = float(next(it))
+        by = float(next(it))
+        a = Point(ax, ay)
+        b = Point(bx, by)
+        length = segment_length_inside(a, b, hull, pip)
+        out_lines.append(f"{length:.2f}")
+
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This Python code follows the same geometric logic as the C++ version and should pass within the given constraints.

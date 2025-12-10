@@ -1,0 +1,458 @@
+1. **Abridged problem statement**
+
+- There are \(N\) cities, \(M\) airline companies.
+- Between every pair of cities \(i \neq j\) there is exactly one direct flight, owned by exactly one company (numbered \(1..M\)).
+- The president wants to choose some companies; all their flights become free.
+- Using only free flights, any city must be reachable from any other in at most 3 flights (i.e. path length \(\le 3\)).
+- Due to antitrust rules, he may buy **at most \(\lfloor (M+1)/2 \rfloor\)** companies.
+- Output:
+  - If possible: how many and which company indices to buy (any valid set).
+  - If impossible: output `-1`.
+
+---
+
+2. **Detailed editorial**
+
+### 2.1. Reformulation as graph problem
+
+- Cities: vertices \(1..N\).
+- Each unordered pair \(\{i, j\}\) has exactly one edge labeled by a company color \(c(i,j) \in \{1..M\}\).
+- If we choose a subset \(S \subseteq \{1..M\}\), all edges whose color is in \(S\) are “free”.
+- Condition: In the subgraph induced by free edges, the shortest path between every pair of vertices has length \(\le 3\).
+- Restriction: \(|S| \le \lfloor (M+1)/2 \rfloor\).
+
+We must find any such \(S\), or say that none exists.
+
+### 2.2. Key structural insight: 2-color case is always solvable
+
+First, shrink the problem to **2 colors** (say black and white). Assume:
+
+- Every edge is either black or white.
+- We want to find a color such that, in the subgraph containing only edges of that color, the distance between any two vertices is at most 3.
+
+**Claim (crucial lemma).** For any complete graph on \(N \ge 1\) vertices whose edges are colored black/white, **at least one color induces a graph where every pair of vertices has graph distance \(\le 3\)**.
+
+Equivalently: you cannot have both:
+- There exist vertices \(u_b, v_b\) such that their shortest black-only path is > 3.
+- There exist vertices \(u_w, v_w\) such that their shortest white-only path is > 3.
+
+Sketch of reasoning (as in the code comments):
+
+1. For \(N = 4\):
+   - Consider an arbitrary 2-coloring of all \(\binom{4}{2} = 6\) edges.
+   - It's known (and can be checked exhaustively, or via the complement argument below) that at least one of the two color graphs has diameter \(\le 3\).
+   - Complement argument: For any (uncolored) simple graph \(H\) on 4 vertices, either \(H\) or its complement \(\overline{H}\) is connected, and in any connected graph on 4 vertices, shortest-path distance between any two vertices is at most 3 (because any simple path can use at most 3 edges).
+
+2. For general \(N\):
+   - Suppose for contradiction that **both** monochromatic graphs (black and white) contain at least one pair of vertices at distance > 3.
+   - Let \(u_b, v_b\) be a pair at distance > 3 in black.
+   - Let \(u_w, v_w\) be a pair at distance > 3 in white.
+   - Consider the induced subgraph on the 4 vertices \(\{u_b, v_b, u_w, v_w\}\). (Some of these may coincide but then distances can only get smaller, so we can treat the problematic pairs as distinct.)
+   - On these 4 vertices, restrict to black edges only; the distance between \(u_b\) and \(v_b\) is still > 3.
+   - Similarly, in white-only edges, the distance between \(u_w\) and \(v_w\) is still > 3.
+   - But this contradicts the \(N = 4\) lemma: on 4 vertices, it is impossible that **both** colors have diameter > 3.
+   - Thus the assumption is false, and at least one color must yield diameter \(\le 3\).
+
+So, with 2 colors, we are assured that there exists at least one “good” color whose subgraph has all pairwise distances \(\le 3\).
+
+### 2.3. Reducing M colors to 2 colors via parity
+
+We have \(M\) colors. The constraint on number of companies:
+
+\[
+|S| \le \left\lfloor\frac{M + 1}{2}\right\rfloor.
+\]
+
+Observe:
+- Number of odd indices in \(1..M\) is \(\lceil M/2 \rceil\).
+- Number of even indices in \(1..M\) is \(\lfloor M/2 \rfloor\).
+- \(\lfloor(M+1)/2\rfloor = \lceil M/2 \rceil\).
+  - For odd \(M = 2t+1\): both sides = \(t+1\).
+  - For even \(M = 2t\): both sides = \(t\).
+
+So:
+- You can choose at most \(\lfloor(M+1)/2\rfloor\) companies.
+- That number equals the size of the larger parity class (odd or even).
+- Therefore, either all odd colors or all even colors **fit** within the limit.
+
+We now **map the multi-color problem to a 2-color problem**:
+
+- For each edge color \(c\):
+  - Replace it by \(c \bmod 2\):
+    - Parity 1 → “odd color” (we’ll treat as black, say).
+    - Parity 0 → “even color” (white).
+- Now each edge has one of 2 parities: 0 or 1.
+
+By the lemma, among parity 0 and parity 1, **at least one parity’s subgraph has diameter \(\le 3\)**.
+
+We need to find which parity works.
+
+### 2.4. Checking a parity with Floyd–Warshall
+
+Let’s fix the representation:
+
+- After `G[i][j] %= 2`, we have an \(N \times N\) matrix where:
+  - `G[i][j] == 0` means “edge \(i-j\) has even company index”.
+  - `G[i][j] == 1` means “edge \(i-j\) has odd company index”.
+
+We’d like a function that checks if *even* edges alone provide diameter \(\le 3\). That is exactly `solve_even()`:
+
+1. Build `dist` matrix (`n x n`), initialized to a large “infinite” value, say `1e9`.
+2. Set `dist[i][i] = 0` for all `i`.
+3. For each pair `(i, j)` with `i < j`:
+   - If `G[i][j] == 0` (even parity):
+     - Set `dist[i][j] = dist[j][i] = 1` (direct free edge).
+4. Run Floyd–Warshall:
+   - For all `k, i, j`, relax:
+     - `dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j])`.
+5. Finally, check that for all `i, j`, `dist[i][j] <= 3`. If any is > 3, then even parity **fails** (not good enough), return false. Otherwise return true.
+
+So:
+
+- If `solve_even()` returns `true`, then using all **even** companies satisfies diameter ≤ 3.
+- If `solve_even()` returns `false`, then even companies alone are not enough; but by the lemma, this implies that **odd** companies alone must work.
+
+### 2.5. Choosing actual company indices and respecting the limit
+
+We must output actual company numbers (1..M) to buy.
+
+Strategy used in the solution:
+
+```cpp
+vector<int> ans;
+for(int i = 1 + solve_even(); i <= k; i += 2) {
+    ans.push_back(i);
+}
+```
+
+Analyze:
+
+- If `solve_even()` is `true`:
+  - `1 + solve_even()` = 2.
+  - Loop: `i = 2, 4, 6, ..., ≤ M`.
+  - So we choose all **even** companies.
+- If `solve_even()` is `false`:
+  - `1 + solve_even()` = 1.
+  - Loop: `i = 1, 3, 5, ..., ≤ M`.
+  - So we choose all **odd** companies.
+
+Why is that always within the allowed limit?
+
+- If `solve_even()` is true, then the number of even indices is `floor(M/2) ≤ floor((M+1)/2)`, OK.
+- If `solve_even()` is false, then by lemma, odds must work; their count is `ceil(M/2) = floor((M+1)/2)`, exactly the maximum allowed.
+
+Thus the solution simply:
+1. Reduces all colors to parity (`G[i][j] %= 2`).
+2. Uses Floyd–Warshall to test whether parity 0 (even indices) suffices.
+3. If yes, chooses the even companies; if not, chooses the odd ones.
+4. Prints the count and list.
+
+Crucially, the lower-level 2-color lemma guarantees that **one of the two parities always works**, so we never print `-1`.
+
+Complexity:
+- `N ≤ 200`.
+- Floyd–Warshall: \(O(N^3) = 8\cdot 10^6\) operations, easily fast enough.
+- Memory: `O(N^2)` = 40,000 ints, well within limits.
+
+---
+
+3. **Commented C++ solution (original code with detailed line-by-line comments)**
+
+```cpp
+#include <bits/stdc++.h>   // Includes almost all standard C++ headers
+
+using namespace std;
+
+// Overload operator<< for pair so it can be printed easily
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pair so it can be read easily
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> to read an entire vector<T>
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {     // for each element by reference
+        in >> x;          // read it
+    }
+    return in;
+};
+
+// Overload operator<< to print an entire vector<T>
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {      // for each element (copy is fine for printing)
+        out << x << ' ';  // print element followed by a space
+    }
+    return out;
+};
+
+// Global variables for number of cities (n) and companies (k = M)
+int n, k;
+
+// Adjacency matrix G:
+// G[i][j] initially = company index (1..k) of edge i-j, 0 on diagonal.
+// After preprocessing, G[i][j] will be G[i][j] % 2 (0 = even, 1 = odd).
+vector<vector<int>> G;
+
+// Read input from stdin into globals n, k, and G
+void read() {
+    cin >> n >> k;                     // read number of cities and companies
+    G.assign(n, vector<int>(n, 0));    // initialize n x n matrix with zeros
+    cin >> G;                          // read the matrix (uses overloaded >>)
+}
+
+// Check whether using only even-parity companies gives diameter <= 3
+bool solve_even() {
+    // dist[i][j] = shortest number of even edges from i to j
+    // initialize with large "infinity" (1e9)
+    vector<vector<int>> dist(n, vector<int>(n, (int)1e9));
+
+    // distance from a node to itself is 0
+    for(int i = 0; i < n; i++) {
+        dist[i][i] = 0;
+    }
+
+    // For each pair of distinct vertices (i, j), if G[i][j] == 0,
+    // it means the edge i-j has even company index (after modulo 2).
+    // Then the cost of going directly from i to j using even edges is 1.
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            if(G[i][j] == 0) {    // even company index edge
+                dist[i][j] = 1;
+                dist[j][i] = 1;  // undirected graph: symmetric distances
+            }
+        }
+    }
+
+    // Floyd–Warshall algorithm to compute all-pairs shortest paths
+    for(int k = 0; k < n; k++) {           // intermediate vertex
+        for(int i = 0; i < n; i++) {       // source
+            for(int j = 0; j < n; j++) {   // destination
+                // If going i -> k -> j is shorter, update dist[i][j].
+                // (Note: with our initialization, unreachable pairs stay large.)
+                dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j]);
+            }
+        }
+    }
+
+    // After Floyd–Warshall, check if any distance > 3 exists.
+    // If so, using only even edges is not enough to ensure diameter <= 3.
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            if(dist[i][j] > 3) {
+                return false;   // not all pairs within 3 steps
+            }
+        }
+    }
+    return true;               // all pairs at distance <= 3 via even edges
+}
+
+// Main solving procedure
+void solve() {
+    // High-level idea (summarized in comments here):
+    //
+    // 1. Reduce M colors to 2 colors via parity: "even" vs "odd".
+    // 2. Prove that for any 2-coloring of edges of a complete graph,
+    //    at least one color induces diameter <= 3.
+    // 3. So either all-even edges or all-odd edges work.
+    // 4. We test "even" by Floyd–Warshall, and if that fails, we use "odd".
+    // 5. Choose the corresponding real company indices (either all evens or all odds).
+    // 6. This automatically respects the limit |S| <= (M+1)/2.
+
+    // Step 1: Reduce G[i][j] to its parity (0 for even, 1 for odd).
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            G[i][j] = G[i][j] % 2;   // now G is effectively a 2-color matrix
+        }
+    }
+
+    // ans will store the selected company indices
+    vector<int> ans;
+
+    // Determine which parity to use:
+    // - If solve_even() == true, we pick all even companies: 2,4,6,...
+    // - If solve_even() == false, we pick all odd companies: 1,3,5,...
+    //
+    // Expression (1 + solve_even()):
+    //   - If true (1), start = 2.
+    //   - If false (0), start = 1.
+    for(int i = 1 + solve_even(); i <= k; i += 2) {
+        ans.push_back(i);
+    }
+
+    // Output result:
+    // First the count
+    cout << ans.size() << endl;
+    // Then the list of chosen companies separated by spaces
+    cout << ans << endl;   // uses overloaded operator<< for vector
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // speed up C++ I/O
+    cin.tie(nullptr);                 // untie cin from cout
+
+    int T = 1;         // number of test cases
+    // cin >> T;       // uncomment if multiple test cases are present
+
+    for(int test = 1; test <= T; test++) {
+        read();        // read input for current test
+        // cout << "Case #" << test << ": "; // optional prefix
+        solve();       // solve and print answer
+    }
+
+    return 0;          // successful program termination
+}
+```
+
+---
+
+4. **Python solution with detailed comments**
+
+```python
+import sys
+
+# We will implement the same logic as the C++ code, but in Python.
+# Steps:
+# 1) Read N (cities) and M (companies).
+# 2) Read the matrix of company indices.
+# 3) Reduce all entries modulo 2 (parity: 0 = even, 1 = odd).
+# 4) Run Floyd–Warshall using only even edges to test if "even" parity works.
+# 5) If it works, output all even company indices, else all odd indices.
+
+def read_ints():
+    """Read a line and parse it into a list of ints."""
+    return list(map(int, sys.stdin.readline().split()))
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    # Read N and M
+    n = int(next(it))  # number of cities
+    m = int(next(it))  # number of companies
+
+    # Read the N x N matrix G of company indices
+    # G[i][j] is in 0..m, with 0 on diagonal
+    G = [[0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            G[i][j] = int(next(it))
+
+    # Reduce edges to parity: 0 => even company index, 1 => odd index
+    # We do this in-place to reuse G for parity matrix.
+    for i in range(n):
+        for j in range(n):
+            G[i][j] %= 2
+
+    # Function to check if using ONLY even edges (parity 0) gives
+    # graph diameter <= 3 among all vertices.
+    def solve_even():
+        INF = 10**9
+        # Initialize distance matrix
+        dist = [[INF] * n for _ in range(n)]
+
+        # Distance from node to itself is 0
+        for i in range(n):
+            dist[i][i] = 0
+
+        # For edges with even company index (parity 0),
+        # set distance between the endpoints to 1.
+        for i in range(n):
+            for j in range(i + 1, n):
+                if G[i][j] == 0:  # even edge
+                    dist[i][j] = 1
+                    dist[j][i] = 1
+
+        # Floyd–Warshall: compute all-pairs shortest paths
+        for k in range(n):
+            # Standard triple loop: i, j, k
+            # Using local variables for small speed-up in Python.
+            dk = dist[k]
+            for i in range(n):
+                di = dist[i]
+                ik = di[k]
+                if ik == INF:
+                    # If i cannot reach k, no need to use k as intermediate
+                    continue
+                for j in range(n):
+                    # Try to relax dist[i][j] via k
+                    alt = ik + dk[j]
+                    if alt < di[j]:
+                        di[j] = alt
+
+        # Check if any pair exceeds distance 3
+        for i in range(n):
+            for j in range(n):
+                if dist[i][j] > 3:
+                    return False
+        return True
+
+    # Decide whether even parity works
+    even_ok = solve_even()
+
+    # Prepare list of companies to buy:
+    # - If even_ok: buy all even companies (2,4,...)
+    # - Otherwise: buy all odd companies (1,3,...)
+    ans = []
+    if even_ok:
+        start = 2
+    else:
+        start = 1
+
+    for company in range(start, m + 1, 2):
+        ans.append(company)
+
+    # Output answer.
+    # Theoretically, the problem allows -1 if impossible,
+    # but by the 2-color lemma, one parity always works, so we never output -1.
+    out_lines = []
+    out_lines.append(str(len(ans)))
+    if ans:
+        out_lines.append(" ".join(map(str, ans)))
+    else:
+        # Edge case: if m=0 (not possible per constraints, but to be safe)
+        out_lines.append("")
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+5. **Compressed editorial**
+
+- Interpret flights as edges of a complete graph on \(N\) vertices, each edge colored by its owning company (1..M).
+- Choosing some companies = taking all edges whose color is in a chosen set. We need this subgraph to have distance ≤ 3 between every pair of cities.
+- Let’s reduce colors to **parity**:
+  - Recolor each edge by \(c(i,j) \bmod 2\) → “even” vs “odd”.
+  - We can buy either all even-index companies or all odd-index companies; each set’s size is at most \(\lfloor(M+1)/2\rfloor\), exactly the allowed limit.
+
+Core lemma (2-color case):
+- In any complete graph whose edges are colored with 2 colors, at least one color induces a graph of diameter ≤ 3.
+- Proof sketch: For 4 vertices it's true by graph/complement argument. For general \(N\), if both colors had a pair at distance > 3, those 4 vertices (the two bad pairs) would contradict the \(N=4\) case.
+
+Algorithm:
+1. Read \(N, M\) and matrix of company indices.
+2. Replace each company index by its parity (`%2`).
+3. Test “even” edges:
+   - Build an adjacency matrix with cost 1 for even edges, ∞ otherwise.
+   - Run Floyd–Warshall to get all-pairs shortest paths.
+   - If any distance > 3 → even fails, else even works.
+4. If even works, output all even indices `2,4,...`; else output all odd indices `1,3,...`.
+
+Complexity:
+- Floyd–Warshall: \(O(N^3)\) with \(N ≤ 200\) → easily fits time.
+- Memory: \(O(N^2)\).
+
+Because one parity always works by the lemma, a solution always exists; we never print `-1`.

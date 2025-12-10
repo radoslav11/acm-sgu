@@ -1,0 +1,652 @@
+1. **Abridged problem statement**
+
+You are given up to 50 spheres in 3D space (center and radius), a starting point of a laser ray, and another point that defines its initial direction. The ray:
+
+- travels in straight lines,
+- reflects perfectly on sphere surfaces (angle of incidence = angle of reflection),
+- may hit the same sphere multiple times,
+- is considered to have reflected even if it only grazes a sphere tangentially.
+
+The ray starts strictly outside all spheres. Simulate the ray and output the sequence of indices of the spheres it hits, in order. If it reflects more than 10 times, output only the first 10 indices followed by `etc.`.
+
+
+
+2. **Detailed editorial**
+
+### 2.1 Geometry model
+
+We work in 3D with:
+
+- Points and vectors represented as `(x, y, z)`.
+- A ray defined by:
+  \[
+  P(t) = O + t\cdot D, \quad t \ge 0
+  \]
+  where:
+  - `O` is the current origin (point where the ray currently starts),
+  - `D` is the current direction vector (we normalize it for numeric stability).
+
+Each sphere `i` is defined by:
+
+- center `C_i = (x_i, y_i, z_i)`
+- radius `r_i`
+
+We need to:
+
+1. Find which sphere is hit next by the current ray.
+2. Compute the hit point.
+3. Compute the reflection direction at that point.
+4. Move to that point and repeat for up to 11 hits (we simulate at most 11 to know if >10 happened).
+
+Important subtlety: after hitting a sphere, the ray could immediately intersect the same sphere again if we start the new ray from inside or numerically on the surface. To avoid counting the same surface as an immediate second hit, we skip the last-hit sphere in the next search.
+
+### 2.2 Ray–sphere intersection
+
+Sphere equation:
+
+\[
+|P - C|^2 = r^2
+\]
+
+Ray: \(P(t) = O + tD\).
+
+Let \(V = O - C\). Plug in:
+
+\[
+|O + tD - C|^2 = r^2 \\
+|V + tD|^2 = r^2 \\
+(V + tD)\cdot (V + tD) = r^2 \\
+V\cdot V + 2t (V\cdot D) + t^2 (D\cdot D) = r^2
+\]
+
+Rearrange to:
+
+\[
+a t^2 + b t + c = 0
+\]
+where
+- \(a = D\cdot D\)
+- \(b = 2 (V\cdot D)\)
+- \(c = V\cdot V - r^2\)
+
+Discriminant:
+
+\[
+\Delta = b^2 - 4ac
+\]
+
+Cases:
+
+- If \(\Delta < 0\): no intersection.
+- If \(\Delta = 0\): tangent (one intersection); we must treat this as a valid hit.
+- If \(\Delta > 0\): two intersection parameters:
+
+  \[
+  t_1 = \frac{-b - \sqrt{\Delta}}{2a}, \quad t_2 = \frac{-b + \sqrt{\Delta}}{2a}
+  \]
+
+We want the **smallest positive** `t` (the nearest point in front of the ray origin):
+
+- If `t1 > EPS` (EPS ~ 1e-6), return `t1`.
+- Else if `t2 > EPS`, return `t2`.
+- Else, no valid positive intersection.
+
+We also clamp the discriminant with `max(0, disc)` before `sqrt` to guard against tiny negative values due to floating-point error.
+
+**Tangents:** If ray just touches a sphere, `Δ` is ~0, so both `t1` and `t2` are equal (within numeric precision) and one of them will be > EPS; we treat that as a hit.
+
+### 2.3 Choosing the next sphere
+
+For each step:
+
+- Iterate over all spheres `i` (0..n-1).
+- Skip `i == last_hit` (the sphere just hit in the previous step), to avoid immediately re-intersecting the same surface due to numerical issues.
+- Compute `t = ray_sphere_intersect(origin, dir, sphere[i])`.
+- Only consider `t > 0`.
+- Track the minimum `t` and its sphere index.
+
+If no sphere has a positive intersection parameter, the ray escapes, and we stop.
+
+### 2.4 Computing reflection
+
+At the hit point:
+
+- Hit point:
+  \[
+  P = O + tD
+  \]
+- Surface normal at that point:
+
+  \[
+  N = \frac{P - C}{\|P - C\|}
+  \]
+
+  (A unit vector pointing from the sphere center to the hit point.)
+
+For incoming direction `D` (normalized), reflection direction `R` is given by:
+
+\[
+R = D - 2(D\cdot N) N
+\]
+
+We normalize `R` again to reduce error accumulation.
+
+Then we set:
+
+- `origin = P`
+- `dir = R`
+
+and repeat.
+
+### 2.5 Simulation details
+
+We simulate up to 11 bounces:
+
+- We want to output up to the first 10 hits. 
+- We simulate one extra step (11th hit) to check if there were more than 10. This is equivalent in effect to: simulate while `step < 11`.
+
+For each found hit, store `(sphere_index + 1)` (1-based indexing) in `hits`.
+
+After the loop:
+
+- If `len(hits) <= 10`, print all hit indices separated by spaces.
+- If `len(hits) > 10`, print the first 10 indices then ` etc.`.
+
+### 2.6 Edge cases and numeric issues
+
+- Starting point is guaranteed to be outside any sphere, so initial intersections always have `t > 0` if intersection exists.
+- Using an `EPS` of `1e-6` avoids counting an intersection behind the origin (`t ≈ 0` or very small negative) as a forward hit.
+- We use double precision (`double`) everywhere.
+- We normalize direction vectors whenever they are created/updated.
+- We do not special-case tangents; the quadratic math already treats them as hits.
+
+### 2.7 Complexity
+
+Each step we:
+
+- Intersect the ray with all `n` spheres: `O(n)` operations.
+- We simulate at most 11 steps, so complexity is `O(11n) = O(n)` with `n ≤ 50`, easily within time limits.
+
+Memory usage is negligible.
+
+
+
+3. **Commented C++ solution**
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard headers; convenient for contests
+
+using namespace std;
+
+// Overload operator<< for pair<T1,T2> to print "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload operator>> for pair<T1,T2> to read "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload operator>> for vector<T> to read all elements in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;                 // Uses existing operator>> for element type
+    }
+    return in;
+};
+
+// Overload operator<< for vector<T> to print all elements separated by space
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Small epsilon for floating point comparisons
+const double EPS = 1e-6;
+
+// 3D vector / point structure
+struct Vec3 {
+    double x, y, z;
+
+    // Constructor with default values (0,0,0)
+    Vec3(double x = 0, double y = 0, double z = 0) : x(x), y(y), z(z) {}
+
+    // Vector addition
+    Vec3 operator+(const Vec3& o) const {
+        return Vec3(x + o.x, y + o.y, z + o.z);
+    }
+
+    // Vector subtraction
+    Vec3 operator-(const Vec3& o) const {
+        return Vec3(x - o.x, y - o.y, z - o.z);
+    }
+
+    // Scalar multiplication: v * k
+    Vec3 operator*(double k) const {
+        return Vec3(x * k, y * k, z * k);
+    }
+
+    // Dot product with another vector
+    double dot(const Vec3& o) const {
+        return x * o.x + y * o.y + z * o.z;
+    }
+
+    // Euclidean norm (length) of the vector
+    double norm() const {
+        return sqrt(dot(*this)); // sqrt(x^2 + y^2 + z^2)
+    }
+
+    // Return normalized (unit length) vector
+    Vec3 normalize() const {
+        double n = norm();
+        return Vec3(x / n, y / n, z / n);
+    }
+};
+
+// Sphere: center and radius
+struct Sphere {
+    Vec3 center;
+    double r;
+};
+
+// Global variables
+int n;                      // number of spheres
+vector<Sphere> spheres;     // list of spheres
+Vec3 origin, dir;           // current ray origin and direction (unit vector)
+
+// Compute intersection of ray with sphere
+double ray_sphere_intersect(Vec3 O, Vec3 D, const Sphere& s) {
+    // Ray: P(t) = O + t*D, t >= 0
+    // Sphere: |P - C|^2 = r^2
+    // Let V = O - C, then we solve quadratic:
+    //   a*t^2 + b*t + c = 0
+    // Where:
+    //   a = D.D
+    //   b = 2 * (V.D)
+    //   c = V.V - r^2
+    // We return the smallest t > EPS, or -1 if no valid intersection.
+
+    Vec3 V = O - s.center;       // Vector from sphere center to ray origin
+    double a = D.dot(D);         // Should be 1 if D is normalized, but we compute generally
+    double b = 2 * V.dot(D);
+    double c = V.dot(V) - s.r * s.r;
+
+    double disc = b * b - 4 * a * c;  // Discriminant
+
+    // If discriminant < 0 (with small tolerance), no real intersection
+    if(disc < -EPS) {
+        return -1;
+    }
+
+    // Guard against tiny negative due to precision; clamp to zero
+    disc = sqrt(max(0.0, disc));
+
+    // Two candidate solutions
+    double t1 = (-b - disc) / (2 * a);
+    double t2 = (-b + disc) / (2 * a);
+
+    // We want the smallest positive t (greater than EPS)
+    if(t1 > EPS) {
+        return t1;
+    }
+    if(t2 > EPS) {
+        return t2;
+    }
+
+    // No positive intersection
+    return -1;
+}
+
+// Compute reflection of direction D about normal N
+Vec3 reflect(Vec3 D, Vec3 N) {
+    // Reflection formula:
+    // R = D - 2(D·N)N
+    return D - N * (2 * D.dot(N));
+}
+
+// Read input
+void read() {
+    cin >> n;                     // number of spheres
+    spheres.resize(n);
+
+    // Read each sphere's center and radius
+    for(int i = 0; i < n; i++) {
+        cin >> spheres[i].center.x >> spheres[i].center.y >>
+            spheres[i].center.z >> spheres[i].r;
+    }
+
+    // Read two points:
+    // (x1,y1,z1) = starting point of ray
+    // (x2,y2,z2) = another point on ray, defines direction
+    double x1, y1, z1, x2, y2, z2;
+    cin >> x1 >> y1 >> z1 >> x2 >> y2 >> z2;
+
+    // Set origin
+    origin = Vec3(x1, y1, z1);
+
+    // Direction = (second point - first point), then normalize
+    dir = Vec3(x2 - x1, y2 - y1, z2 - z1).normalize();
+}
+
+// Core simulation and output
+void solve() {
+    // We simulate the path of the ray as it reflects from spheres.
+
+    vector<int> hits;        // list of indices of spheres hit (1-based)
+    int last_hit = -1;       // index of most recently hit sphere (0-based), -1 = none
+
+    // Simulate up to 11 interactions
+    for(int step = 0; step < 11; step++) {
+        double best_t = 1e18;  // large initial "infinite" distance
+        int best_sphere = -1;  // index of sphere with closest intersection
+
+        // For every sphere, find intersection with current ray
+        for(int i = 0; i < n; i++) {
+            // Skip the last hit sphere to avoid immediately re-hitting
+            if(i == last_hit) {
+                continue;
+            }
+
+            double t = ray_sphere_intersect(origin, dir, spheres[i]);
+
+            // We want smallest positive t
+            if(t > 0 && t < best_t) {
+                best_t = t;
+                best_sphere = i;
+            }
+        }
+
+        // If no sphere is intersected, stop simulation
+        if(best_sphere == -1) {
+            break;
+        }
+
+        // Record the sphere number (1-based index)
+        hits.push_back(best_sphere + 1);
+
+        // Update last_hit so we skip it next iteration
+        last_hit = best_sphere;
+
+        // Compute intersection point P = origin + dir * best_t
+        Vec3 P = origin + dir * best_t;
+
+        // Compute normal at hit point, pointing outward from sphere center
+        Vec3 N = (P - spheres[best_sphere].center).normalize();
+
+        // Compute reflection direction and normalize for stability
+        dir = reflect(dir, N).normalize();
+
+        // New ray origin is the hit point
+        origin = P;
+    }
+
+    // We only print up to the first 10 hits
+    int output_count = min((int)hits.size(), 10);
+
+    // Print hit sequence separated by spaces
+    for(int i = 0; i < output_count; i++) {
+        if(i > 0) {
+            cout << " ";
+        }
+        cout << hits[i];
+    }
+
+    // If more than 10 hits, append " etc."
+    if(hits.size() > 10) {
+        cout << " etc.";
+    }
+
+    cout << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast IO
+    cin.tie(nullptr);                 // Untie cin from cout
+
+    int T = 1;                        // Number of test cases; fixed to 1 here
+    // cin >> T;                      // Could support multiple tests if needed
+    for(int test = 1; test <= T; test++) {
+        read();                      // Read one test case
+        // cout << "Case #" << test << ": ";
+        solve();                     // Solve and output result
+    }
+
+    return 0;                        // Successful termination
+}
+```
+
+4. **Python solution with detailed comments**
+
+```python
+import sys
+import math
+
+EPS = 1e-6
+
+class Vec3:
+    """Simple 3D vector class with basic operations."""
+    __slots__ = ("x", "y", "z")
+
+    def __init__(self, x=0.0, y=0.0, z=0.0):
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+
+    def __add__(self, other):
+        """Vector addition: self + other"""
+        return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def __sub__(self, other):
+        """Vector subtraction: self - other"""
+        return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __mul__(self, k):
+        """Scalar multiplication: self * k"""
+        return Vec3(self.x * k, self.y * k, self.z * k)
+
+    # For k * v, Python will call __rmul__
+    __rmul__ = __mul__
+
+    def dot(self, other):
+        """Dot product with another Vec3."""
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
+    def norm(self):
+        """Euclidean length of the vector."""
+        return math.sqrt(self.dot(self))
+
+    def normalize(self):
+        """Return a normalized (unit length) copy of the vector."""
+        n = self.norm()
+        # Problem guarantees we won't have zero-length directions
+        return Vec3(self.x / n, self.y / n, self.z / n)
+
+
+class Sphere:
+    """Sphere with center (Vec3) and radius r."""
+    __slots__ = ("center", "r")
+
+    def __init__(self, center, r):
+        self.center = center
+        self.r = float(r)
+
+
+def ray_sphere_intersect(O, D, sphere):
+    """
+    Compute intersection of ray P(t) = O + t*D with sphere.
+    Return smallest t > EPS, or -1 if no such intersection.
+    """
+    # Vector from sphere center to ray origin
+    V = O - sphere.center
+
+    # Quadratic coefficients: a*t^2 + b*t + c = 0
+    a = D.dot(D)              # usually 1.0 if D is normalized
+    b = 2.0 * V.dot(D)
+    c = V.dot(V) - sphere.r * sphere.r
+
+    # Discriminant
+    disc = b * b - 4.0 * a * c
+
+    # No real roots: discriminant negative beyond tolerance
+    if disc < -EPS:
+        return -1.0
+
+    # Clamp small negative values to 0 before sqrt for numerical safety
+    disc = math.sqrt(max(0.0, disc))
+
+    # Two candidate intersection parameters
+    t1 = (-b - disc) / (2.0 * a)
+    t2 = (-b + disc) / (2.0 * a)
+
+    # We need smallest positive t (t > EPS)
+    if t1 > EPS:
+        return t1
+    if t2 > EPS:
+        return t2
+
+    # Both are behind or very close to origin -> no valid intersection
+    return -1.0
+
+
+def reflect(D, N):
+    """
+    Reflect direction D around normal N.
+    Reflection formula: R = D - 2(D·N)N
+    Both D and N are Vec3.
+    """
+    k = 2.0 * D.dot(N)
+    return D - (k * N)
+
+
+def solve_one_case(data_iter):
+    """
+    Read a single test case from iterator of tokens and print result.
+    The problem as given uses a single test per file.
+    """
+    # Read number of spheres
+    try:
+        n = int(next(data_iter))
+    except StopIteration:
+        return False  # no more data
+
+    spheres = []
+
+    # Read n spheres: xi yi zi ri
+    for _ in range(n):
+        x = float(next(data_iter))
+        y = float(next(data_iter))
+        z = float(next(data_iter))
+        r = float(next(data_iter))
+        spheres.append(Sphere(Vec3(x, y, z), r))
+
+    # Last line: 6 real numbers for two points
+    x1 = float(next(data_iter))
+    y1 = float(next(data_iter))
+    z1 = float(next(data_iter))
+    x2 = float(next(data_iter))
+    y2 = float(next(data_iter))
+    z2 = float(next(data_iter))
+
+    # Ray origin
+    origin = Vec3(x1, y1, z1)
+
+    # Direction from first point to second, normalized
+    dir_vec = Vec3(x2 - x1, y2 - y1, z2 - z1).normalize()
+
+    hits = []          # list of sphere indices (1-based) hit in order
+    last_hit = -1      # index (0-based) of last hit sphere; -1 if none
+
+    # Simulate up to 11 hits (one extra to detect "more than 10")
+    for step in range(11):
+        best_t = float('inf')  # nearest intersection distance along ray
+        best_idx = -1          # index of sphere giving that intersection
+
+        # Check intersection with each sphere
+        for i, s in enumerate(spheres):
+            # Skip last-hit sphere to avoid immediate re-hitting the same one
+            if i == last_hit:
+                continue
+
+            t = ray_sphere_intersect(origin, dir_vec, s)
+
+            # We only care about positive t; choose the smallest
+            if t > 0.0 and t < best_t:
+                best_t = t
+                best_idx = i
+
+        # If we didn't find any intersection, the ray escapes
+        if best_idx == -1:
+            break
+
+        # Record 1-based index of this sphere
+        hits.append(best_idx + 1)
+
+        # Update last hit
+        last_hit = best_idx
+
+        # Compute hit point P = origin + dir_vec * best_t
+        P = origin + dir_vec * best_t
+
+        # Compute outward normal at the hit point and normalize
+        N = (P - spheres[best_idx].center).normalize()
+
+        # Compute reflected direction and normalize to unit length
+        dir_vec = reflect(dir_vec, N).normalize()
+
+        # New ray origin is the hit point
+        origin = P
+
+    # Output logic: print first up to 10 hits, separated by spaces
+    out_hits = hits[:10]
+    if out_hits:
+        sys.stdout.write(" ".join(str(x) for x in out_hits))
+    # If more than 10 hits, append " etc."
+    if len(hits) > 10:
+        if out_hits:
+            sys.stdout.write(" ")
+        sys.stdout.write("etc.")
+    sys.stdout.write("\n")
+
+    return True
+
+
+def main():
+    # Read all input as tokens (whitespace-separated)
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+
+    it = iter(data)
+
+    # Problem specifies a single test case, but we make it generic:
+    # if multiple cases were concatenated, this would process them all.
+    while True:
+        if not solve_one_case(it):
+            break
+
+
+if __name__ == "__main__":
+    main()
+```
+
+5. **Compressed editorial**
+
+- Represent the ray as \(P(t) = O + tD\) with normalized direction `D`.
+- For each sphere, solve intersection by plugging the ray into \(|P - C|^2 = r^2\). This yields a quadratic in `t`. Compute discriminant:
+  - If `< 0`: no intersection.
+  - Otherwise compute `t1`, `t2`; choose smallest `t > EPS`.
+- For each step, among all spheres except the last one hit, pick the sphere with minimal positive `t`. If none exists, stop.
+- For a hit:
+  - Record its 1-based index.
+  - Compute hit point `P = O + tD`.
+  - Compute normal `N = (P - C).normalize()`.
+  - Reflect direction: `D = (D - 2(D·N)N).normalize()`.
+  - Set new origin `O = P`.
+- Simulate up to 11 bounces (for up to 10 outputs plus detection of “more than 10”). Print first 10 indices; if more hits exist, append `etc.`.
