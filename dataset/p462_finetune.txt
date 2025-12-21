@@ -1,0 +1,313 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+462. Electrician
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+An electrician Vasya has got an assignment to solder n wires. His boss specified the requirements precisely, so for each wire Vasya knows exactly where its endpoints should be soldered to. Two identifiers ai,bi are given for each wire, meaning that one endpoint of the wire should be soldered to the place ai, and the other endpoint should be soldered to the place bi. It doesn't matter which endpoint will be soldered to which place. Also each wire has two more characteristics ri and pi, where ri is its reliability and pi is its cost.
+
+The only way for Vasya to express himself in such a rigorous constraints is to choose an order, and solder all wires in this order, one after another. As an experienced electrician Vasya knows what a short circuit is — it occurs when a scheme contains a cycle, in other words when there is more than one simple path over wires from one place to another. So, if a short circuit occurs after a wire is soldered, the least reliable wire in the cycle burns out (you may think that the least reliable wire disappears from the scheme). If there are several least reliable wires in the cycle, the one of them which was soldered earlier burns out. It is clear that after a wire burns out, the scheme doesn't have any cycles.
+
+When Vasya is done with soldering, he ends up with a scheme of soldered wires. So, he wants to solder all wires in such an order, that the total cost of wires in a resulting scheme will be as maximal as possible.
+
+Input
+The first line of input contains a single integer n (1 ≤ n ≤ 30000). Each of the following n lines contains four integer numbers ai,bi,ri,pi (1 ≤ ai,bi, ri,pi ≤ 109; ai ≠q bi), where ai and bi are identifiers of the places for endpoints of i-th wire, ri is the reliability of the wire, and pi is the cost of the wire. There can be more than one wire between any pair of places.
+
+Output
+Print the required maximal total cost to the first line of output. Print the order of wires for soldering to the second line, delimiting wire indices with a single space.
+
+You may print any solution if there are many of them.
+
+Example(s)
+sample input
+sample output
+4
+10 20 5 3
+20 11 5 2
+10 11 7 1
+1 2 1 1
+5
+2 3 1 4 
+
+
+
+Note
+In the sample test Vasya can choose any order with the only rule: the second wire should be soldered before the first one. If he violates the rule, the total cost will be 4 instead of 5.
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You have `n` wires. Wire `i` connects places `a_i` and `b_i`, has reliability `r_i` and cost `p_i`. You must choose an order to solder all wires.
+
+After soldering a wire, if the current scheme contains a **cycle**, then **exactly one** wire in that cycle burns and is removed:
+- the wire with **minimum reliability** burns;
+- if there are several with the same minimum reliability, the one soldered **earlier** burns.
+
+After burning, the scheme becomes acyclic again.
+
+Goal: choose a soldering order maximizing the **total cost of wires remaining at the end**, and output that maximum cost and any optimal order.
+
+Constraints: `n ≤ 30000`, endpoints up to `1e9`, multiple edges possible.
+
+---
+
+## 2) Key observations
+
+1. **The scheme is always a forest after each step.**  
+   Any time a cycle appears, one edge is removed immediately, restoring acyclicity.
+
+2. **When a cycle forms, the “worst” edge in that cycle is removed** where “worst” means:
+   - smaller `r` is worse,
+   - if `r` ties, **earlier soldered is worse** (because earlier burns).
+
+3. This behavior matches the well-known **cycle property** behind spanning forests:  
+   In any cycle, an edge that is minimal by the chosen priority cannot be part of the best final forest; it will be eliminated when a cycle arises.
+
+4. Therefore, the final set of surviving edges is a **maximum spanning forest by reliability**, with a special tie-break: among equal reliability edges, **later soldered edges are preferred to survive**.
+
+5. To maximize final total cost, within the same reliability `r`, we want **expensive edges to be soldered later**, so that if equal-`r` edges compete in a cycle, cheaper ones are more likely to burn.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Choose an order to solder
+Sort wires by:
+1. `r` increasing,
+2. `p` increasing.
+
+Call this sorted list `perm` (it is also the order we will output).
+
+Why this order?
+- Low reliability edges should come earlier because higher reliability edges tend to survive.
+- For equal reliability, cheap first / expensive last ensures that if equal-`r` edges compete (tie case), the earlier (cheaper) one burns.
+
+### Step B: Compute the maximum achievable final cost (without simulating burns)
+Direct simulation of “add edge → find cycle → remove minimum” is hard fast.
+
+Instead use **reverse Kruskal**:
+
+- Traverse `perm` from the end to the beginning (i.e., from “most preferred to survive” to “least preferred”).
+- Maintain a DSU (Union-Find).
+- If an edge connects two different DSU components, **keep it** and add its cost; otherwise skip it.
+
+This builds a forest that is maximum under the priority:
+- higher `r` first,
+- for equal `r`, higher `p` first (because we are traversing the `p`-ascending order backwards).
+
+That forest is exactly the set of wires that remain after soldering in `perm`.
+
+### Step C: Coordinate compression
+Endpoints `a_i, b_i` can be up to `1e9`, but there are at most `2n` distinct places. Compress them to `0..m-1` for DSU.
+
+### Complexity
+- Compression: `O(n log n)`
+- Sorting: `O(n log n)`
+- DSU pass: `O(n α(n))`
+Overall: `O(n log n)` and easily fits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// ---------- DSU (Disjoint Set Union / Union-Find) ----------
+struct DSU {
+    vector<int> parent, sz;
+
+    DSU(int n = 0) { init(n); }
+
+    void init(int n) {
+        parent.resize(n);
+        sz.assign(n, 1);
+        iota(parent.begin(), parent.end(), 0);
+    }
+
+    int find(int x) {
+        if (parent[x] == x) return x;
+        return parent[x] = find(parent[x]);
+    }
+
+    bool same(int a, int b) { return find(a) == find(b); }
+
+    void unite(int a, int b) {
+        a = find(a); b = find(b);
+        if (a == b) return;
+        if (sz[a] > sz[b]) swap(a, b); // union by size
+        parent[a] = b;
+        sz[b] += sz[a];
+    }
+};
+
+struct Wire {
+    int u, v;           // compressed endpoints
+    long long r, p;     // reliability, cost
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+
+    vector<long long> nodes;
+    nodes.reserve(2LL * n);
+
+    // Read raw data first (endpoints are large, so keep for compression)
+    struct Raw { long long a, b, r, p; };
+    vector<Raw> raw(n);
+
+    for (int i = 0; i < n; i++) {
+        cin >> raw[i].a >> raw[i].b >> raw[i].r >> raw[i].p;
+        nodes.push_back(raw[i].a);
+        nodes.push_back(raw[i].b);
+    }
+
+    // ---- Coordinate compression of node IDs ----
+    sort(nodes.begin(), nodes.end());
+    nodes.erase(unique(nodes.begin(), nodes.end()), nodes.end());
+
+    auto get_id = [&](long long x) -> int {
+        return int(lower_bound(nodes.begin(), nodes.end(), x) - nodes.begin());
+    };
+
+    // Build compressed wires
+    vector<Wire> wires(n);
+    for (int i = 0; i < n; i++) {
+        wires[i].u = get_id(raw[i].a);
+        wires[i].v = get_id(raw[i].b);
+        wires[i].r = raw[i].r;
+        wires[i].p = raw[i].p;
+    }
+
+    // perm = soldering order:
+    // reliability ascending, cost ascending
+    vector<int> perm(n);
+    iota(perm.begin(), perm.end(), 0);
+    sort(perm.begin(), perm.end(), [&](int i, int j) {
+        if (wires[i].r != wires[j].r) return wires[i].r < wires[j].r;
+        return wires[i].p < wires[j].p;
+    });
+
+    // Reverse-Kruskal to compute which wires remain and their total cost
+    int m = (int)nodes.size();
+    DSU dsu(m);
+
+    long long bestCost = 0;
+    for (int k = n - 1; k >= 0; k--) {
+        int idx = perm[k];
+        int u = wires[idx].u, v = wires[idx].v;
+
+        // Keep this wire if it connects two different components
+        if (!dsu.same(u, v)) {
+            dsu.unite(u, v);
+            bestCost += wires[idx].p;
+        }
+    }
+
+    // Output answer and the chosen soldering order (1-based indices)
+    cout << bestCost << "\n";
+    for (int i = 0; i < n; i++) {
+        if (i) cout << ' ';
+        cout << perm[i] + 1;
+    }
+    cout << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from bisect import bisect_left
+
+# ---------- DSU (Disjoint Set Union / Union-Find) ----------
+class DSU:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.sz = [1] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]  # path compression
+            x = self.parent[x]
+        return x
+
+    def same(self, a: int, b: int) -> bool:
+        return self.find(a) == self.find(b)
+
+    def unite(self, a: int, b: int) -> None:
+        a = self.find(a)
+        b = self.find(b)
+        if a == b:
+            return
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.parent[a] = b
+        self.sz[b] += self.sz[a]
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    n = int(data[0])
+
+    # Read wires and collect endpoints for compression
+    raw = []
+    nodes = []
+    ptr = 1
+    for _ in range(n):
+        a = int(data[ptr]); b = int(data[ptr + 1])
+        r = int(data[ptr + 2]); p = int(data[ptr + 3])
+        ptr += 4
+        raw.append((a, b, r, p))
+        nodes.append(a)
+        nodes.append(b)
+
+    # ---- Coordinate compression ----
+    nodes = sorted(set(nodes))
+    def get_id(x: int) -> int:
+        return bisect_left(nodes, x)
+
+    # Compressed wires: (u, v, r, p)
+    wires = []
+    for a, b, r, p in raw:
+        wires.append((get_id(a), get_id(b), r, p))
+
+    # Soldering order: sort by (r asc, p asc)
+    perm = list(range(n))
+    perm.sort(key=lambda i: (wires[i][2], wires[i][3]))
+
+    # Reverse Kruskal to compute maximum remaining cost
+    dsu = DSU(len(nodes))
+    best_cost = 0
+    for k in range(n - 1, -1, -1):
+        idx = perm[k]
+        u, v, r, p = wires[idx]
+        if not dsu.same(u, v):
+            dsu.unite(u, v)
+            best_cost += p
+
+    # Output
+    sys.stdout.write(str(best_cost) + "\n")
+    sys.stdout.write(" ".join(str(i + 1) for i in perm) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This outputs:
+- the maximal achievable final total cost,
+- and a valid optimal soldering order (any optimal order is accepted).

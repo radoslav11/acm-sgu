@@ -1,0 +1,347 @@
+## 1) Concise abridged problem statement
+
+You are given **n wires**. Wire *i* connects places \(a_i\) and \(b_i\), has **reliability** \(r_i\) and **cost** \(p_i\). You must choose an **order** to solder all wires one by one.
+
+Whenever adding a wire creates a **cycle**, then **exactly one wire in that cycle burns out and disappears**:
+- the wire with **minimum reliability** in the cycle burns;
+- if there are multiple with the same minimum reliability, the one that was **soldered earlier** burns.
+
+After burning, the graph becomes acyclic again.
+
+Goal: choose an order maximizing the **sum of costs of wires remaining at the end**, and output that maximum sum and any achieving order.
+
+Constraints: \(1 \le n \le 30000\), values up to \(10^9\), multiple edges allowed.
+
+---
+
+## 2) Detailed editorial (reasoning and solution)
+
+### Key observation: the final set of remaining wires is a “maximum-reliability forest” with a special tie-break
+The process maintains a forest (acyclic) after each step because cycles are immediately broken by burning one edge.
+
+Consider what happens when you add an edge \(e\) between two vertices already connected: it forms a unique cycle. Burning removes the **weakest** edge (smallest reliability) on that cycle; if reliabilities tie, it removes the one soldered **earliest**.
+
+This is exactly the same rule that makes **Kruskal’s algorithm** correct for building a **maximum spanning forest by reliability** (or minimum spanning forest, depending on ordering). Here we want to *keep* edges with **higher reliability**; any time a cycle appears, the minimum-reliability edge in that cycle is discarded—so the structure evolves toward a maximum-by-reliability forest.
+
+The only subtlety is the tie-break among equal reliabilities: *earlier soldered burns first*, meaning **later soldered edges of the same reliability are favored to stay**.
+
+So, informally:
+- Primarily, the final forest is determined by **reliability** (keep higher \(r\)).
+- Among equal \(r\), the process favors keeping edges that appear **later** in the soldering order.
+
+### Reformulating the goal
+We want the final forest (under these rules) to have **maximum total cost** \(\sum p\).
+
+But the reliabilities dictate which edges can survive: among edges with higher reliability, they tend to be kept over lower reliability. The only freedom we have is within **equal reliability groups** via the “burn earlier” tie-break: we can arrange order so that among same \(r\), the set that survives is biased toward edges soldered later.
+
+To maximize final cost, for equal reliability \(r\), we want **higher-cost edges to be soldered later**, so that if ties happen, cheaper ones are the ones more likely to burn.
+
+### Constructing an optimal order
+Let’s decide the soldering order as follows:
+1. Sort edges by **increasing reliability \(r\)**.
+2. If reliabilities tie, sort by **increasing cost \(p\)**.
+
+So within the same \(r\), cheap edges come first, expensive ones last.
+
+Now, what is the final set of edges that would remain after soldering in that order?
+
+Instead of simulating burning online (which could require dynamic cycle handling), we can compute the final kept set using a **reverse Kruskal** trick:
+
+#### Reverse Kruskal idea
+If the forward process prefers:
+- higher reliability edges,
+- and among equal reliability, later edges,
+
+then if we traverse edges **from the end of that sorted order to the beginning**, and greedily keep edges that connect two different components, we reconstruct exactly the set of edges that will remain.
+
+Why?
+- Traversing from the end means we first consider:
+  - higher reliability edges (because \(r\) increasing forward ⇒ decreasing backward),
+  - and among equal \(r\), higher cost edges first (since \(p\) increasing forward ⇒ decreasing backward).
+- Adding an edge only if it connects two components builds a forest maximizing “priority” lexicographically by \((r, p)\) in that ordering, which matches the burn rule preferences: when a cycle happens, the least reliable (and among ties the earliest) is removed, so the survivors are exactly those that would be chosen by this reverse greedy inclusion.
+
+Concretely:
+- Let `perm` be indices sorted by (r asc, p asc).
+- Initialize DSU (disjoint set union) on all vertices.
+- Iterate `i = n-1 ... 0`:
+  - let edge = `perm[i]`
+  - if its endpoints are in different DSU components: keep it (union) and add its cost to answer.
+
+The resulting chosen edges are the final surviving wires for that soldering order, and the constructed order is optimal by the earlier argument (expensive edges later within equal reliability).
+
+### Correctness sketch
+1. **Reliability optimality**: The burn rule always removes a minimum-reliability edge on a created cycle, so no final forest can “prefer” a lower reliability edge over a higher reliability alternative that connects the same components without violating the cycle rule. This is the same exchange argument as Kruskal.
+2. **Tie handling**: If reliabilities tie on the weakest edges in a cycle, the earliest burns. Therefore, to maximize the chance that an edge survives among equal \(r\), we should place it later; thus sorting by \(p\) ascending within equal \(r\) makes higher-cost edges later and more likely to stay.
+3. **Reverse greedy reconstruction**: The set of survivors for this order is exactly what you get by scanning edges backward and building a forest (keep if it connects components). This is equivalent to Kruskal under the total order induced by (r asc, p asc) with “later is better” tie-break.
+
+### Complexity
+- Coordinate-compress vertex labels (because \(a_i, b_i\) up to \(10^9\)): \(O(n \log n)\).
+- Sort edges: \(O(n \log n)\).
+- DSU operations: \(O(n \alpha(n))\).
+
+Fits easily in constraints.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector with trailing spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+// Disjoint Set Union (Union-Find) structure to maintain connected components
+class DSU {
+  public:
+    int n;              // number of nodes (max index)
+    vector<int> par;    // parent pointers
+    vector<int> sz;     // component sizes
+
+    DSU(int _n = 0) { init(_n); }
+
+    // initialize DSU for nodes 0..n
+    void init(int _n) {
+        n = _n;
+        par.assign(n + 1, 0);
+        sz.assign(n + 1, 0);
+        for (int i = 0; i <= n; i++) {
+            par[i] = i;   // each node is its own parent initially
+            sz[i] = 1;    // size of each component is 1
+        }
+    }
+
+    // find the representative (root) with path compression
+    int root(int u) {
+        return par[u] = ((u == par[u]) ? u : root(par[u]));
+    }
+
+    // check if two nodes are currently in the same component
+    bool connected(int x, int y) { return root(x) == root(y); }
+
+    // union-by-size: attach smaller tree under bigger one
+    int unite(int x, int y) {
+        x = root(x), y = root(y);
+        if (x == y) return x;        // already connected
+
+        if (sz[x] > sz[y]) swap(x, y); // ensure x is smaller
+        par[x] = y;                    // attach x under y
+        sz[y] += sz[x];                // update size
+        return y;                      // return new root
+    }
+
+    // (unused) returns list of nodes in each component
+    vector<vector<int>> components() {
+        vector<vector<int>> comp(n + 1);
+        for (int i = 0; i <= n; i++) {
+            comp[root(i)].push_back(i);
+        }
+        return comp;
+    }
+};
+
+int n;
+
+// Each wire stored as tuple (u, v, r, p)
+vector<tuple<int, int, int, int>> wires;
+
+void read() {
+    vector<int> nodes;     // to collect all endpoint labels for compression
+
+    cin >> n;
+    wires.resize(n);
+
+    // read wires; store endpoints in nodes for coordinate compression
+    for (auto& [u, v, r, p] : wires) {
+        cin >> u >> v >> r >> p;
+        nodes.push_back(u);
+        nodes.push_back(v);
+    }
+
+    // coordinate compress all node labels to 0..(m-1)
+    sort(nodes.begin(), nodes.end());
+    nodes.erase(unique(nodes.begin(), nodes.end()), nodes.end());
+
+    // replace original labels by compressed indices
+    for (auto& [u, v, r, p] : wires) {
+        u = lower_bound(nodes.begin(), nodes.end(), u) - nodes.begin();
+        v = lower_bound(nodes.begin(), nodes.end(), v) - nodes.begin();
+    }
+}
+
+void solve() {
+    // Build an order perm: sort by reliability ascending, then cost ascending.
+    // This is the soldering order we will output.
+    //
+    // To compute the final remaining wires and maximum cost, we do "reverse Kruskal":
+    // traverse perm from the end to the start, and keep an edge if it connects
+    // two different DSU components. The kept edges are the ones that survive.
+
+    DSU dsu(2 * n); // DSU sized safely; endpoints count <= 2n after compression
+
+    vector<int> perm(n);
+    iota(perm.begin(), perm.end(), 0); // perm = [0,1,2,...,n-1]
+
+    // Sort indices by (r asc, p asc)
+    sort(perm.begin(), perm.end(), [&](int i, int j) {
+        auto& [u1, v1, r1, p1] = wires[i];
+        auto& [u2, v2, r2, p2] = wires[j];
+        if (r1 != r2) return r1 < r2;
+        return p1 < p2;
+    });
+
+    int64_t total_cost = 0;
+
+    // Traverse from back: higher r first; within same r, higher p first.
+    for (int i = n - 1; i >= 0; i--) {
+        int idx = perm[i];
+        auto& [u, v, r, p] = wires[idx];
+
+        // If u and v are not connected, include this edge in the final forest.
+        if (!dsu.connected(u, v)) {
+            dsu.unite(u, v);
+            total_cost += p; // add its cost to answer
+        }
+    }
+
+    // Output maximum achievable total cost
+    cout << total_cost << "\n";
+
+    // Output the soldering order (1-based wire indices)
+    for (int i = 0; i < n; i++) {
+        if (i > 0) cout << " ";
+        cout << perm[i] + 1;
+    }
+    cout << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // only one test case in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+from bisect import bisect_left
+
+# ---------- DSU (Disjoint Set Union / Union-Find) ----------
+class DSU:
+    def __init__(self, n: int):
+        # We'll use 0..n-1
+        self.par = list(range(n))
+        self.sz = [1] * n
+
+    def root(self, x: int) -> int:
+        # Path compression
+        while self.par[x] != x:
+            self.par[x] = self.par[self.par[x]]
+            x = self.par[x]
+        return x
+
+    def connected(self, a: int, b: int) -> bool:
+        return self.root(a) == self.root(b)
+
+    def unite(self, a: int, b: int) -> None:
+        a = self.root(a)
+        b = self.root(b)
+        if a == b:
+            return
+        # Union by size: attach smaller to bigger
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.par[a] = b
+        self.sz[b] += self.sz[a]
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    n = int(data[0])
+    wires = []
+    nodes = []
+
+    # Read wires; store endpoints for coordinate compression
+    idx = 1
+    for _ in range(n):
+        a = int(data[idx]); b = int(data[idx + 1])
+        r = int(data[idx + 2]); p = int(data[idx + 3])
+        idx += 4
+        wires.append([a, b, r, p])
+        nodes.append(a)
+        nodes.append(b)
+
+    # Coordinate compress node labels to 0..m-1
+    nodes = sorted(set(nodes))
+    for w in wires:
+        w[0] = bisect_left(nodes, w[0])
+        w[1] = bisect_left(nodes, w[1])
+
+    m = len(nodes)
+    dsu = DSU(m)
+
+    # perm = indices 0..n-1, sorted by (reliability asc, cost asc)
+    perm = list(range(n))
+    perm.sort(key=lambda i: (wires[i][2], wires[i][3]))
+
+    # Reverse traversal: keep an edge if it connects different components
+    total_cost = 0
+    for k in range(n - 1, -1, -1):
+        i = perm[k]
+        u, v, r, p = wires[i]
+        if not dsu.connected(u, v):
+            dsu.unite(u, v)
+            total_cost += p
+
+    # Output
+    out = []
+    out.append(str(total_cost))
+    out.append(" ".join(str(i + 1) for i in perm))
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Sort wires by \((r \uparrow, p \uparrow)\) and output this order. The burn rule always removes the minimum-reliability edge on any formed cycle; among equal reliabilities it removes the earliest, so placing higher-cost edges later within equal \(r\) makes them more likely to survive.
+
+To compute the final maximum total cost for this order, run “reverse Kruskal”: traverse the sorted list from back to front and add an edge iff it connects two different DSU components. Sum costs of added edges; that sum is maximal achievable. Coordinate-compress endpoint labels. Complexity \(O(n \log n)\).
