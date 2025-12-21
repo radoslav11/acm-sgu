@@ -1,6 +1,6 @@
 # ACM SGU Competitive Programming Solutions with LLM Enhancement
 
-This repository contains solutions to ACM SGU (Saratov State University) competitive programming problems, enhanced with detailed editorials and reasoning explanations generated using advanced language models.
+This repository contains solutions to ACM SGU (Saratov State University) competitive programming problems, enhanced with detailed editorials and reasoning explanations generated using advanced language models. The full page about the project is [here](https://radoslav11.com/sgu-dataset/).
 
 ## Overview
 
@@ -67,9 +67,10 @@ If you use this dataset please cite, maybe I will add an actual PDF later:
 
 ```bibtex
 @misc{dimitrov2025sgu,
-  title={ACM SGU Competitive Programming Solutions with LLM Enhancement},
+  title={SGU-Editorial: A Small Dataset of Competitive Programming Problems with LLM-Enhanced Editorials},
   author={Radoslav Dimitrov},
   year={2025},
+  url={https://radoslav11.com/sgu-dataset/sgu-editorial.pdf}
 }
 ```
 
