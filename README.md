@@ -15,8 +15,10 @@ The repository consists of two main components:
 dataset/
 ├── p100.txt          # Enhanced editorial with solution approach
 ├── p100_raw.txt      # Original source code solution + statemtent + sample input/output
+├── p100_finetune.txt # Example finetuning format
 ├── p101.txt          # Enhanced editorial with solution approach
 ├── p101_raw.txt      # Original source code solution + statemtent + sample input/output
+├── p101_finetune.txt # Example finetuning format
 └── ...               # Additional problems (100+ problems covered)
 ```
 
