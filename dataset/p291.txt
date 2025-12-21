@@ -1,0 +1,273 @@
+## 1) Abridged problem statement
+
+You have a grid of size \(q \times c\) (1-indexed). There are \(n\) bacterial cultures; culture \(i\) starts from one cell \((x_i,y_i)\) (all distinct).
+
+Each second, cultures divide **in order** \(1,2,\dots,n\). When a bacterium divides, it attempts to place bacteria into the 5 cells: itself and its 4 orthogonal neighbors. Rules:
+
+- If a target cell is outside the grid, that offspring dies.
+- If a target cell is occupied by **another culture**, the offspring dies (cannot enter).
+- If a target cell is occupied by the **same culture**, the younger replaces the older (but the cell remains owned by that culture).
+- If multiple same-culture offspring of the same generation target the same cell, one wins (still same culture).
+
+After \(t\) seconds, output how many cells are occupied by each culture.
+
+Constraints: \(q,c \le 1000\), \(n \le 22204\), \(t \le 10^9\).
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observation: this is just territory expansion with tie-breaking by culture index
+Ignore the “younger kills older” and “random among same generation” details: they never change **which culture owns a cell**, only *which individual* sits there.
+
+A culture can occupy a cell if there is a path of orthogonal moves from its start to that cell, and the time to reach is the path length (Manhattan shortest path on a grid with no obstacles). Cultures expand one step per second (because offspring can only go to neighbors per second). Therefore, after \(t\) seconds, a cell can only be owned by cultures that can reach it within distance \(\le t\).
+
+When multiple cultures can reach the same empty cell:
+
+- In a given second, culture 1 expands first, then 2, etc.
+- If two cultures reach a cell at the same earliest time, the smaller index culture gets there first (because it expands earlier in that second) and blocks the others forever (“entering occupied by other culture kills incoming”).
+
+So the owner of each cell is:
+
+1. The culture with **minimum distance** to that cell (shortest Manhattan distance),
+2. Breaking ties by **smallest culture index**.
+
+That is exactly a **multi-source BFS** on an unweighted grid, seeded with all start cells, where initial queue order (or an explicit tie rule) ensures lower index wins ties at the same distance.
+
+### Why BFS works even though \(t\) can be huge
+The grid has at most \(10^6\) cells. Expansion beyond filling the whole grid is irrelevant. We only need to expand up to distance \(t\), but also never more than the grid diameter. So complexity is \(O(qc)\) in the worst case, which is fine.
+
+### Algorithm
+- Maintain `owner[x][y]` = culture index that owns the cell, or 0 if empty.
+- Initialize a queue with all starting positions:
+  - Set `owner[start] = i`.
+  - Push `(x, y, dist=0, i)` in increasing `i` order.
+  - (If starts are unique, no conflicts; still safe.)
+- BFS:
+  - Pop `(x,y,dist,i)`.
+  - If `dist == t`, do not expand further.
+  - For each of 4 neighbors:
+    - If inside grid and `owner[nx][ny] == 0`, set `owner[nx][ny] = i` and push `(nx,ny,dist+1,i)`.
+- Finally, count how many cells have each owner and print counts for cultures 1..n.
+
+### Correctness sketch
+- BFS processes states in nondecreasing distance.
+- Since we push initial cultures in increasing index, all distance-0 states are processed in index order; inductively, for the same distance, earlier-index cultures’ frontier is enqueued earlier and claims empty cells first.
+- Once a cell is claimed, it never changes owner (other cultures cannot enter), matching the problem rules.
+- Therefore, the BFS owner assignment matches the “minimum distance then minimum index” rule, which matches the simulation outcome.
+
+### Complexity
+- Time: \(O(qc)\) cell visits and 4 neighbor checks each.
+- Memory: `owner` is \( (q+1)(c+1)\) ints (~4 MB for 1e6), plus queue overhead.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (common in contests)
+using namespace std;
+
+// Output operator for pair: prints "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pair: reads "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vector: reads each element sequentially
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {               // Iterate by reference to fill each element
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vector: prints elements separated by spaces (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int q, c, n, t;                       // Grid size q x c, number of cultures n, time t
+vector<pair<int, int>> xy;            // Starting positions for each culture (1-indexed coordinates)
+
+void read() {
+    cin >> q >> c >> n >> t;          // Read parameters
+    xy.resize(n);                     // Prepare to read n positions
+    cin >> xy;                        // Read all positions using the vector >> overload
+}
+
+void solve() {
+    // Multi-source BFS:
+    // - Each culture expands like a wave one cell per second.
+    // - If multiple cultures reach a cell at the same time, smaller index wins
+    //   because cultures expand in order each second.
+
+    // owner[x][y] = culture index occupying this cell, or 0 if empty.
+    // Using size (q+1) x (c+1) so we can use 1..q and 1..c indices directly.
+    vector<vector<int>> owner(q + 1, vector<int>(c + 1, 0));
+
+    // ans[i] will count cells owned by culture i (1..n). ans[0] counts empty but unused.
+    vector<int> ans(n + 1, 0);
+
+    // BFS queue entries: (x, y, time/dist from start, culture index)
+    queue<tuple<int, int, int, int>> bfs;
+
+    // 4-direction movement vectors (right, down, left, up)
+    vector<pair<int, int>> dxy = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
+
+    int dy[] = {1, 0, -1, 0};         // Unused leftover; harmless but redundant
+
+    // Initialize BFS with each culture's starting cell.
+    // Important: we push cultures in increasing index order so ties at same distance
+    // are resolved in favor of smaller index (matches problem's division order).
+    for (int i = 0; i < n; i++) {
+        int x = xy[i].first, y = xy[i].second;
+
+        // Sanity bounds check + ensure cell unowned.
+        // (Statements says starts are unique and in grid, but this keeps it robust.)
+        if (x >= 1 && x <= q && y >= 1 && y <= c && owner[x][y] == 0) {
+            owner[x][y] = i + 1;                 // Culture indices are 1..n
+            bfs.push({x, y, 0, i + 1});          // Distance/time = 0 at the seed
+        }
+    }
+
+    // Standard BFS loop
+    while (!bfs.empty()) {
+        auto [x, y, ti, num] = bfs.front();      // Pop front state
+        bfs.pop();
+
+        // Do not expand from this cell if we already reached time t.
+        // Cells at exact time t exist, but they cannot expand further.
+        if (ti >= t) {
+            continue;
+        }
+
+        // Try to claim each 4-neighbor
+        for (auto [dx, dy] : dxy) {
+            int nx = x + dx;
+            int ny = y + dy;
+
+            // If inside grid and unowned, claim it for this culture.
+            // If already owned by any culture, we do nothing (blocked forever).
+            if (nx >= 1 && nx <= q && ny >= 1 && ny <= c && owner[nx][ny] == 0) {
+                owner[nx][ny] = num;             // Assign ownership
+                bfs.push({nx, ny, ti + 1, num});  // Push next layer with time+1
+            }
+        }
+    }
+
+    // Count how many cells each culture owns.
+    for (int x = 1; x <= q; x++) {
+        for (int y = 1; y <= c; y++) {
+            ans[owner[x][y]]++;                  // owner[x][y] in [0..n]
+        }
+    }
+
+    // Output answers for cultures 1..n (one per line)
+    for (int i = 1; i <= n; i++) {
+        cout << ans[i] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O
+    cin.tie(nullptr);                 // Untie cin from cout for speed
+
+    int T = 1;                        // Only one test case in this problem
+    // cin >> T;                      // (disabled)
+
+    for (int test = 1; test <= T; test++) {
+        read();                       // Read input
+        // cout << "Case #" << test << ": ";  // (disabled)
+        solve();                      // Solve and print
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    if not data:
+        return
+    it = iter(data)
+
+    q = next(it)          # number of rows (x dimension)
+    c = next(it)          # number of cols (y dimension)
+    n = next(it)          # number of cultures
+    t = next(it)          # number of seconds to simulate/expand
+
+    starts = [(next(it), next(it)) for _ in range(n)]  # starting positions
+
+    # owner[x][y] = culture index owning cell (1..n), 0 if empty.
+    # Use 1-based indexing by allocating (q+1) x (c+1).
+    owner = [[0] * (c + 1) for _ in range(q + 1)]
+
+    # Multi-source BFS queue items: (x, y, dist, culture)
+    bfs = deque()
+
+    # Seed the BFS in increasing culture index order so ties go to smaller index.
+    for i, (x, y) in enumerate(starts, start=1):
+        # Input guarantees unique in-grid positions, but keep checks anyway.
+        if 1 <= x <= q and 1 <= y <= c and owner[x][y] == 0:
+            owner[x][y] = i
+            bfs.append((x, y, 0, i))
+
+    # 4-direction moves
+    dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+    # BFS expansion up to distance t
+    while bfs:
+        x, y, dist, culture = bfs.popleft()
+
+        # If we've already spent t seconds to reach here, no further expansion allowed.
+        if dist >= t:
+            continue
+
+        nd = dist + 1
+        for dx, dy in dirs:
+            nx, ny = x + dx, y + dy
+            # Claim only if within bounds and currently empty.
+            if 1 <= nx <= q and 1 <= ny <= c and owner[nx][ny] == 0:
+                owner[nx][ny] = culture
+                bfs.append((nx, ny, nd, culture))
+
+    # Count owned cells for each culture
+    ans = [0] * (n + 1)
+    for x in range(1, q + 1):
+        row = owner[x]
+        for y in range(1, c + 1):
+            ans[row[y]] += 1
+
+    # Output counts for cultures 1..n
+    out = "\n".join(str(ans[i]) for i in range(1, n + 1))
+    sys.stdout.write(out)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Each culture expands one cell per second in 4-neighborhood; once a cell is occupied, other cultures can never enter it. Therefore, after \(t\) seconds a cell is owned by the culture with the smallest grid distance to it, with ties broken by smaller culture index (because cultures divide in order each second). This is exactly multi-source BFS: initialize the queue with all starting cells in culture index order; BFS claims each empty neighbor once, stopping expansion at distance \(t\). Finally count owners per culture and print. Complexity \(O(qc)\), memory \(O(qc)\).

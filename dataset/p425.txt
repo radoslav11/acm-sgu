@@ -1,0 +1,272 @@
+## 1) Concise, abridged problem statement
+
+You are given an **n × m** matrix `T` of non‑negative integers (`1 ≤ n,m ≤ 1000`). It is guaranteed that the **first row differs from every other row in at least one column**.
+
+A function `f : ℕ → ℕ` is a **control function** if after replacing every entry `x` in the matrix by `f(x)`, the first row is still different from every other row (i.e., for every row `i>1` there exists a column `j` with `f(T[1][j]) ≠ f(T[i][j])`).
+
+Construct such a function where **all output values are ≤ 50**, and print it as `"key -> value"` for every **distinct value appearing in the matrix**, sorted by key. Print `"Yes"` if possible, otherwise `"No"`.
+
+---
+
+## 2) Detailed editorial (explaining the given solution approach)
+
+### Key idea: only need to “separate” row 1 from each other row once
+For each row `i > 1`, since `T` is a control matrix, row `i` differs from row 1 in **at least one column**. To ensure the transformed matrix `f(T)` is still a control matrix, it is enough that for each `i>1` there exists **at least one** mismatching column `j` such that:
+- `f(T[i][j]) != f(T[1][j])`.
+
+So for each row `i>1`, we can pick **one** mismatch position `(i, j)` and only “care” that those two values map to different outputs.
+
+### Build a graph of “must be different” constraints
+Create an undirected graph where:
+- Each vertex is a value that appears in the matrix.
+- For each row `i>1`, choose the first column `j` where `T[i][j] != T[1][j]`, and add an edge between the two values:
+  - `u = T[i][j]` (value in row `i`)
+  - `v = T[1][j]` (value in row 1)
+- This edge means: we must enforce `f(u) != f(v)`.
+
+Now the task becomes:
+
+> Assign a “color” (output value) to each vertex so that adjacent vertices get different colors, using colors from `{1,2,...,50}` (and optionally allowing `0` for unconstrained values).
+
+That is simply a graph coloring problem.
+
+### Why ≤ 50 colors is always achievable here (under this construction)
+We add exactly **one edge per row** for rows `2..n`, so the number of edges is:
+- `E ≤ n - 1 ≤ 999`.
+
+A known bound: any graph with `E` edges can be properly colored with at most `⌊√(2E)⌋ + 1` colors by a simple greedy strategy when vertices are processed in nondecreasing degree order (there are several variants/bounds; the provided code relies on the classic “few edges ⇒ few colors” intuition and a greedy ordering).
+
+For `E ≤ 999`, `√(2E) + 1 < 50` (since `√1998 ≈ 44.7`), so **50 is safe**.
+
+Important subtlety:
+- If some row differs from row 1 in **multiple** columns, we only pick the first mismatch. This cannot make the problem harder; it only reduces constraints, so if we can satisfy the reduced constraints, the original requirement is still satisfied (because we still preserve at least one mismatch after mapping).
+
+### Algorithm steps
+1. Collect all distinct values in the matrix; sort them for required output ordering.
+2. For each row `i=1..n-1` (0-indexed: `i=1..n-1`):
+   - Find first column `j` where `tbl[i][j] != tbl[0][j]`.
+   - Add an undirected edge between those two values.
+   - Track degrees for ordering.
+3. Sort vertices by increasing degree.
+4. Greedy coloring:
+   - For each vertex `v` in that order, look at already-colored neighbors and pick the smallest positive integer not used by them.
+5. Print `"Yes"` and for every value in sorted order:
+   - Print `"value -> color"` if colored, else `"value -> 0"`.
+
+Complexity:
+- Building constraints: in worst case scans up to `m` per row ⇒ `O(nm)` (≤ 1e6).
+- Coloring: proportional to edges/adjacency size ⇒ `O(E log V)`ish due to sets/maps, but still fine for constraints.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input (assumes vector already has correct size)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector with spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;
+vector<vector<int>> tbl;
+
+// Reads n, m and the matrix
+void read() {
+    cin >> n >> m;
+    tbl.assign(n, vector<int>(m, 0)); // allocate n rows, m cols
+    cin >> tbl;                       // use vector>> overload
+}
+
+void solve() {
+    // Collect all values appearing in the matrix (for output keys).
+    vector<int> values;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            values.push_back(tbl[i][j]);
+        }
+    }
+
+    // Sort and unique to get distinct keys in increasing order.
+    sort(values.begin(), values.end());
+    values.erase(unique(values.begin(), values.end()), values.end());
+
+    // Graph representation:
+    // adj[x] = neighbors of value x (values that must get different f()).
+    map<int, vector<int>> adj;
+
+    // degree[x] = degree of vertex x (how many constraints incident to x).
+    map<int, int> degree;
+
+    // colors[x] = assigned color for value x (only for constrained vertices).
+    map<int, int> colors;
+
+    // For every row i>0, add exactly one edge corresponding to the first mismatch.
+    for (int i = 1; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            int u = tbl[i][j];   // value in row i
+            int v = tbl[0][j];   // value in row 0 (the first row)
+            if (u != v) {
+                // We must ensure f(u) != f(v), so add edge (u,v).
+                degree[u]++;
+                degree[v]++;
+                adj[u].push_back(v);
+                adj[v].push_back(u);
+                break; // only one constraint edge per row is sufficient
+            }
+        }
+    }
+
+    // Make a list of vertices that actually appear in constraints (nonzero degree).
+    vector<pair<int, int>> vertices; // (degree, vertex_value)
+    for (auto [v, d] : degree) {
+        vertices.push_back({d, v});
+    }
+
+    // Sort by increasing degree for a favorable greedy coloring order.
+    sort(vertices.begin(), vertices.end());
+
+    // Greedy graph coloring:
+    // for each vertex v, pick the smallest color not used by already-colored neighbors.
+    for (auto [d, v] : vertices) {
+        set<int> used = {0}; // color 0 is treated as "reserved"/ignored here
+        for (int u : adj[v]) {
+            if (colors.count(u)) {
+                used.insert(colors[u]); // mark neighbor's color as unavailable
+            }
+        }
+        int c = 1;
+        while (used.count(c)) { // find smallest positive not used
+            c++;
+        }
+        colors[v] = c; // assign the color
+    }
+
+    // According to this solution's reasoning, answer is always "Yes".
+    cout << "Yes\n";
+
+    // Print mapping for all distinct values from the matrix in sorted order.
+    // Unconstrained values (not in colors map) are mapped to 0.
+    for (int v : values) {
+        auto it = colors.find(v);
+        cout << v << " -> ";
+        if (it == colors.end()) {
+            cout << "0\n";
+        } else {
+            cout << it->second << '\n';
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import defaultdict
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Read matrix
+    tbl = [[int(next(it)) for _ in range(m)] for _ in range(n)]
+
+    # Collect all distinct values for required output keys
+    values = sorted({tbl[i][j] for i in range(n) for j in range(m)})
+
+    # Build constraint graph:
+    # For each row i>0, find first column where it differs from row 0,
+    # and add an edge between those two values.
+    adj = defaultdict(list)     # value -> list of neighbor values
+    degree = defaultdict(int)   # value -> degree
+
+    for i in range(1, n):
+        for j in range(m):
+            u = tbl[i][j]
+            v = tbl[0][j]
+            if u != v:
+                adj[u].append(v)
+                adj[v].append(u)
+                degree[u] += 1
+                degree[v] += 1
+                break  # only one mismatch edge per row is sufficient
+
+    # List only vertices that have constraints (degree > 0), sorted by degree
+    vertices = sorted((d, v) for v, d in degree.items())
+
+    # Greedy coloring: assign smallest positive color not used by colored neighbors
+    color = {}  # value -> assigned color (positive int)
+
+    for _, v in vertices:
+        used = set()
+        for u in adj[v]:
+            if u in color:
+                used.add(color[u])
+
+        c = 1
+        while c in used:
+            c += 1
+        color[v] = c
+
+    # Output format:
+    # Always print Yes, then mapping for all distinct values in increasing order.
+    out_lines = ["Yes"]
+    for v in values:
+        out_lines.append(f"{v} -> {color.get(v, 0)}")
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Pick for each row `i>1` the first column where it differs from row 1, and add a constraint `f(a) != f(b)` between the two values in that column. This forms a graph with at most `E = n-1 ≤ 999` edges. Now we just need a proper coloring of this graph; greedy coloring in increasing degree order uses `O(√E)` colors, which is < 50 here. Assign these colors as `f(x)` for constrained values and map all other values to 0. Print all distinct matrix values in sorted order as `"key -> value"`.

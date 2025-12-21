@@ -1,14 +1,13 @@
 # ACM SGU Competitive Programming Solutions with LLM Enhancement
 
-This repository contains solutions to ACM SGU (Saratov State University) competitive programming problems, enhanced with detailed editorials and reasoning explanations generated using advanced language models, and includes a finetuned model trained specifically on this dataset.
+This repository contains solutions to ACM SGU (Saratov State University) competitive programming problems, enhanced with detailed editorials and reasoning explanations generated using advanced language models.
 
 ## Overview
 
-The repository consists of three main components:
+The repository consists of two main components:
 
 1. **Original Solutions**: Competitive programming solutions to SGU problems in C++ or Python.
-2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using gpt5.1 thinking.
-3. **Finetuned Model**: A basic pipeline with MLX for finetuning an LLM based on the above (still WIP).
+2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using gpt5.2 thinking.
 
 ## Dataset Structure
 
@@ -38,50 +37,12 @@ The editorials follow a structured format:
 4. **Reference Solutions**: One solution in C++ and one in Python.
 5. **Compressed Editorial**: Quick summary for experienced programmers.
 
-## Model Finetuning
-
-### Dataset Preparation
-- **230 problems** (and slowly increasing) from the SGU archive solved by me ([radoslav11](https://codeforces.com/problemsets/acmsguru/standings)).
-- Enhanced with detailed editorials using GPT gpt5.1 thinking.
-
-### Training Configuration
-- **Base Model**: OlympicCoder-7B (MLX format, fp16)
-- **Architecture**: Qwen2-based language model
-- **Training Method**: Autoregressive language modeling with SGD optimizer
-- **Context Length**: 2048 tokens with sliding window
-- **Learning Rate**: 1e-6 with gradient clipping
-- **Hardware**: Apple M2 Max (96GB RAM)
-
-## Getting Started
-
-### Prerequisites
-```bash
-# Install MLX for Apple Silicon
-pip install mlx mlx-lm
-
-# Install additional dependencies
-pip install matplotlib numpy transformers
-```
-
-### Training Your Own Model
-```bash
-python3 src/finetune.py \
-    --model path/to/base/model \
-    --dataset_dir dataset \
-    --epochs 3 \
-    --batch_size 1 \
-    --lr 1e-6 \
-    --max_length 2048 \
-    --output_dir path/to/output
-```
-
 ## File Structure
 
 ```
 src/
 ├── process_problems.py          # Script to process my raw solutions and statments.
 ├── create_dataset.py            # After processing the problems, creates the actual dataset.
-├── finetune.py                  # Main training pipeline script.
 └── requirements.txt             # Python dependencies.
 
 problems/
@@ -91,17 +52,9 @@ problems/
 
 dataset/
 ├── p*.txt                      # Enhanced editorials.
-├── p*_finetune.tx              # Data used for finetuning. 
-└── p*_raw.txt                  # All data from the corresponding promblems/ directory.
+├── p*_finetune.txt             # Formatted data for training.
+└── p*_raw.txt                  # All data from the corresponding problems/ directory.
 ```
-
-## External Requirements
-
-The training pipeline requires:
-- **Apple Silicon Mac** with MLX support.
-- **Sufficient RAM** (recommended 32GB+ for 7B models).
-- **Python 3.8+** with MLX framework.
-- **Matplotlib** for training visualization.
 
 ## Future Work
 
@@ -123,6 +76,4 @@ If you use this dataset please cite, maybe I will add an actual PDF later:
 ## Acknowledgments
 
 - SGU (Saratov State University) for the original problem set.
-- OpenAI for the GPT gpt5.1 thinking model used in editorial generation.
-- Apple MLX team for the training framework.
-- OlympicCoder project for the base model architecture.
+- OpenAI for the GPT gpt5.2 thinking model used in editorial generation.

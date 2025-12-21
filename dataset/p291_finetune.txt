@@ -1,0 +1,264 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+291. Evolution
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Qc has discovered n new amusing cultures of bacteria. The bacteria are grown in a special container divided into qxc cells. Initially one bacterium of each culture is put into some cell of the box. After that they start to grow.
+Each second the following actions take place.
+First the bacteria of the first culture divide simultaneously. Each bacterium divides into five ones, and if the dividing bacterium occupied the cell (x, y), the five bacteria try to occupy cells (x, y), (x-1, y), (x+1, y), (x, y-1) and (x, y+1). If the required cell does not exist, or is occupied by the bacterium of the other culture, the corresponding bacterium dies. If the cell that the bacterium goes to is already occupied by the bacterium of the same culture, the younger bacterium kills the older one and occupies the cell. If two bacteria of the same generation try to occupy the same cell, the random one wins and kills the other one.
+After bacteria of the first culture divide, bacteria of the second culture do, after that the bacteria of the third culture, and so on. It takes one second for all n cultures to divide.
+All cultures divide in the described way each second.
+Given the initial positions of bacteria of all cultures, Qc wants to know how many cells are occupied by each culture after t seconds.
+
+Input
+The first line of the input contains four integer numbers: 1 <= q, c, <= 1000, 1 <= n <= 22204 --- the number of cultures and 0 <= t <= 10^9. Next n lines contains n pairs of integer numbers (xi, yi) --- initial positions of bacteria of each culture. No two bacteria initially occupy the same cell. Size q is for x coordinates, c is for y.
+
+Output
+Print n lines of output, each line must contain a single integer --- the answer for the i-th culture.
+
+Sample test(s)
+
+Input
+10 10 3 3
+3 3
+6 2
+7 9
+
+Output
+21
+15
+21
+Author:	Anton Golubev, Petrazavodsk SU
+Resource:	Anton Golubev (Hedgehog)'s Contest #2 from Annual Summer Russian Teams Meeting in Petrozavodsk State University
+Date:	August 26, 2005
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+We have a \(q \times c\) grid (cells \((x,y)\), \(1 \le x \le q\), \(1 \le y \le c\)).  
+There are \(n\) bacterial cultures; culture \(i\) starts in a unique cell \((x_i,y_i)\).
+
+Every second, cultures act in order \(1,2,\dots,n\). When a culture acts, each of its bacteria “divides” attempting to place bacteria into its own cell and its 4 orthogonal neighbors. Offspring dies if it goes out of bounds or into a cell occupied by another culture. Same-culture conflicts don’t matter for ownership (the cell remains that culture).
+
+After \(t\) seconds, output how many cells are occupied by each culture.
+
+Constraints: \(q,c \le 1000\) (so up to \(10^6\) cells), \(n \le 22204\), \(t \le 10^9\).
+
+---
+
+## 2) Key observations
+
+1. **Ownership never changes once a cell is taken by some culture.**  
+   A culture cannot enter a cell already occupied by another culture (incoming dies), so the first culture that claims a cell keeps it forever.
+
+2. **The “5-way division” results in a simple wave expansion.**  
+   The only way to occupy new cells is via orthogonal moves (up/down/left/right), so after \(d\) seconds a culture can only reach cells with Manhattan distance \(\le d\) from its start.
+
+3. **Who owns a cell is determined by shortest distance, then culture index.**  
+   For any cell \(v\):
+   - Let \(dist_i(v)\) be Manhattan shortest path distance from culture \(i\)’s start to \(v\).
+   - The earliest possible arrival time is \(\min_i dist_i(v)\).
+   - If multiple cultures tie on the same earliest time, culture with **smaller index wins**, because cultures expand in order during that second.
+
+   So owner(cell) = argmin \((dist, index)\).
+
+4. This is exactly **multi-source BFS** on a grid with tie-breaking by culture index:
+   - BFS guarantees increasing distance order.
+   - Seeding the queue with sources in increasing index order ensures that among equal distances, smaller index claims first.
+
+5. Even if \(t\) is huge, we never need more than \(q \cdot c\) work: the grid has at most \(10^6\) cells; once filled (or once distance reaches \(t\)), we stop.
+
+---
+
+## 3) Full solution approach
+
+### Plan
+We compute which culture owns every cell within distance \(\le t\) from some starting culture (and possibly all cells if \(t\) is large enough).
+
+### Data structures
+- `owner[x][y]`: culture index that owns cell \((x,y)\), or `0` if unoccupied.
+- BFS queue entries: `(x, y, dist, culture)`.
+
+### Algorithm (multi-source BFS)
+1. Read input.
+2. Initialize `owner` to all zeros.
+3. Push all starting cells into BFS queue **in increasing culture index**:
+   - `owner[x_i][y_i] = i`
+   - enqueue `(x_i, y_i, 0, i)`
+4. BFS loop:
+   - pop front `(x, y, d, i)`
+   - if `d == t`, do not expand further from this cell
+   - for each 4-neighbor `(nx, ny)` inside grid:
+     - if `owner[nx][ny] == 0` (still empty), set it to `i` and enqueue `(nx, ny, d+1, i)`
+5. Count how many cells have `owner == i` for each culture `i`.
+6. Output counts for `i = 1..n`.
+
+### Why tie-breaking works
+BFS processes states in nondecreasing `dist`.  
+All starting nodes have distance 0 and are enqueued in order `1..n`. Inductively, all nodes discovered at distance `d` are processed before distance `d+1`. If two cultures could claim the same empty cell at the same distance, the one whose frontier reaches it first in the queue wins; that is ensured by the initial ordering (and FIFO nature) matching “culture 1 divides first, then 2, …” each second.
+
+### Complexity
+- Time: \(O(qc)\) in worst case (each cell is assigned once, checking 4 neighbors).
+- Memory: \(O(qc)\) for the `owner` grid + BFS queue.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p291 - Evolution
+
+  Multi-source BFS on a q x c grid.
+  Each cell is claimed by the culture with smallest distance to it;
+  ties are broken by smaller culture index due to expansion order.
+
+  We stop expanding beyond distance t.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int q, c, n;
+    long long t; // t can be up to 1e9
+    cin >> q >> c >> n >> t;
+
+    vector<pair<int,int>> start(n + 1);
+    for (int i = 1; i <= n; i++) {
+        cin >> start[i].first >> start[i].second;
+    }
+
+    // owner[x][y] = culture index owning this cell, 0 if empty.
+    // Using 1-based indexing for simplicity: valid x in [1..q], y in [1..c].
+    vector<vector<int>> owner(q + 1, vector<int>(c + 1, 0));
+
+    // BFS queue stores: x, y, dist, culture
+    // dist fits into int because we never need to exceed q+c, but keep it int.
+    queue<tuple<int,int,int,int>> bfs;
+
+    // Seed BFS in increasing culture order to enforce tie-breaking by index.
+    for (int i = 1; i <= n; i++) {
+        auto [x, y] = start[i];
+        owner[x][y] = i;
+        bfs.push({x, y, 0, i});
+    }
+
+    // 4-neighborhood directions
+    const int dx[4] = {1, -1, 0, 0};
+    const int dy[4] = {0, 0, 1, -1};
+
+    while (!bfs.empty()) {
+        auto [x, y, dist, cult] = bfs.front();
+        bfs.pop();
+
+        // We can occupy cells at distance <= t.
+        // But from a cell reached at dist==t we cannot expand further.
+        if ((long long)dist >= t) continue;
+
+        int nd = dist + 1;
+        for (int dir = 0; dir < 4; dir++) {
+            int nx = x + dx[dir];
+            int ny = y + dy[dir];
+
+            // inside bounds?
+            if (nx < 1 || nx > q || ny < 1 || ny > c) continue;
+
+            // claim only if empty; once claimed, no other culture can ever enter
+            if (owner[nx][ny] == 0) {
+                owner[nx][ny] = cult;
+                bfs.push({nx, ny, nd, cult});
+            }
+        }
+    }
+
+    // Count cells for each culture.
+    vector<int> ans(n + 1, 0);
+    for (int x = 1; x <= q; x++) {
+        for (int y = 1; y <= c; y++) {
+            ans[owner[x][y]]++;
+        }
+    }
+
+    // Output answers for cultures 1..n.
+    for (int i = 1; i <= n; i++) {
+        cout << ans[i] << "\n";
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    if not data:
+        return
+    it = iter(data)
+
+    q = next(it)   # x dimension (rows)
+    c = next(it)   # y dimension (cols)
+    n = next(it)   # number of cultures
+    t = next(it)   # seconds
+
+    starts = [(next(it), next(it)) for _ in range(n)]  # culture i starts at starts[i-1]
+
+    # owner[x][y] = culture index (1..n), 0 if empty.
+    # Use 1-based indexing: allocate (q+1) x (c+1).
+    owner = [[0] * (c + 1) for _ in range(q + 1)]
+
+    # Multi-source BFS queue items: (x, y, dist, culture)
+    bfs = deque()
+
+    # Seed BFS in culture index order to break ties properly.
+    for i, (x, y) in enumerate(starts, start=1):
+        owner[x][y] = i
+        bfs.append((x, y, 0, i))
+
+    # 4-neighborhood moves
+    dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+    while bfs:
+        x, y, dist, cult = bfs.popleft()
+
+        # Do not expand beyond distance t.
+        if dist >= t:
+            continue
+
+        nd = dist + 1
+        for dx, dy in dirs:
+            nx, ny = x + dx, y + dy
+            if 1 <= nx <= q and 1 <= ny <= c and owner[nx][ny] == 0:
+                owner[nx][ny] = cult
+                bfs.append((nx, ny, nd, cult))
+
+    # Count owned cells per culture.
+    ans = [0] * (n + 1)
+    for x in range(1, q + 1):
+        row = owner[x]
+        for y in range(1, c + 1):
+            ans[row[y]] += 1
+
+    sys.stdout.write("\n".join(str(ans[i]) for i in range(1, n + 1)))
+
+if __name__ == "__main__":
+    solve()
+```
+
+These implementations follow the key reduction: the process is equivalent to assigning each cell to the nearest culture (Manhattan distance), with ties resolved by smaller index—implemented explainedly via multi-source BFS seeded in index order and stopped at distance \(t\).

@@ -33,6 +33,9 @@ int n, m;
 void read() { cin >> n >> m; }
 
 void solve() {
+    // This is a standard problem for DP with a broken profile, although we need
+    // to consider some cases.
+
     // vector<vector<int64_t>> can_cover(1 << m, vector<int64_t>(1 << m,
     // false));
 

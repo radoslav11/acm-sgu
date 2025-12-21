@@ -20,7 +20,7 @@ Based on all the information provided for problem `{problem_name}`, please provi
 """
 
     response = client.responses.create(
-        model="gpt-5.1",
+        model="gpt-5.2",
         input=[
             {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
             {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
@@ -66,7 +66,7 @@ Use the provided editorial and solutions as reference, but create a clear, educa
 """
 
     response = client.responses.create(
-        model="gpt-5.1",
+        model="gpt-5.2",
         input=[
             {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
         ],

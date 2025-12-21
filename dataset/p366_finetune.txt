@@ -1,0 +1,399 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+366. Computer Game
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+BerSoft company recently released new computer game, where you play against N opponents. During the game you need to tell to K opponents your opinion about them. You feel pleasure after that and get several score points after that. Each opponent described by two parameters ai and bi, where ai is the amount of pleasure you get when you tell your opinion about this opponent; bi amount of score points you get in that case. Let us denote A and B summary pleasure and score points that you get during the game. You have never played this game; therefore you don't know what is now what is more advantageous: get more pleasure or score points. You decided to make these values as close as possible. Your task is to select K opponents in a way that minimizes |A - B|. If there are several ways to do it, choose one that maximizes A + B.
+
+Input
+The first line of the input file contains integer number N, K (1 ≤ N ≤ 60000; 1 ≤ K ≤ min(N, 20)). Next N lines contain two integer numbers each — i-th opponent parameters ai and bi (0 ≤ ai ≤ 50; 0 ≤ bi ≤ 50).
+
+Output
+On the first line of the output file print values A and B. Print numbers of K selected opponents on the second line. Print numbers in ascending order. If there are several solutions, output any of them.
+
+Example(s)
+sample input
+sample output
+4 2 
+1 2 
+2 3 
+4 1 
+6 2
+6 4 
+2 3
+
+sample input
+sample output
+5 3 
+13 11 
+3 17 
+15 20 
+6 13 
+17 9
+36 33 
+1 4 5
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You have **N** opponents (up to 60000). Opponent *i* gives you two values \((a_i, b_i)\) (both in \([0, 50]\)).  
+Choose **exactly K** opponents (\(K \le 20\)) so that:
+
+1) \(|A - B|\) is minimized, where \(A=\sum a_i\), \(B=\sum b_i\) over chosen opponents.  
+2) If multiple choices minimize \(|A-B|\), pick one with maximum \(A+B\).
+
+Output \(A\), \(B\), and the chosen indices (ascending). Any optimal answer is accepted.
+
+---
+
+## 2) Key observations
+
+1. **Change variables** for each opponent:
+   - \(d_i = a_i - b_i\) (difference contribution)
+   - \(s_i = a_i + b_i\) (sum contribution)
+
+   For a chosen set \(S\) (|S|=K):
+   - \(D = \sum d_i = A - B\)
+   - \(Ssum = \sum s_i = A + B\)
+
+   Goal becomes:
+   - minimize \(|D|\)
+   - tie-break: maximize \(Ssum\)
+
+2. Since \(a_i, b_i \in [0,50]\), we have \(d_i \in [-50, 50]\): **only 101 possible differences**.
+
+3. **Dominance inside a difference group**:
+   - If two opponents have the same \(d\), picking the one with larger \(s\) is always better (same effect on \(D\), better on \(Ssum\)).
+   - Therefore, from each difference group we only ever need the **top K** opponents by \(s\) (because total picks is K).
+
+   This shrinks candidates from up to 60000 down to at most \(101 \cdot K \le 2020\).
+
+4. After reduction, we can do a knapsack-style DP over:
+   - how many picked (0..K)
+   - total difference \(D\) (range \([-50K, 50K]\), at most \([-1000,1000]\))
+
+   and maximize \(Ssum\) for each reachable state.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Reduce N by grouping
+For each opponent \(i\):
+- compute \(d_i = a_i - b_i\)
+- compute \(s_i = a_i + b_i\)
+
+Group opponents by \(d_i\) (101 buckets).  
+In each bucket, sort by \(s_i\) descending and keep only top **K**.
+
+Now we have at most ~2020 candidates.
+
+---
+
+### Step B — DP to select exactly K opponents
+We want: among all ways to pick exactly K items,
+- minimize \(|\sum d_i|\)
+- tie-break by maximizing \(\sum s_i\)
+
+Use a shifted-difference representation to avoid negative indices:
+- let `OFFSET = 50`
+- store `shifted_d = d + OFFSET` in \([0,100]\)
+
+If we pick K items:
+- `sumShifted = Σ(d+OFFSET) = D + K*OFFSET`
+- so `D = sumShifted - K*OFFSET`
+- minimizing \(|D|\) equals minimizing \(|sumShifted - K*OFFSET|\)
+
+DP state:
+- `dp[cnt][sumShifted]` (cnt = number of picked items)
+- store the **maximum** achievable `Ssum` and also store a parent pointer (or directly store indices) for reconstruction.
+
+Transition for each candidate item \((shifted_d, s, idx)\):
+- for `cnt` from K-1 down to 1:
+  - `dp[cnt][newSum] = max(dp[cnt][newSum], dp[cnt-1][oldSum] + s)`
+
+Initialize:
+- `dp[0][0] = 0` (picked none, sumShifted=0)
+
+At the end, among all `dp[K][sumShifted]` reachable:
+- choose one minimizing `abs(sumShifted - K*OFFSET)`
+- tie: maximizing `Ssum`
+
+Then recover:
+- \(D = sumShifted - K*OFFSET\)
+- \(A = (Ssum + D)/2\)
+- \(B = (Ssum - D)/2\)
+
+Reconstruct indices and print sorted.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p366 - Computer Game
+
+  Core idea:
+  - Transform (a,b) -> d=a-b, s=a+b.
+  - Want K items minimizing |sum d|, tie maximize sum s.
+  - d in [-50..50] => 101 groups; keep top K by s per group => <= 2020 items.
+  - DP on (count, sumShiftedDiff) maximizing sum s.
+  - Reconstruct chosen indices.
+*/
+
+static const int MAXV = 50;
+static const int OFFSET = 50;              // shift diff by +50 => [0..100]
+static const int DIFF_VALUES = 101;        // -50..50
+
+struct Item {
+    int shDiff;   // (a-b)+OFFSET in [0..100]
+    int sum;      // a+b
+    int idx;      // original 1-based index
+};
+
+struct Parent {
+    int prevSum = -1;    // previous sumShiftedDiff
+    int prevItem = -1;   // index in items array chosen last
+    bool used = false;
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, K;
+    cin >> N >> K;
+
+    vector<pair<int,int>> ab(N);
+    for (int i = 0; i < N; i++) cin >> ab[i].first >> ab[i].second;
+
+    // Step 1: group by shifted diff, store (sum, idx)
+    vector<vector<pair<int,int>>> groups(DIFF_VALUES);
+    for (int i = 0; i < N; i++) {
+        int a = ab[i].first, b = ab[i].second;
+        int d = a - b;
+        int sh = d + OFFSET;
+        int s = a + b;
+        groups[sh].push_back({s, i + 1}); // sum, original index
+    }
+
+    // Step 2: keep only top K by sum in each group
+    vector<Item> items;
+    items.reserve(DIFF_VALUES * K);
+
+    for (int sh = 0; sh < DIFF_VALUES; sh++) {
+        auto &g = groups[sh];
+        sort(g.begin(), g.end(), greater<pair<int,int>>()); // descending by sum
+        if ((int)g.size() > K) g.resize(K);
+        for (auto [s, idx] : g) {
+            items.push_back({sh, s, idx});
+        }
+    }
+
+    // DP dimensions:
+    // sumShiftedDiff can be at most K*100, but we used 101 values per pick (0..100),
+    // so safe upper bound: K*100, or more conservatively K*101.
+    int MAX_SUM = K * DIFF_VALUES;  // max possible sumShiftedDiff
+
+    // dp[cnt][sum] = best (max) Ssum achievable with cnt items and shifted sum 'sum'
+    // Use -INF for impossible.
+    const int NEG = -1e9;
+    vector<vector<int>> dp(K + 1, vector<int>(MAX_SUM + 1, NEG));
+
+    // parent pointers to reconstruct:
+    // parent[cnt][sum] stores how we came here (prevSum and item used)
+    vector<vector<Parent>> parent(K + 1, vector<Parent>(MAX_SUM + 1));
+
+    dp[0][0] = 0;
+
+    // Standard 0/1 knapsack over the reduced item set
+    for (int it = 0; it < (int)items.size(); it++) {
+        int sh = items[it].shDiff;
+        int s  = items[it].sum;
+
+        // go backwards in cnt to avoid reusing the same item
+        for (int cnt = K; cnt >= 1; cnt--) {
+            for (int sum = 0; sum + sh <= MAX_SUM; sum++) {
+                if (dp[cnt - 1][sum] == NEG) continue;
+                int nsum = sum + sh;
+                int cand = dp[cnt - 1][sum] + s;
+                if (cand > dp[cnt][nsum]) {
+                    dp[cnt][nsum] = cand;
+                    parent[cnt][nsum].used = true;
+                    parent[cnt][nsum].prevSum = sum;
+                    parent[cnt][nsum].prevItem = it;
+                }
+            }
+        }
+    }
+
+    // Choose best among dp[K][sumShifted]
+    int target = K * OFFSET; // corresponds to D=0
+    int bestSumShifted = -1;
+    int bestSsum = NEG;
+    int bestAbs = INT_MAX;
+
+    for (int sum = 0; sum <= MAX_SUM; sum++) {
+        if (dp[K][sum] == NEG) continue;
+        int absD = abs(sum - target);
+        if (absD < bestAbs || (absD == bestAbs && dp[K][sum] > bestSsum)) {
+            bestAbs = absD;
+            bestSumShifted = sum;
+            bestSsum = dp[K][sum];
+        }
+    }
+
+    // Reconstruct indices
+    vector<int> chosen;
+    int cnt = K, sum = bestSumShifted;
+    while (cnt > 0) {
+        Parent &p = parent[cnt][sum];
+        // With our transitions, if dp[cnt][sum] is reachable, parent should be set
+        int it = p.prevItem;
+        chosen.push_back(items[it].idx);
+        sum = p.prevSum;
+        cnt--;
+    }
+    sort(chosen.begin(), chosen.end());
+
+    // Recover A and B:
+    int D = bestSumShifted - target; // A-B
+    int Ssum = bestSsum;             // A+B
+    int A = (Ssum + D) / 2;
+    int B = (Ssum - D) / 2;
+
+    cout << A << " " << B << "\n";
+    for (int i = 0; i < (int)chosen.size(); i++) {
+        if (i) cout << " ";
+        cout << chosen[i];
+    }
+    cout << "\n";
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+# p366 - Computer Game
+#
+# Same approach:
+# 1) Transform each opponent: d=a-b, s=a+b
+# 2) Group by d (101 possibilities), keep top K by s in each group
+# 3) 0/1 knapsack DP for exactly K picks:
+#    dp[cnt][sumShifted] = max Ssum
+#    parent pointers to reconstruct chosen indices
+#
+# Note: Python might be close to the time limit on some judges,
+# but with the reduction to <= 2020 items and small DP it's typically fine.
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    N = int(next(it))
+    K = int(next(it))
+
+    ab = [(int(next(it)), int(next(it))) for _ in range(N)]
+
+    MAXV = 50
+    OFFSET = 50
+    DIFF_VALUES = 101  # shifted diffs 0..100
+
+    # Group by shifted diff
+    groups = [[] for _ in range(DIFF_VALUES)]  # each: list of (s, idx)
+    for idx, (a, b) in enumerate(ab, start=1):
+        sh = (a - b) + OFFSET
+        s = a + b
+        groups[sh].append((s, idx))
+
+    # Keep top K in each group
+    items = []  # (shDiff, sum, idx)
+    for sh in range(DIFF_VALUES):
+        g = groups[sh]
+        g.sort(reverse=True)         # descending by s
+        if len(g) > K:
+            g = g[:K]
+        for s, idx in g:
+            items.append((sh, s, idx))
+
+    MAX_SUM = K * DIFF_VALUES  # safe bound for sumShiftedDiff
+    NEG = -10**9
+
+    # dp[cnt][sum] = best Ssum, parent to reconstruct:
+    dp = [[NEG] * (MAX_SUM + 1) for _ in range(K + 1)]
+    # parent[cnt][sum] = (prev_sum, item_index) or None
+    parent = [[None] * (MAX_SUM + 1) for _ in range(K + 1)]
+
+    dp[0][0] = 0
+
+    for item_i, (sh, s, idx) in enumerate(items):
+        # backward cnt to avoid reuse
+        for cnt in range(K, 0, -1):
+            prev = dp[cnt - 1]
+            cur = dp[cnt]
+            for sumv in range(0, MAX_SUM - sh + 1):
+                if prev[sumv] == NEG:
+                    continue
+                nsum = sumv + sh
+                cand = prev[sumv] + s
+                if cand > cur[nsum]:
+                    cur[nsum] = cand
+                    parent[cnt][nsum] = (sumv, item_i)
+
+    target = K * OFFSET
+    best_sum_shifted = -1
+    best_ssum = NEG
+    best_abs = 10**18
+
+    for sumv in range(MAX_SUM + 1):
+        if dp[K][sumv] == NEG:
+            continue
+        absd = abs(sumv - target)
+        if absd < best_abs or (absd == best_abs and dp[K][sumv] > best_ssum):
+            best_abs = absd
+            best_sum_shifted = sumv
+            best_ssum = dp[K][sumv]
+
+    # Reconstruct
+    chosen = []
+    cnt, sumv = K, best_sum_shifted
+    while cnt > 0:
+        prev_sum, item_i = parent[cnt][sumv]
+        sh, s, idx = items[item_i]
+        chosen.append(idx)
+        sumv = prev_sum
+        cnt -= 1
+
+    chosen.sort()
+
+    D = best_sum_shifted - target  # A-B
+    Ssum = best_ssum               # A+B
+    A = (Ssum + D) // 2
+    B = (Ssum - D) // 2
+
+    out = []
+    out.append(f"{A} {B}\n")
+    out.append(" ".join(map(str, chosen)) + "\n")
+    sys.stdout.write("".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+

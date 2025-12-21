@@ -1,0 +1,419 @@
+## 1) Abridged problem statement
+
+You are given a directed graph with **N** vertices and **M** arcs. Each arc has a non‑negative integer “mark”.
+
+A vertex is **active** if **all incoming arcs** to it currently have **positive** marks.
+
+The system evolves by repeatedly choosing any active vertex and **firing** it:
+- each **incoming** arc to that vertex decreases by 1,
+- each **outgoing** arc increases by 1.
+
+A vertex is **potentially alive** if there exists some valid firing sequence after which that vertex fires at least once.
+A vertex is **alive** if **after any valid firing sequence**, it is still potentially alive.
+
+Output for each vertex `1` if it is alive, else `0`.
+
+Constraints: `1 ≤ N ≤ 1000`, `1 ≤ M ≤ 50000`, marks up to `1e9`.
+
+---
+
+## 2) Detailed editorial (explaining the solution)
+
+### Key simplifications
+
+#### A) Only whether a mark is zero matters
+For “can a vertex become active”, what blocks activity is an incoming arc being **zero** (because activity requires all incoming marks > 0).  
+If an arc is already positive, it can be thought of as “available”; exact magnitude doesn’t matter for the *existence* of deadlocks/aliveness classification used here. Thus the solution only distinguishes:
+- `w == 0`  (blocking token missing)
+- `w > 0`   (already has token)
+
+#### B) Once a vertex is “not alive”, everything reachable from it is “not alive”
+Intuition: if there exists a sequence of fires that can make `u` lose the property “alive”, then vertices downstream can be deprived of required tokens as well. The official solution uses a monotonicity argument: “not alive” propagates along edges, so we can mark all vertices reachable from a “bad” vertex as also bad.
+
+So: find a set of vertices that are definitely **not alive**, then DFS/BFS along **all edges** to mark everything reachable as not alive.
+
+---
+
+### What makes a vertex definitely not alive?
+
+#### 1) A zero self-loop kills the vertex immediately
+If there is an edge `u -> u` with initial mark `0`, then vertex `u` can never be active:
+- To fire `u`, all incoming arcs must be positive; but the self-loop is incoming and remains stuck at 0 unless `u` fires.
+- Catch-22: `u` can’t fire to increase it, because it’s needed to be positive to fire.
+
+Therefore: `u` is **not alive**.
+
+(If the self-loop has `w>0`, it doesn’t create a fundamental obstruction for the reasoning here, so it’s ignored.)
+
+#### 2) Any directed cycle consisting only of zero-mark edges makes its vertices not alive
+Consider only edges with `w==0`. If there is a directed cycle of length > 1 among these edges, no vertex on that cycle can ever get all its incoming arcs positive, because each vertex on the cycle has at least one incoming zero edge from another vertex in the same cycle. To increase those cycle edges, some vertex on the cycle must fire first, but none can become active due to the zero incoming requirement.
+
+This is exactly captured by **strongly connected components (SCCs)** in the graph of `w==0` edges:
+- If an SCC has size > 1, it contains a directed cycle ⇒ all its vertices are not alive.
+
+So: build graph **H** containing only edges with `w==0` (except ignore `u->u` here and handle self-loops separately), compute SCCs. Any vertex in an SCC of size > 1 is not alive.
+
+---
+
+### Final propagation
+
+Let initial bad set be:
+- vertices with a zero self-loop, and
+- vertices in SCCs (in the zero-edge graph) of size > 1.
+
+Then perform DFS/BFS from every bad vertex over **the full graph G (all edges regardless of w)** and mark reachable vertices as bad too.
+
+Remaining vertices are alive.
+
+---
+
+### Complexity
+- Building graphs: `O(N + M)`
+- SCC (Kosaraju): `O(N + M0)` where `M0` is number of zero edges (≤ M)
+- DFS propagation: `O(N + M)`
+Works comfortably within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/scc.hpp>
+
+using namespace std;
+
+// Output a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+/*
+  Kosaraju SCC implementation:
+  - First DFS on original graph to get finishing order (top_sort).
+  - Second DFS on reversed graph in that order to assign components.
+*/
+class StronglyConnectedComponents {
+  private:
+    vector<bool> visited; // visited marker for first pass DFS
+
+    // First pass: standard DFS to compute finishing order
+    void dfs1(int u) {
+        visited[u] = true;
+        for(int v: adj[u]) {
+            if(!visited[v]) {
+                dfs1(v);
+            }
+        }
+        // push after exploring descendants => finishing order
+        top_sort.push_back(u);
+    }
+
+    // Second pass: DFS on reversed graph to mark component id
+    void dfs2(int u) {
+        for(int v: radj[u]) {
+            if(comp[v] == -1) {          // not assigned yet
+                comp[v] = comp[u];       // same component as u
+                dfs2(v);
+            }
+        }
+    }
+
+  public:
+    int n;                              // number of vertices
+    vector<vector<int>> adj, radj;      // graph and reverse graph
+    vector<int> comp;                   // comp[u] = component id of u
+    vector<int> comp_ids;               // list of component ids (0..k-1)
+    vector<int> top_sort;               // finishing order from first pass
+
+    StronglyConnectedComponents() {}
+    StronglyConnectedComponents(int _n) { init(_n); }
+
+    // Add directed edge u -> v
+    void add_edge(int u, int v) {
+        adj[u].push_back(v);    // forward
+        radj[v].push_back(u);   // reverse
+    }
+
+    // Initialize graphs for n nodes
+    void init(int _n) {
+        n = _n;
+        comp_ids.clear();
+        top_sort.clear();
+        adj.assign(n, {});
+        radj.assign(n, {});
+    }
+
+    // Run Kosaraju to fill comp[] and comp_ids
+    void find_components() {
+        comp.assign(n, -1);         // -1 means unassigned
+        visited.assign(n, false);   // none visited in first pass
+
+        // 1st pass: get finishing order
+        for(int i = 0; i < n; i++) {
+            if(!visited[i]) {
+                dfs1(i);
+            }
+        }
+
+        // Kosaraju: process nodes in reverse finishing order
+        reverse(top_sort.begin(), top_sort.end());
+
+        // 2nd pass: assign components on reversed graph
+        for(int u: top_sort) {
+            if(comp[u] == -1) {
+                // start a new component
+                comp[u] = (int)comp_ids.size();
+                comp_ids.push_back(comp[u]);
+                dfs2(u);
+            }
+        }
+    }
+};
+
+int n, m;
+vector<vector<int>> all;        // all[u] = outgoing neighbors in full graph G
+vector<int> alive;              // alive[u] = 1 if alive, 0 otherwise
+
+StronglyConnectedComponents scc; // SCC structure for zero-edge graph H
+vector<bool> has_zero_self_loop; // remembers if u has an edge u->u with w==0
+
+// Read input and build:
+// - full adjacency list "all" (contains all edges, regardless of w)
+// - SCC graph contains only edges with w==0 and u!=v
+// - record zero self-loops separately
+void read() {
+    cin >> n >> m;
+    all.resize(n);
+    scc.init(n);
+    has_zero_self_loop.resize(n);
+
+    for(int i = 0; i < m; i++) {
+        int u, v, w;
+        cin >> u >> v >> w;
+        u--, v--;                 // convert to 0-based
+
+        all[u].push_back(v);      // store all edges for later propagation
+
+        if(w == 0) {
+            if(u == v) {
+                // zero self-loop is an immediate "not alive" certificate
+                has_zero_self_loop[u] = true;
+            } else {
+                // keep only w==0 non-self edges in SCC graph H
+                scc.add_edge(u, v);
+            }
+        }
+    }
+}
+
+// DFS to propagate "not alive" along the full graph G.
+// If u is not alive, every node reachable from u becomes not alive too.
+void dfs(int u) {
+    for(int v: all[u]) {
+        if(alive[v] == 1) {     // if v still marked alive
+            alive[v] = 0;       // mark as not alive
+            dfs(v);             // continue propagation
+        }
+    }
+}
+
+void solve() {
+    /*
+      Plan:
+      1) Mark everything alive initially.
+      2) Compute SCCs in graph of w==0 edges.
+      3) Any node in SCC size > 1 is not alive (zero-cycle).
+         Any node with zero self-loop is not alive.
+      4) Propagate "not alive" through all edges.
+      5) Output alive[].
+    */
+
+    alive.assign(n, 1);        // assume alive until proven otherwise
+    scc.find_components();     // SCCs in zero-edge graph H
+
+    // Compute size of each component
+    vector<int> comp_size(scc.comp_ids.size());
+    for(int i = 0; i < n; i++) {
+        comp_size[scc.comp[i]]++;
+    }
+
+    // Mark initial "bad" vertices:
+    // - zero self-loop
+    // - SCC size > 1 (zero cycle)
+    for(int i = 0; i < n; i++) {
+        if(has_zero_self_loop[i] || comp_size[scc.comp[i]] > 1) {
+            alive[i] = 0;
+        }
+    }
+
+    // Propagate badness along full graph from each bad vertex
+    for(int i = 0; i < n; i++) {
+        if(alive[i] == 0) {
+            dfs(i);
+        }
+    }
+
+    // Print result
+    for(int i = 0; i < n; i++) {
+        cout << alive[i] << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;   // problem has single test, kept as template
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(1_000_000)
+
+def solve() -> None:
+    input = sys.stdin.readline
+    n, m = map(int, input().split())
+
+    # all_edges: full graph G (all edges regardless of weight)
+    all_edges = [[] for _ in range(n)]
+
+    # zero-edge graph H for SCC: only edges with w == 0 and u != v
+    adj = [[] for _ in range(n)]
+    radj = [[] for _ in range(n)]
+
+    # remember zero self-loops separately
+    has_zero_self_loop = [False] * n
+
+    for _ in range(m):
+        u, v, w = map(int, input().split())
+        u -= 1
+        v -= 1
+
+        # store edge in full graph
+        all_edges[u].append(v)
+
+        if w == 0:
+            if u == v:
+                has_zero_self_loop[u] = True
+            else:
+                adj[u].append(v)
+                radj[v].append(u)
+
+    # --- Kosaraju SCC on H (zero edges) ---
+    visited = [False] * n
+    order = []
+
+    def dfs1(u: int) -> None:
+        """First pass DFS to compute finishing order."""
+        visited[u] = True
+        for v in adj[u]:
+            if not visited[v]:
+                dfs1(v)
+        order.append(u)
+
+    for i in range(n):
+        if not visited[i]:
+            dfs1(i)
+
+    comp = [-1] * n
+    comp_count = 0
+
+    def dfs2(u: int, cid: int) -> None:
+        """Second pass DFS on reversed graph to assign component id."""
+        comp[u] = cid
+        for v in radj[u]:
+            if comp[v] == -1:
+                dfs2(v, cid)
+
+    # process in reverse finishing order
+    for u in reversed(order):
+        if comp[u] == -1:
+            dfs2(u, comp_count)
+            comp_count += 1
+
+    # component sizes
+    comp_size = [0] * comp_count
+    for u in range(n):
+        comp_size[comp[u]] += 1
+
+    # alive[u] = 1 means alive, 0 means not alive
+    alive = [1] * n
+
+    # initial "bad" vertices:
+    # - zero self-loop
+    # - belongs to SCC with size > 1 in zero-edge graph (zero cycle)
+    for u in range(n):
+        if has_zero_self_loop[u] or comp_size[comp[u]] > 1:
+            alive[u] = 0
+
+    # propagate "not alive" along the full graph
+    def propagate(u: int) -> None:
+        """If u is not alive, mark all reachable vertices as not alive."""
+        for v in all_edges[u]:
+            if alive[v] == 1:
+                alive[v] = 0
+                propagate(v)
+
+    for u in range(n):
+        if alive[u] == 0:
+            propagate(u)
+
+    sys.stdout.write("\n".join(map(str, alive)))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Only the **zero vs positive** status of each arc matters.
+- Build two graphs:
+  - **G**: all edges.
+  - **H**: only edges with initial mark `0` (ignore self-loops here).
+- A vertex is immediately **not alive** if it has a **zero self-loop**.
+- Any SCC in **H** of size > 1 is a **cycle of zero edges** ⇒ all its vertices are **not alive**.
+- From every not-alive vertex, DFS/BFS over **G** to mark all reachable vertices as not alive.
+- Output 1 for the rest.
+
+Time: `O(N+M)` (Kosaraju SCC + DFS).

@@ -1,0 +1,369 @@
+## 1) Concise abridged problem statement
+
+For each test case you are given results of tossing two unknown biased coins:
+
+- Coin 1 has unknown head probability \(p\), tossed \(n_1\) times, with \(m_1\) heads.
+- Coin 2 has unknown head probability \(q\), tossed \(n_2\) times, with \(m_2\) heads.
+
+Before observing data, \(p\) and \(q\) are independent and uniformly distributed on \([0,1]\).
+
+Compute the posterior probability \( \Pr(p < q \mid \text{observations}) \) and print it as a real number (error \(\le 10^{-4}\)).
+
+Constraints: \(1 \le n_1,n_2 \le 1000\), \(0 \le m_1,m_2 \le 50\).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Step A: Bayesian model
+
+We start with independent priors:
+\[
+p \sim \text{Uniform}(0,1),\quad q \sim \text{Uniform}(0,1)
+\]
+
+Likelihoods given observations:
+\[
+\Pr(m_1 \mid p) = \binom{n_1}{m_1} p^{m_1}(1-p)^{n_1-m_1}
+\]
+\[
+\Pr(m_2 \mid q) = \binom{n_2}{m_2} q^{m_2}(1-q)^{n_2-m_2}
+\]
+
+Because the prior is uniform (a Beta(1,1)), the posteriors are Beta distributions:
+\[
+p \mid \text{data} \sim \text{Beta}(a_1,b_1),\quad a_1=m_1+1,\ b_1=n_1-m_1+1
+\]
+\[
+q \mid \text{data} \sim \text{Beta}(a_2,b_2),\quad a_2=m_2+1,\ b_2=n_2-m_2+1
+\]
+and \(p,q\) remain independent **given the data**, since the two experiments are independent.
+
+So the target is:
+\[
+\Pr(p<q)=\int_0^1 \int_0^q f_p(p)\, f_q(q)\, dp\, dq
+\]
+where \(f_p, f_q\) are Beta PDFs.
+
+---
+
+### Step B: Convert to a 1D integral using the Beta CDF
+
+Inner integral:
+\[
+\int_0^q f_p(p)\, dp = F_p(q)
+\]
+Thus:
+\[
+\Pr(p<q)=\int_0^1 F_p(q)\, f_q(q)\, dq
+\]
+
+So we need a way to compute this efficiently.
+
+---
+
+### Step C: Closed form for Beta CDF when parameters are integers
+
+For integer parameters, there is a well-known identity connecting the Beta CDF with a binomial tail:
+
+If \(p \sim \text{Beta}(a,b)\) with integers \(a,b\), then
+\[
+F_p(q)=I_q(a,b)=\sum_{j=a}^{a+b-1} \binom{a+b-1}{j} q^j(1-q)^{a+b-1-j}
+\]
+
+Here, \(a=a_1=m_1+1\) and \(a+b-1=(m_1+1)+(n_1-m_1+1)-1=n_1+1\).  
+So:
+\[
+F_p(q)=\sum_{j=m_1+1}^{n_1+1} \binom{n_1+1}{j} q^j(1-q)^{n_1+1-j}
+\]
+
+Plugging into \(\Pr(p<q)\):
+\[
+\Pr(p<q)=\int_0^1 \left(\sum_{j=m_1+1}^{n_1+1} \binom{n_1+1}{j} q^j(1-q)^{n_1+1-j}\right)\, f_q(q)\, dq
+\]
+Swap sum and integral:
+\[
+\Pr(p<q)=\sum_{j=m_1+1}^{n_1+1} \binom{n_1+1}{j}\int_0^1 q^j(1-q)^{n_1+1-j} f_q(q)\, dq
+\]
+
+Now write \(f_q(q)\) explicitly:
+\[
+f_q(q)=\frac{1}{B(a_2,b_2)} q^{m_2}(1-q)^{n_2-m_2}
+\]
+
+Multiply exponents:
+\[
+q^{j+m_2}(1-q)^{(n_1+1-j)+(n_2-m_2)}
+\]
+
+So the integral becomes a Beta function:
+\[
+\int_0^1 q^{j+m_2}(1-q)^{n_1+n_2-m_2-j+1}\,dq
+= B(j+m_2+1,\ n_1+n_2-m_2-j+2)
+\]
+
+Therefore:
+\[
+\Pr(p<q)=\frac{1}{B(m_2+1,n_2-m_2+1)}
+\sum_{j=m_1+1}^{n_1+1}
+\binom{n_1+1}{j}\,
+B(j+m_2+1,\ n_1+n_2-m_2-j+2)
+\]
+
+This is an \(O(n_1)\) sum.
+
+---
+
+### Step D: Computing the sum stably and fast (no factorials)
+
+Direct factorials overflow, so compute terms multiplicatively.
+
+Define the term for each \(j\):
+\[
+T(j)=\binom{n_1+1}{j}\,
+\frac{B(j+m_2+1,\ n_1+n_2-m_2-j+2)}{B(m_2+1,n_2-m_2+1)}
+\]
+
+We compute:
+- the first term \(T(m_1+1)\) using products of ratios
+- then iterate with a recurrence for adjacent terms:
+
+Using algebra with Gamma/Beta identities, you get:
+\[
+\frac{T(j+1)}{T(j)}=
+\frac{(n_1+1-j)(j+m_2+1)}{(j+1)(n_1+n_2-m_2-j+1)}
+\]
+
+So:
+- initialize `term = T(m1+1)`
+- add to answer
+- for \(j=m_1+1\) to \(n_1\): update `term *= ... / ...` and accumulate.
+
+This matches the provided C++.
+
+Complexity per test: \(O(n_1)\), fine for \(n_1 \le 1000\). Uses `long double` for precision.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard C++ headers
+using namespace std;
+
+// Overload output for pair (not used in final solution, but harmless utility)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pair (not used in final solution, but harmless utility)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vector: reads all elements in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output for vector (not used in final solution)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Global variables for one test case
+int n1, m1, n2, m2;
+
+// Reads one test case
+void read() { cin >> n1 >> m1 >> n2 >> m2; }
+
+void solve() {
+    // We compute P(p<q | data) where:
+    // p|data ~ Beta(m1+1, n1-m1+1)
+    // q|data ~ Beta(m2+1, n2-m2+1)
+    //
+    // Closed form:
+    // P(p<q) = (1/B(m2+1, n2-m2+1)) *
+    //          sum_{j=m1+1}^{n1+1} C(n1+1, j) * B(j+m2+1, n1+n2-m2-j+2)
+    //
+    // We compute the sum in O(n1) using a recurrence between terms.
+
+    long double term = 1.0L;  // Will hold the current summand T(j)
+
+    // First, compute C(n1+1, m1+1) multiplicatively:
+    // C(N, K) = Π_{i=0}^{K-1} (N-i)/(i+1)
+    // Here N = n1+1, K = m1+1, so i goes 0..m1.
+    for(int i = 0; i <= m1; i++) {
+        term *= (long double)(n1 + 1 - i) / (i + 1);
+    }
+
+    // Now we multiply term by:
+    // B(m1+m2+2, n1+n2-m1-m2+1) / B(m2+1, n2-m2+1)
+    // so that term becomes exactly T(j) for j = m1+1.
+    //
+    // This ratio is expanded into products of small factors to avoid factorials.
+    //
+    // Multiply by Π_{i=1}^{m1+1} (m2+i)  == (m2+1)(m2+2)...(m2+m1+1)
+    for(int i = 1; i <= m1 + 1; i++) {
+        term *= (long double)(m2 + i);
+    }
+
+    // Multiply by Π_{i=1}^{n1-m1} (n2-m2+i) == (n2-m2+1)...(n2-m2+n1-m1)
+    for(int i = 1; i <= n1 - m1; i++) {
+        term *= (long double)(n2 - m2 + i);
+    }
+
+    // Divide by Π_{i=1}^{n1+1} (n2+1+i) == (n2+2)...(n2+n1+2)
+    for(int i = 1; i <= n1 + 1; i++) {
+        term /= (long double)(n2 + 1 + i);
+    }
+
+    // Now term == T(m1+1). Start the summation.
+    long double ans = term;
+
+    // Use recurrence for j from (m1+1) up to n1:
+    // T(j+1)/T(j) = (n1+1-j)*(j+m2+1) / [(j+1)*(n1+n2-m2-j+1)]
+    //
+    // After loop ends, we've added terms up to j=n1+1.
+    for(int j = m1 + 1; j <= n1; j++) {
+        term *= (long double)(n1 + 1 - j) * (j + m2 + 1);              // multiply numerator
+        term /= (long double)(j + 1) * (n1 + n2 - m2 - j + 1);         // divide denominator
+        ans += term;                                                   // accumulate
+    }
+
+    // Print with enough precision
+    cout << fixed << setprecision(10) << ans << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O
+    cin.tie(nullptr);                 // Untie cin/cout for speed
+
+    int T = 1;
+    cin >> T;                         // Number of test cases
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read n1,m1,n2,m2
+        solve();                      // Compute and print answer
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same method) with detailed comments
+
+```python
+import sys
+
+def solve_case(n1, m1, n2, m2) -> float:
+    """
+    Computes P(p < q | data) where:
+      p|data ~ Beta(m1+1, n1-m1+1)
+      q|data ~ Beta(m2+1, n2-m2+1)
+
+    Uses the same O(n1) summation and recurrence as the C++ code,
+    keeping everything as floating-point products (no factorials).
+    """
+
+    # term will hold the current summand T(j)
+    term = 1.0
+
+    # Compute C(n1+1, m1+1) multiplicatively:
+    # C(N, K) = Π_{i=0}^{K-1} (N-i)/(i+1)
+    # Here N = n1+1, K = m1+1 -> i from 0..m1
+    for i in range(m1 + 1):
+        term *= (n1 + 1 - i) / (i + 1)
+
+    # Multiply by the Beta ratio that makes term equal to the first summand T(m1+1):
+    # B(m1+m2+2, n1+n2-m1-m2+1) / B(m2+1, n2-m2+1)
+    #
+    # Expanded into products to avoid huge factorials.
+
+    # Multiply by (m2+1)(m2+2)...(m2+m1+1)
+    for i in range(1, m1 + 2):
+        term *= (m2 + i)
+
+    # Multiply by (n2-m2+1)(n2-m2+2)...(n2-m2+n1-m1)
+    for i in range(1, n1 - m1 + 1):
+        term *= (n2 - m2 + i)
+
+    # Divide by (n2+2)(n2+3)...(n2+n1+2)
+    for i in range(1, n1 + 2):
+        term /= (n2 + 1 + i)
+
+    # Start summation with the first term j = m1+1
+    ans = term
+
+    # Recurrence:
+    # T(j+1)/T(j) = (n1+1-j)*(j+m2+1) / [(j+1)*(n1+n2-m2-j+1)]
+    #
+    # Loop j = m1+1 .. n1, producing terms up to j = n1+1.
+    for j in range(m1 + 1, n1 + 1):
+        term *= (n1 + 1 - j) * (j + m2 + 1)
+        term /= (j + 1) * (n1 + n2 - m2 - j + 1)
+        ans += term
+
+    return ans
+
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    t = int(data[0])
+    idx = 1
+
+    out_lines = []
+    for _ in range(t):
+        n1 = int(data[idx]); m1 = int(data[idx+1]); n2 = int(data[idx+2]); m2 = int(data[idx+3])
+        idx += 4
+        ans = solve_case(n1, m1, n2, m2)
+        out_lines.append(f"{ans:.10f}")
+
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Posterior distributions are independent:
+\[
+p\mid data\sim Beta(m_1+1,n_1-m_1+1),\quad q\mid data\sim Beta(m_2+1,n_2-m_2+1)
+\]
+We need
+\[
+P(p<q)=\int_0^1 F_p(q)\,f_q(q)\,dq
+\]
+For integer Beta parameters,
+\[
+F_p(q)=\sum_{j=m_1+1}^{n_1+1}\binom{n_1+1}{j}q^j(1-q)^{n_1+1-j}
+\]
+Substitute and integrate termwise using Beta integrals:
+\[
+P(p<q)=\frac{1}{B(m_2+1,n_2-m_2+1)}\sum_{j=m_1+1}^{n_1+1}
+\binom{n_1+1}{j}B(j+m_2+1,n_1+n_2-m_2-j+2)
+\]
+Compute the sum in \(O(n_1)\) by:
+- multiplicatively building the first term at \(j=m_1+1\)
+- using recurrence
+\[
+\frac{T(j+1)}{T(j)}=\frac{(n_1+1-j)(j+m_2+1)}{(j+1)(n_1+n_2-m_2-j+1)}
+\]
+Accumulate with floating-point (`long double`/`float`) and print.

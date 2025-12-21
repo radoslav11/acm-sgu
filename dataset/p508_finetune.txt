@@ -1,0 +1,277 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+508. Black-white balls
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+n black and white balls were put into a bag. Petya doesn't know exactly how many black balls are there among them. He knows, however, that there are 0, 1,..., n black balls among all balls in the bag with equal probability.
+
+Petya took l balls from the bag at random, and l1 of them turned out black, while l2 other turned out white (l1 + l2 = l). Now he wants to predict how many black balls were there initially in the bag. Of course, if l < n, he can't be sure in his prediction, but he wants to predict a segment [a, b], such that the amount k of black balls belongs to it with probability at least p.
+
+You are given n, l1, l2 and p, and you must find such a and b that b - a is minimal possible. If there are several such pairs (a, b), choose the one with the smallest a.
+
+Input
+In the first line there are four integer numbers: 1 ≤ n ≤ 50 — the number of balls in the bag, 0 ≤ l1 ≤ n — the number of black balls out of the l balls that Petya took from the bag, 0 ≤ l2 ≤ n - l1 — the number of white balls that Petya took from the bag, 0 ≤ p ≤ 100 — the required confidence in percent.
+
+Output
+Output numbers a and b separated by a space, 0 ≤ a ≤ b ≤ n.
+
+Example(s)
+sample input
+sample output
+50 1 24 100
+1 26
+
+sample input
+sample output
+50 1 49 100
+1 1
+
+sample input
+sample output
+50 1 10 95
+1 15
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+There are `n` balls in a bag; `k` of them are black (unknown). Before any draw, Petya assumes every `k ∈ {0,1,…,n}` is equally likely.
+
+Petya draws `l = l1 + l2` balls uniformly at random **without replacement** and observes `l1` black and `l2` white.
+
+Given `n, l1, l2` and required confidence `p%`, output an integer interval `[a, b]` (`0 ≤ a ≤ b ≤ n`) such that:
+
+- \( \Pr(a \le k \le b \mid \text{observed}) \ge p/100 \)
+- the length `b - a` is minimal
+- if multiple, choose the one with smallest `a`
+
+`n ≤ 50`.
+
+---
+
+## 2) Key observations
+
+1. **Uniform prior over `k`**:  
+   \[
+   P(k) = \frac{1}{n+1}
+   \]
+
+2. **Likelihood is hypergeometric** (drawing without replacement): if there are `k` black balls total, the probability to see exactly `l1` black and `l2` white is:
+   \[
+   P(\text{data}\mid k)=\frac{\binom{k}{l_1}\binom{n-k}{l_2}}{\binom{n}{l_1+l_2}}
+   \]
+
+3. **Posterior is proportional to the numerator**: by Bayes,
+   \[
+   P(k\mid \text{data}) \propto \binom{k}{l_1}\binom{n-k}{l_2}
+   \]
+   because the prior is constant in `k` and \(\binom{n}{l}\) doesn’t depend on `k`.
+
+4. Since `n ≤ 50`, we can:
+   - compute all \(\binom{n}{r}\) easily,
+   - compute posterior for all `k = 0..n`,
+   - brute force all intervals `[a,b]` in `O(n^2)`.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Compute unnormalized posterior weights
+For each `k = 0..n`, define:
+\[
+w_k = \binom{k}{l_1}\binom{n-k}{l_2}
+\]
+If `l1 > k` or `l2 > n-k`, then `w_k = 0` (impossible).
+
+### Step B: Normalize to a probability distribution
+Let:
+\[
+S = \sum_{k=0}^{n} w_k
+\qquad\Rightarrow\qquad
+post_k = \frac{w_k}{S}
+\]
+Now `post_k` is the posterior probability that initially there were exactly `k` black balls.
+
+### Step C: Fast interval probability queries (prefix sums)
+Compute prefix sums:
+\[
+pref[i] = \sum_{k=0}^{i-1} post_k
+\]
+Then for any interval `[a,b]`:
+\[
+P([a,b]) = pref[b+1] - pref[a]
+\]
+
+### Step D: Find the shortest interval meeting the confidence
+Brute force all intervals, but in increasing length `len = b-a`:
+
+- For `len = 0..n`
+  - For `a = 0..n-len`
+    - `b = a + len`
+    - if `P([a,b]) ≥ p` then it’s a candidate
+    - keep the one with smallest `len`, and if tied, smallest `a`
+
+Use a tiny epsilon (e.g. `1e-15`) for floating comparisons.
+
+Complexity:  
+- Binomial table: `O(n^2)`  
+- All intervals: `O(n^2)`  
+Total is trivial for `n ≤ 50`.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Small epsilon to avoid floating-point comparison issues.
+static const long double EPS = 1e-15;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, l1, l2;
+    long double pPercent;
+    cin >> n >> l1 >> l2 >> pPercent;
+
+    // Convert p from percent to probability in [0, 1].
+    long double p = pPercent / 100.0L;
+
+    // -----------------------------
+    // 1) Precompute binomial coefficients C[n][k] for n <= 50
+    // Using Pascal's triangle: C(i,j) = C(i-1,j-1) + C(i-1,j)
+    // Stored as long double for convenience (values are small enough for n<=50).
+    // -----------------------------
+    vector<vector<long double>> C(n + 1, vector<long double>(n + 1, 0.0L));
+    for (int i = 0; i <= n; i++) {
+        C[i][0] = C[i][i] = 1.0L;
+        for (int j = 1; j < i; j++) {
+            C[i][j] = C[i - 1][j - 1] + C[i - 1][j];
+        }
+    }
+
+    // -----------------------------
+    // 2) Compute unnormalized posterior weights:
+    //    w_k = C(k,l1) * C(n-k,l2)
+    // This is proportional to P(k | observed), due to uniform prior over k.
+    // -----------------------------
+    vector<long double> w(n + 1, 0.0L);
+    long double total = 0.0L;
+
+    for (int k = 0; k <= n; k++) {
+        if (l1 <= k && l2 <= n - k) {
+            w[k] = C[k][l1] * C[n - k][l2];
+        } else {
+            w[k] = 0.0L; // impossible to observe given this k
+        }
+        total += w[k];
+    }
+
+    // Normalize to get posterior probabilities post[k].
+    vector<long double> post(n + 1, 0.0L);
+    for (int k = 0; k <= n; k++) {
+        post[k] = (total > 0 ? w[k] / total : 0.0L);
+    }
+
+    // -----------------------------
+    // 3) Prefix sums for O(1) interval probability queries:
+    // pref[i] = sum_{k=0..i-1} post[k]
+    // Then sum on [a,b] = pref[b+1] - pref[a]
+    // -----------------------------
+    vector<long double> pref(n + 2, 0.0L);
+    for (int k = 0; k <= n; k++) {
+        pref[k + 1] = pref[k] + post[k];
+    }
+
+    // -----------------------------
+    // 4) Brute force smallest-length interval with mass >= p.
+    // Tie-breaking: smallest a.
+    // -----------------------------
+    int bestLen = n + 1;
+    int bestA = 0, bestB = n;
+
+    for (int len = 0; len <= n; len++) {
+        for (int a = 0; a + len <= n; a++) {
+            int b = a + len;
+            long double prob = pref[b + 1] - pref[a];
+
+            if (prob + EPS >= p) {
+                if (len < bestLen || (len == bestLen && a < bestA)) {
+                    bestLen = len;
+                    bestA = a;
+                    bestB = b;
+                }
+            }
+        }
+    }
+
+    cout << bestA << ' ' << bestB << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from math import comb
+
+EPS = 1e-15
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    l1 = int(data[1])
+    l2 = int(data[2])
+    p = float(data[3]) / 100.0  # percent -> probability
+
+    # 1) Unnormalized posterior weights:
+    #    w_k = C(k,l1) * C(n-k,l2)
+    # Using math.comb which is exact integer arithmetic.
+    w = [0.0] * (n + 1)
+    total = 0.0
+
+    for k in range(n + 1):
+        if l1 <= k and l2 <= (n - k):
+            wk = comb(k, l1) * comb(n - k, l2)
+        else:
+            wk = 0
+        w[k] = float(wk)
+        total += w[k]
+
+    # 2) Normalize into posterior probabilities post[k]
+    post = [wk / total for wk in w] if total > 0 else [0.0] * (n + 1)
+
+    # 3) Prefix sums: pref[i] = sum_{k=0..i-1} post[k]
+    pref = [0.0] * (n + 2)
+    for k in range(n + 1):
+        pref[k + 1] = pref[k] + post[k]
+
+    # 4) Find minimal-length interval [a,b] with posterior mass >= p
+    best_len = n + 1
+    best_a, best_b = 0, n
+
+    for length in range(n + 1):
+        for a in range(0, n - length + 1):
+            b = a + length
+            prob = pref[b + 1] - pref[a]
+            if prob + EPS >= p:
+                if length < best_len or (length == best_len and a < best_a):
+                    best_len = length
+                    best_a, best_b = a, b
+
+    print(best_a, best_b)
+
+if __name__ == "__main__":
+    solve()
+```
+
+Both implementations follow the same idea: compute the Bayesian posterior on `k` via hypergeometric likelihood, then pick the shortest contiguous interval whose posterior mass reaches the required confidence.

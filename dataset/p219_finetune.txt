@@ -1,0 +1,378 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+219. Synchrograph
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+In the theory of processes a special case of Petri nets is often considered, called synchrographs. Synchrograph can be represented as directed graph, each arc of which is marked with some non-negative integer number. The vertex of synchrograph is called active if all arcs incoming into this vertex are marked with the positive number.
+
+Synchrograph operates in cycles. Each cycle one active vertex is nondeterministically selected and fired. The vertex fires the following way: the number on each arc incoming into this vertex is decreased by one, and the number on each arc outgoing from this vertex is increased by one. After that the set of active vertices is refreshed due to the new marks of the arcs and the next cycle takes place.
+
+The vertex of synchrograph is called potentially alive if there is the sequence of fires, such that after it the vertex itself fires. The vertex is called alive if after any valid sequence of fires it is potentially alive.
+
+For each vertex of synchrograph detect whether it is alive.
+
+Input
+
+The first line of the input file contains N and M — the number of vertices and arcs of synchrograph respectively (1 ≤ N ≤ 1000, 1 ≤ M ≤ 50000). Next M lines contain arc descriptions --- the beginning of the arc, the end of the arc and the number that this arc is initially marked with. No mark exceeds 109.
+
+Output
+
+For each vertex print 1 if it is alive and 0 in the other case.
+
+Sample test(s)
+
+Input
+6 8
+1 2 1
+4 3 0
+2 4 0
+4 3 1
+1 6 0
+6 3 1
+3 2 0
+4 5 1000000000
+
+Output
+1
+0
+0
+0
+0
+1
+
+Note
+11.12.2003. Clarification done: "For each vertex of synchrograph detect whether it is potentially alive" changed to "For each vertex of synchrograph detect whether it is alive".
+Author:	Andrew Stankevich
+Resource:	Summer Trainings 2003, Maloyaroslavets
+Date:	2003-06-26
+
+<|response|>
+## 1) Abridged problem statement (concise version)
+
+You are given a directed graph with **N** vertices and **M** arcs. Each arc has an initial **non‑negative** integer mark.
+
+A vertex is **active** if **all its incoming arcs** currently have **positive** marks.
+
+A step (“cycle”) chooses any active vertex and **fires** it:
+- every **incoming** arc mark decreases by 1
+- every **outgoing** arc mark increases by 1
+
+A vertex is:
+- **potentially alive** if there exists some valid firing sequence after which this vertex fires at least once.
+- **alive** if **after any valid firing sequence**, it is still potentially alive.
+
+For each vertex, output `1` if it is **alive**, else `0`.
+
+Constraints: `N ≤ 1000`, `M ≤ 50000`, marks up to `1e9`.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+### Observation A — “Zero vs positive” is what matters for being blocked
+A vertex is blocked from being active if it has **at least one incoming arc with mark 0**.  
+For the aliveness characterization used in this task, the exact positive value (5 vs 1e9) is not essential—what matters is whether an arc is **0** (missing a required token) or **>0**.
+
+### Observation B — A zero self-loop makes the vertex impossible to fire
+If there is an arc `u → u` with mark `0`, then `u` can never become active:
+- that self-loop is incoming to `u` and stays 0 unless `u` fires,
+- but `u` cannot fire because it requires that arc to be positive.
+
+So `u` is **not alive**.
+
+### Observation C — A directed cycle of zero-mark edges is a permanent deadlock region
+Consider the subgraph consisting only of arcs with initial mark `0` (ignore self-loops for a moment).  
+If it contains a directed cycle (length ≥ 2), then no vertex on that cycle can ever be the **first** to fire to “create” tokens on those zero edges, because each vertex has at least one incoming zero edge from the cycle.
+
+In graph terms: any **SCC** (strongly connected component) in the `w = 0` subgraph with **size > 1** contains such a cycle, hence all its vertices are **not alive**.
+
+### Observation D — “Not alive” propagates forward along all edges
+If a vertex `u` is not alive, then every vertex reachable from `u` in the original graph is also not alive (intuitively: downstream vertices can be deprived of the ability to eventually fire after some sequences).
+
+So once we find an initial set of “certainly not alive” vertices, we can mark all vertices reachable from them (using **all edges**) as not alive too.
+
+---
+
+## 3) Full solution approach based on the observations
+
+1. **Read input** and build:
+   - `G`: adjacency list of the **full graph** (all arcs, regardless of mark).
+   - `H`: adjacency list of the **zero-edge graph** (only arcs with `w == 0` and `u != v`).
+   - `zeroSelf[u]`: whether there exists a **zero self-loop** `u → u` with `w == 0`.
+
+2. **Compute SCCs in `H`** (Kosaraju or Tarjan).
+   - For every SCC with size > 1, mark all its vertices as **not alive**.
+   - Additionally, any `u` with `zeroSelf[u] == true` is **not alive**.
+
+3. **Propagate not-aliveness**:
+   - Run DFS/BFS in the full graph `G` starting from all currently-not-alive vertices.
+   - Mark every reachable vertex as **not alive**.
+
+4. Output for each vertex:
+   - `1` if not marked “not alive”
+   - `0` otherwise
+
+**Complexity:**  
+- SCC on zero-edges: `O(N + M0)` where `M0 ≤ M`
+- Propagation DFS/BFS on full graph: `O(N + M)`
+- Total: `O(N + M)` time, memory `O(N + M)`.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Kosaraju SCC:
+  - First pass DFS on graph to compute finishing order.
+  - Second pass DFS on reversed graph in reverse finishing order.
+*/
+struct KosarajuSCC {
+    int n;
+    vector<vector<int>> g, rg;
+    vector<int> comp;       // comp[v] = component id
+    vector<int> order;
+    vector<char> vis;
+
+    KosarajuSCC(int n = 0) { init(n); }
+
+    void init(int n_) {
+        n = n_;
+        g.assign(n, {});
+        rg.assign(n, {});
+        comp.assign(n, -1);
+        order.clear();
+        vis.assign(n, 0);
+    }
+
+    void add_edge(int u, int v) {
+        g[u].push_back(v);
+        rg[v].push_back(u);
+    }
+
+    void dfs1(int u) {
+        vis[u] = 1;
+        for (int v : g[u]) if (!vis[v]) dfs1(v);
+        order.push_back(u); // push after exploring descendants
+    }
+
+    void dfs2(int u, int cid) {
+        comp[u] = cid;
+        for (int v : rg[u]) if (comp[v] == -1) dfs2(v, cid);
+    }
+
+    int build() {
+        // 1) finishing order
+        for (int i = 0; i < n; i++) if (!vis[i]) dfs1(i);
+
+        // 2) reverse finishing order, assign components on reversed graph
+        reverse(order.begin(), order.end());
+        int cid = 0;
+        for (int u : order) {
+            if (comp[u] == -1) {
+                dfs2(u, cid);
+                cid++;
+            }
+        }
+        return cid; // number of components
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    cin >> N >> M;
+
+    // Full graph G: used for "not alive" propagation
+    vector<vector<int>> full(N);
+
+    // Zero-edge graph H: used to detect zero cycles via SCC
+    KosarajuSCC scc(N);
+
+    // Remember zero self-loops separately
+    vector<char> zeroSelf(N, 0);
+
+    for (int i = 0; i < M; i++) {
+        int u, v;
+        long long w;
+        cin >> u >> v >> w;
+        --u; --v;
+
+        full[u].push_back(v);
+
+        if (w == 0) {
+            if (u == v) {
+                // Observation B: zero self-loop => vertex is not alive
+                zeroSelf[u] = 1;
+            } else {
+                // Observation C: keep only zero edges (non-self) for SCC
+                scc.add_edge(u, v);
+            }
+        }
+    }
+
+    // Build SCCs in the zero-edge graph H
+    int compCnt = scc.build();
+
+    // Compute component sizes
+    vector<int> compSize(compCnt, 0);
+    for (int v = 0; v < N; v++) compSize[scc.comp[v]]++;
+
+    // alive[v] = 1 means alive, 0 means not alive
+    vector<char> alive(N, 1);
+
+    // Initial "definitely not alive" set:
+    // - zero self-loop
+    // - SCC size > 1 in zero-edge graph => zero cycle exists
+    for (int v = 0; v < N; v++) {
+        if (zeroSelf[v] || compSize[scc.comp[v]] > 1) {
+            alive[v] = 0;
+        }
+    }
+
+    // Propagate "not alive" forward along ALL edges in the full graph
+    // If some vertex is not alive, every vertex reachable from it is not alive.
+    vector<char> vis(N, 0);
+    stack<int> st;
+    for (int i = 0; i < N; i++) {
+        if (alive[i] == 0 && !vis[i]) {
+            vis[i] = 1;
+            st.push(i);
+            while (!st.empty()) {
+                int u = st.top();
+                st.pop();
+                for (int v : full[u]) {
+                    if (!vis[v]) {
+                        vis[v] = 1;
+                        alive[v] = 0;
+                        st.push(v);
+                    }
+                }
+            }
+        }
+    }
+
+    // Output one per line
+    for (int v = 0; v < N; v++) {
+        cout << int(alive[v]) << "\n";
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+sys.setrecursionlimit(1_000_000)
+
+def solve() -> None:
+    input = sys.stdin.readline
+    n, m = map(int, input().split())
+
+    # Full graph G: used for forward propagation of "not alive"
+    full = [[] for _ in range(n)]
+
+    # Zero-edge graph H for SCC: only edges with w == 0 and u != v
+    g = [[] for _ in range(n)]
+    rg = [[] for _ in range(n)]
+
+    # Track zero self-loops: u->u with w==0
+    zero_self = [False] * n
+
+    for _ in range(m):
+        u, v, w = map(int, input().split())
+        u -= 1
+        v -= 1
+
+        full[u].append(v)
+
+        if w == 0:
+            if u == v:
+                zero_self[u] = True
+            else:
+                g[u].append(v)
+                rg[v].append(u)
+
+    # --- Kosaraju SCC on H (zero-edge graph) ---
+    visited = [False] * n
+    order = []
+
+    def dfs1(u: int) -> None:
+        visited[u] = True
+        for v in g[u]:
+            if not visited[v]:
+                dfs1(v)
+        order.append(u)
+
+    for i in range(n):
+        if not visited[i]:
+            dfs1(i)
+
+    comp = [-1] * n
+    comp_cnt = 0
+
+    def dfs2(u: int, cid: int) -> None:
+        comp[u] = cid
+        for v in rg[u]:
+            if comp[v] == -1:
+                dfs2(v, cid)
+
+    for u in reversed(order):
+        if comp[u] == -1:
+            dfs2(u, comp_cnt)
+            comp_cnt += 1
+
+    # Component sizes
+    comp_size = [0] * comp_cnt
+    for u in range(n):
+        comp_size[comp[u]] += 1
+
+    # alive[u] = 1 if alive, 0 if not alive
+    alive = [1] * n
+
+    # Initial "definitely not alive":
+    # - zero self-loop
+    # - belongs to an SCC of size > 1 in zero-edge graph => zero cycle
+    for u in range(n):
+        if zero_self[u] or comp_size[comp[u]] > 1:
+            alive[u] = 0
+
+    # Propagate not-aliveness over the FULL graph
+    # Iterative DFS to avoid recursion depth issues on large graphs.
+    stack = [u for u in range(n) if alive[u] == 0]
+    seen = [False] * n
+    for u in stack:
+        seen[u] = True
+
+    while stack:
+        u = stack.pop()
+        for v in full[u]:
+            if not seen[v]:
+                seen[v] = True
+                alive[v] = 0
+                stack.append(v)
+
+    sys.stdout.write("\n".join(map(str, alive)))
+
+if __name__ == "__main__":
+    solve()
+```
+
+These implementations follow the same core idea:
+1) detect “zero deadlock cores” via SCCs on zero-mark edges (+ zero self-loops),  
+2) propagate their effect forward on the full graph,  
+3) remaining vertices are alive.

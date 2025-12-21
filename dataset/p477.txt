@@ -1,0 +1,478 @@
+## 1) Abridged problem statement
+
+You are given two increasing sequences of times:
+
+- \(p_1 < \dots < p_n\): people pass through door 1  
+- \(q_1 < \dots < q_m\): people pass through door 2  
+
+Each door has an integer parameter \(t \in [1, 10^9]\). If a person passes at time \(x\), the door would be open on \([x-t, x+t]\). However, consecutive people with gaps \(\le 2t\) are merged into one “row”, so the door opens once at \( (\text{first}-t) \) and closes once at \( (\text{last}+t) \). Thus, for a fixed \(t\), each door’s open times become a union of disjoint intervals; the number of intervals equals the number of openings.
+
+Find integers \(t_1, t_2\) such that:
+
+1. The **total number of openings** (intervals) over both doors is **minimum possible**.
+2. There is **no** time interval where **both doors are open continuously** for **more than \(d\)** seconds (i.e., the intersection of their open-sets contains no segment of length \(> d\)).
+
+If impossible, print `"No solution"`.
+
+Constraints: \(1 \le n,m \le 5000\), times up to \(10^9\), \(d\) up to \(10^9\).
+
+---
+
+## 2) Detailed editorial
+
+### A. Modeling openings as merged intervals
+
+Fix a door with passing times \(a_1 < \dots < a_k\) and parameter \(t\).
+
+Each person creates an interval \([a_i - t, a_i + t]\). Because of the “row” rule, overlapping/touching intervals (specifically, when \(a_{i+1} - a_i \le 2t\)) merge into one continuous open interval. So we can construct the door’s final segments by a linear sweep:
+
+- Start a segment at \([a_i - t, a_i + t]\)
+- While next interval starts before or at current end (equivalently \(a_{i+1} - t \le \text{end}\)), extend end to \(a_{i+1}+t\)
+- When it no longer overlaps, finish segment and start a new one
+
+The number of segments is the number of openings for that door.
+
+So for given \((t_1, t_2)\), we can compute:
+- Door1 segments count \(= O_1(t_1)\)
+- Door2 segments count \(= O_2(t_2)\)
+- Total openings \(= O_1(t_1)+O_2(t_2)\)
+
+### B. Checking the “both open too long” constraint efficiently
+
+We must ensure the intersection of the two doors’ open sets has **no** continuous interval longer than \(d\).
+
+A standard way: treat each segment \([L,R]\) as two events:
+- at \(L\): +1 (door becomes open)
+- at \(R\): -1 (door becomes closed)
+
+If we merge events from both doors into one timeline and maintain a `balance` = number of currently-open doors (0,1,2), then:
+
+- `balance == 2` means both doors are open.
+- Whenever we enter `balance == 2`, record the start.
+- When we leave it, compute the length and ensure it’s not \(> d\).
+
+Important detail: if an “open” and “close” happen at same coordinate, order matters for correct continuous-interval length. The provided code resolves ties by processing **-1 before +1** (because it sorts by `(pos, delta)` with delta -1 < +1 when positions equal). That prevents incorrectly extending a “both open” interval through a point where one door closes exactly as the other opens.
+
+We can do this without sorting from scratch: each door’s segments are produced in increasing order, therefore its event list is already sorted by position (and tie ordering is controlled by pushing start then end? In code it pushes `{start,+1}`, `{end,-1}`, then merging with a comparator that ensures correct tie-breaking across the two lists). Then merge the two sorted event arrays in linear time \(O(n+m)\).
+
+So `check(t1,t2)` runs in \(O(n+m)\) and returns:
+- whether the overlap constraint is satisfied
+- the total openings count for this pair (segments in door1 + segments in door2)
+
+### C. Why we only need to test \(O(n+m)\) candidate values
+
+As \(t\) increases, openings only **decrease** when some gap becomes mergeable.
+
+For one door with times \(a_i\), the condition for merging between consecutive people is:
+\[
+a_{i+1} - a_i \le 2t \quad \Leftrightarrow \quad t \ge \left\lceil \frac{a_{i+1}-a_i}{2} \right\rceil
+\]
+Thus, the number of openings changes only at thresholds:
+\[
+\left\lceil \frac{a_{i+1}-a_i}{2} \right\rceil
+\]
+There are only \(k-1\) such thresholds per door, so \(O(n)\) for door1 and \(O(m)\) for door2. Between thresholds, the segmentation structure (and openings count) is constant.
+
+Additionally, feasibility regarding overlap length \(> d\) can only “switch” meaningfully around small set of values; the solution includes a few extra safe candidates: \(1\), \(d\), and \(\lceil d/2 \rceil\). (These help cover corner cases where constraints bind at extremes; the official solution this code is based on uses these typical guard candidates.)
+
+So we build two candidate sets:
+- `candidates_t1` from door1 gaps + {1, d, (d+1)/2}
+- `candidates_t2` from door2 gaps + {1, d, (d+1)/2}
+Sort + unique.
+
+### D. Monotonicity and two-pointers over candidate lists
+
+Key monotonic behavior:
+
+- Increasing \(t_1\) makes door1 segments *wider* and fewer segments (openings decrease), but it also tends to increase overlap with door2, making feasibility **harder**.
+- Increasing \(t_2\) similarly tends to make overlap longer, also **harder**.
+
+So for fixed \(t_1\), if a certain \(t_2\) is feasible, then any **smaller** \(t_2\) is also feasible (door2 opens less widely). Therefore feasibility is monotone in \(t_2\) (non-increasing as \(t_2\) increases).
+
+Also, if \(t_1\) increases, to remain feasible you may need to decrease \(t_2\). This supports a two-pointer scan:
+
+- Sort candidates increasing.
+- Start `j` at the largest candidate \(t_2\).
+- For each \(t_1\) from small to large:
+  - While `j` valid and `check(t1, t2[j])` is **not** feasible, decrement `j`.
+  - Now `t2[j]` is the largest feasible \(t_2\) for this \(t_1\) (if any).
+
+Why choose the **largest feasible \(t_2\)**? Because larger \(t_2\) generally reduces openings of door2 (more merging), thus helps minimize total openings while still feasible. With `check` also returning openings count, we can track the best.
+
+Complexity:
+- Candidate sizes: \(O(n)\), \(O(m)\)
+- Two-pointer does at most \(O(|cand1| + |cand2|)\) checks
+- Each check is \(O(n+m)\)
+So total is \(O((n+m)(|cand1|+|cand2|)) = O((n+m)^2)\) in worst case, which is acceptable for 5000 with careful constants in C++ (this is the intended solution for this classic problem).
+
+### E. Output
+
+Keep best pair with minimal openings. If none feasible, print `"No solution"`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard headers (GNU extension)
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector: expects the vector already has the correct size
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {             // iterate by reference to fill elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m, d;                      // sizes of sequences and maximum allowed overlap length
+vector<int> p, q;                 // passage times for door 1 and door 2
+
+// Read input
+void read() {
+    cin >> n >> m >> d;           // read n, m, d
+    p.resize(n);                  // allocate p with size n
+    q.resize(m);                  // allocate q with size m
+    cin >> p >> q;                // read arrays p and q (already sorted as per statement)
+}
+
+// For given t1 and t2:
+// - build merged open intervals for both doors
+// - check that overlap (both open) never lasts more than d
+// Returns:
+//   {is_valid, total_openings}
+pair<bool, int> check(int t1, int t2) {
+    vector<pair<int, int>> p_seg, q_seg;   // event lists: (position, delta), delta is +1 open, -1 close
+
+    // ----- Build merged segments for door 1, but store as events -----
+    for(int i = 0; i < n;) {
+        int start = p[i] - t1;    // door opens t1 before the first person of this merged group
+        int end = p[i] + t1;      // closes t1 after
+        i++;
+
+        // Merge subsequent people as long as their [pi-t1, pi+t1] overlaps current [start,end]
+        while(i < n && p[i] - t1 <= end) {
+            end = p[i] + t1;      // extend the end to include this person
+            i++;
+        }
+
+        // Record the merged interval [start,end] as events:
+        // +1 at start, -1 at end
+        p_seg.push_back({start, 1});
+        p_seg.push_back({end, -1});
+    }
+
+    // ----- Build merged segments for door 2 similarly -----
+    for(int i = 0; i < m;) {
+        int start = q[i] - t2;
+        int end = q[i] + t2;
+        i++;
+        while(i < m && q[i] - t2 <= end) {
+            end = q[i] + t2;
+            i++;
+        }
+        q_seg.push_back({start, 1});
+        q_seg.push_back({end, -1});
+    }
+
+    // total number of openings is just number of segments for door1 plus door2
+    int cnt = (int)p_seg.size() / 2 + (int)q_seg.size() / 2;
+
+    int balance = 0;              // how many doors are currently open: 0,1,2
+    int last_pos = INT_MIN;       // start position of current "both open" interval; INT_MIN means none
+    int i = 0, j = 0;             // pointers for merging two sorted event lists
+
+    // Merge events from p_seg and q_seg in increasing time order.
+    // Tie-breaking: if same position, process delta=-1 before delta=+1
+    // to avoid falsely creating/lengthening overlap at a single instant.
+    while(i < (int)p_seg.size() || j < (int)q_seg.size()) {
+        int pos, delta;
+
+        // Choose next event from p_seg if:
+        // - q events are exhausted, OR
+        // - p's next position is smaller, OR
+        // - same position but p's delta is smaller (-1 before +1)
+        if(j >= (int)q_seg.size() ||
+           (i < (int)p_seg.size() && (p_seg[i].first < q_seg[j].first ||
+                                 (p_seg[i].first == q_seg[j].first &&
+                                  p_seg[i].second < q_seg[j].second)))) {
+            tie(pos, delta) = p_seg[i++];  // take from p
+        } else {
+            tie(pos, delta) = q_seg[j++];  // take from q
+        }
+
+        balance += delta;         // update how many doors are open after this event
+
+        if(balance == 2) {
+            // We just entered a state where both doors are open.
+            // Record the starting position of overlap.
+            last_pos = pos;
+        } else {
+            // We are not in "both open" state now.
+            // If we just exited "both open", last_pos holds where it started.
+            // Now pos is the point of leaving; check overlap length.
+            if(balance == 1 && last_pos != INT_MIN && pos - last_pos > d) {
+                return {false, cnt};       // invalid: overlap longer than d
+            }
+            last_pos = INT_MIN;    // reset because we are not currently in overlap
+        }
+    }
+
+    // No overlap segment exceeded d
+    return {true, cnt};
+}
+
+void solve() {
+    // Candidate generation:
+    // For each door, openings structure changes only at thresholds ceil((gap)/2)
+    // for consecutive times. Add a few guard values {1, d, (d+1)/2}.
+    vector<int> candidates_t1, candidates_t2;
+
+    for(int i = 1; i < n; i++) {
+        int val = (p[i] - p[i - 1] + 1) / 2;   // ceil((p[i]-p[i-1])/2)
+        candidates_t1.push_back(val);
+    }
+    for(int i = 1; i < m; i++) {
+        int val = (q[i] - q[i - 1] + 1) / 2;
+        candidates_t2.push_back(val);
+    }
+
+    // Guard candidates
+    candidates_t1.push_back(1);
+    candidates_t1.push_back(d);
+    candidates_t1.push_back((d + 1) / 2);
+    candidates_t2.push_back(1);
+    candidates_t2.push_back(d);
+    candidates_t2.push_back((d + 1) / 2);
+
+    // Sort and unique candidate lists
+    sort(candidates_t1.begin(), candidates_t1.end());
+    candidates_t1.erase(
+        unique(candidates_t1.begin(), candidates_t1.end()), candidates_t1.end()
+    );
+
+    sort(candidates_t2.begin(), candidates_t2.end());
+    candidates_t2.erase(
+        unique(candidates_t2.begin(), candidates_t2.end()), candidates_t2.end()
+    );
+
+    int best_openings = n + m + 1;    // upper bound; any real answer must be <= n+m
+    int best_t1 = -1, best_t2 = -1;   // store best parameters
+    int j = (int)candidates_t2.size() - 1;  // two-pointer: start from largest t2
+
+    // For each t1 in increasing order, find largest feasible t2 by moving j downward
+    for(int i = 0; i < (int)candidates_t1.size(); i++) {
+        bool valid;
+        int t1 = candidates_t1[i], openings = -1;
+
+        // Decrease t2 until the pair becomes valid or we run out of candidates
+        while(j >= 0) {
+            tie(valid, openings) = check(t1, candidates_t2[j]);
+            if(valid) {
+                break;            // candidates_t2[j] is feasible for this t1
+            }
+            j--;                  // otherwise try smaller t2 (less overlap)
+        }
+
+        // If some feasible t2 exists, consider updating the best answer
+        if(j >= 0) {
+            if(openings < best_openings) {
+                best_openings = openings;
+                best_t1 = t1;
+                best_t2 = candidates_t2[j];
+            }
+        }
+    }
+
+    // Output result
+    if(best_t1 == -1) {
+        cout << "No solution\n";
+    } else {
+        cout << best_t1 << " " << best_t2 << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster IO
+    cin.tie(nullptr);                 // untie cin/cout for speed
+
+    int T = 1;
+    // cin >> T;                      // problem has single test, left commented
+    for(int test = 1; test <= T; test++) {
+        read();                       // read input
+        // cout << "Case #" << test << ": ";
+        solve();                      // solve and print
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from typing import List, Tuple
+
+def build_events(times: List[int], t: int) -> List[Tuple[int, int]]:
+    """
+    Convert sorted pass times into merged open intervals for parameter t,
+    returned as sorted events (pos, delta), delta in {+1, -1}.
+    """
+    events = []
+    i = 0
+    n = len(times)
+
+    while i < n:
+        start = times[i] - t
+        end = times[i] + t
+        i += 1
+
+        # Merge while next interval overlaps current:
+        # [times[i]-t, times[i]+t] overlaps [start,end] iff times[i]-t <= end
+        while i < n and times[i] - t <= end:
+            end = times[i] + t
+            i += 1
+
+        # Record interval as events
+        events.append((start, +1))
+        events.append((end, -1))
+
+    # events are already in nondecreasing order of position because times are sorted
+    return events
+
+def check(p: List[int], q: List[int], d: int, t1: int, t2: int) -> Tuple[bool, int]:
+    """
+    Returns (is_valid, total_openings) for given (t1, t2).
+    is_valid: no overlap segment (both doors open) has length > d.
+    total_openings: number of merged segments in door1 + door2.
+    """
+    pe = build_events(p, t1)
+    qe = build_events(q, t2)
+
+    openings = len(pe)//2 + len(qe)//2
+
+    i = j = 0
+    balance = 0          # number of open doors right now
+    last_pos = None      # start position of current overlap (balance==2), else None
+
+    # Merge two sorted event lists with tie-breaking:
+    # smaller position first; if equal, process delta=-1 before delta=+1.
+    while i < len(pe) or j < len(qe):
+        if j >= len(qe):
+            pos, delta = pe[i]
+            i += 1
+        elif i >= len(pe):
+            pos, delta = qe[j]
+            j += 1
+        else:
+            # compare (pos, delta) lexicographically; delta -1 < +1 enforces "close before open"
+            if pe[i] < qe[j]:
+                pos, delta = pe[i]
+                i += 1
+            else:
+                pos, delta = qe[j]
+                j += 1
+
+        balance += delta
+
+        if balance == 2:
+            # entering overlap
+            last_pos = pos
+        else:
+            # leaving overlap: after leaving, balance becomes 1 (because only one door remains open)
+            if balance == 1 and last_pos is not None and (pos - last_pos) > d:
+                return False, openings
+            last_pos = None
+
+    return True, openings
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it)); m = int(next(it)); d = int(next(it))
+    p = [int(next(it)) for _ in range(n)]
+    q = [int(next(it)) for _ in range(m)]
+
+    # Candidate t values where merging structure can change: ceil(gap/2)
+    cand1 = []
+    for i in range(1, n):
+        gap = p[i] - p[i-1]
+        cand1.append((gap + 1)//2)
+
+    cand2 = []
+    for i in range(1, m):
+        gap = q[i] - q[i-1]
+        cand2.append((gap + 1)//2)
+
+    # Guard values
+    cand1.extend([1, d, (d + 1)//2])
+    cand2.extend([1, d, (d + 1)//2])
+
+    cand1 = sorted(set(cand1))
+    cand2 = sorted(set(cand2))
+
+    best_openings = n + m + 1
+    best_t1 = best_t2 = None
+
+    # Two-pointers: start with largest feasible t2 for each t1
+    j = len(cand2) - 1
+    for t1 in cand1:
+        # decrease t2 until pair becomes valid
+        while j >= 0:
+            ok, openings = check(p, q, d, t1, cand2[j])
+            if ok:
+                break
+            j -= 1
+
+        if j >= 0:
+            if openings < best_openings:
+                best_openings = openings
+                best_t1 = t1
+                best_t2 = cand2[j]
+
+    if best_t1 is None:
+        sys.stdout.write("No solution\n")
+    else:
+        sys.stdout.write(f"{best_t1} {best_t2}\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- For fixed \(t\), each door is open on the union of merged intervals built from \([x-t, x+t]\); consecutive times merge if gap \(\le 2t\). Number of intervals = number of openings.
+- Feasibility check for \((t_1,t_2)\): build merged intervals for both doors in \(O(n+m)\), convert to events \((pos, \pm1)\), merge two sorted event streams (processing -1 before +1 on ties), track when `balance==2`; any overlap segment length \(> d\) → invalid. Also compute total openings.
+- Candidate \(t\) values per door are only thresholds \(\lceil (a_{i+1}-a_i)/2\rceil\) (where merging changes) plus a few guards \(\{1, d, \lceil d/2\rceil\}\). So \(O(n+m)\) candidates.
+- Use two pointers: iterate \(t_1\) ascending and keep \(t_2\) pointer descending until feasible; this works due to monotonic feasibility in \(t_2\). For each \(t_1\) use the largest feasible \(t_2\) (fewest openings) and track minimum total openings.
+- If no feasible pair found, output `"No solution"`, else print the best \((t_1,t_2)\).

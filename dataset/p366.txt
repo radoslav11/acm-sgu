@@ -1,0 +1,444 @@
+## 1) Abridged problem statement
+
+You are given **N** opponents (up to 60000). Opponent *i* has values \((a_i, b_i)\) with \(0 \le a_i,b_i \le 50\).  
+Pick exactly **K** opponents ( \(K \le 20\) ) to minimize \(|A-B|\), where:
+
+- \(A = \sum a_i\) (total pleasure)
+- \(B = \sum b_i\) (total score)
+
+If multiple selections achieve the same minimum \(|A-B|\), choose one maximizing \(A+B\).  
+Output \(A\) and \(B\), and the chosen indices in ascending order.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key transformations
+
+For each opponent, define:
+
+- \(d_i = a_i - b_i\)  (difference contribution)
+- \(s_i = a_i + b_i\)  (sum contribution)
+
+If we pick a set \(S\) of size \(K\), then:
+
+- Total difference: \(D = \sum_{i \in S} d_i = A - B\)
+- Total sum: \(Ssum = \sum_{i \in S} s_i = A + B\)
+
+The objective becomes:
+
+1. minimize \(|D|\)
+2. if tie, maximize \(Ssum\)
+
+Finally, once we know \(D\) and \(Ssum\), we can reconstruct \(A, B\):
+
+\[
+A = \frac{(A+B) + (A-B)}{2} = \frac{Ssum + D}{2}, \quad
+B = \frac{(A+B) - (A-B)}{2} = \frac{Ssum - D}{2}
+\]
+
+So the problem is: choose \(K\) items minimizing \(|\sum d_i|\), tie-breaking by max \(\sum s_i\).
+
+---
+
+### Why naive DP is too slow
+
+A classic DP would be:
+
+- dp over number of picked items \(c\)
+- and possible total difference \(D\)
+
+Since each \(a_i,b_i \in [0,50]\), each \(d_i \in [-50,50]\).  
+Thus total \(D\) lies in \([-50K, 50K]\), which is small (at most \([-1000,1000]\)).
+
+However, iterating over all \(N\) items (up to 60000) with transitions leads to roughly:
+
+- \(O(N \cdot K \cdot (range\ of\ D)) \approx 60000 \cdot 20 \cdot 2001\)
+
+and with reconstruction and tie logic it can be heavy under 0.5s. The provided solution uses a stronger reduction.
+
+---
+
+### Crucial optimization: group by difference
+
+There are only **101** possible values of \(d_i\) (from -50 to +50).
+
+Group opponents by their \(d_i\). Within the same group (same \(d_i\)), choosing an opponent only differs by how much it increases \(Ssum\) (i.e., \(a_i+b_i\)).
+
+Observation:
+- For a fixed difference value \(d\), if you might choose some items from that group, you would always prefer the ones with **largest** \(s_i\).
+- Because all items in the group contribute the same \(d\), the only way one dominates another is via larger \(s_i\).
+
+Since we pick only \(K\) total opponents, we never need more than the top **K** items from any group.
+
+So:
+1. Build 101 groups by \(d_i\)
+2. Sort each group by \(s_i\) descending
+3. Keep only top \(K\) per group
+
+Now the total remaining items is at most \(101 \cdot K \le 2020\), which is tiny.
+
+---
+
+### DP after reduction (and solution reconstruction)
+
+The code uses an offset encoding:
+
+- store `diff_index = d + OFFSET`, where `OFFSET = 50`, so diff_index in [0..100]
+- For K picks, total diff_index sum equals:
+  \[
+  \sum (d_i + OFFSET) = \left(\sum d_i\right) + K\cdot OFFSET = D + 50K
+  \]
+So if DP stores `best_diff_index_sum`, we can recover:
+\[
+D = best\_diff - OFFSET\cdot K
+\]
+
+DP structure:
+
+- `dp[cnt][sumDiff]` stores a `State`:
+  - `possible`: reachable or not
+  - `sum`: best total \(Ssum = \sum(a_i+b_i)\) achievable
+  - `indices`: actual chosen indices to reconstruct the answer
+
+Here `cnt` is “how many items selected minus 1” due to their indexing style:
+- `dp[0]` corresponds to selecting 1 item
+- ...
+- `dp[k-1]` corresponds to selecting K items
+
+Transitions:
+- For each candidate item with `(diff, sum, idx)`:
+  - For `cnt` from `k-2` down to `0`:
+    - for all `s`:
+      - if dp[cnt][s] reachable, update dp[cnt+1][s+diff] with better `sum`
+
+Additionally they seed 1-item states directly into `dp[0][diff]`.
+
+After DP:
+- scan all `dp[k-1][s]`:
+  - compute `balance = abs(s - OFFSET*K)` which equals \(|D|\)
+  - pick minimal balance, then maximal `dp[k-1][s].sum`
+
+Finally compute:
+- `D = best_diff - OFFSET*K`
+- `Ssum = best_sum`
+- `A = (Ssum + D)/2`, `B = (Ssum - D)/2`
+
+Print A B and the indices from the stored state.
+
+Complexities after reduction:
+- items ≤ 2020
+- DP states: \(K \cdot (K\cdot 101)\) ~ \(20 \cdot 2020 = 40400\)
+- transitions roughly: items * K * range ≈ 2020 * 20 * 2020 ≈ 81M worst-ish, but with tight constants and small memory fits in time in C++.
+
+---
+
+## 3) The provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Print a vector separated by spaces (note: trailing space is fine)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// ai, bi are in [0..50], so diff ai-bi is in [-50..50]
+const int MAXV = 50;
+
+// OFFSET is used to shift diff into non-negative range
+const int OFFSET = MAXV;
+
+// Number of possible shifted diffs: from -50..50 => 101 values
+const int MAX_SIZE = 2 * OFFSET + 1;
+
+// A large number for comparisons
+const int INF = (int)1e9 + 42;
+
+// DP state: whether reachable, best (max) A+B sum, and chosen indices to reconstruct
+struct State {
+    bool possible = false;   // can we reach this state?
+    int sum = 0;             // best total (A+B) among ways reaching it
+    vector<int> indices;     // chosen opponent indices that achieve this best sum
+};
+
+int n, k;
+vector<pair<int, int>> ab;
+
+// Read input: n, k, then n pairs (ai, bi)
+void read() {
+    cin >> n >> k;
+    ab.resize(n);
+    cin >> ab;
+}
+
+void solve() {
+    // We reduce N by grouping by (A-B). Since A,B in [0..50], diff in [-50..50].
+    // For each diff group, we only need top K elements with largest (A+B).
+
+    const int offset = OFFSET;          // 50
+    const int max_diff = MAX_SIZE;      // 101
+    const int max_sum = k * MAX_SIZE;   // maximum possible sum of shifted diffs: K*101
+
+    // groups[diff] holds candidates as (A+B, originalIndex)
+    vector<vector<pair<int, int>>> groups(max_diff);
+
+    // Put every opponent into its diff group
+    for (int i = 0; i < n; i++) {
+        int a = ab[i].first;
+        int b = ab[i].second;
+        int diff = a - b + offset; // shift to [0..100]
+        int sum = a + b;           // A+B
+
+        // Store sum and 1-based index
+        groups[diff].push_back({sum, i + 1});
+    }
+
+    // For each diff group: sort descending by sum, keep only best K
+    for (int i = 0; i < max_diff; i++) {
+        sort(groups[i].begin(), groups[i].end(), greater<pair<int, int>>());
+        if ((int)groups[i].size() > k) {
+            groups[i].resize(k);
+        }
+    }
+
+    // dp[cnt][s] means: selecting (cnt+1) items with total shifted-diff sum = s
+    // We store best achievable (A+B) and the indices for reconstruction.
+    vector<vector<State>> dp(k, vector<State>(max_sum));
+
+    // Iterate through all remaining candidates, grouped by diff
+    for (int diff = 0; diff < max_diff; diff++) {
+        for (auto [sum, idx] : groups[diff]) {
+
+            // Transition: add this item to an existing selection of size (cnt+1)
+            // and produce selection of size (cnt+2).
+            // Iterate cnt backwards to avoid using the same item multiple times.
+            for (int cnt = k - 2; cnt >= 0; cnt--) {
+
+                // Try all current shifted-diff sums s, and move to s+diff
+                for (int s = 0; s + diff <= max_sum - 1; s++) {
+
+                    // If dp[cnt][s] is reachable and improves dp[cnt+1][s+diff], update.
+                    if (dp[cnt][s].possible &&
+                        (!dp[cnt + 1][s + diff].possible ||
+                         dp[cnt + 1][s + diff].sum < dp[cnt][s].sum + sum)) {
+
+                        dp[cnt + 1][s + diff].possible = true;
+                        dp[cnt + 1][s + diff].sum = dp[cnt][s].sum + sum;
+
+                        // Copy indices and append this idx (reconstruct path)
+                        dp[cnt + 1][s + diff].indices = dp[cnt][s].indices;
+                        dp[cnt + 1][s + diff].indices.push_back(idx);
+                    }
+                }
+            }
+
+            // Base case: selecting exactly 1 item => stored in dp[0][diff]
+            // Keep the one with maximum sum if multiple items share same diff.
+            if (diff < max_sum &&
+                (!dp[0][diff].possible || dp[0][diff].sum < sum)) {
+
+                dp[0][diff].possible = true;
+                dp[0][diff].sum = sum;
+                dp[0][diff].indices = {idx};
+            }
+        }
+    }
+
+    // Now choose the best state among those selecting K items: dp[k-1][s]
+    int best_diff = -1;     // best shifted-diff sum
+    int best_sum = -1;      // best A+B for that diff
+    int min_balance = INF;  // best |A-B|
+
+    for (int s = 0; s < max_sum; s++) {
+        if (dp[k - 1][s].possible) {
+            // shifted sum s corresponds to real difference D = s - OFFSET*K
+            // So |D| = |s - OFFSET*K|
+            int balance = abs(s - offset * k);
+
+            // Primary: minimize |D|, secondary: maximize A+B
+            if (balance < min_balance ||
+                (balance == min_balance && dp[k - 1][s].sum > best_sum)) {
+                min_balance = balance;
+                best_diff = s;
+                best_sum = dp[k - 1][s].sum;
+            }
+        }
+    }
+
+    // Recover A and B from:
+    // D = A-B = best_diff - OFFSET*K
+    // Ssum = A+B = best_sum
+    int a_total = (best_sum + best_diff - offset * k) / 2;
+    int b_total = (best_sum - best_diff + offset * k) / 2;
+
+    cout << a_total << ' ' << b_total << '\n';
+
+    // Output indices in ascending order
+    vector<int> result = dp[k - 1][best_diff].indices;
+    sort(result.begin(), result.end());
+    cout << result << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // This problem has a single test case; T is kept but unused.
+    // cin >> T;
+    for (int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    k = int(next(it))
+
+    ab = [(int(next(it)), int(next(it))) for _ in range(n)]
+
+    MAXV = 50
+    OFFSET = MAXV                 # shift diffs by +50 to become non-negative
+    MAX_SIZE = 2 * OFFSET + 1     # 101 possible shifted diffs [0..100]
+    max_diff = MAX_SIZE
+    max_sum = k * MAX_SIZE        # max possible sum of shifted diffs over K picks
+
+    # Group opponents by shifted diff; each entry is (a+b, index)
+    groups = [[] for _ in range(max_diff)]
+    for i, (a, b) in enumerate(ab, start=1):     # 1-based indices
+        diff = a - b + OFFSET
+        s = a + b
+        groups[diff].append((s, i))
+
+    # Keep only top K by (a+b) in each diff group
+    for d in range(max_diff):
+        groups[d].sort(reverse=True)   # sorts by first then second; first is sum
+        if len(groups[d]) > k:
+            groups[d] = groups[d][:k]
+
+    # DP:
+    # dp[cnt][sd] = best total (A+B) achievable by selecting (cnt+1) items
+    #               with shifted-diff sum = sd
+    # Also store chosen indices for reconstruction.
+    #
+    # We'll store:
+    # possible[cnt][sd] as bool
+    # bestsum[cnt][sd] as int
+    # choice[cnt][sd] as list of indices (kept only for best state)
+    possible = [[False] * max_sum for _ in range(k)]
+    bestsum  = [[0] * max_sum for _ in range(k)]
+    choice   = [[None] * max_sum for _ in range(k)]  # None or list[int]
+
+    # Iterate candidates
+    for diff in range(max_diff):
+        for s, idx in groups[diff]:
+
+            # transitions for adding item to existing selections
+            for cnt in range(k - 2, -1, -1):  # from k-2 down to 0
+                for sd in range(0, max_sum - diff):
+                    if not possible[cnt][sd]:
+                        continue
+                    nsd = sd + diff
+                    nsum = bestsum[cnt][sd] + s
+                    if (not possible[cnt + 1][nsd]) or (bestsum[cnt + 1][nsd] < nsum):
+                        possible[cnt + 1][nsd] = True
+                        bestsum[cnt + 1][nsd] = nsum
+                        # copy indices from previous and add current index
+                        choice[cnt + 1][nsd] = choice[cnt][sd] + [idx]
+
+            # base: selecting exactly 1 item
+            if diff < max_sum:
+                if (not possible[0][diff]) or (bestsum[0][diff] < s):
+                    possible[0][diff] = True
+                    bestsum[0][diff] = s
+                    choice[0][diff] = [idx]
+
+    # Select best among K picks
+    target_cnt = k - 1
+    best_sd = -1
+    best_s = -1
+    best_balance = 10**18
+
+    for sd in range(max_sum):
+        if not possible[target_cnt][sd]:
+            continue
+        balance = abs(sd - OFFSET * k)  # equals |A-B|
+        if balance < best_balance or (balance == best_balance and bestsum[target_cnt][sd] > best_s):
+            best_balance = balance
+            best_sd = sd
+            best_s = bestsum[target_cnt][sd]
+
+    # Recover A and B:
+    # D = A-B = best_sd - OFFSET*K
+    D = best_sd - OFFSET * k
+    Ssum = best_s  # A+B
+
+    A = (Ssum + D) // 2
+    B = (Ssum - D) // 2
+
+    # Output
+    res = sorted(choice[target_cnt][best_sd])
+    sys.stdout.write(f"{A} {B}\n")
+    sys.stdout.write(" ".join(map(str, res)) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Transform each opponent to:
+- \(d=a-b\), \(s=a+b\).
+Pick \(K\) items minimizing \(|\sum d|\), tie-breaking by maximizing \(\sum s\). Then
+\(A=(Ssum+D)/2\), \(B=(Ssum-D)/2\).
+
+Since \(a,b\in[0,50]\), \(d\in[-50,50]\): only 101 diff groups. In a fixed diff group, larger \(s\) is always better, so keep only top \(K\) by \(s\) per group. This reduces candidates to \(\le 101K\).
+
+Run DP over number selected and total shifted diff:
+- shift diffs by +50 so they’re non-negative;
+- dp stores best \(Ssum\) and chosen indices for reconstruction.
+Finally scan dp for \(K\) picks to minimize \(|D|\) (i.e., \(|sd-50K|\)) and maximize \(Ssum\). Output \(A,B\) and indices.

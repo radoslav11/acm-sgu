@@ -1,0 +1,596 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+388. Soap Opera
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Brazil script writers are inexhaustible! Recently two greatest writers don Juan and donna Rosa have married. And now they are writing their shared scenario with a great happy end. So they want to maximize the amount of marriages at the end of the serial. In spite of their sympathy, Juan and Rosa have different points of view at the cinema, so there are some pairs of actors (of course, pair is a man and woman), such that Juan considers them photogenic, but Rosa does not and vise versa. In order to settle, newlyweds decided to select such a troup that both Juan and Rosa can combine marriages at the scenario in such a way that each actor will be married. You will be given the number of actors n and sets of successful pairs in the views of Juan and Rosa. Your task is to maximize the size of the troup.
+
+Input
+First line of the input file contains three integer numbers n, m1 and m2 — the number of actors, number of photogenic pairs in the views of Juan and Rosa respectively, 2 ≤ n ≤ 100. Each of the following m1 lines contains a pair of integer numbers between 1 and n — successful pair in the view of Juan. It is guaranteed that all Juan's pairs will be different. Next m2 lines describe Rosa's opinion in the same manner.
+
+Output
+In the first line output one integer number k — the maximal possible number of marriages at the end of the serial. Each of the following k lines should contain description of possible marriages in the view of Juan, and then output k lines — description in the view of Rosa.
+
+Example(s)
+sample input
+sample output
+4 2 2
+1 3
+2 4
+1 4
+2 3
+2
+1 3
+2 4
+3 2
+4 1
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+There are `n (2…100)` actors. Every “successful pair” is always a man–woman pair, so the overall graph is bipartite (the partition is not given).
+
+Juan approves `m1` pairs (edges set `E1`), Rosa approves `m2` pairs (edges set `E2`).
+
+Choose the largest possible troupe (subset of actors) such that:
+
+- Using only Juan’s edges `E1`, all chosen actors can be perfectly paired into marriages.
+- Using only Rosa’s edges `E2`, the same chosen actors can also be perfectly paired.
+
+Output `k` = maximum number of marriages (so troupe size is `2k`), then print `k` marriages for Juan and `k` marriages for Rosa that realize it.
+
+---
+
+## 2) Key observations
+
+1. **We only care about actors that can be perfectly matched in both graphs on the same vertex set.**  
+   That means we want two perfect matchings (one from `E1`, one from `E2`) covering exactly the same chosen vertices.
+
+2. **Recover the bipartition first.**  
+   The union graph `E1 ∪ E2` is bipartite (guaranteed). We can 2-color it to get sides `A` and `B`.
+
+3. **Turn “two matchings on same vertices” into “vertex-disjoint directed cycles”.**  
+   After we have `A/B`, direct edges as:
+   - Juan edges: `A → B`
+   - Rosa edges: `B → A`
+
+   If we select some directed Juan+Rosa edges so that every selected vertex has in-degree = out-degree = 1 within the selected subgraph, then the edges form **vertex-disjoint directed cycles**.  
+   Every such cycle alternates Juan/Rosa edges and corresponds to:
+   - Juan matching on its vertices (take the Juan edges on the cycle)
+   - Rosa matching on the same vertices (take the Rosa edges on the cycle)
+
+   Maximizing troupe size becomes: **pick the maximum total number of vertices covered by disjoint alternating directed cycles**, equivalently maximum number of selected Juan+Rosa edges.
+
+4. **Enforce “each actor used at most once” with node-splitting (capacity 1).**  
+   Split each actor `u` into `u_in` and `u_out` with an edge `u_in → u_out` capacity `1`.  
+   Any chosen relationship edge must go from `out → in`. This ensures at most one unit of cycle-flow can pass through each actor.
+
+5. **This becomes a min-cost circulation with negative costs.**
+   - Add each relationship edge (Juan or Rosa, directed as above) with capacity `1` and cost `-1` (profit).
+   - Find a **minimum-cost circulation**. It will send flow along negative cycles to reduce cost, i.e., select as many relationship edges as possible subject to capacities.
+   - Each marriage contributes **two selected relationship edges** (one Juan + one Rosa), so if total min cost is `C` (negative), then:
+     - #selected relationship edges = `-C`
+     - `k = (-C) / 2`
+
+   Important: the graph can contain **negative cycles**, so a typical “successive shortest augmenting path” min-cost flow that assumes no negative cycles is not safe. Use an algorithm that *handles negative cycles*, e.g. **network simplex** (fast) or **cycle-canceling** (simpler, still OK for `n ≤ 100`).
+
+---
+
+## 3) Full solution approach
+
+### Step A — Read input and build union adjacency
+Store a matrix `G[u][v]` as bitmask:
+- bit 1 (`1`) if Juan approves edge `{u,v}`
+- bit 2 (`2`) if Rosa approves edge `{u,v}`
+
+### Step B — Bipartite coloring
+Run DFS/BFS on the union graph (edges where `G[u][v] != 0`) to compute `color[u] ∈ {0,1}`:
+- `color=0` => side `A`
+- `color=1` => side `B`
+
+Guaranteed to succeed.
+
+### Step C — Build the circulation network (node-splitting)
+Create `2n` nodes:
+- `u_in = u`
+- `u_out = u+n`
+
+Add:
+- edge `u_in → u_out` with `(cap=1, cost=0)` for every actor `u`
+
+For each unordered pair `(i,j)`:
+- If Juan approves it: add directed edge from `A_out → B_in` with `(cap=1, cost=-1)`
+- If Rosa approves it: add directed edge from `B_out → A_in` with `(cap=1, cost=-1)`
+
+Also store metadata for each such relationship edge so we can later output the selected ones.
+
+### Step D — Run min-cost circulation
+Compute minimum circulation cost `C`.
+
+Then `k = (-C)/2`.
+
+### Step E — Reconstruct marriages
+For each stored relationship edge:
+- if its flow is `1` (or residual capacity indicates used), it is chosen
+Collect chosen Juan edges and chosen Rosa edges separately and print:
+- first `k`
+- then `k` Juan pairs
+- then `k` Rosa pairs
+
+The circulation guarantees the selected edges decompose into disjoint alternating cycles, hence form valid perfect matchings for both opinions on the same set of actors.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+This is a faithful, fast solution using a **network-simplex style minimum-cost circulation** (handles negative cycles well and fits the tight time limit).
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Min-cost circulation via a (primal) network simplex style algorithm.
+  This approach can handle negative cycles (important here because we use cost=-1 edges).
+*/
+template<typename T>
+class MinCostCirculation {
+  private:
+    struct Edge {
+        int from, to;
+        T cap, cost, flow;
+        Edge(int f, int t, T c, T w, T fl = 0) : from(f), to(t), cap(c), cost(w), flow(fl) {}
+    };
+
+    int n;                          // number of "real" nodes (we will use an extra root node internally)
+    vector<Edge> edges;             // forward + reverse edges
+    vector<int> parentEdge, depth;  // parent edge (as reverse id), and depth in basis tree
+    vector<T> pot;                  // node potentials (dual variables)
+    vector< set<int> > treeAdj;     // adjacency of the current basis tree (store edge indices)
+
+    // DFS to compute depth/parentEdge/potentials along current basis tree.
+    void dfs(int v) {
+        for (int ei : treeAdj[v]) {
+            if (ei == parentEdge[v]) continue;
+            int to = edges[ei].to;
+            pot[to] = pot[v] + edges[ei].cost;
+            parentEdge[to] = (ei ^ 1);       // store reverse as "edge to parent"
+            depth[to] = depth[v] + 1;
+            dfs(to);
+        }
+    }
+
+    // Walk the unique path in the basis tree between endpoints of edge 'ei',
+    // and apply callback cb to each edge on the fundamental cycle (including ei).
+    template<class CB>
+    void walk_cycle(int ei, CB cb) {
+        cb(ei); // entering edge itself is part of the cycle
+        int a = edges[ei].from, b = edges[ei].to;
+        while (a != b) {
+            if (depth[a] > depth[b]) {
+                // edge from parent(a) -> a is (parentEdge[a]^1)
+                cb(parentEdge[a] ^ 1);
+                a = edges[parentEdge[a]].to; // parent of a
+            } else {
+                // parentEdge[b] is edge b -> parent(b), on path in opposite direction
+                cb(parentEdge[b]);
+                b = edges[parentEdge[b]].to; // parent of b
+            }
+        }
+    }
+
+  public:
+    MinCostCirculation(int n_ = 0) { init(n_); }
+
+    void init(int n_) {
+        n = n_;
+        edges.clear();
+        parentEdge.assign(n + 1, -1);
+        depth.assign(n + 1, 0);
+        pot.assign(n + 1, 0);
+        treeAdj.assign(n + 1, {});
+    }
+
+    // Add directed edge u->v with given capacity and cost, and reverse residual edge.
+    // Return id of the forward edge.
+    int add_edge(int u, int v, T cap, T cost) {
+        int id = (int)edges.size();
+        edges.emplace_back(u, v, cap, cost, 0);
+        edges.emplace_back(v, u, 0, -cost, 0);
+        return id;
+    }
+
+    const Edge& get_edge(int id) const { return edges[id]; }
+
+    // Compute minimum cost circulation. Returns the minimum total cost.
+    T min_circulation() {
+        // Add an artificial root node with index n (arrays are sized n+1),
+        // connect root->i with 0 capacity edges to form an initial feasible basis tree.
+        for (int i = 0; i < n; i++) {
+            int ei = add_edge(n, i, 0, 0);
+            treeAdj[n].insert(ei);
+            treeAdj[i].insert(ei ^ 1);
+        }
+
+        T totalCost = 0;
+        int ptr = 0;
+        const int B = 3 * n; // scan batch size (heuristic)
+
+        // Repeatedly pivot while we find negative reduced-cost entering edges.
+        for (int outer = 0; outer < (int)edges.size() / B + 1; outer++) {
+            if (outer == 0) {
+                // compute potentials from scratch using the current basis tree
+                dfs(n);
+            }
+
+            // Find an entering edge with negative reduced cost.
+            // reduced_cost(e) = pot[from] + cost - pot[to]
+            pair<T,int> best = {0, -1}; // we want the minimum; must be < 0 to improve
+            for (int t = 0; t < B; t++, (++ptr) %= (int)edges.size()) {
+                auto &e = edges[ptr];
+                if (e.flow < e.cap) {
+                    T rc = pot[e.from] + e.cost - pot[e.to];
+                    best = min(best, {rc, ptr});
+                }
+            }
+
+            T rc = best.first;
+            int ein = best.second;
+            if (rc == 0) continue; // no negative reduced-cost edge in this batch
+
+            // Determine bottleneck (leaving edge) on the cycle created by adding 'ein'
+            pair<T,int> bott = {edges[ein].cap - edges[ein].flow, ein};
+            walk_cycle(ein, [&](int ei) {
+                bott = min(bott, {edges[ei].cap - edges[ei].flow, ei});
+            });
+
+            T push = bott.first;
+            int eout = bott.second;
+
+            // Augment along the cycle
+            walk_cycle(ein, [&](int ei) {
+                edges[ei].flow += push;
+                edges[ei ^ 1].flow -= push;
+            });
+
+            // Pivot in the basis tree: add entering edge, remove leaving edge
+            treeAdj[edges[ein].from].insert(ein);
+            treeAdj[edges[ein].to].insert(ein ^ 1);
+            treeAdj[edges[eout].from].erase(eout);
+            treeAdj[edges[eout].to].erase(eout ^ 1);
+
+            totalCost += push * rc;
+
+            // After pivot, recompute potentials from scratch
+            outer = -1;
+        }
+
+        return totalCost;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m1, m2;
+    cin >> n >> m1 >> m2;
+
+    // G[u][v] bitmask: 1 = Juan edge exists, 2 = Rosa edge exists
+    vector<vector<int>> G(n, vector<int>(n, 0));
+    for (int i = 0; i < m1; i++) {
+        int u, v; cin >> u >> v; --u; --v;
+        G[u][v] |= 1;
+        G[v][u] |= 1;
+    }
+    for (int i = 0; i < m2; i++) {
+        int u, v; cin >> u >> v; --u; --v;
+        G[u][v] |= 2;
+        G[v][u] |= 2;
+    }
+
+    // 1) Bipartite coloring of the union graph
+    vector<int> color(n, -1);
+    function<bool(int,int)> dfs = [&](int u, int c) -> bool {
+        color[u] = c;
+        for (int v = 0; v < n; v++) {
+            if (!G[u][v]) continue;
+            if (color[v] == -1) {
+                if (!dfs(v, 1 - c)) return false;
+            } else if (color[v] == color[u]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (int i = 0; i < n; i++) if (color[i] == -1) {
+        // guaranteed bipartite by statement
+        bool ok = dfs(i, 0);
+        (void)ok;
+        assert(ok);
+    }
+
+    // 2) Build circulation graph on 2*n nodes:
+    //    u_in = u, u_out = u+n
+    MinCostCirculation<long long> mcc(2 * n);
+
+    // Store (edgeId, u, v, type) for relationship edges to reconstruct answer:
+    // type: 1 = Juan, 2 = Rosa
+    vector<tuple<int,int,int,int>> info;
+
+    // capacity-1 pass-through for each actor
+    for (int u = 0; u < n; u++) {
+        mcc.add_edge(u, u + n, 1, 0);
+    }
+
+    // add directed relationship edges with cost -1
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (!G[i][j]) continue;
+
+            // Juan edge must be A(0)->B(1)
+            if (G[i][j] & 1) {
+                if (color[i] == 0 && color[j] == 1) {
+                    int ei = mcc.add_edge(i + n, j, 1, -1);
+                    info.push_back({ei, i, j, 1});
+                } else {
+                    int ei = mcc.add_edge(j + n, i, 1, -1);
+                    info.push_back({ei, i, j, 1});
+                }
+            }
+
+            // Rosa edge must be B(1)->A(0)
+            if (G[i][j] & 2) {
+                if (color[i] == 1 && color[j] == 0) {
+                    int ei = mcc.add_edge(i + n, j, 1, -1);
+                    info.push_back({ei, i, j, 2});
+                } else {
+                    int ei = mcc.add_edge(j + n, i, 1, -1);
+                    info.push_back({ei, i, j, 2});
+                }
+            }
+        }
+    }
+
+    // 3) Solve min-cost circulation
+    long long cost = mcc.min_circulation();
+    int k = (int)(-cost / 2); // each marriage corresponds to 2 chosen directed edges
+
+    // 4) Recover chosen edges (flow > 0 means selected)
+    vector<pair<int,int>> juan, rosa;
+    for (auto [ei, u, v, type] : info) {
+        if (mcc.get_edge(ei).flow > 0) {
+            if (type == 1) juan.push_back({u, v});
+            else rosa.push_back({u, v});
+        }
+    }
+
+    // 5) Output
+    cout << k << "\n";
+    for (auto [u, v] : juan) cout << u + 1 << " " << v + 1 << "\n";
+    for (auto [u, v] : rosa) cout << u + 1 << " " << v + 1 << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Python version uses **negative-cycle canceling** (Bellman–Ford to find negative cycles and augment along them). It’s much simpler than network simplex and is typically fast enough for `n ≤ 100` (graph ≤ 200 nodes; edges ≈ O(n²)).
+
+```python
+import sys
+
+# ---------------- Min-Cost Circulation via Negative Cycle Canceling ----------------
+
+class Edge:
+    __slots__ = ("to", "rev", "cap", "cost")
+    def __init__(self, to, rev, cap, cost):
+        self.to = to        # endpoint
+        self.rev = rev      # index of reverse edge in adjacency list of 'to'
+        self.cap = cap      # residual capacity
+        self.cost = cost    # per-unit cost
+
+class MinCostCirculation:
+    """
+    Minimum-cost circulation in a directed capacitated graph with costs.
+    Works even with negative cycles by repeatedly canceling them.
+
+    Complexity is not great in theory, but fine for this problem size.
+    """
+    def __init__(self, n):
+        self.n = n
+        self.g = [[] for _ in range(n)]
+
+    def add_edge(self, fr, to, cap, cost):
+        """
+        Adds fr->to with residual capacity 'cap', and reverse edge with cap=0.
+        Returns (fr, index_in_g[fr]) to later inspect whether this edge was used.
+        """
+        fwd = Edge(to, len(self.g[to]), cap, cost)
+        rev = Edge(fr, len(self.g[fr]), 0, -cost)
+        self.g[fr].append(fwd)
+        self.g[to].append(rev)
+        return fr, len(self.g[fr]) - 1
+
+    def min_cost_circulation(self):
+        """
+        While there is a negative cycle in the residual graph:
+        - find one via Bellman-Ford
+        - augment maximum possible flow around it
+        Returns total minimum cost.
+        """
+        n = self.n
+        total_cost = 0
+
+        while True:
+            # Bellman-Ford with "super source" trick: initialize all dist=0
+            dist = [0] * n
+            pv = [-1] * n   # parent vertex
+            pe = [-1] * n   # parent edge index in g[pv]
+
+            x = -1
+            for _ in range(n):
+                x = -1
+                for v in range(n):
+                    dv = dist[v]
+                    for ei, e in enumerate(self.g[v]):
+                        if e.cap <= 0:
+                            continue
+                        nd = dv + e.cost
+                        if nd < dist[e.to]:
+                            dist[e.to] = nd
+                            pv[e.to] = v
+                            pe[e.to] = ei
+                            x = e.to
+
+            if x == -1:
+                # no relaxation in nth iteration -> no negative cycles
+                break
+
+            # Move 'x' inside the cycle
+            for _ in range(n):
+                x = pv[x]
+
+            # Reconstruct cycle edges (pv[cur] -> cur)
+            cycle = []
+            cur = x
+            while True:
+                cycle.append((pv[cur], pe[cur]))
+                cur = pv[cur]
+                if cur == x:
+                    break
+
+            # Find bottleneck residual capacity along the cycle
+            add = 10**18
+            for v, ei in cycle:
+                add = min(add, self.g[v][ei].cap)
+
+            # Augment and update cost
+            for v, ei in cycle:
+                e = self.g[v][ei]
+                rev = self.g[e.to][e.rev]
+                e.cap -= add
+                rev.cap += add
+                total_cost += add * e.cost
+
+        return total_cost
+
+# ---------------- Problem Solution ----------------
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m1 = int(next(it))
+    m2 = int(next(it))
+
+    # G[u][v] bitmask: 1=Juan, 2=Rosa
+    G = [[0] * n for _ in range(n)]
+    for _ in range(m1):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        G[u][v] |= 1
+        G[v][u] |= 1
+    for _ in range(m2):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        G[u][v] |= 2
+        G[v][u] |= 2
+
+    # 1) Bipartite coloring on union graph
+    sys.setrecursionlimit(10000)
+    color = [-1] * n
+
+    def dfs(u, c):
+        color[u] = c
+        for v in range(n):
+            if G[u][v] == 0:
+                continue
+            if color[v] == -1:
+                if not dfs(v, 1 - c):
+                    return False
+            elif color[v] == color[u]:
+                return False
+        return True
+
+    for i in range(n):
+        if color[i] == -1:
+            ok = dfs(i, 0)
+            # guaranteed bipartite by statement
+            if not ok:
+                raise RuntimeError("Union graph is not bipartite (unexpected).")
+
+    # 2) Build min-cost circulation on 2n nodes (node-splitting)
+    N = 2 * n
+    mcc = MinCostCirculation(N)
+
+    # Edge metadata for reconstruction: (fr, idx, u, v, typ)
+    edge_info = []
+
+    # pass-through edges, cap=1
+    for u in range(n):
+        mcc.add_edge(u, u + n, 1, 0)
+
+    # relationship edges with cost -1
+    for i in range(n):
+        for j in range(i + 1, n):
+            if G[i][j] == 0:
+                continue
+
+            # Juan: A(0)->B(1)
+            if G[i][j] & 1:
+                if color[i] == 0 and color[j] == 1:
+                    fr, idx = mcc.add_edge(i + n, j, 1, -1)
+                else:
+                    fr, idx = mcc.add_edge(j + n, i, 1, -1)
+                edge_info.append((fr, idx, i, j, 1))
+
+            # Rosa: B(1)->A(0)
+            if G[i][j] & 2:
+                if color[i] == 1 and color[j] == 0:
+                    fr, idx = mcc.add_edge(i + n, j, 1, -1)
+                else:
+                    fr, idx = mcc.add_edge(j + n, i, 1, -1)
+                edge_info.append((fr, idx, i, j, 2))
+
+    # 3) Solve
+    min_cost = mcc.min_cost_circulation()
+    k = (-min_cost) // 2  # each marriage is two selected directed edges
+
+    # 4) Recover selected edges:
+    # If initial cap was 1 and now residual cap is 0, then the edge was used.
+    juan = []
+    rosa = []
+    for fr, idx, u, v, typ in edge_info:
+        used = (mcc.g[fr][idx].cap == 0)
+        if used:
+            if typ == 1:
+                juan.append((u, v))
+            else:
+                rosa.append((u, v))
+
+    # 5) Output
+    out = [str(k)]
+    for u, v in juan:
+        out.append(f"{u+1} {v+1}")
+    for u, v in rosa:
+        out.append(f"{u+1} {v+1}")
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also add a small correctness proof sketch (why cycles ⇔ two perfect matchings on same vertex set), or discuss performance considerations for the Python cycle-canceling variant under the 0.25s limit.

@@ -1,0 +1,676 @@
+1. Abridged problem statement
+You are given a sequence of n grayscale pixel values c₁…cₙ (0 ≤ cᵢ ≤ 10⁶). You may delete any subset of pixels, preserving the original order of the remaining ones. After deletions you obtain a sequence r₁…rₘ.
+
+Constraint: for every adjacent pair in the final sequence, |rᵢ − rᵢ₊₁| ≠ 1 (their colors must not differ by exactly 1).
+
+Goal: Delete the minimum number of pixels (equivalently, keep a longest possible subsequence) such that no two adjacent remaining pixels differ by 1. Output:
+- t = minimum number of deletions;
+- one valid resulting sequence r of length m = n − t.
+
+n ≤ 10⁵, colors ≤ 10⁶.
+
+---
+
+2. Detailed editorial
+
+Reformulation  
+We need a longest subsequence (not necessarily contiguous) of the input array c[0…n−1], such that for all consecutive chosen indices i < j, |c[i] − c[j]| ≠ 1. Order must be preserved.
+
+If we find the maximum length L of such a subsequence, the answer is:
+- minimum deletions t = n − L,
+- and any subsequence of length L satisfying the constraint.
+
+This is a classic “longest subsequence with a constraint on adjacent chosen elements”.
+
+Dynamic programming idea  
+Let’s process pixels from left to right and define:
+
+- dp[pos] = length of the longest valid subsequence that ends exactly at position pos (0-based), i.e., we take pixel pos as the last pixel of the subsequence.
+
+If the previous chosen pixel index is last < pos, we must have |c[pos] − c[last]| ≠ 1.
+
+Thus:
+dp[pos] = 1 + max over all last < pos, |c[pos] − c[last]| ≠ 1 of dp[last].
+
+If we know the best “previous dp” we can transition. Directly this is O(n²), too slow (n up to 10⁵).
+
+Transforming the transition  
+For each position pos, the recurrence doesn’t depend on the distance in indices, only on colors:
+
+dp[pos] = 1 + best_dp_for_previous_color, where “previous color” v is any color such that |v − c[pos]| ≠ 1.
+
+We can maintain, for each color v, the best dp value achieved by any position with that color so far.
+
+Let best[v] = max dp[last] over all last with c[last] = v.
+
+At position pos with color x = c[pos], we want:
+max over all v such that |v − x| ≠ 1 of best[v].
+
+The forbidden previous colors are exactly x − 1 and x + 1 (and there is no restriction about same color x itself; colors can be equal). So allowed colors are:
+
+- all colors v, except possibly v = x − 1 and v = x + 1.
+
+So at pos:
+best_over_allowed = maximum over all colors v of best[v]
+                     but ignoring v = x−1 and v = x+1.
+
+After we get best_over_allowed, we do:
+dp[pos] = best_over_allowed + 1.
+
+Then we must update best[x] = max(best[x], dp[pos]) since ending at pos gives a new candidate for color x.
+
+The difficulty is computing best_over_allowed fast.
+
+Naive approach  
+If we kept best[v] in an array of size up to MAXV = 10⁶ and scanned all colors every time, each step is O(MAXV) → O(n·MAXV) impossible.
+
+We need something like a segment tree or Fenwick tree to get range maxima quickly.
+
+Segment tree approach  
+We need to query the maximum dp among all colors v except x−1 and x+1. That is “all colors” minus up to two points.
+
+We can’t directly subtract a point from a segment tree max query. But we can express:
+
+All colors v except x−1 and x+1 form these ranges (on color values):
+- [0, x−2] and [x, x] and [x+2, MAXV]
+
+Explanation:
+- Remove x−1 and x+1.
+- The color x itself IS allowed: |x−x| = 0, so we can place equal colors adjacent.
+- For v < x−1: these all satisfy |v−x| ≥ 2.
+- For v between x+2 and MAXV: also |v−x| ≥ 2.
+
+So we can query at most three disjoint ranges on colors:
+1) [0, x−2] if x ≥ 2
+2) [x, x]
+3) [x+2, MAXV] if x+2 ≤ MAXV
+
+Take the maximum of those three range maxima.
+
+Data we store in the segment tree  
+We need to later reconstruct which positions form the optimal subsequence, so we need to recall the previous index last that gave the best dp.
+
+So for each color v we want to store:
+
+- current best pair (best_dp_for_color_v, some_index_with_that_dp).
+
+We’ll keep in each tree node a pair<int,int>:
+
+- first: dp value (the maximum for that node range),
+- second: the index where this value is achieved.
+
+The tree node value is simply the max (lexicographically) between its children: pair comparison first compares first, then second, which is fine.
+
+Identity value (for an empty segment) is something like (-INF, -1) so that max(x, identity) = x.
+
+Implementation details of DP:
+
+- Let MAXV = 10⁶ + 42 (a bit larger than allowed colors).
+- Build SegmentTree over indices 0..MAXV (color domain), initially all identity (very small).
+- Arrays:
+  - dp[n],
+  - parent[n] = previous index in the optimal chain for each i (for path reconstruction).
+
+Initialize first element:
+- At position 0:
+  - We always can start a subsequence of length 1 with c[0]:
+    dp[0] = 1
+    parent[0] = -1 (no previous)
+    In segment tree, at position color = c[0], we set best for that color:
+      update(c[0], max(current_value_at_color, (1, 0)))
+
+For general i from 1..n−1:
+
+Let x = c[i].
+
+Compute best candidate:
+
+Initialize best = (0, -1)  // meaning subsequence length 0, no previous index
+
+1) if x >= 2:
+     best = max(best, segment_tree.query(0, x−2))
+
+2) include same color:
+     best = max(best, segment_tree.query(x, x))
+
+3) if x + 2 ≤ MAXV:
+     best = max(best, segment_tree.query(x+2, MAXV))
+
+Now we have best = (best_dp_value, best_index).
+
+Then:
+dp[i] = best.first + 1
+parent[i] = best.second
+
+Now update the tree at color x with this new candidate:
+
+current_color_val = segment_tree.get_pos(x)
+segment_tree.update(x, max(current_color_val, (dp[i], i)))
+
+At the end:
+
+- The best global subsequence is the maximum dp[i] over i=0..n−1.
+  Let:
+    max_len = max(dp)
+    end_pos = index achieving that max.
+
+Reconstruct path:
+
+Start from end_pos, and repeatedly go to parent[end_pos], until -1.
+
+Store indices, then reverse to get them in increasing order.
+
+Those indices describe the subsequence of pixels to keep. Its length is max_len.
+
+Answer:
+
+- Minimum deletions t = n − max_len
+- Output the retained pixel values in order: c[p] for p in path.
+
+Complexity analysis
+
+- Segment tree size: O(MAXV), where MAXV ≈ 10⁶. Good under memory limits.
+- For each of the n positions:
+  - up to 3 range-maximum queries O(log MAXV),
+  - 1 update O(log MAXV).
+- Total: O(n log MAXV) ≈ 10⁵ * log(10⁶) ~ 10⁵ * 20 = 2⋅10⁶ operations, fine.
+
+Correctness arguments
+
+- DP correctness: Each dp[i] is defined as 1 + best possible dp[last] among all last < i with |c[i] − c[last]| ≠ 1. We never consider invalid predecessors because the tree query explicitly excludes colors x−1 and x+1; we include all others (three ranges cover all allowed colors).
+- Using color-based segmentation is valid since the only condition depends on color difference, not on position difference.
+- Segment tree always holds correct best dp-per-color up to current i−1, and since we update immediately after computing dp[i], by induction it is correct for all steps.
+
+- Reconstruction: parent[i] always points to some previous index last that achieved the dp value used to compute dp[i]. Starting from any index achieving global maximum and following parents yields a chain of indices with strictly increasing order and valid color constraints. The chain length equals dp[end_pos], which is max_len, so it’s an optimal subsequence.
+
+Edge cases
+
+- n = 1: dp[0] = 1, answer is 0 deletions and the single pixel.
+- All pixels equal: we can keep all, since |x−x|=0. DP will keep extending using same color range.
+- Colors are such that every adjacent pair has difference 1: we can still pick a subsequence skipping some pixels; DP finds the longest valid subsequence automatically.
+
+---
+
+3. C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Overload stream operators for convenience (pairs and vectors).
+
+// Print pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read all elements of a vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print all elements of a vector separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Generic iterative segment tree template for type T.
+// merge: function to combine two children nodes.
+// e: function returning the identity element for merge.
+template<class T, T (*merge)(T, T), T (*e)()>
+class SegmentTree {
+  private:
+    int n;          // number of "real" elements (original array size)
+    int size;       // size of the internal power-of-two segment tree base
+    vector<T> tr;   // tree array: indices [1 .. 2*size-1]
+
+    // Recompute node x from its children.
+    void pull(int x) { tr[x] = merge(tr[2 * x], tr[2 * x + 1]); }
+
+  public:
+    // Default constructor: builds empty tree.
+    SegmentTree() { init(vector<T>()); }
+
+    // Build tree from size n, initializing all values with e().
+    SegmentTree(int _n) { init(vector<T>(_n, e())); }
+
+    // Build tree from an existing array _a.
+    SegmentTree(const vector<T>& _a) { init(_a); }
+
+    // Initialize / rebuild tree from array _a.
+    void init(const vector<T>& _a) {
+        n = (int)_a.size();
+        // Find smallest power of two >= n.
+        size = 1;
+        while (size < n) {
+            size <<= 1;
+        }
+
+        // Allocate tree with identity values.
+        tr.assign(2 * size, e());
+
+        // Copy array into leaves (starting at index size).
+        for (int i = 0; i < n; i++) {
+            tr[size + i] = _a[i];
+        }
+
+        // Build internal nodes bottom-up.
+        for (int i = size - 1; i > 0; i--) {
+            pull(i);
+        }
+    }
+
+    // Point update: set position pos to val (0-based on original array).
+    void update(int pos, T val) {
+        pos += size;        // move to leaf
+        tr[pos] = val;      // assign
+        // Move upward and recompute parents.
+        for (pos >>= 1; pos > 0; pos >>= 1) {
+            pull(pos);
+        }
+    }
+
+    // Get the value stored at a single position (0-based).
+    T get_pos(int pos) { return tr[pos + size]; }
+
+    // Range query on [l, r] inclusive (0-based).
+    T query(int l, int r) {
+        // ansl accumulates from the left, ansr from the right.
+        T ansl = e(), ansr = e();
+
+        // Convert to leaf indices on [l, r+1)
+        for (l += size, r += size + 1; l < r; l >>= 1, r >>= 1) {
+            // If l is a right child, its segment is disjoint from the left side accumulated so far.
+            if (l & 1) {
+                ansl = merge(ansl, tr[l++]);
+            }
+            // If r is about to become a right bound, take the left sibling's segment.
+            if (r & 1) {
+                ansr = merge(tr[--r], ansr);
+            }
+        }
+        // Merge left and right accumulations.
+        return merge(ansl, ansr);
+    }
+
+    // Query the entire range [0, n-1].
+    T query_all() { return tr[1]; }
+
+    // Additional helpers (max_right/min_left) are not used in this problem.
+    template<bool (*f)(T)>
+    int max_right(int l) const {
+        return max_right(l, [](T x) { return f(x); });
+    }
+
+    template<class F>
+    int max_right(int l, F f) const {
+        if (l == n) {
+            return n;
+        }
+
+        l += size;
+        T sm = e();
+        do {
+            while (l % 2 == 0) {
+                l >>= 1;
+            }
+            if (!f(merge(sm, tr[l]))) {
+                while (l < size) {
+                    l = (2 * l);
+                    if (f(merge(sm, tr[l]))) {
+                        sm = merge(sm, tr[l]);
+                        l++;
+                    }
+                }
+                return l - size;
+            }
+            sm = merge(sm, tr[l]);
+            l++;
+        } while ((l & -l) != l);
+        return n;
+    }
+
+    template<bool (*f)(T)>
+    int min_left(int r) const {
+        return min_left(r, [](T x) { return f(x); });
+    }
+
+    template<class F>
+    int min_left(int r, F f) const {
+        if (r == -1) {
+            return 0;
+        }
+
+        r += size + 1;
+        T sm = e();
+        do {
+            r--;
+            while (r > 1 && (r % 2)) {
+                r >>= 1;
+            }
+            if (!f(merge(tr[r], sm))) {
+                while (r < size) {
+                    r = (2 * r + 1);
+                    if (f(merge(tr[r], sm))) {
+                        sm = merge(tr[r], sm);
+                        r--;
+                    }
+                }
+                return r + 1 - size;
+            }
+            sm = merge(tr[r], sm);
+        } while ((r & -r) != r);
+        return 0;
+    }
+};
+
+// Merge function for segment tree: take maximum of two (dp, index) pairs.
+pair<int, int> max_custom(pair<int, int> a, pair<int, int> b) {
+    return max(a, b);  // uses std::pair lexicographic comparison
+}
+
+// Identity element for max over pairs: very small dp value, invalid index.
+pair<int, int> max_e() {
+    return {INT_MIN, -1};
+}
+
+// Maximum color value allowed in input is 1e6,
+// we add some slack to safely allow x+2 queries.
+const int MAXV = (int)1e6 + 42;
+
+int n;              // number of pixels
+vector<int> c;      // colors
+
+// Read input.
+void read() {
+    cin >> n;
+    c.resize(n);
+    for (int i = 0; i < n; i++) {
+        cin >> c[i];
+    }
+}
+
+void solve() {
+    // Segment tree over color domain [0 .. MAXV].
+    // Each node stores (best_dp_for_color, index_of_pixel).
+    auto t = SegmentTree<pair<int, int>, max_custom, max_e>(MAXV + 1);
+
+    vector<int> dp(n);      // dp[i] = best subsequence length ending at i
+    vector<int> parent(n, -1);  // parent pointer for reconstruction
+
+    // Initialize first position: we can always start with it.
+    dp[0] = 1;
+    parent[0] = -1;
+    // At color c[0], store (dp[0], index=0)
+    t.update(c[0], {1, 0});
+
+    // Process subsequent positions.
+    for (int i = 1; i < n; i++) {
+        pair<int, int> best = {0, -1};  // (best_dp_so_far, index_with_that_dp)
+
+        int col = c[i];
+
+        // Range 1: [0, col-2] if col >= 2.
+        if (col >= 2) {
+            best = max(best, t.query(0, col - 2));
+        }
+
+        // Range 2: [col, col] -- same color is allowed.
+        best = max(best, t.query(col, col));
+
+        // Range 3: [col+2, MAXV] if applicable.
+        if (col + 2 <= MAXV) {
+            best = max(best, t.query(col + 2, MAXV));
+        }
+
+        // dp[i] = best_dp + 1 (or 1 if best_dp = 0 and best.index = -1).
+        dp[i] = best.first + 1;
+        parent[i] = best.second;    // previous index that led to this dp value
+
+        // Update color col in segment tree with new candidate (dp[i], i).
+        auto current_val = t.get_pos(col);
+        // Keep the best pair at this color.
+        t.update(col, max(current_val, make_pair(dp[i], i)));
+    }
+
+    // Find global best subsequence length and ending position.
+    int max_len = *max_element(dp.begin(), dp.end());
+    int end_pos = int(max_element(dp.begin(), dp.end()) - dp.begin());
+
+    // Reconstruct the path of indices by following parent pointers.
+    vector<int> path;
+    int curr = end_pos;
+    while (curr != -1) {
+        path.push_back(curr);
+        curr = parent[curr];
+    }
+    reverse(path.begin(), path.end());  // now in increasing index order
+
+    // Output number of deletions.
+    cout << n - max_len << '\n';
+    // Output the resulting sequence values.
+    for (int p: path) {
+        cout << c[p] << ' ';
+    }
+    cout << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // The problem has a single test case.
+    // If there were multiple, we'd read T here.
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+4. Python solution with detailed comments
+
+```python
+import sys
+
+# We will implement an iterative segment tree for range-max over pairs (dp, index).
+# Python tuples compare lexicographically, so max() on tuples works directly.
+
+INT_MIN = -10**18  # sufficiently small sentinel
+
+MAXV = 10**6 + 42  # maximum color domain in segment tree
+
+
+class SegmentTree:
+    """
+    Segment tree for range maximum over pairs (dp, index) on domain [0..n-1].
+    merge: max of two tuples.
+    identity: (INT_MIN, -1)
+    """
+
+    def __init__(self, n):
+        # n is number of leaves (here n = MAXV+1).
+        self.n = n
+        # Find power-of-two base size >= n.
+        size = 1
+        while size < n:
+            size <<= 1
+        self.size = size
+        # Allocate tree. Use list of tuples; initialize to identity.
+        self.tr = [(INT_MIN, -1)] * (2 * size)
+
+    def update(self, pos, val):
+        """
+        Point update at position pos with value val.
+        We set tr[pos] = val (not taking max here; caller should do that).
+        """
+        i = pos + self.size
+        self.tr[i] = val
+        i >>= 1
+        # Recompute all parents.
+        while i > 0:
+            left = self.tr[2 * i]
+            right = self.tr[2 * i + 1]
+            # Node value is maximum of children.
+            self.tr[i] = left if left >= right else right
+            i >>= 1
+
+    def get_pos(self, pos):
+        """Return the value stored at leaf pos (0-based)."""
+        return self.tr[pos + self.size]
+
+    def query(self, l, r):
+        """
+        Range max on [l, r] inclusive, 0-based.
+        """
+        if l > r:
+            return (INT_MIN, -1)
+        n = self.size
+        # Convert [l, r] to [l, r+1) on leaf indices.
+        l += n
+        r += n + 1
+        resl = (INT_MIN, -1)
+        resr = (INT_MIN, -1)
+        while l < r:
+            if l & 1:
+                # Take current segment at l
+                if self.tr[l] > resl:
+                    resl = self.tr[l]
+                l += 1
+            if r & 1:
+                r -= 1
+                if self.tr[r] > resr:
+                    resr = self.tr[r]
+            l >>= 1
+            r >>= 1
+        # Combine left and right result.
+        return resl if resl >= resr else resr
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    c = [int(next(it)) for _ in range(n)]
+
+    # Build segment tree on color domain [0..MAXV].
+    seg = SegmentTree(MAXV + 1)
+
+    dp = [0] * n       # dp[i] = best subsequence length ending at i
+    parent = [-1] * n  # parent[i] = previous index in subsequence
+
+    # Initialize first element.
+    dp[0] = 1
+    parent[0] = -1
+    # At color c[0], store (dp[0], index=0)
+    old = seg.get_pos(c[0])
+    # Keep maximum between old and new.
+    best_pair = old if old >= (dp[0], 0) else (dp[0], 0)
+    seg.update(c[0], best_pair)
+
+    for i in range(1, n):
+        col = c[i]
+        # best = (best_dp, index)
+        best_dp, best_idx = 0, -1
+
+        # Query [0, col-2] if col >= 2.
+        if col >= 2:
+            cand = seg.query(0, col - 2)
+            if cand[0] > best_dp:
+                best_dp, best_idx = cand
+
+        # Query [col, col] (same color).
+        cand = seg.query(col, col)
+        if cand[0] > best_dp:
+            best_dp, best_idx = cand
+
+        # Query [col+2, MAXV] if applicable.
+        if col + 2 <= MAXV:
+            cand = seg.query(col + 2, MAXV)
+            if cand[0] > best_dp:
+                best_dp, best_idx = cand
+
+        # Compute dp[i] and parent[i].
+        dp[i] = best_dp + 1
+        parent[i] = best_idx
+
+        # Update segment tree at this color with (dp[i], i).
+        old = seg.get_pos(col)
+        new_pair = (dp[i], i)
+        best_pair = old if old >= new_pair else new_pair
+        seg.update(col, best_pair)
+
+    # Find global maximum dp and its index.
+    max_len = max(dp)
+    end_pos = max(range(n), key=lambda i: dp[i])
+
+    # Reconstruct path of indices.
+    path = []
+    cur = end_pos
+    while cur != -1:
+        path.append(cur)
+        cur = parent[cur]
+    path.reverse()
+
+    # Minimum deletions = n - max_len.
+    out_lines = []
+    out_lines.append(str(n - max_len))
+    # Build the resulting sequence string.
+    seq = ' '.join(str(c[i]) for i in path)
+    out_lines.append(seq)
+    sys.stdout.write('\n'.join(out_lines) + '\n')
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+5. Compressed editorial
+
+We need a longest subsequence of the given pixels such that any two consecutive kept pixels don’t differ in color by exactly 1. Let c[i] be the color at position i.
+
+Define dp[i] = length of the longest valid subsequence ending at position i. If the previous kept position is j < i, we must have |c[i] − c[j]| ≠ 1, so:
+
+dp[i] = 1 + max over j<i, |c[i]−c[j]|≠1 of dp[j].
+
+Since the restriction depends only on colors, not indices, maintain best[v] = best dp among indices with color v seen so far. At position i (color x = c[i]), we want:
+
+max over all colors v with |v − x| ≠ 1 of best[v].
+
+Forbidden colors are x−1 and x+1; x itself is allowed. Over the color axis [0..MAXV], allowed colors form up to three disjoint intervals: [0, x−2], [x, x], [x+2, MAXV]. We store best[v] in a segment tree over colors, where each node keeps (best_dp_for_color, index_that_achieves_it). Query these intervals to find the best predecessor:
+
+- best = max(query(0, x−2), query(x, x), query(x+2, MAXV)), skipping ranges that are empty.
+
+Then:
+
+- dp[i] = best.first + 1,
+- parent[i] = best.second (for reconstruction),
+- update the tree at color x with max(current_stored_value, (dp[i], i)).
+
+Initialize dp[0] = 1 and store (1,0) at color c[0]. After processing all positions, take max dp[i] and its index end_pos. Reconstruct the optimal subsequence by following parent pointers from end_pos back to −1. Minimum deletions are n − max_dp.
+
+Complexity: O(n log MAXV) with MAXV ≈ 10⁶, which fits easily in time and memory limits.

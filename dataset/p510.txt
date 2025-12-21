@@ -1,0 +1,950 @@
+## 1) Abridged problem statement
+
+Given an integer \(n\) (\(1 \le n \le 300\)), output a lowercase English string that has **exactly \(n\) distinct substrings**.  
+Among all such strings, choose the **shortest**; if multiple, choose the **lexicographically smallest**.
+
+---
+
+## 2) Detailed editorial (how to solve)
+
+### Key fact: counting distinct substrings with a Suffix Automaton
+A **suffix automaton (SAM)** of a string compactly represents all its substrings.
+
+For each SAM state \(v\):
+- `len[v]` = maximum length of a substring represented by that state
+- `link[v]` = suffix link to another state representing the largest proper suffix class
+
+A classic formula:
+
+\[
+\#\text{distinct substrings} \;=\; \sum_{v \ne 0} \bigl(len[v] - len[link[v]]\bigr)
+\]
+
+Reason: each state corresponds to an “endpos-equivalence class” containing substrings with lengths in:
+\[
+(len[link[v]]+1) \ldots len[v]
+\]
+so it contributes exactly `len[v] - len[link[v]]` new distinct substrings.
+
+Thus, if we can build a SAM for a candidate string quickly, we can compute its distinct-substring count quickly.
+
+### What the problem really asks
+We need, for a given \(n \le 300\), the optimal string by:
+1) minimum length  
+2) then lexicographically minimum  
+subject to having exactly \(n\) distinct substrings.
+
+### Brute force search idea (used to generate the table)
+The provided code contains a function `precompute()` (commented out in `solve()`) that **constructs answers for all \(n\) up to a chosen limit** by an incremental search:
+
+- Maintain `ans[k]` = best (shortest, then lexicographically smallest) string found so far that has exactly `k` distinct substrings.
+- Start from known seeds:
+  - `ans[1]="a"`, `ans[2]="aa"`, `ans[3]="ab"`, `ans[4]="aaaa"` (note `n=4` is special)
+- For each `cnt` from `1` to `n-1`, try to build new candidates by inserting a single character into `ans[cnt]`:
+  - Choose a character `c` from `'a'` to `max_char+1` where `max_char` is the maximum character currently appearing in the string.
+    - This bounds alphabet growth and keeps lexicographic minimality plausible.
+  - Insert `c` at every position `pos` in the string.
+  - For each resulting string `cand`, compute `new_cnt = cnt_distinct(cand)` using SAM.
+  - If `new_cnt <= n`, try to relax `ans[new_cnt]` using the objective (shorter, then lexicographically smaller).
+
+This is essentially a “best-first DP over counts”, using “insert one letter” moves and an oracle (`cnt_distinct`) to classify the candidate.
+
+### Why the submitted solution is just a lookup
+Time limit is extremely tight (0.25s). Even though the above search can be made to work offline, doing it online is risky. So the author **precomputed** the optimal answer strings for all `n` up to 300 and hardcoded them in `prec[]`.  
+At runtime, the solution is simply:
+- read `n`
+- print `prec[n]`
+
+This guarantees speed.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/strings/suffix_automaton.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Generic Suffix Automaton implementation.
+// Default T=string, but can work with other string-like containers.
+template<class T = string>
+class SuffixAutomaton {
+  private:
+    // G is the character type of the input string.
+    // If T is C-string/array, we use char, otherwise T::value_type.
+    using G = conditional_t<
+        is_same_v<T, const char*> || is_same_v<T, char*> || is_array_v<T>, char,
+        typename T::value_type>;
+
+    // Each SAM state:
+    // - to: transitions by character
+    // - len: maximum length in this equivalence class
+    // - link: suffix link
+    struct State {
+        unordered_map<G, int> to; // edges: character -> state index
+        int len;                  // max length of substrings in this state
+        int link;                 // suffix link
+        State(int l = 0, int lnk = -1) : len(l), link(lnk) {}
+    };
+
+    // When following transition (p --c--> q), we might need to clone q
+    // if len[p] + 1 != len[q]. This preserves SAM invariants.
+    int check_replace_with_clone(int p, G c) {
+        int q = states[p].to[c]; // existing target for c
+        // If q already has the right length, no clone needed.
+        if(states[p].len + 1 == states[q].len) {
+            return q;
+        }
+
+        // Create clone state copying q's transitions and link,
+        // but with smaller len = len[p] + 1.
+        int clone = states.size();
+        states.emplace_back(states[p].len + 1, states[q].link);
+        states[clone].to = states[q].to;
+
+        // Redirect transitions that used to go to q via c to instead go to clone
+        // while walking suffix links.
+        while(p >= 0 && states[p].to[c] == q) {
+            states[p].to[c] = clone;
+            p = states[p].link;
+        }
+
+        // q's suffix link becomes the clone
+        states[q].link = clone;
+        return clone;
+    }
+
+  public:
+    int last;               // index of the state representing entire current string
+    vector<State> states;   // all states
+
+    SuffixAutomaton() : last(0) { clear(); }
+    SuffixAutomaton(const T& s) { init(s); }
+
+    // Extend SAM with one character c
+    void add_letter(G c) {
+        // If there is already a transition from 'last' via c,
+        // we need to potentially clone to keep correctness.
+        if(states[last].to.count(c)) {
+            int clone = check_replace_with_clone(last, c);
+            last = clone; // move last to resulting state
+            return;
+        }
+
+        int p = last;
+
+        // Create new state for the new string
+        last = states.size();
+        states.emplace_back(states[p].len + 1); // len increases by 1
+
+        // Add transitions for c from suffix chain until it already exists
+        while(p >= 0 && !states[p].to.count(c)) {
+            states[p].to[c] = last;
+            p = states[p].link;
+        }
+
+        // If we fell off the root, link new state to root (0)
+        if(p == -1) {
+            states[last].link = 0;
+            return;
+        }
+
+        // Otherwise, we have an existing transition p --c--> q.
+        // Fix it using cloning if necessary.
+        int q_or_clone = check_replace_with_clone(p, c);
+        states[last].link = q_or_clone;
+    }
+
+    // Build SAM for a whole string
+    void add_string(const T& s) {
+        last = 0;          // start from root
+        for(char c: s) {   // append letters
+            add_letter(c);
+        }
+    }
+
+    // Reset to empty automaton (only root)
+    void clear() {
+        states.clear();
+        states.emplace_back(); // root with len=0, link=-1
+        last = 0;
+    }
+
+    // Initialize from given string
+    void init(const T& s) {
+        clear();
+        add_string(s);
+    }
+
+    // Build suffix-link tree adjacency list (not used in final solve)
+    vector<vector<int>> build_suffix_link_tree() {
+        vector<vector<int>> adj(states.size());
+        for(int i = 1; i < (int)states.size(); i++) {
+            adj[states[i].link].push_back(i);
+        }
+        return adj;
+    }
+
+    // Bucket states by length (not used in final solve)
+    vector<vector<int>> states_by_length() {
+        vector<vector<int>> ret(states.size());
+        for(int i = 0; i < (int)states.size(); i++) {
+            ret[states[i].len].push_back(i);
+        }
+        return ret;
+    }
+};
+
+// Count number of distinct substrings of s using SAM formula
+int cnt_distinct(string s) {
+    auto sa = SuffixAutomaton<string>(s);
+    int ans = 0;
+    // Sum contributions of all non-root states
+    for(int i = 1; i < (int)sa.states.size(); i++) {
+        ans += sa.states[i].len - sa.states[sa.states[i].link].len;
+    }
+    return ans;
+}
+
+int n;
+
+void read() { cin >> n; }
+
+// Precomputed optimal answers for n=0..300 (index 0 unused in statement).
+// The solve() just prints prec[n].
+vector<string> prec = {
+    "",
+    "a",
+    "aa",
+    "ab",
+    "aaaa",
+    "aab",
+    "abc",
+    "aaab",
+    "aaba",
+    "aabc",
+    "abcd",
+    "aaaba",
+    "aaabc",
+    "aabac",
+    "aabcd",
+    "abcde",
+    "aaabba",
+    "aaabac",
+    "aaabcd",
+    "aabacd",
+    "aabcde",
+    "abcdef",
+    "aaaabcd",
+    "aaabaca",
+    "aaabacd",
+    "aaabcde",
+    "aabacde",
+    "aabcdef",
+    "abcdefg",
+    "aaaabacd",
+    "aaaabcde",
+    "aaabacad",
+    "aaabacde",
+    "aaabcdef",
+    "aabacdef",
+    "aabcdefg",
+    "abcdefgh",
+    "aaaabacad",
+    "aaaabacde",
+    "aaaabcdef",
+    "aaabacade",
+    "aaabacdef",
+    "aaabcdefg",
+    "aabacdefg",
+    "aabcdefgh",
+    "abcdefghi",
+    "aaaabaacde",
+    "aaaabacade",
+    "aaaabacdef",
+    "aaaabcdefg",
+    "aaabacadef",
+    "aaabacdefg",
+    "aaabcdefgh",
+    "aabacdefgh",
+    "aabcdefghi",
+    "abcdefghij",
+    "aaaaabcdefg",
+    "aaaabaacdef",
+    "aaaabacadef",
+    "aaaabacdefg",
+    "aaaabcdefgh",
+    "aaabacadefg",
+    "aaabacdefgh",
+    "aaabcdefghi",
+    "aabacdefghi",
+    "aabcdefghij",
+    "abcdefghijk",
+    "aaaaabacdefg",
+    "aaaaabcdefgh",
+    "aaaabaacdefg",
+    "aaaabacadefg",
+    "aaaabacdefgh",
+    "aaaabcdefghi",
+    "aaabacadefgh",
+    "aaabacdefghi",
+    "aaabcdefghij",
+    "aabacdefghij",
+    "aabcdefghijk",
+    "abcdefghijkl",
+    "aaaaabacadefg",
+    "aaaaabacdefgh",
+    "aaaaabcdefghi",
+    "aaaabaacdefgh",
+    "aaaabacadefgh",
+    "aaaabacdefghi",
+    "aaaabcdefghij",
+    "aaabacadefghi",
+    "aaabacdefghij",
+    "aaabcdefghijk",
+    "aabacdefghijk",
+    "aabcdefghijkl",
+    "abcdefghijklm",
+    "aaaaabaacdefgh",
+    "aaaaabacadefgh",
+    "aaaaabacdefghi",
+    "aaaaabcdefghij",
+    "aaaabaacdefghi",
+    "aaaabacadefghi",
+    "aaaabacdefghij",
+    "aaaabcdefghijk",
+    "aaabacadefghij",
+    "aaabacdefghijk",
+    "aaabcdefghijkl",
+    "aabacdefghijkl",
+    "aabcdefghijklm",
+    "abcdefghijklmn",
+    "aaaaabaacadefgh",
+    "aaaaabaacdefghi",
+    "aaaaabacadefghi",
+    "aaaaabacdefghij",
+    "aaaaabcdefghijk",
+    "aaaabaacdefghij",
+    "aaaabacadefghij",
+    "aaaabacdefghijk",
+    "aaaabcdefghijkl",
+    "aaabacadefghijk",
+    "aaabacdefghijkl",
+    "aaabcdefghijklm",
+    "aabacdefghijklm",
+    "aabcdefghijklmn",
+    "abcdefghijklmno",
+    "aaaaaabcdefghijk",
+    "aaaaabaacadefghi",
+    "aaaaabaacdefghij",
+    "aaaaabacadefghij",
+    "aaaaabacdefghijk",
+    "aaaaabcdefghijkl",
+    "aaaabaacdefghijk",
+    "aaaabacadefghijk",
+    "aaaabacdefghijkl",
+    "aaaabcdefghijklm",
+    "aaabacadefghijkl",
+    "aaabacdefghijklm",
+    "aaabcdefghijklmn",
+    "aabacdefghijklmn",
+    "aabcdefghijklmno",
+    "abcdefghijklmnop",
+    "aaaaaabacdefghijk",
+    "aaaaaabcdefghijkl",
+    "aaaaabaacadefghij",
+    "aaaaabaacdefghijk",
+    "aaaaabacadefghijk",
+    "aaaaabacdefghijkl",
+    "aaaaabcdefghijklm",
+    "aaaabaacdefghijkl",
+    "aaaabacadefghijkl",
+    "aaaabacdefghijklm",
+    "aaaabcdefghijklmn",
+    "aaabacadefghijklm",
+    "aaabacdefghijklmn",
+    "aaabcdefghijklmno",
+    "aabacdefghijklmno",
+    "aabcdefghijklmnop",
+    "abcdefghijklmnopq",
+    "aaaaaabacadefghijk",
+    "aaaaaabacdefghijkl",
+    "aaaaaabcdefghijklm",
+    "aaaaabaacadefghijk",
+    "aaaaabaacdefghijkl",
+    "aaaaabacadefghijkl",
+    "aaaaabacdefghijklm",
+    "aaaaabcdefghijklmn",
+    "aaaabaacdefghijklm",
+    "aaaabacadefghijklm",
+    "aaaabacdefghijklmn",
+    "aaaabcdefghijklmno",
+    "aaabacadefghijklmn",
+    "aaabacdefghijklmno",
+    "aaabcdefghijklmnop",
+    "aabacdefghijklmnop",
+    "aabcdefghijklmnopq",
+    "abcdefghijklmnopqr",
+    "aaaaaabaacdefghijkl",
+    "aaaaaabacadefghijkl",
+    "aaaaaabacdefghijklm",
+    "aaaaaabcdefghijklmn",
+    "aaaaabaacadefghijkl",
+    "aaaaabaacdefghijklm",
+    "aaaaabacadefghijklm",
+    "aaaaabacdefghijklmn",
+    "aaaaabcdefghijklmno",
+    "aaaabaacdefghijklmn",
+    "aaaabacadefghijklmn",
+    "aaaabacdefghijklmno",
+    "aaaabcdefghijklmnop",
+    "aaabacadefghijklmno",
+    "aaabacdefghijklmnop",
+    "aaabcdefghijklmnopq",
+    "aabacdefghijklmnopq",
+    "aabcdefghijklmnopqr",
+    "abcdefghijklmnopqrs",
+    "aaaaaabaacadefghijkl",
+    "aaaaaabaacdefghijklm",
+    "aaaaaabacadefghijklm",
+    "aaaaaabacdefghijklmn",
+    "aaaaaabcdefghijklmno",
+    "aaaaabaacadefghijklm",
+    "aaaaabaacdefghijklmn",
+    "aaaaabacadefghijklmn",
+    "aaaaabacdefghijklmno",
+    "aaaaabcdefghijklmnop",
+    "aaaabaacdefghijklmno",
+    "aaaabacadefghijklmno",
+    "aaaabacdefghijklmnop",
+    "aaaabcdefghijklmnopq",
+    "aaabacadefghijklmnop",
+    "aaabacdefghijklmnopq",
+    "aaabcdefghijklmnopqr",
+    "aabacdefghijklmnopqr",
+    "aabcdefghijklmnopqrs",
+    "abcdefghijklmnopqrst",
+    "aaaaaabaacadaefghijkl",
+    "aaaaaabaacadefghijklm",
+    "aaaaaabaacdefghijklmn",
+    "aaaaaabacadefghijklmn",
+    "aaaaaabacdefghijklmno",
+    "aaaaaabcdefghijklmnop",
+    "aaaaabaacadefghijklmn",
+    "aaaaabaacdefghijklmno",
+    "aaaaabacadefghijklmno",
+    "aaaaabacdefghijklmnop",
+    "aaaaabcdefghijklmnopq",
+    "aaaabaacdefghijklmnop",
+    "aaaabacadefghijklmnop",
+    "aaaabacdefghijklmnopq",
+    "aaaabcdefghijklmnopqr",
+    "aaabacadefghijklmnopq",
+    "aaabacdefghijklmnopqr",
+    "aaabcdefghijklmnopqrs",
+    "aabacdefghijklmnopqrs",
+    "aabcdefghijklmnopqrst",
+    "abcdefghijklmnopqrstu",
+    "aaaaaaabcdefghijklmnop",
+    "aaaaaabaacadaefghijklm",
+    "aaaaaabaacadefghijklmn",
+    "aaaaaabaacdefghijklmno",
+    "aaaaaabacadefghijklmno",
+    "aaaaaabacdefghijklmnop",
+    "aaaaaabcdefghijklmnopq",
+    "aaaaabaacadefghijklmno",
+    "aaaaabaacdefghijklmnop",
+    "aaaaabacadefghijklmnop",
+    "aaaaabacdefghijklmnopq",
+    "aaaaabcdefghijklmnopqr",
+    "aaaabaacdefghijklmnopq",
+    "aaaabacadefghijklmnopq",
+    "aaaabacdefghijklmnopqr",
+    "aaaabcdefghijklmnopqrs",
+    "aaabacadefghijklmnopqr",
+    "aaabacdefghijklmnopqrs",
+    "aaabcdefghijklmnopqrst",
+    "aabacdefghijklmnopqrst",
+    "aabcdefghijklmnopqrstu",
+    "abcdefghijklmnopqrstuv",
+    "aaaaaaabacdefghijklmnop",
+    "aaaaaaabcdefghijklmnopq",
+    "aaaaaabaacadaefghijklmn",
+    "aaaaaabaacadefghijklmno",
+    "aaaaaabaacdefghijklmnop",
+    "aaaaaabacadefghijklmnop",
+    "aaaaaabacdefghijklmnopq",
+    "aaaaaabcdefghijklmnopqr",
+    "aaaaabaacadefghijklmnop",
+    "aaaaabaacdefghijklmnopq",
+    "aaaaabacadefghijklmnopq",
+    "aaaaabacdefghijklmnopqr",
+    "aaaaabcdefghijklmnopqrs",
+    "aaaabaacdefghijklmnopqr",
+    "aaaabacadefghijklmnopqr",
+    "aaaabacdefghijklmnopqrs",
+    "aaaabcdefghijklmnopqrst",
+    "aaabacadefghijklmnopqrs",
+    "aaabacdefghijklmnopqrst",
+    "aaabcdefghijklmnopqrstu",
+    "aabacdefghijklmnopqrstu",
+    "aabcdefghijklmnopqrstuv",
+    "abcdefghijklmnopqrstuvw",
+    "aaaaaaabacadefghijklmnop",
+    "aaaaaaabacdefghijklmnopq",
+    "aaaaaaabcdefghijklmnopqr",
+    "aaaaaabaacadaefghijklmno",
+    "aaaaaabaacadefghijklmnop",
+    "aaaaaabaacdefghijklmnopq",
+    "aaaaaabacadefghijklmnopq",
+    "aaaaaabacdefghijklmnopqr",
+    "aaaaaabcdefghijklmnopqrs",
+    "aaaaabaacadefghijklmnopq",
+    "aaaaabaacdefghijklmnopqr",
+    "aaaaabacadefghijklmnopqr",
+    "aaaaabacdefghijklmnopqrs",
+    "aaaaabcdefghijklmnopqrst",
+    "aaaabaacdefghijklmnopqrs",
+    "aaaabacadefghijklmnopqrs",
+    "aaaabacdefghijklmnopqrst",
+    "aaaabcdefghijklmnopqrstu",
+    "aaabacadefghijklmnopqrst",
+    "aaabacdefghijklmnopqrstu",
+    "aaabcdefghijklmnopqrstuv",
+    "aabacdefghijklmnopqrstuv",
+    "aabcdefghijklmnopqrstuvw",
+    "abcdefghijklmnopqrstuvwx"
+};
+
+// Offline generator for prec[] (not run in final solution).
+void precompute() {
+    vector<string> ans(n + 5, "-1"); // best strings for each count, "-1" = unknown
+    ans[1] = "a";
+    ans[2] = "aa";
+    ans[3] = "ab";
+    ans[4] = "aaaa";
+
+    // Try to improve answers by inserting one letter into known answers.
+    for(int cnt = 1; cnt < n; cnt++) {
+        // Allow letters up to (max in current string)+1 to permit introducing new letters
+        char max_c = *max_element(ans[cnt].begin(), ans[cnt].end()) + 1;
+
+        for(char c = 'a'; c <= max_c; c++) {
+            // Try inserting c at every position
+            for(int pos = 0; pos <= (int)ans[cnt].size(); pos++) {
+                // Build candidate by inserting c at position pos
+                string cand = ans[cnt].substr(0, pos) + c;
+                if(pos != ans[cnt].size()) {
+                    cand += ans[cnt].substr(pos, (int)ans[cnt].size() - pos);
+                }
+
+                int new_cnt = cnt_distinct(cand); // oracle: compute #distinct substrings
+                if(new_cnt > n) {
+                    continue; // ignore counts outside range
+                }
+
+                // Relax ans[new_cnt] by: shorter length first, then lexicographic
+                if(ans[new_cnt] == "-1" ||
+                   (ans[new_cnt].size() > cand.size()) ||
+                   (ans[new_cnt].size() == cand.size() && ans[new_cnt] > cand
+                   )) {
+                    ans[new_cnt] = cand;
+                }
+            }
+        }
+    }
+
+    // Print resulting vector and assert it matches hardcoded prec.
+    cout << "vector<string> prec = {\"\"";
+    for(int i = 1; i <= n; i++) {
+        cout << ", \"" << ans[i] << "\"";
+        assert(ans[i] == prec[i]);
+    }
+    cout << "};\n";
+}
+
+void solve() {
+    // Final submission approach: just output precomputed optimal answer.
+    // precompute(); // disabled
+    cout << prec[n] << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (solves the same submission approach: table lookup)
+
+This matches the provided C++ behavior: constant-time output using a precomputed list.
+
+```python
+import sys
+
+# Precomputed optimal strings for n = 0..300 (0 is dummy).
+# This is exactly the same data as the C++ `prec` vector.
+PREC = [
+    "",
+    "a",
+    "aa",
+    "ab",
+    "aaaa",
+    "aab",
+    "abc",
+    "aaab",
+    "aaba",
+    "aabc",
+    "abcd",
+    "aaaba",
+    "aaabc",
+    "aabac",
+    "aabcd",
+    "abcde",
+    "aaabba",
+    "aaabac",
+    "aaabcd",
+    "aabacd",
+    "aabcde",
+    "abcdef",
+    "aaaabcd",
+    "aaabaca",
+    "aaabacd",
+    "aaabcde",
+    "aabacde",
+    "aabcdef",
+    "abcdefg",
+    "aaaabacd",
+    "aaaabcde",
+    "aaabacad",
+    "aaabacde",
+    "aaabcdef",
+    "aabacdef",
+    "aabcdefg",
+    "abcdefgh",
+    "aaaabacad",
+    "aaaabacde",
+    "aaaabcdef",
+    "aaabacade",
+    "aaabacdef",
+    "aaabcdefg",
+    "aabacdefg",
+    "aabcdefgh",
+    "abcdefghi",
+    "aaaabaacde",
+    "aaaabacade",
+    "aaaabacdef",
+    "aaaabcdefg",
+    "aaabacadef",
+    "aaabacdefg",
+    "aaabcdefgh",
+    "aabacdefgh",
+    "aabcdefghi",
+    "abcdefghij",
+    "aaaaabcdefg",
+    "aaaabaacdef",
+    "aaaabacadef",
+    "aaaabacdefg",
+    "aaaabcdefgh",
+    "aaabacadefg",
+    "aaabacdefgh",
+    "aaabcdefghi",
+    "aabacdefghi",
+    "aabcdefghij",
+    "abcdefghijk",
+    "aaaaabacdefg",
+    "aaaaabcdefgh",
+    "aaaabaacdefg",
+    "aaaabacadefg",
+    "aaaabacdefgh",
+    "aaaabcdefghi",
+    "aaabacadefgh",
+    "aaabacdefghi",
+    "aaabcdefghij",
+    "aabacdefghij",
+    "aabcdefghijk",
+    "abcdefghijkl",
+    "aaaaabacadefg",
+    "aaaaabacdefgh",
+    "aaaaabcdefghi",
+    "aaaabaacdefgh",
+    "aaaabacadefgh",
+    "aaaabacdefghi",
+    "aaaabcdefghij",
+    "aaabacadefghi",
+    "aaabacdefghij",
+    "aaabcdefghijk",
+    "aabacdefghijk",
+    "aabcdefghijkl",
+    "abcdefghijklm",
+    "aaaaabaacdefgh",
+    "aaaaabacadefgh",
+    "aaaaabacdefghi",
+    "aaaaabcdefghij",
+    "aaaabaacdefghi",
+    "aaaabacadefghi",
+    "aaaabacdefghij",
+    "aaaabcdefghijk",
+    "aaabacadefghij",
+    "aaabacdefghijk",
+    "aaabcdefghijkl",
+    "aabacdefghijkl",
+    "aabcdefghijklm",
+    "abcdefghijklmn",
+    "aaaaabaacadefgh",
+    "aaaaabaacdefghi",
+    "aaaaabacadefghi",
+    "aaaaabacdefghij",
+    "aaaaabcdefghijk",
+    "aaaabaacdefghij",
+    "aaaabacadefghij",
+    "aaaabacdefghijk",
+    "aaaabcdefghijkl",
+    "aaabacadefghijk",
+    "aaabacdefghijkl",
+    "aaabcdefghijklm",
+    "aabacdefghijklm",
+    "aabcdefghijklmn",
+    "abcdefghijklmno",
+    "aaaaaabcdefghijk",
+    "aaaaabaacadefghi",
+    "aaaaabaacdefghij",
+    "aaaaabacadefghij",
+    "aaaaabacdefghijk",
+    "aaaaabcdefghijkl",
+    "aaaabaacdefghijk",
+    "aaaabacadefghijk",
+    "aaaabacdefghijkl",
+    "aaaabcdefghijklm",
+    "aaabacadefghijkl",
+    "aaabacdefghijklm",
+    "aaabcdefghijklmn",
+    "aabacdefghijklmn",
+    "aabcdefghijklmno",
+    "abcdefghijklmnop",
+    "aaaaaabacdefghijk",
+    "aaaaaabcdefghijkl",
+    "aaaaabaacadefghij",
+    "aaaaabaacdefghijk",
+    "aaaaabacadefghijk",
+    "aaaaabacdefghijkl",
+    "aaaaabcdefghijklm",
+    "aaaabaacdefghijkl",
+    "aaaabacadefghijkl",
+    "aaaabacdefghijklm",
+    "aaaabcdefghijklmn",
+    "aaabacadefghijklm",
+    "aaabacdefghijklmn",
+    "aaabcdefghijklmno",
+    "aabacdefghijklmno",
+    "aabcdefghijklmnop",
+    "abcdefghijklmnopq",
+    "aaaaaabacadefghijk",
+    "aaaaaabacdefghijkl",
+    "aaaaaabcdefghijklm",
+    "aaaaabaacadefghijk",
+    "aaaaabaacdefghijkl",
+    "aaaaabacadefghijkl",
+    "aaaaabacdefghijklm",
+    "aaaaabcdefghijklmn",
+    "aaaabaacdefghijklm",
+    "aaaabacadefghijklm",
+    "aaaabacdefghijklmn",
+    "aaaabcdefghijklmno",
+    "aaabacadefghijklmn",
+    "aaabacdefghijklmno",
+    "aaabcdefghijklmnop",
+    "aabacdefghijklmnop",
+    "aabcdefghijklmnopq",
+    "abcdefghijklmnopqr",
+    "aaaaaabaacdefghijkl",
+    "aaaaaabacadefghijkl",
+    "aaaaaabacdefghijklm",
+    "aaaaaabcdefghijklmn",
+    "aaaaabaacadefghijkl",
+    "aaaaabaacdefghijklm",
+    "aaaaabacadefghijklm",
+    "aaaaabacdefghijklmn",
+    "aaaaabcdefghijklmno",
+    "aaaabaacdefghijklmn",
+    "aaaabacadefghijklmn",
+    "aaaabacdefghijklmno",
+    "aaaabcdefghijklmnop",
+    "aaabacadefghijklmno",
+    "aaabacdefghijklmnop",
+    "aaabcdefghijklmnopq",
+    "aabacdefghijklmnopq",
+    "aabcdefghijklmnopqr",
+    "abcdefghijklmnopqrs",
+    "aaaaaabaacadefghijkl",
+    "aaaaaabaacdefghijklm",
+    "aaaaaabacadefghijklm",
+    "aaaaaabacdefghijklmn",
+    "aaaaaabcdefghijklmno",
+    "aaaaabaacadefghijklm",
+    "aaaaabaacdefghijklmn",
+    "aaaaabacadefghijklmn",
+    "aaaaabacdefghijklmno",
+    "aaaaabcdefghijklmnop",
+    "aaaabaacdefghijklmno",
+    "aaaabacadefghijklmno",
+    "aaaabacdefghijklmnop",
+    "aaaabcdefghijklmnopq",
+    "aaabacadefghijklmnop",
+    "aaabacdefghijklmnopq",
+    "aaabcdefghijklmnopqr",
+    "aabacdefghijklmnopqr",
+    "aabcdefghijklmnopqrs",
+    "abcdefghijklmnopqrst",
+    "aaaaaabaacadaefghijkl",
+    "aaaaaabaacadefghijklm",
+    "aaaaaabaacdefghijklmn",
+    "aaaaaabacadefghijklmn",
+    "aaaaaabacdefghijklmno",
+    "aaaaaabcdefghijklmnop",
+    "aaaaabaacadefghijklmn",
+    "aaaaabaacdefghijklmno",
+    "aaaaabacadefghijklmno",
+    "aaaaabacdefghijklmnop",
+    "aaaaabcdefghijklmnopq",
+    "aaaabaacdefghijklmnop",
+    "aaaabacadefghijklmnop",
+    "aaaabacdefghijklmnopq",
+    "aaaabcdefghijklmnopqr",
+    "aaabacadefghijklmnopq",
+    "aaabacdefghijklmnopqr",
+    "aaabcdefghijklmnopqrs",
+    "aabacdefghijklmnopqrs",
+    "aabcdefghijklmnopqrst",
+    "abcdefghijklmnopqrstu",
+    "aaaaaaabcdefghijklmnop",
+    "aaaaaabaacadaefghijklm",
+    "aaaaaabaacadefghijklmn",
+    "aaaaaabaacdefghijklmno",
+    "aaaaaabacadefghijklmno",
+    "aaaaaabacdefghijklmnop",
+    "aaaaaabcdefghijklmnopq",
+    "aaaaabaacadefghijklmno",
+    "aaaaabaacdefghijklmnop",
+    "aaaaabacadefghijklmnop",
+    "aaaaabacdefghijklmnopq",
+    "aaaaabcdefghijklmnopqr",
+    "aaaabaacdefghijklmnopq",
+    "aaaabacadefghijklmnopq",
+    "aaaabacdefghijklmnopqr",
+    "aaaabcdefghijklmnopqrs",
+    "aaabacadefghijklmnopqr",
+    "aaabacdefghijklmnopqrs",
+    "aaabcdefghijklmnopqrst",
+    "aabacdefghijklmnopqrst",
+    "aabcdefghijklmnopqrstu",
+    "abcdefghijklmnopqrstuv",
+    "aaaaaaabacdefghijklmnop",
+    "aaaaaaabcdefghijklmnopq",
+    "aaaaaabaacadaefghijklmn",
+    "aaaaaabaacadefghijklmno",
+    "aaaaaabaacdefghijklmnop",
+    "aaaaaabacadefghijklmnop",
+    "aaaaaabacdefghijklmnopq",
+    "aaaaaabcdefghijklmnopqr",
+    "aaaaabaacadefghijklmnop",
+    "aaaaabaacdefghijklmnopq",
+    "aaaaabacadefghijklmnopq",
+    "aaaaabacdefghijklmnopqr",
+    "aaaaabcdefghijklmnopqrs",
+    "aaaabaacdefghijklmnopqr",
+    "aaaabacadefghijklmnopqr",
+    "aaaabacdefghijklmnopqrs",
+    "aaaabcdefghijklmnopqrst",
+    "aaabacadefghijklmnopqrs",
+    "aaabacdefghijklmnopqrst",
+    "aaabcdefghijklmnopqrstu",
+    "aabacdefghijklmnopqrstu",
+    "aabcdefghijklmnopqrstuv",
+    "abcdefghijklmnopqrstuvw",
+    "aaaaaaabacadefghijklmnop",
+    "aaaaaaabacdefghijklmnopq",
+    "aaaaaaabcdefghijklmnopqr",
+    "aaaaaabaacadaefghijklmno",
+    "aaaaaabaacadefghijklmnop",
+    "aaaaaabaacdefghijklmnopq",
+    "aaaaaabacadefghijklmnopq",
+    "aaaaaabacdefghijklmnopqr",
+    "aaaaaabcdefghijklmnopqrs",
+    "aaaaabaacadefghijklmnopq",
+    "aaaaabaacdefghijklmnopqr",
+    "aaaaabacadefghijklmnopqr",
+    "aaaaabacdefghijklmnopqrs",
+    "aaaaabcdefghijklmnopqrst",
+    "aaaabaacdefghijklmnopqrs",
+    "aaaabacadefghijklmnopqrs",
+    "aaaabacdefghijklmnopqrst",
+    "aaaabcdefghijklmnopqrstu",
+    "aaabacadefghijklmnopqrst",
+    "aaabacdefghijklmnopqrstu",
+    "aaabcdefghijklmnopqrstuv",
+    "aabacdefghijklmnopqrstuv",
+    "aabcdefghijklmnopqrstuvw",
+    "abcdefghijklmnopqrstuvwx",
+]
+
+def main() -> None:
+    data = sys.stdin.read().strip()
+    n = int(data)
+    sys.stdout.write(PREC[n] + "\n")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Distinct substrings can be counted via suffix automaton:
+  \(\sum_{v \ne 0} (len[v] - len[link[v]])\).
+- The “online” construction of the optimal string (shortest then lexicographically smallest for each \(n\le 300\)) can be done by incremental search: from known best strings, insert one character in all positions, use SAM as an oracle to compute the new count, and relax the best answer for that count.
+- Because the time limit is tiny, the submitted solution hardcodes the precomputed optimal answers `prec[1..300]` and prints `prec[n]`.
