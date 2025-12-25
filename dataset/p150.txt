@@ -1,0 +1,562 @@
+## 1) Abridged problem statement
+
+A beetle moves along the straight segment from \((x_1,y_1)\) to \((x_2,y_2)\) on an infinite grid of unit square cells whose borders lie on integer coordinates. A cell counts as “passed” if the beetle’s path goes through its **interior** (borders/corners do **not** belong to any cell). List all such cells in order along the movement direction, and output the integer coordinates \((X,Y)\) of the **lower-left corner** of the \(n\)-th visited cell. If fewer than \(n\) cells are visited, output `no solution`.
+
+Input: integers \(x_1,y_1,x_2,y_2,n\), with \(1 \le n \le 10^5\), \(|x_i|,|y_i|\le 10^6\).
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Geometry model of a “cell visited”
+Each grid cell can be identified by integer coordinates \((c_x,c_y)\) meaning the open square:
+\[
+(c_x, c_x+1) \times (c_y, c_y+1)
+\]
+The beetle travels along the segment:
+\[
+P(t) = A + (B-A)t,\quad t\in[0,1]
+\]
+A cell is “passed” iff the segment intersects the **open** square (interior only). Touching only the border should not count.
+
+So for each candidate cell we need to decide if there exists \(t\in(0,1)\) such that:
+\[
+c_x < x(t) < c_x+1,\qquad c_y < y(t) < c_y+1
+\]
+
+### Key idea in code: gather candidate cells cheaply, then sort by entry time
+A classical exact approach would be a grid traversal (2D DDA / Amanatides–Woo) in \(O(\#cells)\). The provided code instead does:
+
+1. Sample points along the segment at step length ~1 in Euclidean distance:
+   - Let `len = |B-A|`, step in parameter space is `dt = 1/len`.
+   - Iterate `t = 0, dt, 2dt, ... , 1`.
+
+2. For each sampled point, compute the cell containing it via `floor(x), floor(y)`.
+3. Add that cell and its 8 neighbors (3×3 block) to a list.
+   - Why neighbors? If the segment crosses near a cell boundary between samples, the true crossed cell could be adjacent to the sampled cell. The neighborhood compensates for this coarse sampling.
+4. For each candidate cell, verify actual intersection using an exact-ish integer slab test (`intersects_cell`) so false candidates are filtered out.
+5. Sort the remaining cells by their “entry parameter” (the earliest \(t\) where the line enters the cell’s bounding box), and unique them.
+6. Output the \(n\)-th cell in that sorted order, or `no solution`.
+
+Given constraints and a very small time limit, this works because:
+- Segment length is at most about \( \sqrt{(2\cdot 10^6)^2+(2\cdot 10^6)^2} \approx 2.8\cdot 10^6\).
+- But we only need up to about `8*n` candidates; the loop stops once it collected enough.
+- With \(n \le 10^5\), candidate size is capped around \(8\cdot 10^5\), manageable.
+
+### Intersection test for a cell (important part)
+
+Let:
+- \(x(t) = x_1 + dx \cdot t\), where `dx = x2-x1` using integer-cast endpoints in the code.
+- Similar for y.
+
+For the segment to intersect the *open* cell, the set of \(t\) such that \(x(t)\in(c_x, c_x+1)\) is an interval; same for y. Intersect those intervals with \([0,1]\). If intersection is non-empty (open), the segment passes through interior.
+
+The code implements a “slab intersection”:
+- Maintain a rational interval \((t_{\min}, t_{\max})\) as fractions `num/den` to reduce floating issues.
+- For x dimension:
+  - Compute \(t\) values when line hits vertical boundaries \(x=c_x\) and \(x=c_x+1\):
+    \[
+    t_1 = \frac{c_x - x_1}{dx},\quad t_2 = \frac{c_x+1 - x_1}{dx}
+    \]
+  - Take the min/max of these as the interval where x is inside the strip.
+  - Combine with current \([t_{\min}, t_{\max}]\).
+- If `dx == 0`, the segment is vertical; then it intersects the cell only if `x1` lies strictly inside \((c_x, c_x+1)\). The code checks the negation and returns false.
+- Repeat for y.
+- Finally it returns `t_min < t_max` using cross-multiplication:
+  ```cpp
+  return t_min_num * t_max_den < t_max_num * t_min_den;
+  ```
+Strict `<` (not `<=`) corresponds to open interior (excluding boundaries).
+
+### Ordering cells: “entry time”
+To output the n-th visited cell, we need correct order along the segment.
+For each cell, define its entry parameter as:
+\[
+t_\text{entry} = \max( \min(t_{x1}, t_{x2}),\ \min(t_{y1}, t_{y2}),\ 0 )
+\]
+This is the earliest parameter where the line is inside both x and y slabs (i.e., enters the cell’s bounding box). The function `get_entry_t` computes this in doubles (used only for sorting, after intersection is already validated).
+
+After sorting, duplicates are removed with `unique`. (Note: `unique` only removes adjacent duplicates; sorting by entry time tends to group duplicates reasonably, but it’s not guaranteed if two distinct cells have the same entry time. Still, the candidate-generation strategy typically avoids problematic repeats; that said, this is a mild fragility of the approach.)
+
+### Degenerate segment case
+If \(A==B\) (length ~ 0):
+- The beetle doesn’t travel; it “passes” a cell only if the starting point lies strictly inside a cell.
+- If the point is on a grid line (`x` or `y` integer), it lies on boundary => no cell.
+- If `n != 1`, no solution because it can’t pass multiple cells.
+- Else output `floor(x1), floor(y1)`.
+
+---
+
+## 3) Provided C++ solution with detailed line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector: read each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with trailing spaces (unused here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = double;
+
+// A 2D point struct (a general geometry toolbox; most is unused in this task)
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D "determinant")
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons (mostly unused)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Lengths
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotation by angle a
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector
+    Point perp() const { return Point(-y, x); }
+    // Unit vector
+    Point unit() const { return *this / norm(); }
+    // Unit normal
+    Point normal() const { return perp().unit(); }
+    // Projection/reflection (unused)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // I/O for Point
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // ccw orientation test (unused in final algorithm)
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    // Point-on-segment, point-in-triangle, etc. (unused)
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+};
+
+int n;
+Point a, b;
+
+// Read input: x1 y1 x2 y2 n
+void read() { cin >> a >> b >> n; }
+
+void solve() {
+    // The approach used here:
+    // 1) Step along the segment roughly once per unit distance.
+    // 2) For each sampled point, consider the surrounding 3x3 cells as candidates.
+    // 3) Filter candidates by an exact integer-based intersection test.
+    // 4) Sort cells by their entry parameter t; unique them; output the n-th.
+
+    Point dir = b - a;          // direction vector from start to end
+    double len = dir.norm();    // segment length
+    constexpr double eps = 1e-9;
+
+    // Degenerate case: no movement.
+    if(len < eps) {
+        // If the point lies exactly on a grid line, it's on boundary -> no cell
+        bool on_boundary =
+            abs(a.x - round(a.x)) < eps || abs(a.y - round(a.y)) < eps;
+
+        // If no movement, only possibly 1 cell (n must be 1) and only if inside
+        if(on_boundary || n != 1) {
+            cout << "no solution" << endl;
+        } else {
+            // The cell containing point a has lower-left corner at floor(x), floor(y)
+            cout << (int)floor(a.x) << " " << (int)floor(a.y) << endl;
+        }
+        return;
+    }
+
+    vector<pair<int, int>> order;   // candidate cells (cx, cy)
+
+    double dt = 1.0 / len;          // step size in parameter t (approx unit distance)
+
+    // The code converts coordinates to int here, assuming inputs are integers.
+    int x1 = (int)a.x, y1 = (int)a.y, x2 = (int)b.x, y2 = (int)b.y;
+    int dx = x2 - x1, dy = y2 - y1;
+
+    // Check whether the segment intersects the *open interior* of cell (ncx,ncy).
+    // Uses rational comparisons to avoid floating errors.
+    auto intersects_cell = [&](int ncx, int ncy) -> bool {
+        // Maintain intersection of valid t-interval with [0,1]:
+        // t_min = 0, t_max = 1 represented as fractions num/den.
+        int64_t t_min_num = 0, t_min_den = 1;
+        int64_t t_max_num = 1, t_max_den = 1;
+
+        // X dimension constraints
+        if(dx != 0) {
+            // t values when x(t)=ncx and x(t)=ncx+1
+            int64_t t1_num = ncx - x1, t2_num = ncx + 1 - x1;
+            int64_t den = dx;
+
+            // Normalize so denominator is positive
+            if(den < 0) {
+                t1_num = -t1_num;
+                t2_num = -t2_num;
+                den = -den;
+            }
+
+            // Ensure t1 <= t2
+            if(t1_num > t2_num) {
+                swap(t1_num, t2_num);
+            }
+
+            // t_min = max(t_min, t1)
+            if(t1_num * t_min_den > t_min_num * den) {
+                t_min_num = t1_num;
+                t_min_den = den;
+            }
+            // t_max = min(t_max, t2)
+            if(t2_num * t_max_den < t_max_num * den) {
+                t_max_num = t2_num;
+                t_max_den = den;
+            }
+        } else if(x1 <= ncx || x1 >= ncx + 1) {
+            // Vertical segment: if x1 not strictly inside (ncx,ncx+1), no intersection
+            return false;
+        }
+
+        // Y dimension constraints (same logic)
+        if(dy != 0) {
+            int64_t t1_num = ncy - y1, t2_num = ncy + 1 - y1;
+            int64_t den = dy;
+            if(den < 0) {
+                t1_num = -t1_num;
+                t2_num = -t2_num;
+                den = -den;
+            }
+            if(t1_num > t2_num) {
+                swap(t1_num, t2_num);
+            }
+            if(t1_num * t_min_den > t_min_num * den) {
+                t_min_num = t1_num;
+                t_min_den = den;
+            }
+            if(t2_num * t_max_den < t_max_num * den) {
+                t_max_num = t2_num;
+                t_max_den = den;
+            }
+        } else if(y1 <= ncy || y1 >= ncy + 1) {
+            // Horizontal segment: if y1 not strictly inside (ncy,ncy+1), no intersection
+            return false;
+        }
+
+        // Return whether interval is non-empty in the *open* sense: t_min < t_max
+        // Compare fractions by cross-multiplying to stay exact.
+        return t_min_num * t_max_den < t_max_num * t_min_den;
+    };
+
+    // Compute an approximate "entry time" (earliest t where segment can be inside the cell box)
+    // Used only for sorting.
+    auto get_entry_t = [&](int ncx, int ncy) -> double {
+        double t_min = 0;
+
+        // For x: entering interval begins at min(t_at_left, t_at_right)
+        if(dx != 0) {
+            double t1 = (double)(ncx - x1) / dx;
+            double t2 = (double)(ncx + 1 - x1) / dx;
+            t_min = max(t_min, min(t1, t2));
+        }
+        // For y
+        if(dy != 0) {
+            double t1 = (double)(ncy - y1) / dy;
+            double t2 = (double)(ncy + 1 - y1) / dy;
+            t_min = max(t_min, min(t1, t2));
+        }
+        return t_min;
+    };
+
+    // Sample along the segment; stop once we have "enough" candidates.
+    for(double t = 0; t <= 1.0 + eps && (int)order.size() < 8 * n; t += dt) {
+        // Current point on the segment
+        double x = a.x + dir.x * t;
+        double y = a.y + dir.y * t;
+
+        // Cell containing the point
+        int cx = (int)floor(x);
+        int cy = (int)floor(y);
+
+        // Check current cell and its 8 neighbors as candidates
+        for(int dcx = -1; dcx <= 1; dcx++) {
+            for(int dcy = -1; dcy <= 1; dcy++) {
+                int ncx = cx + dcx;
+                int ncy = cy + dcy;
+                if(intersects_cell(ncx, ncy)) {
+                    order.push_back({ncx, ncy});
+                }
+            }
+        }
+    }
+
+    // Sort by entry time along the segment so we can take the n-th visited
+    sort(order.begin(), order.end(), [&](const auto& a, const auto& b) {
+        return get_entry_t(a.first, a.second) < get_entry_t(b.first, b.second);
+    });
+
+    // Remove duplicates (only adjacent duplicates after sort)
+    order.erase(unique(order.begin(), order.end()), order.end());
+
+    // Output result or "no solution"
+    if((int)order.size() < n) {
+        cout << "no solution" << endl;
+    } else {
+        cout << order[n - 1].first << " " << order[n - 1].second << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (solves the problem) with detailed comments
+
+This Python version uses a **standard exact grid-walk (2D DDA)** that is simpler and more robust: it advances from one crossed cell to the next by jumping to the next vertical or horizontal grid line intersection. It properly handles “do not count borders” by slightly biasing the start point if it lies exactly on a grid line.
+
+```python
+import sys
+import math
+
+def solve():
+    x1, y1, x2, y2, n = map(int, sys.stdin.read().split())
+
+    # Degenerate segment: no movement
+    if x1 == x2 and y1 == y2:
+        # If the point is on any grid line, it's on boundary -> no cell visited
+        if x1 == int(x1) or y1 == int(y1):  # always true for ints, but keep logic explicit
+            print("no solution")
+            return
+        # For non-integer inputs we'd return floor; with integer inputs it's always boundary
+        print("no solution")
+        return
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    # We traverse cells along the segment from (x1,y1) to (x2,y2).
+    # Cells are open interiors; borders don't count.
+    #
+    # To avoid ambiguous cases when starting exactly on a grid line (always true here since ints),
+    # we conceptually start from a tiny epsilon inside the segment direction.
+    # That ensures we pick the first interior cell consistently.
+    eps = 1e-12
+    sx = x1 + eps * dx
+    sy = y1 + eps * dy
+
+    # Current cell indices
+    cx = math.floor(sx)
+    cy = math.floor(sy)
+
+    # Determine stepping direction in grid
+    step_x = 1 if dx > 0 else -1
+    step_y = 1 if dy > 0 else -1
+
+    # t in [0,1] parameterization; we compare next crossings in this parameter space.
+    # For DDA we need:
+    # - t_max_x: t at which we cross the next vertical grid line
+    # - t_max_y: t at which we cross the next horizontal grid line
+    # - t_delta_x: how much t increases between successive vertical crossings
+    # - t_delta_y: how much t increases between successive horizontal crossings
+    #
+    # Segment: x(t)=x1+dx*t, so crossing x = k happens at t=(k-x1)/dx.
+    if dx != 0:
+        # Next vertical grid line after starting point in direction step_x
+        next_vline = (cx + 1) if step_x > 0 else cx
+        t_max_x = (next_vline - sx) / dx  # dx has sign
+        t_delta_x = 1.0 / abs(dx)         # parameter increase per one cell in x
+    else:
+        t_max_x = float('inf')
+        t_delta_x = float('inf')
+
+    if dy != 0:
+        next_hline = (cy + 1) if step_y > 0 else cy
+        t_max_y = (next_hline - sy) / dy
+        t_delta_y = 1.0 / abs(dy)
+    else:
+        t_max_y = float('inf')
+        t_delta_y = float('inf')
+
+    # Collect visited cells in order until we reach n or finish the segment.
+    visited = 0
+
+    # We also need to stop when t passes 1 (end point). Since we started at epsilon,
+    # we stop when the next boundary crossing would happen after t>1.
+    t = 0.0
+    while True:
+        # The current (cx,cy) is the cell containing the current interior point.
+        visited += 1
+        if visited == n:
+            print(cx, cy)
+            return
+
+        # Decide which grid line we cross next:
+        # - If t_max_x < t_max_y: cross vertical line first => move in x
+        # - If t_max_y < t_max_x: cross horizontal line first => move in y
+        # - If equal: cross a corner (both) => move in both
+        if t_max_x < t_max_y:
+            t = t_max_x
+            if t >= 1.0 - 1e-15:
+                break
+            cx += step_x
+            t_max_x += t_delta_x
+        elif t_max_y < t_max_x:
+            t = t_max_y
+            if t >= 1.0 - 1e-15:
+                break
+            cy += step_y
+            t_max_y += t_delta_y
+        else:
+            # Crossing exactly at a corner: the segment touches a grid corner.
+            # Borders/corners aren't cells, but immediately after crossing we enter
+            # the diagonally adjacent cell, so we advance both coordinates.
+            t = t_max_x
+            if t >= 1.0 - 1e-15:
+                break
+            cx += step_x
+            cy += step_y
+            t_max_x += t_delta_x
+            t_max_y += t_delta_y
+
+    print("no solution")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model each cell as open unit square \((c_x,c_x+1)\times(c_y,c_y+1)\). The segment \(A\to B\) “passes” a cell iff there exists \(t\in(0,1)\) with both coordinates strictly inside that square.
+
+The provided solution:
+- Samples points along the segment at about one per unit length (`dt=1/|AB|`).
+- For each sample, considers the 3×3 neighborhood of the sample’s cell as candidates.
+- Filters candidates with an exact slab-intersection test using integer/rational comparisons, enforcing strict interior (`t_min < t_max`).
+- Sorts remaining cells by entry time `t_entry` (earliest \(t\) entering the cell’s box), uniques, and outputs the \(n\)-th; otherwise prints `no solution`.
+- Handles degenerate \(A=B\): only one cell if point lies strictly inside, else no solution.

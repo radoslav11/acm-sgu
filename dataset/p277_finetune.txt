@@ -1,0 +1,483 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+277. Heroes
+Time limit per test: 1 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+In the game 'Heroes of keyboard and mouse' there are some cities at the plane; each city is situated in a point. The player can build some new cities. All the cities are surrounded by a polygonal wall of minimal length. When a city is built, the wall may be rebuilt to include it. Your task is to determine the area inside the wall each time a new city is built. Of course, the cities are in distinct points.
+
+Input
+The game starts with three cities with coordinates (x1,y1), (x2,y2) and (x3,y3), which are given in the first line of the input. The initial area inside the wall is non-negative. The second line of the input contains single integer N (1≤ N≤ 100000), being the number of cities to be built. Each of the next N lines contains the coordinates of a city to be built. All the coordinates are integer and do not exceed 108 by absolute value.
+
+Output
+The K-th line of the output (1≤ K≤ N) must contain an integer, being the doubled area inside the wall after building K first cities (as listed in the input, not including the first three).
+
+Example(s)
+sample input
+sample output
+1 0 0 3 3 2
+5
+1 2
+2 1
+3 0
+2 3
+0 1
+8
+8
+12
+14
+16
+
+
+
+Novosibirsk SU Contest #2, by Novosibirsk Team #1
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given 3 initial distinct points on a plane. Then **N** more distinct points are added one by one (in given order).  
+After each insertion, all points are surrounded by a polygonal wall of **minimum length** (perimeter). That wall is the **convex hull** of the points.
+
+For each of the N insertions, output the **doubled area** of the current convex hull (an integer).
+
+Constraints: `N ≤ 100000`, coordinates are integers with `|x|, |y| ≤ 1e8`.
+
+---
+
+## 2) Key observations
+
+1. **Minimum-perimeter enclosing polygon = convex hull.**  
+   So after each new point we need the area of the convex hull of all points seen so far.
+
+2. **Doubled area of a polygon** with vertices in order is:
+   \[
+   2S = \left|\sum_{i=0}^{m-1} (P_i \times P_{i+1})\right|
+   \]
+   where \(P_i \times P_{i+1} = x_i y_{i+1} - y_i x_{i+1}\) and indices wrap around.
+
+3. Recomputing the convex hull from scratch after each insertion is too slow.  
+   We need a **dynamic / incremental convex hull** with ~`O(log n)` amortized update.
+
+4. Represent the convex hull as two **x-monotone chains**:
+   - **lower hull** (leftmost → rightmost along the bottom)
+   - **upper hull** (leftmost → rightmost along the top)
+
+   Each chain can be maintained in an ordered structure by `(x, y)` and repaired locally (like Graham scan).
+
+5. If we maintain, for each chain, the sum of cross products of consecutive points, then we can get the hull’s doubled area quickly by combining those sums (plus endpoint “connections” if endpoints differ).
+
+---
+
+## 3) Full solution approach
+
+### Data structure
+Maintain:
+- `lower`: ordered set of points on the lower chain (sorted by `(x, y)`).
+- `upper`: ordered set of points on the upper chain.
+- `lower_sum`: \(\sum (L_i \times L_{i+1})\) over consecutive points in `lower`.
+- `upper_sum`: \(\sum (U_i \times U_{i+1})\) over consecutive points in `upper`.
+
+### Insertion into one chain (core idea)
+To insert point `p` into a chain (lower or upper), do:
+
+1. **Find neighbors by x** using `lower_bound(p)`:
+   - `right` = first point in chain with key ≥ `p`
+   - `left` = previous point (if exists)
+
+2. **Same x special case**  
+   For a fixed `x`, only one point can belong to a monotone hull chain:
+   - lower chain keeps the **minimum y**
+   - upper chain keeps the **maximum y**
+
+   If `p` is not more extreme than the existing point with same `x`, ignore it.  
+   Otherwise replace that point, updating the cross-sum around it.
+
+3. **Check if `p` is useless locally**  
+   If both neighbors exist and `p` lies “inside” that chain (does not make it more convex outward), ignore it.
+
+4. **Remove points that become internal** (like Graham scan):
+   - While the turn with `p` violates convexity on the left side, delete the left neighbor.
+   - Similarly delete violating points on the right side.
+   Each deleted point is removed once overall ⇒ amortized linear deletions.
+
+5. **Insert `p` and update cross-sum**  
+   Remove old edge `(left,right)` if it existed, then add new edges `(left,p)` and `(p,right)`.
+
+We run this procedure twice per point:
+- for **lower** with one convexity direction
+- for **upper** with the opposite direction
+
+This is implemented via a `sign` parameter (`+1` lower, `-1` upper) that flips orientation tests.
+
+### Computing doubled area from the two chains
+The convex hull boundary is:
+- lower chain from left→right
+- then upper chain from right→left
+
+We maintain:
+- `lower_sum` = sum along lower chain left→right
+- `upper_sum` = sum along upper chain left→right
+
+Then:
+- traversing upper in reverse negates its cross-sum contribution, so a working formula is:
+  \[
+  \text{doubled\_area\_signed} = \text{lower\_sum} - \text{upper\_sum} + \text{endpoint corrections}
+  \]
+Endpoint corrections are needed when the leftmost/rightmost points differ between chains due to degeneracies.
+
+Finally output `abs(doubled_area_signed)`.
+
+### Complexity
+- Each insertion does `O(log n)` set operations + amortized `O(1)` deletions.
+- Total: **amortized `O(N log N)`**, fits easily for `N=100000`.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+using int64 = long long;
+
+// 2D point with integer coordinates.
+struct Point {
+    int64 x, y;
+    Point(int64 x=0, int64 y=0) : x(x), y(y) {}
+
+    // Ordering for std::set: by x, then by y
+    bool operator<(const Point& other) const {
+        if (x != other.x) return x < other.x;
+        return y < other.y;
+    }
+    bool operator==(const Point& other) const {
+        return x == other.x && y == other.y;
+    }
+};
+
+// Cross product of vectors (a) x (b)
+static inline int64 cross(const Point& a, const Point& b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+// Cross product (b-a) x (c-a)
+static inline int64 cross(const Point& a, const Point& b, const Point& c) {
+    return cross(Point(b.x - a.x, b.y - a.y), Point(c.x - a.x, c.y - a.y));
+}
+
+// Orientation: +1 CCW, -1 CW, 0 collinear
+static inline int ccw(const Point& a, const Point& b, const Point& c) {
+    int64 v = cross(a, b, c);
+    if (v == 0) return 0;
+    return (v > 0) ? 1 : -1;
+}
+
+/*
+Dynamic convex hull via two x-monotone chains:
+- lower: leftmost -> rightmost along bottom boundary
+- upper: leftmost -> rightmost along top boundary
+
+We store each chain in a std::set<Point> sorted by (x,y).
+Additionally we maintain sum of cross products over consecutive points in each chain:
+sum = Σ (Pi x P{i+1})
+This allows quick area retrieval.
+*/
+class DynamicConvexHull {
+    using Iter = set<Point>::iterator;
+
+    set<Point> lower, upper;
+    int64 lower_sum = 0, upper_sum = 0;
+
+    // Insert point p into one chain.
+    // sign = +1 for lower, -1 for upper: flips convexity/orientation conditions.
+    void add_to_chain(set<Point>& hull, int64& sum, const Point& p, int sign) {
+        if (hull.empty()) {
+            hull.insert(p);
+            return;
+        }
+
+        // Find first point >= p in (x,y) order.
+        Iter right = hull.lower_bound(p);
+
+        // Handle same-x: in a monotone chain, only one point per x is useful.
+        // For lower chain we want the minimum y; for upper chain maximum y.
+        if (right != hull.end() && right->x == p.x) {
+            // If p is not more extreme in the needed direction, ignore.
+            // lower (sign=+1): keep smaller y => ignore if p.y >= existing.y
+            // upper (sign=-1): keep larger y => ignore if p.y <= existing.y
+            if (sign * (p.y - right->y) >= 0) return;
+
+            // Otherwise replace existing point at same x:
+            // remove its adjacent edge contributions from sum.
+            Iter left = (right == hull.begin()) ? hull.end() : prev(right);
+            Iter right_next = next(right);
+
+            if (left != hull.end()) sum -= cross(*left, *right);
+            if (right_next != hull.end()) sum -= cross(*right, *right_next);
+            if (left != hull.end() && right_next != hull.end())
+                sum += cross(*left, *right_next);
+
+            hull.erase(right);
+            right = right_next; // insertion position stays consistent
+        }
+
+        // Determine left neighbor (if any)
+        Iter left = (right == hull.begin()) ? hull.end() : prev(right);
+
+        // If both neighbors exist, check if p is locally inside the chain.
+        // For lower: we need p to be strictly "below" segment (left,right)
+        // For upper: p must be strictly "above" it
+        if (left != hull.end() && right != hull.end()) {
+            if (sign * ccw(*left, *right, p) >= 0) {
+                // Inside or on boundary => does not change this chain
+                return;
+            }
+            // We will break the old edge (left,right)
+            sum -= cross(*left, *right);
+        }
+
+        // Fix convexity on the left side: delete points that become internal.
+        while (left != hull.end() && left != hull.begin()) {
+            Iter left_left = prev(left);
+            // If turn (left_left, left, p) is "good", stop.
+            if (sign * ccw(*left_left, *left, p) > 0) break;
+
+            // Otherwise remove 'left': subtract its edge (left_left,left)
+            sum -= cross(*left_left, *left);
+            hull.erase(left);
+            left = left_left;
+        }
+
+        // Fix convexity on the right side.
+        while (right != hull.end()) {
+            Iter right_next = next(right);
+            if (right_next == hull.end()) break;
+
+            // If turn (p, right, right_next) is good, stop.
+            if (sign * ccw(p, *right, *right_next) > 0) break;
+
+            // Remove 'right': subtract edge (right, right_next)
+            sum -= cross(*right, *right_next);
+            hull.erase(right);
+            right = right_next;
+        }
+
+        // Connect p with its final neighbors and update sum.
+        if (left != hull.end()) sum += cross(*left, p);
+        if (right != hull.end()) sum += cross(p, *right);
+
+        hull.insert(p);
+    }
+
+public:
+    void add(const Point& p) {
+        add_to_chain(lower, lower_sum, p, +1);
+        add_to_chain(upper, upper_sum, p, -1);
+    }
+
+    // Signed doubled area (may be negative depending on orientation).
+    int64 doubled_area_signed() const {
+        if (lower.empty() || upper.empty()) return 0;
+
+        // Combine chain sums; upper is traversed in reverse on the full hull.
+        int64 res = lower_sum - upper_sum;
+
+        // Endpoint corrections if chains don't share identical ends
+        const Point& rl = *lower.rbegin();
+        const Point& ru = *upper.rbegin();
+        if (!(rl == ru)) res += cross(rl, ru);
+
+        const Point& ll = *lower.begin();
+        const Point& lu = *upper.begin();
+        if (!(ll == lu)) res += cross(lu, ll);
+
+        return res;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    Point a, b, c;
+    cin >> a.x >> a.y >> b.x >> b.y >> c.x >> c.y;
+
+    int N;
+    cin >> N;
+
+    DynamicConvexHull hull;
+    hull.add(a);
+    hull.add(b);
+    hull.add(c);
+
+    while (N--) {
+        Point p;
+        cin >> p.x >> p.y;
+        hull.add(p);
+        cout << llabs(hull.doubled_area_signed()) << "\n";
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Python has no built-in balanced BST like `std::set`. To keep the same algorithmic guarantees you’d typically need an external library (e.g. `sortedcontainers`), which is usually not allowed.
+
+Below is a **correct educational reference** using a sorted list + `bisect`. It is **O(N)** per insertion in the worst case due to list insert/delete, and may TLE for `N=100000` in strict limits. The C++ version is the intended performant solution.
+
+```python
+import sys
+from bisect import bisect_left
+
+def cross(a, b):
+    """2D cross product of points/vectors a and b (tuples (x,y))."""
+    return a[0] * b[1] - a[1] * b[0]
+
+def ccw(a, b, c):
+    """Orientation of triangle (a,b,c): +1 CCW, -1 CW, 0 collinear."""
+    v = cross((b[0]-a[0], b[1]-a[1]), (c[0]-a[0], c[1]-a[1]))
+    if v == 0:
+        return 0
+    return 1 if v > 0 else -1
+
+class DynamicConvexHull:
+    """
+    Reference implementation of the same idea as the C++ solution:
+    maintain lower and upper x-monotone chains, and keep cross-sums.
+    Uses Python lists => insert/delete is O(n).
+    """
+
+    def __init__(self):
+        self.lower = []
+        self.upper = []
+        self.lower_sum = 0
+        self.upper_sum = 0
+
+    def _erase_at(self, hull, i, s):
+        """
+        Remove hull[i] and update cross-sum s that represents
+        Σ cross(hull[j], hull[j+1]) for consecutive points.
+        """
+        p = hull[i]
+        has_left = i - 1 >= 0
+        has_right = i + 1 < len(hull)
+
+        if has_left:
+            s -= cross(hull[i-1], p)
+        if has_right:
+            s -= cross(p, hull[i+1])
+        if has_left and has_right:
+            s += cross(hull[i-1], hull[i+1])
+
+        hull.pop(i)
+        return s
+
+    def _add_to_chain(self, hull, s, p, sign):
+        """Insert point p into one chain. sign=+1 lower, sign=-1 upper."""
+        if not hull:
+            hull.append(p)
+            return s
+
+        i = bisect_left(hull, p)
+
+        # same-x handling
+        if i < len(hull) and hull[i][0] == p[0]:
+            existing = hull[i]
+            # lower wants min y, upper wants max y
+            if sign * (p[1] - existing[1]) >= 0:
+                return s
+            s = self._erase_at(hull, i, s)  # remove existing
+
+        # neighbors
+        left = hull[i-1] if i-1 >= 0 else None
+        right = hull[i] if i < len(hull) else None
+
+        # local inside test
+        if left is not None and right is not None:
+            if sign * ccw(left, right, p) >= 0:
+                return s
+            s -= cross(left, right)  # break (left,right)
+
+        # fix left side
+        while i-1 >= 1:
+            a = hull[i-2]
+            b = hull[i-1]
+            if sign * ccw(a, b, p) > 0:
+                break
+            s = self._erase_at(hull, i-1, s)
+            i -= 1  # insertion index shifts left
+
+        # fix right side
+        while i < len(hull) - 1:
+            b = hull[i]
+            c = hull[i+1]
+            if sign * ccw(p, b, c) > 0:
+                break
+            s = self._erase_at(hull, i, s)
+            # i stays the same (elements shift left)
+
+        # reconnect
+        left = hull[i-1] if i-1 >= 0 else None
+        right = hull[i] if i < len(hull) else None
+        if left is not None:
+            s += cross(left, p)
+        if right is not None:
+            s += cross(p, right)
+
+        hull.insert(i, p)
+        return s
+
+    def add(self, p):
+        self.lower_sum = self._add_to_chain(self.lower, self.lower_sum, p, +1)
+        self.upper_sum = self._add_to_chain(self.upper, self.upper_sum, p, -1)
+
+    def doubled_area_signed(self):
+        if not self.lower or not self.upper:
+            return 0
+
+        res = self.lower_sum - self.upper_sum
+
+        rl, ru = self.lower[-1], self.upper[-1]
+        if rl != ru:
+            res += cross(rl, ru)
+
+        ll, lu = self.lower[0], self.upper[0]
+        if ll != lu:
+            res += cross(lu, ll)
+
+        return res
+
+def main():
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    a = (int(next(it)), int(next(it)))
+    b = (int(next(it)), int(next(it)))
+    c = (int(next(it)), int(next(it)))
+    n = int(next(it))
+
+    hull = DynamicConvexHull()
+    hull.add(a); hull.add(b); hull.add(c)
+
+    out = []
+    for _ in range(n):
+        p = (int(next(it)), int(next(it)))
+        hull.add(p)
+        out.append(str(abs(hull.doubled_area_signed())))
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+If you want a Python solution that is also fast under these constraints, tell me which platforms/libraries are allowed (e.g., PyPy, `sortedcontainers`, or implementing a custom treap), and I’ll provide an `O(N log N)` Python version.

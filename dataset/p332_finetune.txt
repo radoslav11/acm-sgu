@@ -1,0 +1,456 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+332. Largest Circle
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Yay! You've finally managed to buy a tiny plot of land just about 400 kilometers from Moscow. Only... only it was so expensive that you are no more able to afford building a house there. So you decide to go for a swimming pool. It should have the form of circle, and be as big as possible inside your plot. Having carefully measured the border of your plot, you know now that it is a convex N-gon.
+
+What is the largest possible radius of a circular pool in it?
+
+Input
+The first line of input contains an integer N, . The next N lines contain two integers each, xi and yi, not exceeding 107 by absolute value — the coordinates of the vertices of the plot (a convex polygon) in the counter-clockwise direction. No three vertices lie on the same line.
+
+Output
+Output the sought radius. Your solution will be accepted if it is within 10-3 of the correct one.
+
+Example(s)
+sample input
+sample output
+4
+0 0
+1 0
+1 1
+0 1
+0.5
+
+<|response|>
+## 1) Abridged problem statement
+
+You are given a **convex polygon** with \(N\) vertices in **counter-clockwise** order (no three collinear). Find the **maximum radius** \(R\) of a circle that can be placed **entirely inside** the polygon. Output \(R\) with absolute/relative error up to \(10^{-3}\).
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Largest inscribed circle = maximize minimum distance to sides**  
+   A circle of radius \(R\) fits in the polygon iff there exists a center point \(C\) such that for every polygon side \(i\),
+   \[
+   \text{dist}(C, \text{side}_i) \ge R.
+   \]
+
+2. **Distance-to-line constraint becomes a half-plane constraint**  
+   For a directed edge \(A \to B\) of a CCW convex polygon, the polygon interior lies on the **left** side of the directed line.  
+   Requiring distance \(\ge R\) from that side is equivalent to shifting the line **inward** by \(R\) along the inward unit normal, and requiring \(C\) to be on the left of the shifted line.
+
+3. **Feasibility is monotone in \(R\)**  
+   As \(R\) increases, the “allowed region” for the center (intersection of shifted half-planes) only shrinks.  
+   Therefore: if radius \(R\) is feasible, any \(R' < R\) is also feasible → use **binary search** on \(R\).
+
+4. **Feasibility test = half-plane intersection (HPI)**  
+   For a given \(R\), compute the intersection of all shifted half-planes.  
+   Non-empty intersection ⇒ feasible.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Build half-planes for a candidate radius \(R\)
+For each polygon edge \(A \to B\):
+
+- Direction vector: \(d = B - A\)
+- Left normal (points inward for CCW polygon): \(\text{perp}(d) = (-d_y, d_x)\)
+- Unit inward normal: \(\hat{n} = \text{perp}(d) / \|d\|\)
+- Shift the line inward by \(R\):  
+  \[
+  A' = A + \hat{n}R,\quad B' = B + \hat{n}R
+  \]
+Now the valid centers must satisfy: “point is on the left of each directed line \(A' \to B'\)”.
+
+So for radius \(R\), we have \(N\) half-planes.
+
+### Step B: Check if intersection is non-empty (Half-Plane Intersection)
+Use a standard HPI algorithm (deque-based) that:
+- sorts lines by direction angle,
+- maintains a deque of candidate half-planes,
+- removes planes that make the intersection empty.
+
+If after processing, fewer than 3 constraints remain (or a contradiction is found), intersection is empty.
+
+### Step C: Binary search the maximum radius
+- low = 0
+- high = \(10^7\) (safe bound from coordinate constraints; answer cannot exceed plot size scale)
+- repeat ~100 iterations:
+  - mid = (low+high)/2
+  - if feasible(mid): low = mid else high = mid
+
+Print `low` (maximum feasible radius found).
+
+### Complexity
+- Each feasibility check: \(O(N \log N)\) due to sorting, but we can sort the original edges once and keep the order (as in the reference), making checks close to \(O(N)\).
+- Binary search: 100 checks.
+- Works fast enough in typical constraints for convex polygons.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Largest inscribed circle in a convex polygon:
+  - Binary search on radius R
+  - For a fixed R, shift each polygon edge inward by distance R
+  - Check if intersection of shifted half-planes is non-empty (Half-Plane Intersection)
+*/
+
+using coord_t = double;
+
+struct Point {
+    static constexpr coord_t EPS = 1e-9;
+    coord_t x, y;
+
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    Point operator + (const Point& o) const { return {x + o.x, y + o.y}; }
+    Point operator - (const Point& o) const { return {x - o.x, y - o.y}; }
+    Point operator * (coord_t k)     const { return {x * k, y * k}; }
+    Point operator / (coord_t k)     const { return {x / k, y / k}; }
+
+    // dot product
+    coord_t dot(const Point& o) const { return x * o.x + y * o.y; }
+    // cross product (2D scalar)
+    coord_t cross(const Point& o) const { return x * o.y - y * o.x; }
+
+    coord_t norm() const { return hypot(x, y); }
+
+    // angle of the vector (used to sort lines by direction)
+    coord_t angle() const { return atan2(y, x); }
+
+    // left perpendicular vector (not unit)
+    Point perp() const { return {-y, x}; }
+
+    // unit vector in the same direction
+    Point unit() const {
+        coord_t n = norm();
+        return *this / n;
+    }
+
+    // unit left normal
+    Point normal() const { return perp().unit(); }
+};
+
+// orientation: +1 left turn, -1 right turn, 0 collinear
+static int ccw(const Point& a, const Point& b, const Point& c) {
+    coord_t v = (b - a).cross(c - a);
+    if (fabs(v) <= Point::EPS) return 0;
+    return (v > 0 ? 1 : -1);
+}
+
+// intersection of infinite lines (a1->b1) and (a2->b2), assuming not parallel
+static Point lineIntersection(const Point& a1, const Point& b1,
+                              const Point& a2, const Point& b2) {
+    Point d1 = b1 - a1;
+    Point d2 = b2 - a2;
+    coord_t denom = d1.cross(d2);
+    // t such that a1 + d1 * t is intersection
+    coord_t t = (a2 - a1).cross(d2) / denom;
+    return a1 + d1 * t;
+}
+
+using Line = pair<Point, Point>; // directed line from first -> second
+
+/*
+  Half-plane intersection for half-planes "to the left of each directed line".
+  Standard deque algorithm (as on cp-algorithms / Zhu's method).
+*/
+class HalfPlaneIntersection {
+    vector<Line> lines;      // lines sorted by direction angle
+    deque<int> dq;           // indices of active half-planes
+    bool empty = false;
+
+    Point dir(int i) const { return lines[i].second - lines[i].first; }
+
+    // true if point p is outside (on the RIGHT side) of half-plane i
+    bool outside(int i, const Point& p) const {
+        return ccw(lines[i].first, lines[i].second, p) < 0;
+    }
+
+    // intersection point of line i and j (infinite lines)
+    Point inter(int i, int j) const {
+        return lineIntersection(lines[i].first, lines[i].second,
+                                lines[j].first, lines[j].second);
+    }
+
+    bool parallel(int i, int j) const {
+        return fabs(dir(i).cross(dir(j))) < Point::EPS;
+    }
+
+    // same general direction (dot > 0), used when handling parallel lines
+    bool sameDir(int i, int j) const {
+        return dir(i).dot(dir(j)) > 0;
+    }
+
+public:
+    static vector<Line> sortByAngle(vector<Line> lns) {
+        sort(lns.begin(), lns.end(), [&](const Line& a, const Line& b) {
+            return (a.second - a.first).angle() < (b.second - b.first).angle();
+        });
+        return lns;
+    }
+
+    HalfPlaneIntersection(const vector<Line>& lns, bool alreadySorted)
+        : lines(alreadySorted ? lns : sortByAngle(lns)) {
+
+        int n = (int)lines.size();
+
+        for (int i = 0; i < n; i++) {
+            // Maintain validity at the back: if last intersection violates new half-plane, pop back
+            while (dq.size() > 1 && outside(i, inter(dq.back(), dq[dq.size()-2])))
+                dq.pop_back();
+
+            // Maintain validity at the front similarly
+            while (dq.size() > 1 && outside(i, inter(dq.front(), dq[1])))
+                dq.pop_front();
+
+            // Handle parallel lines:
+            // - If directions opposite, intersection becomes empty
+            // - Else keep the more restrictive half-plane
+            if (!dq.empty() && parallel(i, dq.back())) {
+                if (!sameDir(i, dq.back())) {
+                    empty = true;
+                    return;
+                }
+                // If new half-plane excludes a point on the old line, new is stricter -> replace old
+                if (outside(i, lines[dq.back()].first))
+                    dq.pop_back();
+                else
+                    continue; // old is stricter -> ignore new
+            }
+
+            dq.push_back(i);
+        }
+
+        // Final cleanup for cyclic validity
+        while (dq.size() > 2 && outside(dq.front(), inter(dq.back(), dq[dq.size()-2])))
+            dq.pop_back();
+        while (dq.size() > 2 && outside(dq.back(), inter(dq.front(), dq[1])))
+            dq.pop_front();
+
+        // If less than 3 half-planes remain, no valid polygon region
+        if (dq.size() < 3) empty = true;
+    }
+
+    bool nonEmpty() const { return !empty; }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+    vector<Point> p(N);
+    for (int i = 0; i < N; i++) cin >> p[i].x >> p[i].y;
+
+    // Build edges as directed lines (CCW polygon => interior is left side of each edge)
+    vector<Line> edges(N);
+    for (int i = 0; i < N; i++) edges[i] = {p[i], p[(i+1)%N]};
+
+    // Sort edges once by angle; we will reuse the order in every feasibility check
+    edges = HalfPlaneIntersection::sortByAngle(edges);
+
+    auto feasible = [&](double R) -> bool {
+        vector<Line> shifted(N);
+        for (int i = 0; i < N; i++) {
+            Point a = edges[i].first;
+            Point b = edges[i].second;
+
+            // Inward unit normal for CCW polygon is the left normal of (b-a)
+            Point offset = (b - a).normal() * R;
+
+            // Shift line inward by R
+            shifted[i] = {a + offset, b + offset};
+        }
+        return HalfPlaneIntersection(shifted, true).nonEmpty();
+    };
+
+    // Binary search for maximal R
+    double lo = 0.0, hi = 1e7; // safe upper bound
+    for (int it = 0; it < 100; it++) {
+        double mid = (lo + hi) / 2.0;
+        if (feasible(mid)) lo = mid;
+        else hi = mid;
+    }
+
+    cout << fixed << setprecision(4) << lo << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+import math
+from collections import deque
+
+# Largest inscribed circle in a convex polygon:
+# - Binary search on radius R
+# - For fixed R, shift each edge inward by R along inward unit normal
+# - Check if intersection of half-planes is non-empty (Half-Plane Intersection)
+
+EPS = 1e-9
+
+class Point:
+    __slots__ = ("x", "y")
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def __add__(self, o): return Point(self.x + o.x, self.y + o.y)
+    def __sub__(self, o): return Point(self.x - o.x, self.y - o.y)
+    def __mul__(self, k): return Point(self.x * k, self.y * k)
+    def __truediv__(self, k): return Point(self.x / k, self.y / k)
+
+    def dot(self, o): return self.x * o.x + self.y * o.y
+    def cross(self, o): return self.x * o.y - self.y * o.x
+    def norm(self): return math.hypot(self.x, self.y)
+    def angle(self): return math.atan2(self.y, self.x)
+
+    def perp(self):  # left perpendicular (not unit)
+        return Point(-self.y, self.x)
+
+    def unit(self):
+        n = self.norm()
+        return self / n
+
+    def normal(self):  # unit left normal
+        return self.perp().unit()
+
+def ccw(a: Point, b: Point, c: Point) -> int:
+    v = (b - a).cross(c - a)
+    if -EPS <= v <= EPS:
+        return 0
+    return 1 if v > 0 else -1
+
+def line_intersection(a1: Point, b1: Point, a2: Point, b2: Point) -> Point:
+    # intersection of infinite lines (a1->b1) and (a2->b2), assuming not parallel
+    d1 = b1 - a1
+    d2 = b2 - a2
+    denom = d1.cross(d2)
+    t = (a2 - a1).cross(d2) / denom
+    return a1 + d1 * t
+
+class HalfPlaneIntersection:
+    # half-plane is "to the left of directed line (a->b)"
+    def __init__(self, lines, already_sorted=False):
+        if not already_sorted:
+            lines = sorted(lines, key=lambda ln: (ln[1] - ln[0]).angle())
+        self.lines = lines
+        self.dq = deque()
+        self.empty = False
+
+        def direction(i):
+            a, b = self.lines[i]
+            return b - a
+
+        def outside(i, p: Point) -> bool:
+            a, b = self.lines[i]
+            return ccw(a, b, p) < 0  # right side => outside
+
+        def inter(i, j) -> Point:
+            a1, b1 = self.lines[i]
+            a2, b2 = self.lines[j]
+            return line_intersection(a1, b1, a2, b2)
+
+        def parallel(i, j) -> bool:
+            return abs(direction(i).cross(direction(j))) < EPS
+
+        def same_dir(i, j) -> bool:
+            return direction(i).dot(direction(j)) > 0
+
+        n = len(self.lines)
+
+        for i in range(n):
+            # pop from back if last intersection violates new half-plane
+            while len(self.dq) > 1 and outside(i, inter(self.dq[-1], self.dq[-2])):
+                self.dq.pop()
+
+            # pop from front similarly
+            while len(self.dq) > 1 and outside(i, inter(self.dq[0], self.dq[1])):
+                self.dq.popleft()
+
+            # handle parallel lines
+            if self.dq and parallel(i, self.dq[-1]):
+                if not same_dir(i, self.dq[-1]):
+                    self.empty = True
+                    return
+                # keep stricter one
+                a_old, _ = self.lines[self.dq[-1]]
+                if outside(i, a_old):
+                    self.dq.pop()
+                else:
+                    continue
+
+            self.dq.append(i)
+
+        # final cyclic cleanup
+        while len(self.dq) > 2 and outside(self.dq[0], inter(self.dq[-1], self.dq[-2])):
+            self.dq.pop()
+        while len(self.dq) > 2 and outside(self.dq[-1], inter(self.dq[0], self.dq[1])):
+            self.dq.popleft()
+
+        if len(self.dq) < 3:
+            self.empty = True
+
+    def is_non_empty(self) -> bool:
+        return not self.empty
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    pts = [Point(int(next(it)), int(next(it))) for _ in range(n)]
+
+    # polygon edges in CCW order
+    edges = [(pts[i], pts[(i + 1) % n]) for i in range(n)]
+    # sort once by direction angle (speed)
+    edges.sort(key=lambda ln: (ln[1] - ln[0]).angle())
+
+    def feasible(R: float) -> bool:
+        shifted = []
+        for a, b in edges:
+            # inward unit normal (left normal for CCW)
+            offset = (b - a).normal() * R
+            shifted.append((a + offset, b + offset))
+        return HalfPlaneIntersection(shifted, already_sorted=True).is_non_empty()
+
+    lo, hi = 0.0, 1e7
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if feasible(mid):
+            lo = mid
+        else:
+            hi = mid
+
+    print(f"{lo:.4f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want an even simpler (but still robust) alternative, you can also solve this as a convex optimization problem (maximize minimum distance) using 2D methods, but the half-plane intersection + binary search is the standard competitive programming approach for this exact task.

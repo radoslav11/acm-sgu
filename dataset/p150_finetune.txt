@@ -1,0 +1,340 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+150. Mr. Beetle II
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard input
+output: standard output
+
+
+
+There is a small beetle living on infinite checkered sheet. Size of each cell is 1x1, the axes of Cartesian coordinate system are lying on the border of cells. Early in the morning beetle travels from his house at point (x1,y1) to the point (x2,y2). All cells that he passed are numbered in order of passing (borders and corners of cells are not considered to be parts of cells). You need to find coordinates of left lower corner of n-th cell on the way of Mr Beetle.
+
+Input
+Input consists of integers x1,y1,x2,y2,n (1<=n<=10^5) written in one line. All coordinates are not greater than 10^6 by it's absolute values.
+
+Output
+Write two numbers, separated by space: coordinates of left most lower point of n-th cell in the beetle's way. If such cell doesn't exist then write 'no solution'.
+
+Sample test(s)
+
+Input
+2 3 4 -1 3
+
+Output
+3 0
+Author:	Michael R. Mirzayanov
+Resource:	Saratov Subregional School Team Contest, 2002
+Date:	Spring, 2002
+
+<|response|>
+## 1) Abridged problem statement
+
+A beetle moves along the straight line segment from \((x_1,y_1)\) to \((x_2,y_2)\) on an infinite grid of **unit square cells** whose borders lie on integer coordinates.  
+A cell is considered “passed” if the segment intersects the **interior** of the cell (touching only borders/corners does **not** count). Cells are numbered in the order the beetle passes them.
+
+Given \(n\), output the integer coordinates \((X,Y)\) of the **lower-left corner** of the \(n\)-th passed cell, or print `no solution` if fewer than \(n\) cells are passed.
+
+Constraints: \(1 \le n \le 10^5\), \(|x_i|,|y_i| \le 10^6\), inputs are integers.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Each cell corresponds to integer indices \((c_x,c_y)\)** and represents the open square:
+   \[
+   (c_x, c_x+1)\times(c_y, c_y+1)
+   \]
+   “Passed” means the segment intersects this open square.
+
+2. The segment can be parameterized as:
+   \[
+   P(t)=(x_1,y_1) + t(dx,dy),\quad t\in[0,1]
+   \]
+   where \(dx=x_2-x_1\), \(dy=y_2-y_1\).
+
+3. A robust way to enumerate crossed cells in order is a **grid traversal (2D DDA / voxel traversal)**:
+   - From the current interior point, jump to the next vertical grid line crossing or the next horizontal grid line crossing.
+   - This visits cells in exactly the order the segment passes them.
+
+4. **Borders don’t count**, and endpoints are integers, so the segment starts exactly on grid lines.  
+   To avoid ambiguity, we conceptually start at a tiny epsilon along the direction:
+   \[
+   (x_1,y_1) + \varepsilon (dx,dy)
+   \]
+   so we begin strictly inside the first cell that the beetle actually enters.
+
+5. We never need to list more than \(n\) cells: stop as soon as the \(n\)-th cell is reached.  
+   Complexity becomes \(O(n)\), which is fine for \(10^5\).
+
+---
+
+## 3) Full solution approach based on the observations (2D DDA)
+
+### Step 0: Handle degenerate movement
+If \((x_1,y_1)=(x_2,y_2)\), the beetle does not move along any interior area. Since the point is integer, it lies on grid borders; thus **no cell interior is visited** ⇒ `no solution`.
+
+### Step 1: Initialize traversal with epsilon shift
+Let:
+- \(dx=x_2-x_1\), \(dy=y_2-y_1\).
+- Start point for traversal:
+  \[
+  s_x = x_1 + \varepsilon dx,\quad s_y = y_1 + \varepsilon dy
+  \]
+- Current cell:
+  \[
+  c_x=\lfloor s_x\rfloor,\quad c_y=\lfloor s_y\rfloor
+  \]
+
+### Step 2: Determine step directions
+- `stepX = +1` if \(dx>0\), else `-1` if \(dx<0\); if \(dx=0\) then no x stepping.
+- similarly for y.
+
+### Step 3: Maintain the next crossing times
+We work in parameter \(t\in[0,1]\).
+
+- If \(dx\neq 0\):
+  - The next vertical grid line to hit is:
+    - \(c_x+1\) if moving right, else \(c_x\) if moving left
+  - Compute:
+    \[
+    tMaxX = \frac{x_{\text{next}} - s_x}{dx}
+    \]
+  - Each time we cross another vertical grid line, \(t\) increases by:
+    \[
+    tDeltaX = \frac{1}{|dx|}
+    \]
+- If \(dx=0\), set `tMaxX = +inf`, `tDeltaX = +inf`.
+
+Similarly compute `tMaxY` and `tDeltaY`.
+
+### Step 4: Walk cell-by-cell until reaching n or end
+Each iteration:
+1. The current \((c_x,c_y)\) is a visited cell interior ⇒ increment count.
+2. If count == n ⇒ output \(c_x\; c_y\).
+3. Decide which boundary is hit next:
+   - If `tMaxX < tMaxY`: cross vertical line ⇒ `c_x += stepX`, `tMaxX += tDeltaX`
+   - If `tMaxY < tMaxX`: cross horizontal line ⇒ `c_y += stepY`, `tMaxY += tDeltaY`
+   - Else (equal): crosses a grid **corner** ⇒ move diagonally: `c_x += stepX`, `c_y += stepY`, and update both.
+4. Stop if the next crossing time \(t\) is already at/after 1 (end of segment): then no more interior cells.
+
+If loop ends before reaching \(n\), print `no solution`.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Mr. Beetle II (p150)
+  Robust solution via 2D DDA (grid traversal / voxel traversal).
+
+  We walk through grid cells intersected by the segment interior,
+  in the correct order, and output the n-th visited cell.
+
+  Key trick: because endpoints are integers (on grid lines), we shift
+  the start point by a tiny epsilon along direction so we start inside
+  the first cell that the segment enters. Borders/corners do not count.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    long long x1, y1, x2, y2;
+    int n;
+    cin >> x1 >> y1 >> x2 >> y2 >> n;
+
+    // Degenerate: no movement. With integer coordinates, point lies on grid border -> no interior.
+    if (x1 == x2 && y1 == y2) {
+        cout << "no solution\n";
+        return 0;
+    }
+
+    long long dx = x2 - x1;
+    long long dy = y2 - y1;
+
+    // Epsilon shift to avoid starting exactly on boundary.
+    const long double eps = 1e-12L;
+    long double sx = (long double)x1 + eps * (long double)dx;
+    long double sy = (long double)y1 + eps * (long double)dy;
+
+    // Current cell indices containing (sx, sy).
+    long long cx = (long long)floor(sx);
+    long long cy = (long long)floor(sy);
+
+    // Step direction in grid.
+    int stepX = (dx > 0) ? 1 : -1;
+    int stepY = (dy > 0) ? 1 : -1;
+
+    // tMaxX: parametric t at which we next cross a vertical grid line.
+    // tDeltaX: how much t increases between consecutive vertical grid lines (1/|dx|).
+    long double tMaxX, tMaxY, tDeltaX, tDeltaY;
+
+    if (dx != 0) {
+        // Next vertical grid line in the direction of travel
+        long double nextV = (stepX > 0) ? (cx + 1.0L) : (cx * 1.0L);
+        tMaxX = (nextV - sx) / (long double)dx;    // dx may be negative; formula still works
+        tDeltaX = 1.0L / fabsl((long double)dx);
+    } else {
+        tMaxX = numeric_limits<long double>::infinity();
+        tDeltaX = numeric_limits<long double>::infinity();
+    }
+
+    if (dy != 0) {
+        long double nextH = (stepY > 0) ? (cy + 1.0L) : (cy * 1.0L);
+        tMaxY = (nextH - sy) / (long double)dy;
+        tDeltaY = 1.0L / fabsl((long double)dy);
+    } else {
+        tMaxY = numeric_limits<long double>::infinity();
+        tDeltaY = numeric_limits<long double>::infinity();
+    }
+
+    // Traverse cells
+    int visited = 0;
+    long double t = 0.0L;
+
+    while (true) {
+        // We are inside the current cell interior (due to epsilon shift).
+        visited++;
+        if (visited == n) {
+            cout << cx << " " << cy << "\n";
+            return 0;
+        }
+
+        // Decide which boundary is hit next.
+        if (tMaxX < tMaxY) {
+            t = tMaxX;
+            // If we have reached the segment end, stop.
+            if (t >= 1.0L - 1e-18L) break;
+
+            cx += stepX;
+            tMaxX += tDeltaX;
+        } else if (tMaxY < tMaxX) {
+            t = tMaxY;
+            if (t >= 1.0L - 1e-18L) break;
+
+            cy += stepY;
+            tMaxY += tDeltaY;
+        } else {
+            // Exactly at a corner: crosses both a vertical and a horizontal line.
+            t = tMaxX;
+            if (t >= 1.0L - 1e-18L) break;
+
+            cx += stepX;
+            cy += stepY;
+            tMaxX += tDeltaX;
+            tMaxY += tDeltaY;
+        }
+    }
+
+    cout << "no solution\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+import math
+
+"""
+Mr. Beetle II (p150) - Python
+Exact grid traversal (2D DDA / voxel traversal).
+
+We enumerate grid cells whose interiors are intersected by the segment,
+in the correct order, and return the n-th one.
+
+Important: borders/corners do not count. Since inputs are integers,
+the segment starts on grid lines. We shift start by a tiny epsilon along
+direction to land inside the first cell the segment actually enters.
+"""
+
+def solve():
+    x1, y1, x2, y2, n = map(int, sys.stdin.read().split())
+
+    # No movement: starting point is integer => on border => no interior cell
+    if x1 == x2 and y1 == y2:
+        print("no solution")
+        return
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    eps = 1e-12
+    sx = x1 + eps * dx
+    sy = y1 + eps * dy
+
+    cx = math.floor(sx)
+    cy = math.floor(sy)
+
+    # Step direction: if dx>0 move right, else move left (dx != 0 case)
+    step_x = 1 if dx > 0 else -1
+    step_y = 1 if dy > 0 else -1
+
+    # Next crossing times in parameter t in [0,1]
+    if dx != 0:
+        next_vline = (cx + 1) if step_x > 0 else cx
+        t_max_x = (next_vline - sx) / dx
+        t_delta_x = 1.0 / abs(dx)
+    else:
+        t_max_x = float("inf")
+        t_delta_x = float("inf")
+
+    if dy != 0:
+        next_hline = (cy + 1) if step_y > 0 else cy
+        t_max_y = (next_hline - sy) / dy
+        t_delta_y = 1.0 / abs(dy)
+    else:
+        t_max_y = float("inf")
+        t_delta_y = float("inf")
+
+    visited = 0
+    t = 0.0
+
+    while True:
+        visited += 1
+        if visited == n:
+            print(cx, cy)
+            return
+
+        # Advance to next grid boundary crossing
+        if t_max_x < t_max_y:
+            t = t_max_x
+            if t >= 1.0 - 1e-15:
+                break
+            cx += step_x
+            t_max_x += t_delta_x
+
+        elif t_max_y < t_max_x:
+            t = t_max_y
+            if t >= 1.0 - 1e-15:
+                break
+            cy += step_y
+            t_max_y += t_delta_y
+
+        else:
+            # Corner crossing: move diagonally
+            t = t_max_x
+            if t >= 1.0 - 1e-15:
+                break
+            cx += step_x
+            cy += step_y
+            t_max_x += t_delta_x
+            t_max_y += t_delta_y
+
+    print("no solution")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This DDA-based method is conceptually clean, avoids the sampling/neighbor heuristics, respects “open interior only”, and runs in \(O(n)\) time (stopping as soon as the \(n\)-th cell is found).
