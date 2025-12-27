@@ -1,0 +1,452 @@
+## 1) Abridged problem statement
+
+You are given an `n × m` chessboard (`1 ≤ n,m ≤ 15`) containing:
+- `*` : the only white piece, a **king** (moves 1 square in any of 8 directions),
+- black pieces: `K` (knight), `B` (bishop), `R` (rook),
+- `.` empty squares.
+
+Black pieces **do not move**. The white king must capture **all** black pieces, one by one, moving like a king. The king is **never allowed to move to a square that is attacked by any black piece that is still on the board**. When the king captures a black piece, that piece is removed.
+
+Find the **minimum number of king moves** to capture all black pieces, or `-1` if impossible. If there are no black pieces, output `0`.
+
+Constraint: total number of pieces (including the king) is at most 15.
+
+---
+
+## 2) Detailed editorial (how the given solution works)
+
+### Key observation: black pieces are static, only “alive/dead” matters
+Since black pieces never move, the only changing parts of the game are:
+1. the **current position** of the white king, and
+2. which black pieces have already been **captured** (removed).
+
+So we can model the problem as a shortest path in a state graph.
+
+### State representation
+Let there be `k` black pieces (`k ≤ 14` since total pieces ≤ 15 and one is the king).
+
+A state is:
+- `(r, c, mask)`
+where:
+- `(r, c)` is the king’s current cell,
+- `mask` is a `k`-bit bitmask, where bit `i = 1` means black piece `i` has been captured.
+
+Goal state: any `(r, c, (1<<k)-1)` (all captured).
+
+Start state: king’s initial location with `mask = 0`.
+
+### Precompute attacked squares per piece (ignoring captures for now)
+The solution precomputes, for each board cell `(r,c)`, which pieces would attack it **if they are still alive**:
+- `attack[r][c]` is a set of indices of black pieces that attack `(r,c)`.
+
+How each black piece attacks:
+- **Knight (`K`)**: the 8 L-shaped squares.
+- **Bishop (`B`)**: rays along diagonals until board edge or until a non-`.` cell blocks further squares.
+- **Rook (`R`)**: rays along ranks/files until board edge or blocked.
+
+Important nuance:
+- Blocking is computed using the **initial board contents** (`tbl`).
+- This means rays stop at the first non-empty cell, which can be `*`, `K`, `B`, or `R`.
+
+Why is this still workable here?
+- The code later checks attacks only from **alive** pieces (`mask`).
+- Captured pieces are treated as removed for “can attack?” purposes.
+- (Note: A fully rigorous chess-physics model would also update sliding lines when a blocking piece is captured. This solution assumes the precomputed blocking is sufficient for the intended problem constraints/interpretation and matches the provided file’s approach.)
+
+### BFS over extended states
+All moves cost 1, so we use BFS.
+
+From state `(r,c,mask)`:
+- Try moving the king to each of its 8 neighboring squares `(nr,nc)` (inside bounds).
+- The move is legal only if `(nr,nc)` is **not attacked** by any **alive** piece:
+  - look at all `idx` in `attack[nr][nc]`,
+  - if any such `idx` has `(mask & (1<<idx)) == 0`, then that attacker is alive → square is forbidden.
+- If the destination contains a black piece, we update the mask to include that piece (captured).
+
+We store distances in:
+- `dist[n][m][1<<k]`, initialized to `-1`.
+
+The first time we pop a state with `mask == all_ones`, we output its distance (minimum moves).
+
+If BFS ends without reaching the goal: output `-1`.
+
+### Complexity
+- Board size: up to `15×15 = 225`.
+- `k ≤ 14` ⇒ masks up to `2^14 = 16384`.
+- Total states: `225 * 16384 ≈ 3.7 million` (upper bound).
+- Each state explores up to 8 moves; attack checking iterates over a set per cell (usually small).
+
+This fits within limits in C++.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience output for pair (not essential to the algorithm)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience input for pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Convenience input for vector: reads all elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Convenience output for vector
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                            // board dimensions
+vector<string> tbl;                  // the board as array of strings
+vector<pair<int, int>> pieces;       // positions of black pieces (row,col)
+vector<char> ptype;                  // type of each black piece: 'K','B','R'
+int kpos;                            // king position encoded as index = r*m + c
+
+// Reads input and collects king position and all black pieces
+void read() {
+    cin >> n >> m;
+    tbl.resize(n);
+    cin >> tbl;
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            if(tbl[i][j] == '*') {
+                // store king position as a single integer
+                kpos = i * m + j;
+            } else if(tbl[i][j] == 'K' || tbl[i][j] == 'B' || tbl[i][j] == 'R') {
+                // store each black piece and its type
+                pieces.emplace_back(i, j);
+                ptype.push_back(tbl[i][j]);
+            }
+        }
+    }
+}
+
+void solve() {
+    // Number of black pieces
+    int k = (int)pieces.size();
+
+    // If there are no black pieces, answer is 0
+    if(k == 0) {
+        cout << 0 << "\n";
+        return;
+    }
+
+    // attack[r][c] = set of indices of pieces that attack square (r,c)
+    vector<vector<set<int>>> attack(n, vector<set<int>>(m));
+
+    // Precompute attacked squares for each piece index
+    for(int idx = 0; idx < k; idx++) {
+        auto [ci, cj] = pieces[idx];   // piece coordinates
+        char type = ptype[idx];        // piece type
+
+        if(type == 'K') {
+            // Here 'K' is a black knight in the statement.
+            // Knight moves: (±2,±1) and (±1,±2).
+            for(int di = -2; di <= 2; di++) {
+                for(int dj = -2; dj <= 2; dj++) {
+                    // abs(di)+abs(dj)==3 selects (2,1) combinations
+                    if(abs(di) + abs(dj) == 3) {
+                        int ni = ci + di, nj = cj + dj;
+                        if(ni >= 0 && ni < n && nj >= 0 && nj < m) {
+                            attack[ni][nj].insert(idx);
+                        }
+                    }
+                }
+            }
+        } else if(type == 'B') {
+            // Bishop attacks along 4 diagonals until blocked
+            for(int d = 0; d < 4; d++) {
+                // Choose one of the 4 diagonal directions
+                int di = (d == 0 || d == 1) ? 1 : -1;
+                int dj = (d == 0 || d == 2) ? 1 : -1;
+
+                for(int step = 1;; step++) {
+                    int ni = ci + di * step, nj = cj + dj * step;
+
+                    // Stop at board boundary
+                    if(ni < 0 || ni >= n || nj < 0 || nj >= m) {
+                        break;
+                    }
+
+                    // This square is attacked by bishop idx
+                    attack[ni][nj].insert(idx);
+
+                    // If the square is not empty, bishop ray is blocked further
+                    if(tbl[ni][nj] != '.') {
+                        break;
+                    }
+                }
+            }
+        } else if(type == 'R') {
+            // Rook attacks along 4 orthogonal directions until blocked
+            for(int d = 0; d < 4; d++) {
+                // Map d to (di,dj):
+                // d=0: down, d=1: up, d=2: right, d=3: left
+                int di = (d == 0) ? 1 : ((d == 1) ? -1 : 0);
+                int dj = (d == 2) ? 1 : ((d == 3) ? -1 : 0);
+
+                for(int step = 1;; step++) {
+                    int ni = ci + di * step, nj = cj + dj * step;
+
+                    // Stop at board boundary
+                    if(ni < 0 || ni >= n || nj < 0 || nj >= m) {
+                        break;
+                    }
+
+                    // This square is attacked by rook idx
+                    attack[ni][nj].insert(idx);
+
+                    // Ray is blocked by any non-empty cell
+                    if(tbl[ni][nj] != '.') {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // BFS queue holds (row, col, mask)
+    queue<array<int, 3>> q;
+
+    // dist[r][c][mask] = minimum moves to reach state
+    vector<vector<vector<int>>> dist(
+        n, vector<vector<int>>(m, vector<int>(1 << k, -1))
+    );
+
+    // Initially captured mask is 0
+    int start_mask = 0;
+
+    // Set start distance and enqueue start state
+    dist[kpos / m][kpos % m][start_mask] = 0;
+    q.push({kpos / m, kpos % m, start_mask});
+
+    // King move directions: 8 neighbors
+    int dr[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    int dc[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+    while(!q.empty()) {
+        auto [ci, cj, mask] = q.front();
+        q.pop();
+
+        // If all pieces captured, we found minimum moves due to BFS
+        if(mask == (1 << k) - 1) {
+            cout << dist[ci][cj][mask] << "\n";
+            return;
+        }
+
+        // Try all king moves
+        for(int d = 0; d < 8; d++) {
+            int ni = ci + dr[d];
+            int nj = cj + dc[d];
+
+            // Must stay inside the board
+            if(ni < 0 || ni >= n || nj < 0 || nj >= m) {
+                continue;
+            }
+
+            // Check if destination is attacked by any alive piece
+            bool attacked = false;
+            for(int idx: attack[ni][nj]) {
+                // if piece idx is not captured yet, it is alive and attacks (ni,nj)
+                if(!(mask & (1 << idx))) {
+                    attacked = true;
+                    break;
+                }
+            }
+            if(attacked) {
+                continue; // illegal move
+            }
+
+            // Compute new capture mask after moving there
+            int nmask = mask;
+            char cell = tbl[ni][nj];
+
+            // If the cell contains a black piece, we "capture" it (set its bit)
+            if(cell == 'K' || cell == 'B' || cell == 'R') {
+                for(int idx = 0; idx < k; idx++) {
+                    if(pieces[idx] == make_pair(ni, nj)) {
+                        nmask |= (1 << idx);
+                        break;
+                    }
+                }
+            }
+
+            // Standard BFS relaxation: visit if unvisited
+            if(dist[ni][nj][nmask] == -1) {
+                dist[ni][nj][nmask] = dist[ci][cj][mask] + 1;
+                q.push({ni, nj, nmask});
+            }
+        }
+    }
+
+    // If BFS finishes without capturing all pieces
+    cout << -1 << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // single test in this task as used here
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+from collections import deque
+
+def solve():
+    n, m = map(int, input().split())
+    tbl = [input().strip() for _ in range(n)]
+
+    pieces = []   # list of (r,c) for each black piece
+    ptype = []    # 'K','B','R' for each piece (black knight/bishop/rook)
+    king_r = king_c = -1
+
+    # Parse the board: find king and black pieces
+    for i in range(n):
+        for j in range(m):
+            ch = tbl[i][j]
+            if ch == '*':
+                king_r, king_c = i, j
+            elif ch in "KBR":
+                pieces.append((i, j))
+                ptype.append(ch)
+
+    k = len(pieces)
+    if k == 0:
+        print(0)
+        return
+
+    # attack[r][c] will store a list of indices of pieces that attack (r,c).
+    # Using list-of-lists (instead of set) is fine; duplicates won't happen here.
+    attack = [[[] for _ in range(m)] for _ in range(n)]
+
+    # Precompute all attacked squares for each black piece, based on initial board.
+    for idx, ((ci, cj), typ) in enumerate(zip(pieces, ptype)):
+        if typ == 'K':  # black knight
+            for di in range(-2, 3):
+                for dj in range(-2, 3):
+                    if abs(di) + abs(dj) == 3:  # (2,1) / (1,2)
+                        ni, nj = ci + di, cj + dj
+                        if 0 <= ni < n and 0 <= nj < m:
+                            attack[ni][nj].append(idx)
+
+        elif typ == 'B':  # bishop: 4 diagonal rays
+            dirs = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+            for di, dj in dirs:
+                step = 1
+                while True:
+                    ni, nj = ci + di * step, cj + dj * step
+                    if not (0 <= ni < n and 0 <= nj < m):
+                        break
+                    attack[ni][nj].append(idx)
+                    # Stop ray when hitting a non-empty square
+                    if tbl[ni][nj] != '.':
+                        break
+                    step += 1
+
+        else:  # 'R' rook: 4 orthogonal rays
+            dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            for di, dj in dirs:
+                step = 1
+                while True:
+                    ni, nj = ci + di * step, cj + dj * step
+                    if not (0 <= ni < n and 0 <= nj < m):
+                        break
+                    attack[ni][nj].append(idx)
+                    if tbl[ni][nj] != '.':
+                        break
+                    step += 1
+
+    # Map piece position -> index to quickly set capture bit
+    pos_to_idx = {pos: i for i, pos in enumerate(pieces)}
+
+    # dist[r][c][mask] = min moves, initialized to -1 (unvisited)
+    # Sizes: n * m * (1<<k)
+    dist = [[[-1] * (1 << k) for _ in range(m)] for _ in range(n)]
+
+    start_mask = 0
+    dist[king_r][king_c][start_mask] = 0
+    q = deque([(king_r, king_c, start_mask)])
+
+    # 8 king moves
+    dr = [-1, -1, -1,  0, 0, 1, 1, 1]
+    dc = [-1,  0,  1, -1, 1,-1, 0, 1]
+
+    full = (1 << k) - 1
+
+    while q:
+        r, c, mask = q.popleft()
+        curd = dist[r][c][mask]
+
+        if mask == full:
+            print(curd)
+            return
+
+        for t in range(8):
+            nr, nc = r + dr[t], c + dc[t]
+            if not (0 <= nr < n and 0 <= nc < m):
+                continue
+
+            # Check if (nr,nc) is attacked by any alive piece
+            attacked = False
+            for idx in attack[nr][nc]:
+                if (mask & (1 << idx)) == 0:  # piece still alive
+                    attacked = True
+                    break
+            if attacked:
+                continue
+
+            nmask = mask
+            # If we moved onto a black piece square, we capture it
+            if (nr, nc) in pos_to_idx:
+                nmask |= 1 << pos_to_idx[(nr, nc)]
+
+            if dist[nr][nc][nmask] == -1:
+                dist[nr][nc][nmask] = curd + 1
+                q.append((nr, nc, nmask))
+
+    print(-1)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model as shortest path with BFS over states `(king_row, king_col, captured_mask)`, where `captured_mask` indicates which black pieces are removed. Precompute for each cell the set of black piece indices that attack it (knight moves, bishop/rook rays blocked by first non-empty cell). In BFS, a king move to a neighbor is allowed only if that neighbor is not attacked by any piece whose bit is still 0 in the mask. Moving onto a piece sets its bit (capture). Distance over `n*m*2^k` states gives the minimum moves; if unreachable output `-1`, if no pieces output `0`.

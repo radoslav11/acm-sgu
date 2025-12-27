@@ -1,0 +1,272 @@
+## 1) Abridged problem statement
+
+You have **N (1 ≤ N ≤ 21)** tubes. Initially tube *i* contains **Sᵢ** liters; you want to reach target amounts **Dᵢ**.  
+One operation (“pouring”) allows transferring **any amount** of liquid from **one tube to another** (some liquid may be spilled or extra liquid may appear overall, as implied by the story—but operationally, we only control transfers between tubes; feasibility is determined by total volume).
+
+Find the **minimum number of pourings** needed to transform the configuration from **S** to **D**, or output **-1** if impossible.
+
+---
+
+## 2) Detailed editorial (solution idea + proof)
+
+### Key observation 1: Feasibility requires equal total volume
+A pouring transfers liquid between tubes and does not change the total amount of liquid. Therefore:
+- If `sum(S) != sum(D)`, it is **impossible** ⇒ answer `-1`.
+
+Assume from now on totals match.
+
+### Key observation 2: Use differences
+Define for each tube:
+\[
+\text{diff}_i = S_i - D_i
+\]
+- If `diff_i > 0`: tube *i* has **extra** liquid that must be sent out.
+- If `diff_i < 0`: tube *i* **needs** `-diff_i` liquid to be received.
+- The global sum of diffs is 0.
+
+### Key observation 3: Any “balanced group” can be fixed internally
+Consider a subset of tubes \(G\). If:
+\[
+\sum_{i \in G} \text{diff}_i = 0
+\]
+then the tubes in \(G\) can be fixed **using only transfers within \(G\)**.
+
+Moreover, such a group of size \(|G| = k\) can always be fixed in **at most \(k-1\)** pourings:
+- Think of moving all required liquid along edges of a spanning tree inside the group, consolidating transfers so that each pour reduces the number of “incorrect” tubes by at least 1.
+- Intuitively, to “connect” \(k\) nodes and redistribute flow among them, you need at least \(k-1\) transfers in the worst case, and it is achievable.
+
+### Key observation 4: Partitioning into many balanced groups minimizes operations
+If we partition all tubes into \(g\) disjoint balanced groups:
+- Group sizes sum to \(N\): \(\sum k_j = N\)
+- Each group \(j\) can be fixed in at most \(k_j - 1\) pours.
+- Total pours \(\le \sum (k_j - 1) = N - g\)
+
+So to **minimize** pours, we want to **maximize the number of balanced groups** in a partition.
+
+Thus, the problem becomes:
+
+> Partition the set of indices into the maximum number of subsets whose diff-sum is 0.
+
+Let that maximum be `g_max`. Then the minimum number of pourings is:
+\[
+\text{answer} = N - g_{\max}
+\]
+
+### DP over subsets
+Since \(N \le 21\), we can do bitmask DP.
+
+Precompute:
+- `sum[mask]` = \(\sum_{i \in mask} diff_i\)
+
+DP definition:
+- `dp[mask]` = maximum number of balanced (sum==0) groups we can partition the subset `mask` into.
+
+Transition used in the provided solution:
+
+1. Start with best value from removing one element:
+   \[
+   dp[mask] = \max_{i \in mask} dp[mask \setminus \{i\}]
+   \]
+   This ensures dp is non-decreasing as mask grows and effectively considers some ordering.
+
+2. If the whole `mask` itself is balanced (`sum[mask]==0`), we can treat it as one additional group:
+   \[
+   dp[mask] \mathrel{+}= 1
+   \]
+   Why is this valid with step (1)?  
+   Because step (1) makes `dp[mask]` equal to the best partitioning count achievable inside `mask` *without necessarily using all elements as a group*. If `mask` is balanced, we can always append the interpretation “this entire mask forms one group”, so the best count for `mask` becomes at least “best for some submask + 1”, and the recurrence as implemented correctly captures the maximum count of zero-sum segments achievable along some permutation perspective.
+
+Finally:
+- `g_max = dp[(1<<N)-1]`
+- `answer = N - g_max`
+
+Complexities:
+- Precomputing sums: `O(N * 2^N)` (via lowbit DP is `O(2^N)`)
+- DP: `O(N * 2^N)`  
+This fits for `N=21` (~44 million inner checks).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Include most standard headers (fast for contests)
+
+using namespace std;
+
+// Pretty-print a pair as: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input: first then second
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector: reads each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                 // iterate by reference to fill elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector: prints elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;                                // number of tubes
+vector<int> S, D;                     // initial and desired amounts
+
+void read() {
+    cin >> n;                         // read N
+    S.resize(n);                      // size vectors to N
+    D.resize(n);
+    cin >> S >> D;                    // read both arrays
+}
+
+void solve() {
+    // If total amount differs, no sequence of internal transfers can fix it.
+    if(accumulate(S.begin(), S.end(), 0) != accumulate(D.begin(), D.end(), 0)) {
+        cout << -1 << endl;
+        return;
+    }
+
+    // diff[i] = extra (+) or deficit (-) in tube i
+    vector<int> diff(n);
+    for(int i = 0; i < n; i++) {
+        diff[i] = S[i] - D[i];
+    }
+
+    // Precompute sum[mask] = sum of diff[i] for i in mask.
+    // Using lowbit DP:
+    // sum[mask] = sum[mask without lowest set bit] + diff[that bit index]
+    vector<int> sum((1 << n), 0);     // sum[0] = 0
+    for(int mask = 1; mask < (1 << n); mask++) {
+        int lb = mask & (-mask);      // lowest set bit as an integer (power of two)
+        int bit = __builtin_ctz(lb);  // index of that bit (count trailing zeros)
+        sum[mask] = sum[mask ^ lb] + diff[bit];
+    }
+
+    // dp[mask] = maximum number of zero-sum groups we can form from subset mask
+    vector<int> dp((1 << n), 0);      // dp[0] = 0: empty set forms 0 groups
+    for(int mask = 1; mask < (1 << n); mask++) {
+
+        // Inherit best value from removing one element.
+        // This effectively builds dp in a way that considers "some order" of elements.
+        for(int i = 0; i < n; i++) {
+            if(mask & (1 << i)) {     // if element i is present in the subset
+                dp[mask] = max(dp[mask], dp[mask ^ (1 << i)]);
+            }
+        }
+
+        // If the entire subset mask is balanced, we can count it as one group.
+        if(sum[mask] == 0) {
+            dp[mask]++;
+        }
+    }
+
+    // If we can partition all N elements into g groups,
+    // minimum pours = N - g (each group of size k costs k-1 pours).
+    cout << n - dp[(1 << n) - 1] << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster I/O
+    cin.tie(nullptr);                 // untie cin/cout
+
+    int T = 1;                        // single test (code supports multiple)
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    S = [int(next(it)) for _ in range(n)]
+    D = [int(next(it)) for _ in range(n)]
+
+    # Feasibility: total liquid must match
+    if sum(S) != sum(D):
+        print(-1)
+        return
+
+    # diff[i] is how much tube i must send out (positive) or receive (negative)
+    diff = [S[i] - D[i] for i in range(n)]
+
+    size = 1 << n
+
+    # Precompute sum[mask] = sum(diff[i] for i in mask)
+    # Use lowbit technique to do it in O(2^n)
+    ssum = [0] * size
+    for mask in range(1, size):
+        lb = mask & -mask                 # lowest set bit (power of two)
+        bit = (lb.bit_length() - 1)       # index of that bit
+        ssum[mask] = ssum[mask ^ lb] + diff[bit]
+
+    # dp[mask] = maximum number of balanced (sum==0) groups obtainable from mask
+    dp = [0] * size
+    for mask in range(1, size):
+        best = 0
+
+        # Try removing each present element and inherit the best dp
+        # This is O(n) per mask, total O(n * 2^n)
+        m = mask
+        while m:
+            lb = m & -m
+            best = max(best, dp[mask ^ lb])
+            m ^= lb
+
+        # If this subset itself is balanced, we can form one more group
+        if ssum[mask] == 0:
+            best += 1
+
+        dp[mask] = best
+
+    gmax = dp[size - 1]
+    # Minimum pourings = N - max_number_of_zero_sum_groups
+    print(n - gmax)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- If `sum(S) != sum(D)`: impossible ⇒ `-1`.
+- Let `diff[i] = S[i] - D[i]`. We need to redistribute so all diffs become 0.
+- Any subset with `sum(diff)==0` is **internally fixable**; a balanced group of size `k` needs `k-1` pours.
+- If we partition all tubes into `g` balanced groups, total pours = `N - g`. So maximize `g`.
+- Bitmask DP:
+  - Precompute `sum[mask]` over diffs.
+  - `dp[mask] = max_{i in mask} dp[mask \ {i}] + (sum[mask]==0)`
+- Answer: `N - dp[(1<<N)-1]`.
+- Complexity: `O(N * 2^N)` time, `O(2^N)` memory (fits for `N≤21`).

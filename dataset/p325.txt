@@ -1,0 +1,362 @@
+## 1) Abridged problem statement
+
+Given a string `s` (1 ≤ |s| ≤ 1,000,000) of capital Latin letters, you may swap **adjacent** characters. Find the **minimum** number of adjacent swaps required to transform `s` into a palindrome. If it’s impossible to form any palindrome (due to character counts), output `-1`.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observations
+
+1. **When is it possible?**  
+   A palindrome can be formed iff:
+   - If `n` is even: **all** character frequencies are even.
+   - If `n` is odd: **exactly one** character frequency is odd (the middle character).
+
+2. **Adjacent swaps and permutations**  
+   Adjacent swaps are exactly what’s needed to transform one arrangement into another.  
+   If we decide a *target arrangement* in terms of **which original indices** go to which final positions, the minimum number of adjacent swaps needed equals the number of **inversions** in that index permutation.
+
+   Why: Each adjacent swap changes inversion count by exactly 1, and bubble-sorting the permutation realizes the target with exactly that many swaps.
+
+3. **Which occurrences of equal characters should be paired?**  
+   For each character `C`, suppose it occurs at indices:
+   ```
+   i1 < i2 < ... < ik
+   ```
+   In any optimal palindrome construction (min swaps), you should pair:
+   ```
+   (i1, ik), (i2, i(k-1)), ...
+   ```
+   and if `k` is odd, `i((k+1)/2)` must go to the center.
+
+   Intuition: Crossing pairings create unnecessary “intersections” and thus extra swaps. Pairing outermost with outermost avoids this.
+
+### Constructing the target permutation without simulating swaps
+
+We build an array `p` of length `n`:
+
+- `p[pos_in_final] = index_in_original`
+- So `p` describes which original character (by its original index) ends up in each final position.
+
+Then the answer is `inv(p)`.
+
+#### Data structure
+For each character, store all its indices in a deque (double-ended queue):
+- front = leftmost unused occurrence
+- back = rightmost unused occurrence
+
+#### Greedy construction (right-to-left)
+Maintain two pointers for final palindrome positions:
+- `l_p = 0` (next free position on the left)
+- `r_p = n-1` (next free position on the right)
+
+Also keep `used[i]` to skip indices already assigned.
+
+Process original indices `r` from `n-1` down to `0`:
+- If already used, continue.
+- If this character has only one unused occurrence left, it must be the center (only possible when `n` is odd):
+  - set `p[n//2] = r`
+- Otherwise:
+  - let `l` be the leftmost unused occurrence of this same character (`deque.front()`).
+  - pair `(l, r)`:
+    - place `l` to `p[l_p]`, place `r` to `p[r_p]`
+    - increment `l_p`, decrement `r_p`
+    - mark both `l` and `r` used, pop from deque ends.
+
+This constructs a valid palindrome mapping that corresponds to the optimal pairing described earlier.
+
+### Why the inversion count is the minimum swaps
+
+- We never need to swap identical letters among themselves (pointless).
+- The pairing strategy avoids crossings between pairs of equal letters; any crossing would force at least one swap to “uncross”.
+- Once we commit to the pairing, the remaining freedom is only how these pairs nest into the final palindrome; the above greedy produces the correct nesting order without adding extra swaps.
+- Given the target index order `p`, transforming original indices into that order requires exactly `inv(p)` adjacent swaps, and no solution can do better for that same mapping.
+
+### Complexity
+
+- Building deques: `O(n)`
+- Greedy construction: `O(n)`
+- Counting inversions with merge sort: `O(n log n)`
+- Memory: `O(n)`
+
+Works for `n` up to 1,000,000.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (not used in this solution, but kept as template utilities)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair (not used here)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector (not used here)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector (not used here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+}
+
+string s;
+
+// Read input string
+void read() { cin >> s; }
+
+// Count inversions in array a using merge sort.
+// Inversions = number of pairs (i < j) with a[i] > a[j].
+// This equals the minimum number of adjacent swaps to transform
+// current order into sorted-by-target order.
+int64_t count_inversions(vector<int>& a) {
+    int64_t inv = 0;              // accumulator for inversion count
+    int n = (int)a.size();
+    vector<int> temp(n);          // temp buffer for merging
+
+    // Recursive merge sort over subarray [l, r]
+    function<void(int, int)> merge_sort = [&](int l, int r) {
+        if (l >= r) return;       // base case: 0 or 1 element => no inversions
+
+        int mid = l + (r - l) / 2;
+        merge_sort(l, mid);       // sort/count left half
+        merge_sort(mid + 1, r);   // sort/count right half
+
+        // Merge step while counting cross inversions
+        int i = l, j = mid + 1, k = l;
+        while (i <= mid && j <= r) {
+            if (a[i] <= a[j]) {
+                // a[i] can be placed without creating new inversions
+                temp[k++] = a[i++];
+            } else {
+                // a[j] is smaller than a[i], so it forms inversions with
+                // all remaining elements a[i..mid] in left half.
+                temp[k++] = a[j++];
+                inv += mid - i + 1;
+            }
+        }
+
+        // Copy leftovers
+        while (i <= mid) temp[k++] = a[i++];
+        while (j <= r)   temp[k++] = a[j++];
+
+        // Write merged result back to a
+        for (int t = l; t <= r; t++) a[t] = temp[t];
+    };
+
+    merge_sort(0, n - 1);
+    return inv;
+}
+
+void solve() {
+    // pos[c] = deque of indices where character c appears in the string.
+    // We will pop from both ends to pair leftmost and rightmost occurrences.
+    map<char, deque<int>> pos;
+    for (int i = 0; i < (int)s.size(); i++) {
+        pos[s[i]].push_back(i);
+    }
+
+    // Count how many characters have odd frequency.
+    int cnt_odd = 0;
+    for (auto [c, p] : pos) {
+        cnt_odd += (int)p.size() % 2;
+    }
+
+    // Feasibility check:
+    // - if n even => cnt_odd must be 0
+    // - if n odd  => cnt_odd must be 1
+    if (cnt_odd != (int)s.size() % 2) {
+        cout << -1 << endl;
+        return;
+    }
+
+    int l_p = 0;                    // next free position from the left in the final palindrome
+    int r_p = (int)s.size() - 1;    // next free position from the right
+
+    vector<int> p(s.size());        // p[final_pos] = original_index placed there
+    vector<bool> used(s.size());    // whether original index i has been assigned to p
+
+    // Greedy: scan original indices from right to left.
+    for (int r = (int)s.size() - 1; r >= 0; r--) {
+        if (used[r]) continue;      // already paired/placed
+
+        used[r] = true;             // we are going to place index r somewhere
+
+        // If this character has only one unused occurrence left,
+        // it must become the middle character of the palindrome.
+        if (pos[s[r]].size() == 1) {
+            p[s.size() / 2] = r;    // middle position
+            continue;
+        }
+
+        // Otherwise, pair r with the leftmost remaining occurrence l of the same char.
+        int l = pos[s[r]].front();
+
+        // Remove these two occurrences from the deque:
+        // pop front for l, pop back for r.
+        pos[s[l]].pop_front();
+        pos[s[r]].pop_back();
+
+        used[l] = true;             // mark l as used too
+
+        // Place paired indices into symmetric positions in final palindrome.
+        p[l_p++] = l;
+        p[r_p--] = r;
+    }
+
+    // Minimum adjacent swaps = inversions in permutation p.
+    cout << count_inversions(p) << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // single test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same idea) with detailed comments
+
+```python
+import sys
+from collections import deque, defaultdict
+
+# ---------- Inversion count via iterative merge sort (fast, O(n log n)) ----------
+def count_inversions(arr):
+    """
+    Counts inversions in arr (list of ints) using merge sort.
+    Inversions = number of pairs (i < j) with arr[i] > arr[j].
+    """
+    n = len(arr)
+    temp = [0] * n
+    inv = 0
+
+    # width: current size of blocks to merge (1,2,4,...)
+    width = 1
+    while width < n:
+        # merge blocks [l:l+width) and [l+width:l+2*width)
+        for l in range(0, n, 2 * width):
+            mid = min(l + width, n)
+            r = min(l + 2 * width, n)
+
+            i, j, k = l, mid, l
+            while i < mid and j < r:
+                if arr[i] <= arr[j]:
+                    temp[k] = arr[i]
+                    i += 1
+                else:
+                    temp[k] = arr[j]
+                    j += 1
+                    # all remaining in left block (i..mid-1) are > arr[j-1]
+                    inv += (mid - i)
+                k += 1
+
+            while i < mid:
+                temp[k] = arr[i]
+                i += 1
+                k += 1
+            while j < r:
+                temp[k] = arr[j]
+                j += 1
+                k += 1
+
+            # copy back
+            arr[l:r] = temp[l:r]
+
+        width *= 2
+
+    return inv
+
+# ---------- Main solution ----------
+def solve(s: str) -> int:
+    n = len(s)
+
+    # Collect positions for each character in a deque.
+    pos = defaultdict(deque)
+    for i, ch in enumerate(s):
+        pos[ch].append(i)
+
+    # Check palindrome feasibility by counting odd frequencies.
+    cnt_odd = sum((len(d) % 2) for d in pos.values())
+    if cnt_odd != (n % 2):
+        return -1
+
+    # p[final_position] = original_index placed there
+    p = [0] * n
+    used = [False] * n
+
+    left_final = 0
+    right_final = n - 1
+
+    # Greedy pairing from right to left (mirror the C++ approach)
+    for r in range(n - 1, -1, -1):
+        if used[r]:
+            continue
+
+        used[r] = True
+        ch = s[r]
+
+        # If this is the only remaining occurrence, it must go to the center.
+        if len(pos[ch]) == 1:
+            p[n // 2] = r
+            pos[ch].pop()   # consume it (optional, but keeps structure consistent)
+            continue
+
+        # Pair r with the leftmost remaining occurrence l.
+        l = pos[ch][0]      # leftmost index of this character
+        pos[ch].popleft()   # remove l
+        pos[ch].pop()       # remove r (rightmost)
+
+        used[l] = True
+
+        # Place them in symmetric final positions
+        p[left_final] = l
+        p[right_final] = r
+        left_final += 1
+        right_final -= 1
+
+    # Minimum adjacent swaps equals inversion count of p
+    return count_inversions(p)
+
+if __name__ == "__main__":
+    s = sys.stdin.readline().strip()
+    print(solve(s))
+```
+
+---
+
+## 5) Compressed editorial
+
+- A palindrome is possible iff the number of odd-frequency letters equals `n % 2`. Otherwise print `-1`.
+- For each character, store all occurrence indices in a deque.
+- Build a target index permutation `p` for the palindrome:
+  - Keep `L=0, R=n-1`.
+  - Scan indices `r` from `n-1` to `0`, skipping used.
+  - If the character’s deque has size 1, place `r` at `p[n//2]` (center).
+  - Else pair `r` with the deque’s front `l`, put `l` at `p[L]`, `r` at `p[R]`, advance `L`, decrease `R`.
+- The minimum adjacent swaps needed to reach that target arrangement equals the inversion count of `p`. Compute inversions with merge sort in `O(n log n)`.
