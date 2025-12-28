@@ -1,0 +1,562 @@
+## 1) Concise abridged problem statement
+
+You are given two strings of uppercase letters:
+
+- First tape string `A` of length `N`
+- Second tape string `B` of length `M`, with `M < N`
+
+A **cyclic shift** moves characters left/right with wrap-around (e.g., left shift `"ABRA"` → `"BRAA"`).
+
+To open the lock:
+
+1. Cyclically shift `B` to obtain the **lexicographically smallest** cyclic shift of `B`. Call this resulting string `B'`.
+2. Cyclically shift `A` so that its first `M` characters match `B'` **with at most one mismatching position**.
+
+Output:
+- Line 1: `B'`
+- Line 2: the chosen shifted version of `A`
+
+If multiple `A`-shifts work, choose one with **minimum number of shifts**; if still tied, choose the **left shift** direction.
+
+A solution is guaranteed to exist.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+#### A) Handling cyclic shifts by doubling the string
+A cyclic shift corresponds to taking a length-`L` substring of `S+S`:
+- Any cyclic shift of `S` (length `L`) equals `S2[i : i+L)` where `S2 = S + S` and `0 ≤ i < L`.
+
+So we build:
+- `A2 = A + A` (length `2N`)
+- `B2 = B + B` (length `2M`)
+
+Then:
+- A cyclic shift of `B` is `B2[i : i+M)`, `i in [0, M-1]`
+- A cyclic shift of `A` is `A2[i : i+N)`, `i in [0, N-1]`
+
+#### B) Need fast substring comparisons ⇒ rolling hash + LCP by binary search
+To compare two candidate cyclic shifts lexicographically, we need to find the first position where they differ (their LCP).
+
+We use Rabin–Karp polynomial hashing over mod \(2^{61}-1\) (a fast “Mersenne-like” prime), which supports:
+- `hash(S[l..r])` in O(1) after O(n) preprocessing
+- LCP between two substrings by binary searching the length and comparing hashes: **O(log L)**
+
+Define:
+`lcp(i, j, max_len)` = longest common prefix length between substrings starting at positions `i` and `j` with maximum length `max_len`.
+
+---
+
+### Step 1: Find lexicographically smallest cyclic shift of `B`
+
+We want:
+\[
+best\_b = \arg\min_{0 \le i < M} B2[i:i+M)
+\]
+
+To compare shifts `i` and `j`:
+1. `l = lcp(i, j, M)`
+2. If `l == M`, they are equal.
+3. Else compare `B2[i+l]` vs `B2[j+l]`.
+
+This is O(M log M) time (M comparisons, each LCP O(log M)).
+
+---
+
+### Step 2: Find a shift of `A` whose prefix matches `B'` with ≤ 1 mismatch
+
+Let `B' = B2[best_b : best_b+M)`.
+
+For each candidate starting position `pos_a` in `A2` (meaning shifted `A` is `A2[pos_a : pos_a+N)`), we need:
+The first `M` chars of that shifted `A` differ from `B'` in at most one position.
+
+#### Counting mismatches using at most two LCP calls
+We compute mismatches in the length-`M` window:
+- Compute `l1 = lcp(pos_a, best_b, M)` between `A2[pos_a:]` and `B2[best_b:]`.
+  - If `l1 == M`: exact match → 0 mismatches
+  - Otherwise the first mismatch is at index `l1`.
+- Skip that mismatching character and match the remainder:
+  - Compute `l2 = lcp(pos_a + l1 + 1, best_b + l1 + 1, M - l1 - 1)`
+  - If `l1 + 1 + l2 == M`, then everything else matches → exactly 1 mismatch
+  - Otherwise → at least 2 mismatches
+
+So mismatch-counting is O(log M).
+
+---
+
+### Tie-breaking on the shift of `A`
+
+We must:
+1. Minimize number of shifts needed to reach the chosen cyclic shift from original `A`.
+2. If tied, prefer left shift.
+
+If we represent a left shift by `d` positions as taking `A2[d : d+N)`, then:
+- Left shift by `d` corresponds to start index `d`
+- Right shift by `d` corresponds to left shift by `N-d` (start index `N-d`)
+
+The solution searches in increasing `d = 0..floor(N/2)` and checks:
+- left shift `d`
+- then (if different) right shift `d` i.e. start at `N-d`
+
+This exactly implements:
+- minimal shift count first (smallest `d`)
+- and for the same `d`, left shift is checked before right shift
+
+Guaranteed solution exists, so it will find one.
+
+---
+
+### Complexity
+- Hash preprocessing: O(N + M)
+- Smallest shift of `B`: O(M log M)
+- Finding shift of `A`: up to N candidates worst-case, each O(log M) ⇒ O(N log M)
+
+Overall: **O(N log N)**-ish (dominant term O(N log M)), fits constraints with fast hashing.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// All standard headers in one (GCC extension).
+
+#pragma GCC optimize("O3,unroll-loops")
+// Aggressive optimization and loop unrolling.
+
+#pragma GCC target("avx2")
+// Allow vector instructions; may speed up some operations.
+
+using namespace std;
+
+// Pretty-print a pair (not used in core logic, but harmless).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair (also not used).
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector (also not used).
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (also not used).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Rolling-hash helper using mod = 2^61-1 with fast multiplication.
+class HashMeta {
+  private:
+    // Choose a random base for hashing to reduce collision risk.
+    void set_random_base() {
+        seed_seq seed{
+            (uint32_t)chrono::duration_cast<chrono::nanoseconds>(
+                chrono::high_resolution_clock::now().time_since_epoch()
+            )
+                .count(),
+            (uint32_t)random_device()(), (uint32_t)42
+        };
+        mt19937 rng(seed);
+        base = uniform_int_distribution<uint64_t>(0, mod - 1)(rng);
+    }
+
+    // Precompute base^i for i=0..n-1, used to extract substring hashes.
+    void precompute_base_pow(size_t n) {
+        base_pow.resize(n);
+        base_pow[0] = 1;
+        for(size_t i = 1; i < n; i++) {
+            base_pow[i] = mul(base_pow[i - 1], base);
+        }
+    }
+
+    // Addition modulo (2^61-1), with reduction trick.
+    static constexpr uint64_t add(uint64_t a, uint64_t b) {
+        a += b + 1;
+        a = (a & mod) + (a >> 61);
+        return a - 1;
+    }
+
+    // Subtraction modulo.
+    static constexpr uint64_t sub(uint64_t a, uint64_t b) {
+        return add(a, mod - b);
+    }
+
+    // Multiplication modulo (2^61-1), using 128-bit-like splitting trick.
+    static constexpr uint64_t mul(uint64_t a, uint64_t b) {
+        uint64_t l1 = (uint32_t)a, h1 = a >> 32, l2 = (uint32_t)b, h2 = b >> 32;
+        uint64_t l = l1 * l2, m = l1 * h2 + l2 * h1, h = h1 * h2;
+        uint64_t ret =
+            (l & mod) + (l >> 61) + (h << 3) + (m >> 29) + (m << 35 >> 3) + 1;
+        ret = (ret & mod) + (ret >> 61);
+        ret = (ret & mod) + (ret >> 61);
+        return ret - 1;
+    }
+
+  public:
+    // Wrapper type around uint64_t hash value, with operators.
+    class hash_t {
+        uint64_t h;
+
+      public:
+        hash_t() : h(0) {}
+        hash_t(uint64_t h) : h(h) {}
+        operator uint64_t() const { return h; }
+
+        hash_t& operator+=(const hash_t& other) {
+            h = add(h, other.h);
+            return *this;
+        }
+
+        hash_t& operator-=(const hash_t& other) {
+            h = sub(h, other.h);
+            return *this;
+        }
+
+        hash_t& operator*=(const hash_t& other) {
+            h = mul(h, other.h);
+            return *this;
+        }
+
+        hash_t operator+(const hash_t& other) const {
+            return hash_t(*this) += other;
+        }
+        hash_t operator-(const hash_t& other) const {
+            return hash_t(*this) -= other;
+        }
+        hash_t operator*(const hash_t& other) const {
+            return hash_t(*this) *= other;
+        }
+
+        bool operator==(const hash_t& other) const { return h == other.h; }
+        bool operator!=(const hash_t& other) const { return h != other.h; }
+
+        // Useful for ordered containers if needed.
+        bool operator<(const hash_t& other) const { return h < other.h; }
+    };
+
+    uint64_t base;              // random base
+    vector<hash_t> base_pow;    // base powers
+    static constexpr uint64_t mod = (1ull << 61) - 1;
+
+    // Initialize hashing for strings up to length n (powers computed up to n).
+    void init(size_t n) {
+        set_random_base();
+        precompute_base_pow(n);
+    }
+
+    // Build prefix hashes for a container (string) in O(len).
+    // h[i] = hash of container[0..i].
+    template<typename T>
+    vector<hash_t> rabin_karp(const T& container) {
+        vector<hash_t> h(container.size());
+        for(size_t i = 0; i < container.size(); i++) {
+            h[i] = (i ? h[i - 1] : hash_t(0)) * hash_t(base) +
+                   hash_t(container[i]); // uses character code as number
+        }
+        return h;
+    }
+
+    // Return hash of substring [l..r] inclusive from prefix hash array h.
+    hash_t hash_range(int l, int r, const vector<hash_t>& h) {
+        if(l == 0) {
+            return h[r];
+        }
+        return h[r] - h[l - 1] * base_pow[r - l + 1];
+    }
+};
+
+HashMeta hash_meta;
+using hash_t = HashMeta::hash_t;
+
+int n, m;
+string A, B;
+
+void read() {
+    cin >> n >> m;
+    cin >> A >> B;
+    // Double both strings so that cyclic shifts become substrings.
+    A = A + A;
+    B = B + B;
+}
+
+void solve() {
+    // Prepare hashing; A length is 2n, B length is 2m.
+    // base_pow size uses 2*n; that is enough for all hash extractions
+    // (we only query substrings within A of length <= n and within B of length <= m).
+    hash_meta.init(2 * n);
+
+    // Prefix hashes for doubled strings.
+    vector<hash_t> ph_a = hash_meta.rabin_karp(A);
+    vector<hash_t> ph_b = hash_meta.rabin_karp(B);
+
+    // Longest Common Prefix between:
+    // - substring of first string starting at i
+    // - substring of second string starting at j
+    // up to max_len characters.
+    // Uses binary search on length and hash comparisons.
+    auto lcp = [&](int i, int j, vector<hash_t>& ph_i, vector<hash_t>& ph_j,
+                   int max_len) {
+        int lo = 0, hi = max_len;
+        while(lo < hi) {
+            int mid = (lo + hi + 1) / 2;
+            // Compare hashes of length mid.
+            if(hash_meta.hash_range(i, i + mid - 1, ph_i) ==
+               hash_meta.hash_range(j, j + mid - 1, ph_j)) {
+                lo = mid;      // they match for mid, try bigger
+            } else {
+                hi = mid - 1;  // mismatch, try smaller
+            }
+        }
+        return lo;
+    };
+
+    // Compare two cyclic shifts of B (starting at i and j) lexicographically,
+    // each of length m.
+    auto cmp_cyclic = [&](int i, int j) {
+        int l = lcp(i, j, ph_b, ph_b, m);
+        if(l == m) {
+            return false; // equal -> not less
+        }
+        return B[i + l] < B[j + l]; // compare first differing character
+    };
+
+    // Find best_b = starting index of lexicographically minimal cyclic shift of B.
+    int best_b = 0;
+    for(int i = 1; i < m; i++) {
+        if(cmp_cyclic(i, best_b)) {
+            best_b = i;
+        }
+    }
+
+    // Count mismatches between:
+    // A substring A[pos_a : pos_a+m) and B substring B[best_b : best_b+m),
+    // but only needs to distinguish 0/1 vs 2+ mismatches.
+    auto count_mismatches = [&](int pos_a) {
+        // First LCP: match from the start.
+        int l1 = lcp(pos_a, best_b, ph_a, ph_b, m);
+        if(l1 == m) {
+            return 0; // full match
+        }
+        if(l1 == m - 1) {
+            return 1; // only last character differs
+        }
+
+        // Assume mismatch at position l1, skip it in both strings and match the rest.
+        int l2 = lcp(pos_a + l1 + 1, best_b + l1 + 1, ph_a, ph_b, m - l1 - 1);
+
+        // If remainder matches completely, total mismatches is exactly 1.
+        if(l1 + 1 + l2 == m) {
+            return 1;
+        }
+        return 2; // at least 2 mismatches
+    };
+
+    // Find best_a = start index in A (0..n-1) giving minimal shifts.
+    // We search increasing distance d from 0:
+    // - check left shift by d first (start index d),
+    // - then right shift by d (start index n-d).
+    int best_a = -1;
+    for(int d = 0; d <= n / 2 && best_a == -1; d++) {
+        if(count_mismatches(d) <= 1) {
+            best_a = d; // smallest shift count; left preferred
+        } else if(d > 0 && n - d != d && count_mismatches(n - d) <= 1) {
+            best_a = n - d; // right shift by d (same shift count), if left failed
+        }
+    }
+
+    // Construct output strings:
+    // - minimal cyclic shift of B is B[best_b..best_b+m)
+    // - shifted A is A[best_a..best_a+n)
+    string result_b = B.substr(best_b, m);
+    string result_a = A.substr(best_a, n);
+
+    cout << result_b << "\n";
+    cout << result_a << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Single test case in this problem.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import random
+import time
+
+# We'll implement rolling hash with mod = 2^61 - 1 (same modulus idea as C++).
+# Python integers are arbitrary precision, so we can implement safe reduction.
+
+MOD = (1 << 61) - 1
+
+def mod_add(a, b):
+    x = a + b
+    x = (x & MOD) + (x >> 61)
+    if x >= MOD:
+        x -= MOD
+    return x
+
+def mod_sub(a, b):
+    return mod_add(a, MOD - b)
+
+def mod_mul(a, b):
+    # Multiply then reduce mod (2^61-1) using the identity:
+    # x mod (2^61-1) = (x & MOD) + (x >> 61), repeated once or twice.
+    x = a * b
+    x = (x & MOD) + (x >> 61)
+    x = (x & MOD) + (x >> 61)
+    if x >= MOD:
+        x -= MOD
+    return x
+
+class RollingHash:
+    def __init__(self, max_len):
+        # Random base in [1..MOD-2]
+        seed = int(time.time_ns()) ^ random.getrandbits(64)
+        rng = random.Random(seed)
+        self.base = rng.randrange(1, MOD - 1)
+
+        # Precompute powers of base up to max_len
+        self.pow = [1] * (max_len + 1)
+        for i in range(1, max_len + 1):
+            self.pow[i] = mod_mul(self.pow[i - 1], self.base)
+
+    def prefix_hash(self, s):
+        # Build prefix hashes:
+        # h[i+1] = hash(s[0..i]) (length i+1)
+        h = [0] * (len(s) + 1)
+        for i, ch in enumerate(s):
+            h[i + 1] = mod_add(mod_mul(h[i], self.base), ord(ch))
+        return h
+
+    def range_hash(self, h, l, r):
+        # hash of s[l:r] (half-open)
+        # = h[r] - h[l] * base^(r-l)
+        return mod_sub(h[r], mod_mul(h[l], self.pow[r - l]))
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    n, m = map(int, data[:2])
+    A = data[2].strip()
+    B = data[3].strip()
+
+    # Double strings to model cyclic shifts as substrings
+    A2 = A + A
+    B2 = B + B
+
+    # Prepare hashing (need powers up to 2*n, safe for all queries we do)
+    rh = RollingHash(2 * n + 5)
+    ha = rh.prefix_hash(A2)
+    hb = rh.prefix_hash(B2)
+
+    def lcp_a_b(i, j, max_len):
+        """LCP between A2[i:] and B2[j:] up to max_len."""
+        lo, hi = 0, max_len
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if rh.range_hash(ha, i, i + mid) == rh.range_hash(hb, j, j + mid):
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    def lcp_b_b(i, j, max_len):
+        """LCP between B2[i:] and B2[j:] up to max_len."""
+        lo, hi = 0, max_len
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if rh.range_hash(hb, i, i + mid) == rh.range_hash(hb, j, j + mid):
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    # Compare two cyclic shifts of B lexicographically
+    def cmp_shift(i, j):
+        l = lcp_b_b(i, j, m)
+        if l == m:
+            return False
+        return B2[i + l] < B2[j + l]
+
+    # Step 1: lexicographically smallest cyclic shift of B
+    best_b = 0
+    for i in range(1, m):
+        if cmp_shift(i, best_b):
+            best_b = i
+
+    # Step 2: check if A2[pos:pos+m] differs from B2[best_b:best_b+m] by <= 1 char
+    def mismatches_le_1(pos):
+        l1 = lcp_a_b(pos, best_b, m)
+        if l1 == m:
+            return True  # 0 mismatches
+        if l1 == m - 1:
+            return True  # exactly 1 mismatch (last char)
+        # skip one mismatch at l1, then remaining must match
+        l2 = lcp_a_b(pos + l1 + 1, best_b + l1 + 1, m - l1 - 1)
+        return (l1 + 1 + l2 == m)
+
+    # Choose shift of A with minimal shift count; tie -> left shift.
+    best_a = None
+    for d in range(0, n // 2 + 1):
+        # left shift by d => start index d
+        if mismatches_le_1(d):
+            best_a = d
+            break
+        # right shift by d => start index n-d (avoid duplicates)
+        if d > 0 and n - d != d and mismatches_le_1(n - d):
+            best_a = n - d
+            break
+
+    # Output results
+    result_b = B2[best_b:best_b + m]
+    result_a = A2[best_a:best_a + n]
+    sys.stdout.write(result_b + "\n" + result_a + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Double strings: `A2=A+A`, `B2=B+B`; cyclic shift = substring of fixed length.
+- Use rolling hash to answer substring equality in O(1), and LCP via binary search in O(log L).
+- Find minimal cyclic shift of `B` by scanning all starts `i∈[0..M-1]` and comparing `B2[i:i+M)` using `LCP` to locate first differing char.
+- Let `B'` be that minimal shift.
+- For each shift start `pos` in `A2`, decide if `A2[pos:pos+M)` matches `B'` with ≤1 mismatch:
+  - `l1=LCP(start)`; if full match => ok; else skip one char and compute `l2`; if remainder matches => exactly 1 mismatch else ≥2.
+- To satisfy tie-breaking on shifts of `A`, check shift distances `d=0..⌊N/2⌋`:
+  - test left shift `d` first (`pos=d`), then right shift `d` (`pos=N-d`).
+- Output `B2[best_b:best_b+M]` and `A2[best_a:best_a+N]`.
