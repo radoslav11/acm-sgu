@@ -1,0 +1,720 @@
+## 1) Abridged problem statement
+
+For each test case, you are given a positive integer **N** (as a decimal string, potentially very large). Count how many **positive integers X** satisfy:
+
+\[
+X + R(X) = N
+\]
+
+where **R(X)** is the decimal representation of **X** reversed (leading zeros dropped in the reversed number, e.g., \(R(150)=51\)).  
+Input ends with a line containing a single `0`. For each test case, output the count (as an integer with no leading zeros).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observations
+
+Let \(X\) be written in decimal with digits \(x_0 x_1 \dots x_{m-1}\) (left to right), so \(x_0 \neq 0\).  
+Then \(R(X)\) has digits \(x_{m-1}\dots x_1 x_0\) (but note reversing can drop trailing zeros of X; that is naturally handled if we treat X as an integer with no leading zeros).
+
+When adding \(X + R(X)\), digit positions pair up:
+
+- The **leftmost** digit of the sum depends on \(x_0 + x_{m-1}\) plus a carry coming from the *inside*.
+- The **rightmost** digit depends on \(x_{m-1} + x_0\) plus a carry coming from the *outside*.
+
+So it’s natural to process digits in **pairs from the outside in**:
+- pair \((x_L, x_R)\) where \(L\) goes from left to center and \(R\) goes from right to center.
+
+Carries are the tricky part because:
+- The carry into the **right end** (least significant digit) is the usual carry from adding the previous (more inner) digits when going from right to left.
+- But if we process pairs from outside inward, we need to account for both:
+  - carry propagating from the right side (least significant side) inward/outward,
+  - and what carry we must “expect” on the left side to make the left digit match.
+
+### Two length cases
+
+Let \(n = |N|\).
+
+When adding \(X + R(X)\), the result can have either:
+1. **Same length as X** (no extra carry creating a new most significant digit).
+2. **One more digit than X** (a carry creates a leading `1` in N).
+
+Equivalently, for a given N, there are two scenarios for X:
+
+- **Case A (no outer carry):** \(|X| = |N|\). Then there is **no** carry “beyond” the leftmost digit. This is modeled by starting with `expecting_carry_initial = 0` on the left side and processing the full string N.
+
+- **Case B (leading 1 created):** \(|X| = |N|-1\) and \(N\) must start with `'1'` (because the only possible leading digit created by a carry in decimal addition is 1). In this case, we drop that leading `'1'` from N and solve on \(N' = N[1:]\) while starting with `expecting_carry_initial = 1`.
+
+The final answer is:
+- solutions for Case A, plus
+- solutions for Case B (only if \(N[0]='1'\) and \(n>1\)).
+
+### DP state definition
+
+For a given target string **S** (either N or N without its leading 1), we process positions:
+
+- `left` from 0 upward
+- `right` from |S|-1 downward
+
+At each step we choose digits:
+- \(a = x_{left}\)
+- \(b = x_{right}\)
+with the constraint \(a \neq 0\) if `left == 0` (no leading zeros in X).
+
+If `left == right` (middle digit in odd length), then we must have \(a=b\).
+
+We maintain a DP over two binary carry-like values:
+
+- `exp_carry` (0/1): what carry we are **expecting on the left digit** of S at the current outer position due to addition of the current pair and inner carries.
+- `carry_r` (0/1): the carry coming **from the right side** into the current right digit (the normal addition carry for the least significant direction).
+
+DP meaning (as implemented):
+- `dp[exp_carry][carry_r] = number of ways` to choose already-processed outer pairs so that they match the already-fixed outer digits of S.
+
+Transition when processing a pair:
+
+Let:
+- `d_left` = digit S[left]
+- `d_right` = digit S[right]
+- sum = a + b
+
+**Right digit constraint (least-significant-side equation):**
+\[
+(sum + carry\_r) \bmod 10 = d\_right
+\]
+and the next carry from the right becomes:
+\[
+new\_carry\_r = \left\lfloor\frac{sum + carry\_r}{10}\right\rfloor
+\]
+
+**Left digit constraint (most-significant-side equation):**
+
+At the left digit, what you “see” is affected by the carry coming from the inner side; in this outside-in DP, that inner-side carry is represented by the current `exp_carry` and must be consistent.
+
+The code rearranges the condition into computing what carry should be expected for the next inner layer:
+
+\[
+new\_exp\_carry = d\_left + 10 \cdot exp\_carry - sum
+\]
+
+This value must be either 0 or 1, otherwise impossible. Intuition: it encodes whether the inner addition must produce a carry into this left digit to make the digit match.
+
+**Middle digit handling:**
+If `left == right`, there is only one digit \(a=b\), and we must have the carry coming from the right equal to the carry expected on the left (they meet at the center). The code enforces:
+- only accept if `new_carry_r == exp_carry`.
+
+### Finalization
+
+After processing all pairs, we’re left with dp over carry states. Valid completions require the “expected carry” and the “right carry” to match appropriately at the end; the code sums:
+\[
+dp[0][0] + dp[1][1]
+\]
+
+### Big integers
+
+The number of solutions can be enormous (for very long N), so the solution uses a custom `bigint` implementation to store counts.
+
+### Complexity
+
+Let \(L = |S|\). For each of ~\(L/2\) positions, we iterate over:
+- 2 `exp_carry` * 2 `carry_r` states,
+- digits `a` in 0..9 (with one restriction),
+- digits `b` in 0..9 (or just `a` in the middle).
+
+So it’s \(O(L \cdot 100)\) transitions, very fast; the heavier cost is big integer addition, but still feasible.
+
+---
+
+## 3) Provided C++ solution with detailed comments (line-by-line style)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector from input (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector with spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// We store big integers in base 1e9 (fits in 32-bit int with carry in 64-bit).
+const int base = 1000000000;
+const int base_digits = 9;
+
+// Big integer struct capable of +, -, *, /, % etc.
+// In this problem we mostly need: construction from int, +, +=, isZero, printing.
+struct bigint {
+    vector<int> z;  // digits in little-endian: z[0] is least significant block
+    int sign;       // +1 or -1
+
+    bigint() : sign(1) {}
+    bigint(long long v) { *this = v; }
+    bigint(const string& s) { read(s); }
+
+    void operator=(const bigint& v) { sign = v.sign; z = v.z; }
+
+    // Assign from a 64-bit integer
+    void operator=(long long v) {
+        sign = 1;
+        if(v < 0) { sign = -1; v = -v; }
+        z.clear();
+        for(; v > 0; v /= base) z.push_back(v % base);
+    }
+
+    // Addition
+    bigint operator+(const bigint& v) const {
+        if(sign == v.sign) {
+            bigint res = v; // start from v and add this->z into it
+            for(int i = 0, carry = 0;
+                i < (int)max(z.size(), v.z.size()) || carry; ++i) {
+                if(i == (int)res.z.size()) res.z.push_back(0);
+                res.z[i] += carry + (i < (int)z.size() ? z[i] : 0);
+                carry = res.z[i] >= base;
+                if(carry) res.z[i] -= base;
+            }
+            return res;
+        }
+        // If signs differ, reduce to subtraction
+        return *this - (-v);
+    }
+
+    // Subtraction
+    bigint operator-(const bigint& v) const {
+        if(sign == v.sign) {
+            // If |this| >= |v|, do normal subtraction
+            if(abs() >= v.abs()) {
+                bigint res = *this;
+                for(int i = 0, carry = 0; i < (int)v.z.size() || carry; ++i) {
+                    res.z[i] -= carry + (i < (int)v.z.size() ? v.z[i] : 0);
+                    carry = res.z[i] < 0;
+                    if(carry) res.z[i] += base;
+                }
+                res.trim();
+                return res;
+            }
+            // Otherwise result is negative
+            return -(v - *this);
+        }
+        // Different signs -> addition
+        return *this + (-v);
+    }
+
+    // Multiply by small int
+    void operator*=(int v) {
+        if(v < 0) { sign = -sign; v = -v; }
+        for(int i = 0, carry = 0; i < (int)z.size() || carry; ++i) {
+            if(i == (int)z.size()) z.push_back(0);
+            long long cur = z[i] * (long long)v + carry;
+            carry = (int)(cur / base);
+            z[i] = (int)(cur % base);
+        }
+        trim();
+    }
+
+    bigint operator*(int v) const { bigint res = *this; res *= v; return res; }
+
+    // Division with remainder: returns (q, r)
+    friend pair<bigint, bigint> divmod(const bigint& a1, const bigint& b1) {
+        int norm = base / (b1.z.back() + 1);
+        bigint a = a1.abs() * norm;
+        bigint b = b1.abs() * norm;
+        bigint q, r;
+        q.z.resize(a.z.size());
+
+        for(int i = (int)a.z.size() - 1; i >= 0; i--) {
+            r *= base;
+            r += a.z[i];
+            int s1 = b.z.size() < r.z.size() ? r.z[b.z.size()] : 0;
+            int s2 = (int)b.z.size() - 1 < r.z.size() ? r.z[b.z.size() - 1] : 0;
+            int d = ((long long)s1 * base + s2) / b.z.back();
+            r -= b * d;
+            while(r < 0) { r += b; --d; }
+            q.z[i] = d;
+        }
+
+        q.sign = a1.sign * b1.sign;
+        r.sign = a1.sign;
+        q.trim();
+        r.trim();
+        return make_pair(q, r / norm);
+    }
+
+    // Integer square root (not needed for this problem)
+    friend bigint sqrt(const bigint& a1) {
+        bigint a = a1;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+        int n = a.z.size();
+
+        int firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int norm = base / (firstDigit + 1);
+        a *= norm;
+        a *= norm;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        bigint r = (long long)a.z[n - 1] * base + a.z[n - 2];
+        firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int q = firstDigit;
+        bigint res;
+
+        for(int j = n / 2 - 1; j >= 0; j--) {
+            for(;; --q) {
+                bigint r1 =
+                    (r - (res * 2 * base + q) * q) * base * base +
+                    (j > 0 ? (long long)a.z[2 * j - 1] * base + a.z[2 * j - 2] : 0);
+                if(r1 >= 0) { r = r1; break; }
+            }
+            res *= base;
+            res += q;
+
+            if(j > 0) {
+                int d1 = res.z.size() + 2 < r.z.size() ? r.z[res.z.size() + 2] : 0;
+                int d2 = res.z.size() + 1 < r.z.size() ? r.z[res.z.size() + 1] : 0;
+                int d3 = res.z.size() < r.z.size() ? r.z[res.z.size()] : 0;
+                q = ((long long)d1 * base * base + (long long)d2 * base + d3) /
+                    (firstDigit * 2);
+            }
+        }
+
+        res.trim();
+        return res / norm;
+    }
+
+    bigint operator/(const bigint& v) const { return divmod(*this, v).first; }
+    bigint operator%(const bigint& v) const { return divmod(*this, v).second; }
+
+    // Divide by small int
+    void operator/=(int v) {
+        if(v < 0) { sign = -sign; v = -v; }
+        for(int i = (int)z.size() - 1, rem = 0; i >= 0; --i) {
+            long long cur = z[i] + rem * (long long)base;
+            z[i] = (int)(cur / v);
+            rem = (int)(cur % v);
+        }
+        trim();
+    }
+
+    bigint operator/(int v) const { bigint res = *this; res /= v; return res; }
+
+    int operator%(int v) const {
+        if(v < 0) v = -v;
+        int m = 0;
+        for(int i = (int)z.size() - 1; i >= 0; --i)
+            m = (z[i] + m * (long long)base) % v;
+        return m * sign;
+    }
+
+    // Convenience compound ops
+    void operator+=(const bigint& v) { *this = *this + v; }
+    void operator-=(const bigint& v) { *this = *this - v; }
+    void operator*=(const bigint& v) { *this = *this * v; }
+    void operator/=(const bigint& v) { *this = *this / v; }
+
+    // Comparisons
+    bool operator<(const bigint& v) const {
+        if(sign != v.sign) return sign < v.sign;
+        if(z.size() != v.z.size()) return z.size() * sign < v.z.size() * v.sign;
+        for(int i = (int)z.size() - 1; i >= 0; i--)
+            if(z[i] != v.z[i]) return z[i] * sign < v.z[i] * sign;
+        return false;
+    }
+    bool operator>(const bigint& v) const { return v < *this; }
+    bool operator<=(const bigint& v) const { return !(v < *this); }
+    bool operator>=(const bigint& v) const { return !(*this < v); }
+    bool operator==(const bigint& v) const { return !(*this < v) && !(v < *this); }
+    bool operator!=(const bigint& v) const { return *this < v || v < *this; }
+
+    // Remove leading zero blocks and normalize sign for zero
+    void trim() {
+        while(!z.empty() && z.back() == 0) z.pop_back();
+        if(z.empty()) sign = 1;
+    }
+
+    // Check if value == 0
+    bool isZero() const { return z.empty() || (z.size() == 1 && !z[0]); }
+
+    // Unary minus
+    bigint operator-() const { bigint res = *this; res.sign = -sign; return res; }
+
+    // Absolute value
+    bigint abs() const { bigint res = *this; res.sign *= res.sign; return res; }
+
+    // Convert to long long (unsafe if too large; not used here)
+    long long longValue() const {
+        long long res = 0;
+        for(int i = (int)z.size() - 1; i >= 0; i--) res = res * base + z[i];
+        return res * sign;
+    }
+
+    friend bigint gcd(const bigint& a, const bigint& b) {
+        return b.isZero() ? a : gcd(b, a % b);
+    }
+    friend bigint lcm(const bigint& a, const bigint& b) {
+        return a / gcd(a, b) * b;
+    }
+
+    // Read decimal string into bigint
+    void read(const string& s) {
+        sign = 1;
+        z.clear();
+        int pos = 0;
+        while(pos < (int)s.size() && (s[pos] == '-' || s[pos] == '+')) {
+            if(s[pos] == '-') sign = -sign;
+            ++pos;
+        }
+        for(int i = (int)s.size() - 1; i >= pos; i -= base_digits) {
+            int x = 0;
+            for(int j = max(pos, i - base_digits + 1); j <= i; j++)
+                x = x * 10 + s[j] - '0';
+            z.push_back(x);
+        }
+        trim();
+    }
+
+    friend istream& operator>>(istream& stream, bigint& v) {
+        string s; stream >> s; v.read(s); return stream;
+    }
+
+    friend ostream& operator<<(ostream& stream, const bigint& v) {
+        if(v.sign == -1) stream << '-';
+        stream << (v.z.empty() ? 0 : v.z.back());
+        for(int i = (int)v.z.size() - 2; i >= 0; --i)
+            stream << setw(base_digits) << setfill('0') << v.z[i];
+        return stream;
+    }
+
+    // Base conversion helper used by multiplication
+    static vector<int> convert_base(const vector<int>& a, int old_digits, int new_digits) {
+        vector<long long> p(max(old_digits, new_digits) + 1);
+        p[0] = 1;
+        for(int i = 1; i < (int)p.size(); i++) p[i] = p[i - 1] * 10;
+        vector<int> res;
+        long long cur = 0;
+        int cur_digits = 0;
+        for(int i = 0; i < (int)a.size(); i++) {
+            cur += a[i] * p[cur_digits];
+            cur_digits += old_digits;
+            while(cur_digits >= new_digits) {
+                res.push_back(int(cur % p[new_digits]));
+                cur /= p[new_digits];
+                cur_digits -= new_digits;
+            }
+        }
+        res.push_back((int)cur);
+        while(!res.empty() && res.back() == 0) res.pop_back();
+        return res;
+    }
+
+    typedef vector<long long> vll;
+
+    // Karatsuba multiplication for large bigint*bigint
+    static vll karatsubaMultiply(const vll& a, const vll& b) {
+        int n = a.size();
+        vll res(n + n);
+        if(n <= 32) {
+            for(int i = 0; i < n; i++)
+                for(int j = 0; j < n; j++)
+                    res[i + j] += a[i] * b[j];
+            return res;
+        }
+
+        int k = n >> 1;
+        vll a1(a.begin(), a.begin() + k);
+        vll a2(a.begin() + k, a.end());
+        vll b1(b.begin(), b.begin() + k);
+        vll b2(b.begin() + k, b.end());
+
+        vll a1b1 = karatsubaMultiply(a1, b1);
+        vll a2b2 = karatsubaMultiply(a2, b2);
+
+        for(int i = 0; i < k; i++) a2[i] += a1[i];
+        for(int i = 0; i < k; i++) b2[i] += b1[i];
+
+        vll r = karatsubaMultiply(a2, b2);
+        for(int i = 0; i < (int)a1b1.size(); i++) r[i] -= a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) r[i] -= a2b2[i];
+
+        for(int i = 0; i < (int)r.size(); i++) res[i + k] += r[i];
+        for(int i = 0; i < (int)a1b1.size(); i++) res[i] += a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) res[i + n] += a2b2[i];
+        return res;
+    }
+
+    // Full bigint multiplication
+    bigint operator*(const bigint& v) const {
+        vector<int> a6 = convert_base(this->z, base_digits, 6);
+        vector<int> b6 = convert_base(v.z, base_digits, 6);
+        vll a(a6.begin(), a6.end());
+        vll b(b6.begin(), b6.end());
+        while(a.size() < b.size()) a.push_back(0);
+        while(b.size() < a.size()) b.push_back(0);
+        while(a.size() & (a.size() - 1)) { a.push_back(0); b.push_back(0); }
+
+        vll c = karatsubaMultiply(a, b);
+
+        bigint res;
+        res.sign = sign * v.sign;
+        for(int i = 0, carry = 0; i < (int)c.size(); i++) {
+            long long cur = c[i] + carry;
+            res.z.push_back((int)(cur % 1000000));
+            carry = (int)(cur / 1000000);
+        }
+        res.z = convert_base(res.z, 6, base_digits);
+        res.trim();
+        return res;
+    }
+};
+
+string N;
+
+// Reads one test case; exits the program on EOF
+void read() {
+    if(!(cin >> N)) exit(0);
+}
+
+// Count solutions for a given target string S and initial expected carry on the left
+bigint count_solutions(const string& S, int expecting_carry_initial) {
+    int n = (int)S.size();
+    if(n == 0) return 0;
+
+    // dp[exp_carry][carry_r] = number of ways so far
+    vector<vector<bigint>> dp(2, vector<bigint>(2, 0));
+    dp[expecting_carry_initial][0] = 1; // initially no carry from the rightmost side
+
+    int left = 0, right = n - 1;
+    while(left <= right) {
+        int d_left = S[left] - '0';
+        int d_right = S[right] - '0';
+        bool is_middle = (left == right);
+
+        vector<vector<bigint>> ndp(2, vector<bigint>(2, 0));
+
+        for(int exp_carry = 0; exp_carry < 2; exp_carry++) {
+            for(int carry_r = 0; carry_r < 2; carry_r++) {
+                if(dp[exp_carry][carry_r].isZero()) continue;
+
+                // Choose digit a = X[left]
+                for(int a = 0; a <= 9; a++) {
+                    // X cannot have leading zeros
+                    if(left == 0 && a == 0) continue;
+
+                    // Choose digit b = X[right] (must equal a if middle digit)
+                    int b_lo = is_middle ? a : 0;
+                    int b_hi = is_middle ? a : 9;
+
+                    for(int b = b_lo; b <= b_hi; b++) {
+                        int sum = a + b;
+
+                        // Right-side digit constraint
+                        int right_val = sum + carry_r;
+                        if(right_val % 10 != d_right) continue;
+                        int new_carry_r = right_val / 10;
+
+                        // Compute what carry we must expect for the next inner layer on the left
+                        int new_exp_carry = d_left + 10 * exp_carry - sum;
+                        if(new_exp_carry < 0 || new_exp_carry > 1) continue;
+
+                        if(is_middle) {
+                            // At the center, the carry from right and expected carry must meet
+                            if(new_carry_r == exp_carry) {
+                                ndp[0][0] += dp[exp_carry][carry_r];
+                            }
+                        } else {
+                            // Normal transition inward
+                            ndp[new_exp_carry][new_carry_r] += dp[exp_carry][carry_r];
+                        }
+                    }
+                }
+            }
+        }
+
+        dp = ndp;
+        left++;
+        right--;
+    }
+
+    // Valid completions require the two carry notions to match at the end
+    bigint ans = 0;
+    for(int c = 0; c < 2; c++) ans += dp[c][c];
+    return ans;
+}
+
+void solve() {
+    // Termination condition in the statement: a single "0" ends input.
+    if(N == "0") exit(0);
+
+    bigint ans = 0;
+
+    // Case A: |X| = |N|, no extra leading carry
+    ans += count_solutions(N, 0);
+
+    // Case B: |X| = |N|-1, meaning N must start with '1' from the outer carry
+    if(N.size() > 1 && N[0] == '1') {
+        ans += count_solutions(N.substr(1), 1);
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    for(int test = 1;; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same idea, with detailed comments)
+
+```python
+import sys
+
+# Python's int is arbitrary precision, so we don't need a custom bigint.
+
+def count_solutions(S: str, expecting_carry_initial: int) -> int:
+    """
+    Count number of positive integers X such that X + reverse(X) == S (as digits),
+    under a particular initial 'expected carry' on the left side.
+
+    expecting_carry_initial:
+        0 -> corresponds to case |X| == |S|
+        1 -> corresponds to case where original N had an extra leading '1' carry
+    """
+    n = len(S)
+    if n == 0:
+        return 0
+
+    # dp[exp_carry][carry_r]
+    dp = [[0, 0], [0, 0]]
+    dp[expecting_carry_initial][0] = 1  # initially no carry entering the rightmost digit
+
+    left, right = 0, n - 1
+    while left <= right:
+        d_left = ord(S[left]) - ord('0')
+        d_right = ord(S[right]) - ord('0')
+        is_middle = (left == right)
+
+        ndp = [[0, 0], [0, 0]]
+
+        for exp_carry in (0, 1):
+            for carry_r in (0, 1):
+                ways = dp[exp_carry][carry_r]
+                if ways == 0:
+                    continue
+
+                # choose a = X[left]
+                for a in range(10):
+                    # X is positive and has no leading zeros
+                    if left == 0 and a == 0:
+                        continue
+
+                    # choose b = X[right]; if middle, must be the same digit
+                    if is_middle:
+                        b_range = (a,)
+                    else:
+                        b_range = range(10)
+
+                    for b in b_range:
+                        s = a + b
+
+                        # Right digit must match:
+                        # (a + b + carry_r) % 10 == digit at S[right]
+                        right_val = s + carry_r
+                        if right_val % 10 != d_right:
+                            continue
+                        new_carry_r = right_val // 10  # 0 or 1
+
+                        # Left digit constraint transformed into:
+                        # new_exp_carry = d_left + 10*exp_carry - (a+b)
+                        new_exp_carry = d_left + 10 * exp_carry - s
+                        if new_exp_carry < 0 or new_exp_carry > 1:
+                            continue
+
+                        if is_middle:
+                            # At the middle, the carry coming from the right
+                            # must equal the carry expected on the left.
+                            if new_carry_r == exp_carry:
+                                ndp[0][0] += ways
+                        else:
+                            ndp[new_exp_carry][new_carry_r] += ways
+
+        dp = ndp
+        left += 1
+        right -= 1
+
+    # Final consistency: sum dp[c][c]
+    return dp[0][0] + dp[1][1]
+
+
+def solve_one(N: str) -> int:
+    # Case A: X has same length as N
+    ans = count_solutions(N, 0)
+
+    # Case B: X has length len(N)-1, only possible if N begins with '1'
+    if len(N) > 1 and N[0] == '1':
+        ans += count_solutions(N[1:], 1)
+
+    return ans
+
+
+def main():
+    out_lines = []
+    for line in sys.stdin:
+        N = line.strip()
+        if not N:
+            continue
+        if N == "0":
+            break
+        out_lines.append(str(solve_one(N)))
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Process digit pairs \((x_L, x_R)\) of \(X\) from outside to center. Each pair determines both the left digit and right digit of \(N = X + R(X)\), but involves carries from both ends. Use DP with two binary carry states:
+
+- `exp_carry` = carry expected into the current left digit (from inner positions),
+- `carry_r` = carry into the current right digit (usual carry from less significant side).
+
+For each outer position `(left,right)` and each state, try digits `a` and `b` (with no leading zero for `a` at left=0; and `a=b` in the middle). Enforce:
+- `(a+b+carry_r) % 10 == N[right]`, set `new_carry_r = (a+b+carry_r)//10`,
+- `new_exp_carry = N[left] + 10*exp_carry - (a+b)` must be 0 or 1.
+
+Transition inward accordingly; at the middle require `new_carry_r == exp_carry`. Sum final `dp[c][c]`.
+
+Answer is sum of two cases:
+1) \(|X|=|N|\): run DP on `N` with initial `exp_carry=0`.
+2) \(|X|=|N|-1\): only if `N` starts with `1`, run DP on `N[1:]` with initial `exp_carry=1`.
+
+Use big integers for the count (Python int works; C++ uses custom bigint).
