@@ -1,0 +1,400 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+173. Coins
+time limit per test: 0.75 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+There is a row consist of N coins. Each coin lies heads up or tails up. There is also binary vector A with (K-1) dimensions.
+We accomplish M operations with our coins row: we select some consecutive K coins, and apply to selected coins transformation X for Di times (i=1..M, where i is a number of operation)
+The transformation X for given row C with length K means:
+1. We shift the row C in one position to the left in a cyclic way.
+2. Then we scan the row C from the first (leftmost) coin to (K-1)-th coin: if coin Ci lies tails up, and Ai=1, then we turn over coin Ck
+Obviously, that for constant coins row with length K transformation X is fully determined by vector A. But vector A haven't given to you. You have results of transformation L rows with length K (row of coins before transformation, and row after transformation). It is guarantied that there is exactly one vector A satisfied all L conditions.
+Your task is to reconstruct initial row by given row after all operations being accomplished.
+
+Input
+There is four integer numbers in the first line of input: N, M, K, L (2<=N<=50, 1<=M<=10, 1<=L<=200, 2<=K<=N).
+Second line contains description of accomplished operations, M pairs of positive integer numbers Si and Di. Si is a starting point of selected coins subrow, Di is a number of iterations of transformation (Si <= N-K+1; Di <= 10^6).
+There are the following L conditions determining transformation X, L blocks by two lines each: first line of each block contains a row before transformation, and the second line contains row after transformation. Each line consists of K symbols, 1 denotes tails, 0 denotes heads.
+The last line contains N symbols - row of coins after all operations accomplished. i-th symbol is 1 if i-th coin lies tails up, and 0 otherwise.
+
+Output
+Write N symbols in single line of output: i-th symbol must be 1 if i-th coin of initial row laid tails up, and 0 otherwise.
+
+Sample test(s)
+
+Input
+4 2 3 2
+2 1 1 1
+010
+101
+101
+011
+1010
+
+Output
+0110
+Author:	Dmitry Orlov
+Resource:	Saratov ST team Spring Contest #1
+Date:	18.05.2003
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You have a binary row of **N** coins (0=heads, 1=tails). An unknown binary vector **A** of length **K−1** defines a transformation **X** on any length-**K** block:
+
+1. Cyclic shift the block left by 1.
+2. For each position `i=1..K−1` (left to right): if the coin at position `i` is `1` and `A[i]=1`, then flip the **last** coin.
+
+You are given **L** examples of `(beforeBlock, afterBlock)` for **X**, and it is guaranteed there is **exactly one** vector **A** consistent with all examples.
+
+Then **M** operations were applied to an unknown initial length-**N** row: operation `i` takes the block starting at `S_i` (length K) and applies **X** exactly `D_i` times. You are given the final row; output the initial row.
+
+Constraints: `N<=50, M<=10, L<=200, K<=N, D_i<=1e6`.
+
+---
+
+## 2) Key observations
+
+1. **Only the last bit depends on A** (for a single application of X).  
+   After the cyclic shift, positions `0..K−2` are determined purely by the shift. The conditional flips only affect the last coin.
+
+2. **Each example yields one linear equation over GF(2)** (XOR arithmetic).  
+   For an example `(before=B, after=T)`, the last bit gives:
+   \[
+   \bigoplus_{i=0}^{K-2} (B[i+1]\land A[i]) = T[K-1]\oplus B[0]
+   \]
+   This is a linear equation in the unknown bits of `A`.
+
+3. Since `K−1 <= 49`, we can represent equations as **64-bit masks** and solve with **Gaussian elimination over GF(2)**.
+
+4. To reconstruct the initial row, we must **reverse operations** and apply **X^{-1}** repeatedly.  
+   Inversion is easy:
+   - From `after` block `Y`, we know `before[1..K-1] = Y[0..K-2]`.
+   - Compute `before[0]` using the last-bit relation:
+     \[
+     before[0] = Y[K-1] \oplus \bigoplus_{i=0}^{K-2}(Y[i]\land A[i])
+     \]
+   Then we “rotate right by 1” to undo the previous left rotation.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Parse input and encode bitstrings as bitmasks
+- Encode each length-`K` block as a `uint64_t` mask where bit `i` corresponds to position `i` in the block (left to right).
+- Encode the final length-`N` row similarly (still fits in 64-bit since `N<=50`).
+
+### Step B: Build a linear system to recover A
+Unknowns: `A[0..K-2]` (total `K-1` bits).
+
+For each constraint `(before=B, after=T)`:
+- Coefficients for `A[i]` are `B[i+1]`. As a bitmask this is `B >> 1` (bit 0 corresponds to `B[1]`, etc.).
+- Right-hand side: `rhs = T[K-1] XOR B[0]`.
+
+So each equation is:
+- `mask = (B >> 1)` over variables
+- `rhs` is 0/1
+
+Run Gaussian elimination over GF(2) on these `(mask, rhs)` pairs. The statement guarantees a **unique solution**, so we can extract `A` directly from the reduced system.
+
+### Step C: Reverse the M operations using X^{-1}
+We are given the final row. To get the initial row:
+- Process operations in reverse order: `i = M..1`.
+- For each operation, apply the inverse transform `D_i` times to the affected block.
+
+One inverse iteration on a K-bit block `sub` (this is the “after” of forward X):
+1. Compute `flipParity = parity( (sub[0..K-2] & A) )`.
+2. `before0 = sub[K-1] XOR flipParity`.
+3. Reconstruct the “shifted” state by setting last bit accordingly, then rotate right by 1 to undo the left rotation.
+
+Implementation-wise (matching the reference code):
+- Extract `sub = (row >> s) & maskK`.
+- `flipParity = popcount((sub & A) & lowerMask) % 2`
+- `shifted = sub XOR (flipParity << (K-1))`
+- `original = rotR1(shifted)` within K bits
+- Write back into the big row mask.
+
+Finally, print the recovered mask as `N` characters.
+
+Complexity:
+- Gaussian elimination: `O(L*(K-1)^2)` with small constants.
+- Simulation: `sum(D_i)` iterations, each O(1) bit ops; with `M<=10, D_i<=1e6`, worst-case ~1e7 iterations, intended to pass in C++ under given limits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p173 - Coins
+
+  Idea:
+  1) Recover unknown vector A (length K-1) from L examples via linear equations over GF(2).
+  2) Starting from the final N-bit row, undo operations in reverse order by applying X^{-1} Di times.
+     Each X^{-1} step is O(1) using bitmasks + popcount.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M, K, L;
+    cin >> N >> M >> K >> L;
+
+    vector<pair<int,int>> ops(M); // (start index 0-based, repetitions)
+    for (int i = 0; i < M; i++) {
+        int s, d;
+        cin >> s >> d;
+        --s;                 // to 0-based
+        ops[i] = {s, d};
+    }
+
+    // Read constraints: L blocks, each has two K-bit strings (before, after)
+    vector<pair<uint64_t,uint64_t>> constraints(L);
+    for (int i = 0; i < L; i++) {
+        string sb, sa;
+        cin >> sb >> sa;
+
+        uint64_t before = 0, after = 0;
+        for (int j = 0; j < K; j++) {
+            if (sb[j] == '1') before |= (1ULL << j);
+            if (sa[j] == '1') after  |= (1ULL << j);
+        }
+        constraints[i] = {before, after};
+    }
+
+    // Read final row of length N as bitmask
+    string sfinal;
+    cin >> sfinal;
+    uint64_t row = 0;
+    for (int i = 0; i < N; i++) {
+        if (sfinal[i] == '1') row |= (1ULL << i);
+    }
+
+    // -------------------------
+    // Build linear equations for A[0..K-2]
+    // Equation from one example (before=B, after=T):
+    //   XOR_{i=0..K-2} (B[i+1] & A[i]) = T[K-1] XOR B[0]
+    // Coeff mask is (B >> 1). RHS is (T[K-1] XOR B[0]).
+    // -------------------------
+    vector<pair<uint64_t,int>> eqs(L);
+    for (int i = 0; i < L; i++) {
+        uint64_t B = constraints[i].first;
+        uint64_t T = constraints[i].second;
+
+        uint64_t coeff = (B >> 1); // bits 0..K-2 correspond to B[1..K-1]
+        int rhs = int(((T >> (K - 1)) & 1ULL) ^ (B & 1ULL));
+        eqs[i] = {coeff, rhs};
+    }
+
+    // -------------------------
+    // Gaussian elimination over GF(2) on (K-1) variables, using 64-bit masks.
+    // We do "full elimination" (eliminate pivot from all other rows),
+    // so that each pivot column appears in only one row -> easy extraction.
+    // -------------------------
+    int pivot_row = 0;
+    for (int col = 0; col < K - 1 && pivot_row < L; col++) {
+        int sel = -1;
+        for (int r = pivot_row; r < L; r++) {
+            if (eqs[r].first & (1ULL << col)) { sel = r; break; }
+        }
+        if (sel == -1) continue;
+
+        swap(eqs[pivot_row], eqs[sel]);
+
+        // Eliminate this column from all other rows
+        for (int r = 0; r < L; r++) {
+            if (r != pivot_row && (eqs[r].first & (1ULL << col))) {
+                eqs[r].first ^= eqs[pivot_row].first;
+                eqs[r].second ^= eqs[pivot_row].second;
+            }
+        }
+        pivot_row++;
+    }
+
+    // Extract solution A from reduced equations.
+    // Because solution is unique, each nonzero row should correspond to one variable.
+    uint64_t A = 0;
+    for (int i = 0; i < L; i++) {
+        uint64_t mask = eqs[i].first;
+        if (mask == 0) continue; // redundant row (or would indicate inconsistency, but guaranteed solvable)
+        int lead = __builtin_ctzll(mask); // index of least significant 1 bit
+        if (eqs[i].second) A |= (1ULL << lead);
+    }
+
+    // -------------------------
+    // Undo operations in reverse order using X^{-1}.
+    //
+    // We'll work with K-bit submasks extracted from the N-bit row.
+    // maskK extracts K bits; lowerMask extracts the lowest K-1 bits inside the block.
+    // -------------------------
+    uint64_t maskK = (K == 64 ? ~0ULL : ((1ULL << K) - 1ULL));
+    uint64_t lowerMask = (K - 1 == 64 ? ~0ULL : ((1ULL << (K - 1)) - 1ULL));
+
+    for (int op = M - 1; op >= 0; op--) {
+        int start = ops[op].first;
+        int d = ops[op].second;
+
+        for (int t = 0; t < d; t++) {
+            // sub is the current K-bit block (this is "after" for inverse step)
+            uint64_t sub = (row >> start) & maskK;
+
+            // flipParity = parity of (sub[0..K-2] & A)
+            int flipParity = __builtin_popcountll((sub & A) & lowerMask) & 1;
+
+            // We need to toggle the last bit if parity is 1, to reconstruct the shifted state
+            uint64_t shifted = sub ^ (uint64_t(flipParity) << (K - 1));
+
+            // Undo cyclic left shift: rotate right by 1 within K bits.
+            // rotr1(x) = (x<<1) | (x>>(K-1))  (because we store bits left-to-right as increasing indices)
+            uint64_t original = ((shifted << 1) | (shifted >> (K - 1))) & maskK;
+
+            // Write the restored block back
+            row = (row & ~(maskK << start)) | (original << start);
+        }
+    }
+
+    // Output initial row as N bits (bit i -> character i)
+    for (int i = 0; i < N; i++) {
+        cout << ((row >> i) & 1ULL);
+    }
+    cout << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+# p173 - Coins (Python)
+# Same approach:
+# 1) Solve for A with Gaussian elimination over GF(2) using integers as bitmasks.
+# 2) Undo operations in reverse by applying X^{-1} Di times to the K-bit block.
+
+def solve():
+    input = sys.stdin.readline
+    N, M, K, L = map(int, input().split())
+
+    # Read 2*M integers (S_i, D_i)
+    ops_raw = list(map(int, input().split()))
+    ops = []
+    for i in range(M):
+        s = ops_raw[2*i] - 1  # to 0-based
+        d = ops_raw[2*i + 1]
+        ops.append((s, d))
+
+    # Read constraints
+    constraints = []
+    for _ in range(L):
+        sb = input().strip()
+        sa = input().strip()
+        before = 0
+        after = 0
+        for i, ch in enumerate(sb):
+            if ch == '1':
+                before |= 1 << i
+        for i, ch in enumerate(sa):
+            if ch == '1':
+                after |= 1 << i
+        constraints.append((before, after))
+
+    # Read final N-bit row
+    sfinal = input().strip()
+    row = 0
+    for i, ch in enumerate(sfinal):
+        if ch == '1':
+            row |= 1 << i
+
+    # -------------------------
+    # Build equations for A[0..K-2]:
+    # (before>>1) dot A = after[K-1] XOR before[0]
+    # -------------------------
+    eqs = []
+    for before, after in constraints:
+        coeff = before >> 1
+        rhs = ((after >> (K - 1)) & 1) ^ (before & 1)
+        eqs.append([coeff, rhs])
+
+    # -------------------------
+    # Gaussian elimination over GF(2)
+    # We eliminate pivot column from all other rows (RREF-ish).
+    # -------------------------
+    pivot_row = 0
+    for col in range(K - 1):
+        if pivot_row >= L:
+            break
+
+        # find pivot
+        sel = -1
+        for r in range(pivot_row, L):
+            if (eqs[r][0] >> col) & 1:
+                sel = r
+                break
+        if sel == -1:
+            continue
+
+        eqs[pivot_row], eqs[sel] = eqs[sel], eqs[pivot_row]
+        piv_mask, piv_rhs = eqs[pivot_row]
+
+        # eliminate from all other rows
+        for r in range(L):
+            if r != pivot_row and ((eqs[r][0] >> col) & 1):
+                eqs[r][0] ^= piv_mask
+                eqs[r][1] ^= piv_rhs
+
+        pivot_row += 1
+
+    # Extract A (unique solution guaranteed)
+    A = 0
+    for mask, rhs in eqs:
+        if mask == 0:
+            continue
+        lead = (mask & -mask).bit_length() - 1  # index of lsb set bit
+        if rhs:
+            A |= 1 << lead
+
+    # -------------------------
+    # Undo operations using inverse transform
+    # -------------------------
+    maskK = (1 << K) - 1
+    lowerMask = (1 << (K - 1)) - 1
+
+    for s, d in reversed(ops):
+        for _ in range(d):
+            sub = (row >> s) & maskK
+
+            # parity of (sub[0..K-2] & A)
+            flip_parity = (((sub & A) & lowerMask).bit_count() & 1)
+
+            shifted = sub ^ (flip_parity << (K - 1))
+
+            # rotate right by 1 within K bits (same bit layout as in C++ solution)
+            original = ((shifted << 1) | (shifted >> (K - 1))) & maskK
+
+            row = (row & ~(maskK << s)) | (original << s)
+
+    # Output N bits
+    out = []
+    for i in range(N):
+        out.append('1' if ((row >> i) & 1) else '0')
+    sys.stdout.write(''.join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want, I can also show a small worked example of how one constraint becomes a GF(2) equation, or how the inverse step reconstructs `before[0]` from the “after” block.
