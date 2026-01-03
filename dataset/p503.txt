@@ -1,0 +1,632 @@
+## 1) Abridged problem statement
+
+You are given a **directed weighted graph** with `n` vertices and `m` edges (edge `i` has travel time `c[i]`). You must go from start `S` to finish `T`.
+
+Additionally, there are `r` **special routes**, each described as a sequence of edge IDs forming a valid simple path. **Every time your traveled path contains one of these special routes as a contiguous subpath**, you incur an **extra penalty equal to the total time of that special route** (as if you traversed that route twice). If the same special route is listed multiple times, penalties stack.
+
+Find the minimum possible total time from `S` to `T` (base edge costs + all penalties), and output any optimal sequence of edge IDs. If `T` is unreachable, output `-1`.
+
+Constraints highlights:
+- Outdegree of each vertex ≤ 10.
+- Sum of lengths of all special routes ≤ `2m`.
+- Each edge appears in ≤ 10 special routes.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key idea: treat the path as a “string” of edge IDs
+A walk/path in the graph corresponds to a sequence of edge indices:
+\[
+e_1, e_2, \dots, e_L
+\]
+Each special route is also a sequence of edge indices (a “pattern”). The penalty rule says:
+
+> If a pattern appears as a **substring** of your edge-sequence, add its pattern-cost once for each occurrence.
+
+Where pattern-cost = sum of base edge weights along that special route.
+
+So the objective becomes:
+\[
+\text{minimize } \sum_{i=1}^{L} c[e_i] \;+\; \sum_{\text{occurrences of patterns}} (\text{pattern-cost})
+\]
+
+This is exactly a classic “string with pattern occurrences” accumulation problem — solved efficiently by **Aho–Corasick automaton**.
+
+---
+
+### Step A: Build Aho–Corasick over patterns (edge IDs as alphabet)
+- Alphabet symbols are edge IDs `0..m-1`.
+- Insert all `r` special routes as patterns, with an ID `i`.
+
+The automaton state represents the **longest suffix of the processed edge sequence that is also a prefix of some pattern**.
+
+#### Why add singleton patterns `{edge}` with cost 0?
+The code inserts `{i}` for every edge `i` with cost 0.
+This is not strictly required for correctness of costs, but it guarantees the automaton always has a meaningful transition/state for every edge encountered and keeps state-space behavior convenient. (Cost is 0, so it doesn’t alter the objective.)
+
+---
+
+### Step B: Precompute penalty added when entering an automaton state
+In Aho–Corasick, when you land in a state `u`, patterns that end at `u` (and also at its suffix-link ancestors) are exactly the patterns that end at the current position in the text.
+
+Let:
+- `end_cost[u]` = sum of pattern-costs of patterns whose terminal state is exactly `u`.
+- `state_cost[u]` = sum of `end_cost[x]` over `x = u, link(u), link(link(u)), ...` up to root.
+
+Then whenever we extend the path with an edge and transition to `new_state`, the additional penalty incurred **at that step** is exactly:
+\[
+state\_cost[new\_state]
+\]
+because it sums all patterns that just ended here.
+
+The code computes `state_cost` in a straightforward way by walking suffix links for each state (still fine because total states is O(total pattern length) ≤ O(m)).
+
+---
+
+### Step C: Run Dijkstra on an expanded graph (vertex, automaton_state)
+We must obey the original graph’s connectivity (edges go from `a` to `b`). But penalties depend on recent edge history (automaton state). So we do shortest path on a product graph:
+
+- Node in expanded graph: `(graph_vertex v, automaton_state st)`
+- From `(u, st)` for each outgoing original edge `edge_id: u -> v`:
+  - `new_st = aho.go(st, edge_id)`
+  - transition cost:
+    \[
+    c[edge\_id] + state\_cost[new\_st]
+    \]
+  - relax `(v, new_st)`.
+
+All costs are nonnegative ⇒ Dijkstra works.
+
+Complexity:
+- Automaton size = O(m) (because sum pattern lengths ≤ 2m plus m singleton edges).
+- Expanded nodes: `(n * states)`, but in practice constrained by `states = O(m)`.
+- Each expanded node has ≤ 10 outgoing transitions (outdegree constraint).
+So total relaxations are about `O(states * m * 10)` in worst form; works within constraints, and is the intended optimization.
+
+---
+
+### Step D: Recover the actual edge sequence
+We store parent pointers:
+- `parent[v][st] = (prev_vertex, prev_state)`
+- `parent_edge[v][st] = edge_id used`
+
+After Dijkstra, among all states `st`, pick the best `dist[T][st]`, then backtrack to reconstruct the edge list.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/strings/aho_corasick.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector (assumes correct size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print an entire vector separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// A large number used as "infinity" for distances
+const int64_t inf = (int64_t)1e18 + 42;
+
+// Generic Aho–Corasick automaton. Here it will be used with T = vector<int>,
+// so the alphabet symbols are ints (edge IDs).
+template<class T = string>
+class AhoCorasick {
+  private:
+    // Determine the "character" type: for strings it's char,
+    // for vector<int> it's int.
+    using G = conditional_t<
+        is_same_v<T, const char*> || is_same_v<T, char*> || is_array_v<T>, char,
+        typename T::value_type>;
+
+    // Each state of the automaton:
+    // - to: trie transitions by symbol
+    // - link: suffix (failure) link
+    // - word_id: id of a pattern that ends here (if any); not used heavily here
+    struct State {
+        map<G, int> to;   // transitions (sparse)
+        int link;         // suffix link
+        int word_id;      // pattern id if terminal
+        State() : link(0), word_id(-1) {}
+    };
+
+  public:
+    vector<State> states; // all states; state 0 is root
+
+    AhoCorasick() { clear(); }
+
+    // Reset automaton to just the root
+    void clear() {
+        states.clear();
+        states.emplace_back();
+    }
+
+    // Insert a pattern into the trie; optionally store an id at its terminal node
+    void add_word(const T& word, int id = -1) {
+        int u = 0; // start at root
+        for(const G& c: word) {
+            if(!states[u].to.count(c)) {
+                // create a new state if transition doesn't exist
+                states[u].to[c] = states.size();
+                states.emplace_back();
+            }
+            u = states[u].to[c]; // go to next state
+        }
+        states[u].word_id = id; // mark terminal (only one id stored)
+    }
+
+    // Build suffix links using BFS
+    void build() {
+        queue<int> Q;
+        states[0].link = -1; // root's suffix link is "none"
+
+        // Initialize BFS queue with root's children; their link is root (0)
+        for(auto& [c, v]: states[0].to) {
+            states[v].link = 0;
+            Q.push(v);
+        }
+
+        // Standard Aho–Corasick BFS
+        while(!Q.empty()) {
+            int u = Q.front();
+            Q.pop();
+
+            // For each transition u --c--> v
+            for(auto& [c, v]: states[u].to) {
+                int j = states[u].link; // try suffix states of u
+                while(j != -1 && !states[j].to.count(c)) {
+                    j = states[j].link;  // follow suffix links until transition exists
+                }
+                // If none found, suffix link goes to root; else follow that transition
+                states[v].link = (j == -1) ? 0 : states[j].to[c];
+                Q.push(v);
+            }
+        }
+    }
+
+    // Transition function with fallback through suffix links
+    int go(int u, const G& c) const {
+        while(u != -1 && !states[u].to.count(c)) {
+            u = states[u].link;
+        }
+        return (u == -1) ? 0 : states[u].to.at(c);
+    }
+
+    int link(int u) const { return states[u].link; }
+    int word_id(int u) const { return states[u].word_id; }
+    int size() const { return states.size(); }
+
+    // Traverse a text and record the state after each symbol
+    vector<int> traverse(const T& text) const {
+        vector<int> result;
+        result.reserve(text.size());
+        int u = 0;
+        for(const G& c: text) {
+            u = go(u, c);
+            result.push_back(u);
+        }
+        return result;
+    }
+
+    // Build tree of suffix links (not used in this solution)
+    vector<vector<int>> build_link_tree() const {
+        vector<vector<int>> adj(states.size());
+        for(int i = 1; i < (int)states.size(); i++) {
+            adj[states[i].link].push_back(i);
+        }
+        return adj;
+    }
+};
+
+int n, m, r, S, T;
+
+// edges[i] = (from, to, cost)
+vector<tuple<int, int, int64_t>> edges;
+
+// adj[u] = list of (v, edge_id) outgoing from u
+vector<vector<pair<int, int>>> adj;
+
+// routes[i] = list of edge IDs (0-based) describing special route i
+vector<vector<int>> routes;
+
+void read() {
+    cin >> n >> m >> r >> S >> T;
+
+    edges.resize(m);
+    adj.resize(n + 1);
+
+    // Read edges and build adjacency by edge id
+    for(int i = 0; i < m; i++) {
+        int a, b;
+        int64_t c;
+        cin >> a >> b >> c;
+        edges[i] = {a, b, c};
+        adj[a].push_back({b, i});
+    }
+
+    // Read routes; convert edge IDs to 0-based
+    routes.resize(r);
+    for(int i = 0; i < r; i++) {
+        int k;
+        cin >> k;
+        routes[i].resize(k);
+        for(int j = 0; j < k; j++) {
+            cin >> routes[i][j];
+            routes[i][j]--; // make 0-based
+        }
+    }
+}
+
+void solve() {
+    // Build Aho–Corasick over edge-ID sequences (patterns are special routes).
+    AhoCorasick<vector<int>> aho;
+
+    // pattern_cost[i] = sum of base edge costs along route i
+    vector<int64_t> pattern_cost(r);
+    for(int i = 0; i < r; i++) {
+        for(int e: routes[i]) {
+            pattern_cost[i] += get<2>(edges[e]);
+        }
+        // Insert route i as a pattern with id i
+        aho.add_word(routes[i], i);
+    }
+
+    // Add singleton patterns {edge} with cost 0 (convenience / completeness)
+    for(int i = 0; i < m; i++) {
+        aho.add_word({i});
+    }
+
+    // Compute suffix links
+    aho.build();
+
+    int num_states = aho.size();
+
+    // end_cost[st] = sum of costs of patterns that end exactly at state st
+    vector<int64_t> end_cost(num_states, 0);
+    for(int i = 0; i < r; i++) {
+        // Re-find the terminal state of route i
+        int st = 0;
+        for(int e: routes[i]) {
+            st = aho.go(st, e);
+        }
+        // Multiple routes may end at same state; accumulate
+        end_cost[st] += pattern_cost[i];
+    }
+
+    // state_cost[st] = sum of end_cost along suffix chain => all patterns that end here
+    vector<int64_t> state_cost(num_states, 0);
+    for(int u = 0; u < num_states; u++) {
+        int cur = u;
+        while(cur != -1) {
+            state_cost[u] += end_cost[cur];
+            cur = aho.link(cur);
+        }
+    }
+
+    // Dijkstra on expanded graph: dist[node][automaton_state]
+    vector<vector<int64_t>> dist(n + 1, vector<int64_t>(num_states, inf));
+
+    // Parent pointers for path reconstruction:
+    // parent[v][st] = (prev_node, prev_state)
+    vector<vector<pair<int, int>>> parent(
+        n + 1, vector<pair<int, int>>(num_states, {-1, -1})
+    );
+    // parent_edge[v][st] = edge_id used to reach (v, st)
+    vector<vector<int>> parent_edge(n + 1, vector<int>(num_states, -1));
+
+    // Min-heap: (distance, graph_node, automaton_state)
+    priority_queue<
+        tuple<int64_t, int, int>, vector<tuple<int64_t, int, int>>, greater<>>
+        pq;
+
+    // Start at (S, root_state=0) with cost 0
+    dist[S][0] = 0;
+    pq.push({0, S, 0});
+
+    while(!pq.empty()) {
+        auto [d, u, st] = pq.top();
+        pq.pop();
+
+        // Ignore outdated heap entries
+        if(d > dist[u][st]) {
+            continue;
+        }
+
+        // Try all outgoing edges from u in the original graph
+        for(auto [v, edge_id]: adj[u]) {
+            int64_t edge_cost = get<2>(edges[edge_id]);
+
+            // Update Aho–Corasick state by reading symbol edge_id
+            int new_st = aho.go(st, edge_id);
+
+            // New total cost includes base edge cost + penalties of patterns ending here
+            int64_t new_dist = d + edge_cost + state_cost[new_st];
+
+            // Relax
+            if(new_dist < dist[v][new_st]) {
+                dist[v][new_st] = new_dist;
+                parent[v][new_st] = {u, st};
+                parent_edge[v][new_st] = edge_id;
+                pq.push({new_dist, v, new_st});
+            }
+        }
+    }
+
+    // Among all automaton states at node T, choose the best distance
+    int64_t best_dist = inf;
+    int best_st = -1;
+    for(int st = 0; st < num_states; st++) {
+        if(dist[T][st] < best_dist) {
+            best_dist = dist[T][st];
+            best_st = st;
+        }
+    }
+
+    // If unreachable
+    if(best_dist == inf) {
+        cout << -1 << "\n";
+        return;
+    }
+
+    // Reconstruct path by backtracking edges from (T, best_st)
+    vector<int> path;
+    int cur_node = T, cur_st = best_st;
+    while(parent_edge[cur_node][cur_st] != -1) {
+        path.push_back(parent_edge[cur_node][cur_st]);
+        auto [prev_node, prev_st] = parent[cur_node][cur_st];
+        cur_node = prev_node;
+        cur_st = prev_st;
+    }
+    reverse(path.begin(), path.end());
+
+    // Output: minimal time, number of edges, and 1-based edge IDs
+    cout << best_dist << "\n";
+    cout << path.size() << "\n";
+    for(int i = 0; i < (int)path.size(); i++) {
+        if(i > 0) {
+            cout << " ";
+        }
+        cout << path[i] + 1;
+    }
+    cout << " \n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import heapq
+from collections import deque
+
+INF = 10**30
+
+# We build an Aho–Corasick automaton where "characters" are edge IDs (ints).
+class AhoCorasick:
+    def __init__(self):
+        # next[state] is a dict: symbol -> next_state
+        self.nxt = []
+        self.link = []
+        self._new_state()          # state 0 = root
+        self.link[0] = -1          # root suffix link
+
+    def _new_state(self):
+        self.nxt.append({})
+        self.link.append(0)
+        return len(self.nxt) - 1
+
+    def add_word(self, word):
+        """Insert a sequence of integers into the trie."""
+        u = 0
+        for c in word:
+            if c not in self.nxt[u]:
+                self.nxt[u][c] = self._new_state()
+            u = self.nxt[u][c]
+        return u  # return terminal state (useful)
+
+    def build(self):
+        """Build suffix links using BFS."""
+        q = deque()
+
+        # Initialize children of root: suffix link = root
+        for c, v in self.nxt[0].items():
+            self.link[v] = 0
+            q.append(v)
+
+        # BFS
+        while q:
+            u = q.popleft()
+            for c, v in self.nxt[u].items():
+                j = self.link[u]
+                while j != -1 and c not in self.nxt[j]:
+                    j = self.link[j]
+                self.link[v] = 0 if j == -1 else self.nxt[j][c]
+                q.append(v)
+
+    def go(self, u, c):
+        """Automaton transition with failure links."""
+        while u != -1 and c not in self.nxt[u]:
+            u = self.link[u]
+        return 0 if u == -1 else self.nxt[u][c]
+
+    def size(self):
+        return len(self.nxt)
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+    r = int(next(it))
+    S = int(next(it))
+    T = int(next(it))
+
+    edges = [None] * m           # (a,b,c)
+    adj = [[] for _ in range(n + 1)]  # adj[a] = (b, edge_id)
+
+    for i in range(m):
+        a = int(next(it)); b = int(next(it)); c = int(next(it))
+        edges[i] = (a, b, c)
+        adj[a].append((b, i))
+
+    routes = []
+    for _ in range(r):
+        k = int(next(it))
+        route = [int(next(it)) - 1 for __ in range(k)]  # 0-based edge IDs
+        routes.append(route)
+
+    # --- Build Aho–Corasick ---
+    aho = AhoCorasick()
+
+    # pattern_cost[i] = sum of base edge costs along special route i
+    pattern_cost = [0] * r
+
+    # We'll need terminal states to assign end_cost easily.
+    terminal_states = [0] * r
+
+    for i, route in enumerate(routes):
+        cost = 0
+        for e in route:
+            cost += edges[e][2]
+        pattern_cost[i] = cost
+        terminal_states[i] = aho.add_word(route)
+
+    # Add singleton patterns {edge_id} with cost 0 (as in C++ solution)
+    for e in range(m):
+        aho.add_word([e])
+
+    aho.build()
+    num_states = aho.size()
+
+    # end_cost[state] = sum of costs of patterns ending exactly at this state
+    end_cost = [0] * num_states
+    for i in range(r):
+        end_cost[terminal_states[i]] += pattern_cost[i]
+
+    # state_cost[state] = sum of end_cost along suffix chain
+    state_cost = [0] * num_states
+    for u in range(num_states):
+        cur = u
+        s = 0
+        while cur != -1:
+            s += end_cost[cur]
+            cur = aho.link[cur]
+        state_cost[u] = s
+
+    # --- Dijkstra on expanded states (graph_vertex, automaton_state) ---
+    dist = [[INF] * num_states for _ in range(n + 1)]
+    parent_node = [[-1] * num_states for _ in range(n + 1)]
+    parent_state = [[-1] * num_states for _ in range(n + 1)]
+    parent_edge = [[-1] * num_states for _ in range(n + 1)]
+
+    pq = []
+    dist[S][0] = 0
+    heapq.heappush(pq, (0, S, 0))
+
+    while pq:
+        d, u, st = heapq.heappop(pq)
+        if d != dist[u][st]:
+            continue
+
+        for v, edge_id in adj[u]:
+            edge_cost = edges[edge_id][2]
+            new_st = aho.go(st, edge_id)
+            new_dist = d + edge_cost + state_cost[new_st]
+
+            if new_dist < dist[v][new_st]:
+                dist[v][new_st] = new_dist
+                parent_node[v][new_st] = u
+                parent_state[v][new_st] = st
+                parent_edge[v][new_st] = edge_id
+                heapq.heappush(pq, (new_dist, v, new_st))
+
+    # Pick best automaton state at destination T
+    best_dist = INF
+    best_st = -1
+    for st in range(num_states):
+        if dist[T][st] < best_dist:
+            best_dist = dist[T][st]
+            best_st = st
+
+    if best_dist >= INF:
+        sys.stdout.write("-1\n")
+        return
+
+    # Reconstruct edge path
+    path = []
+    cur_node, cur_st = T, best_st
+    while parent_edge[cur_node][cur_st] != -1:
+        e = parent_edge[cur_node][cur_st]
+        path.append(e)
+        pn = parent_node[cur_node][cur_st]
+        ps = parent_state[cur_node][cur_st]
+        cur_node, cur_st = pn, ps
+    path.reverse()
+
+    # Output (edge IDs must be 1-based)
+    sys.stdout.write(str(best_dist) + "\n")
+    sys.stdout.write(str(len(path)) + "\n")
+    if path:
+        sys.stdout.write(" ".join(str(e + 1) for e in path) + " \n")
+    else:
+        sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model the traveled path as a sequence of edge IDs. Each special route is a pattern; whenever it occurs as a contiguous subpath, add an extra penalty equal to the route’s total edge cost. Build an Aho–Corasick automaton over all special routes (plus singleton edges with cost 0). Precompute for each automaton state `st` the total penalty of all patterns that end at this position: `state_cost[st]` = sum of `end_cost` over `st` and its suffix-link ancestors.
+
+Run Dijkstra on expanded nodes `(vertex, st)`. For each graph edge `edge_id: u→v`, transition `st→new_st = go(st, edge_id)` with cost `c[edge_id] + state_cost[new_st]`. The best answer is `min_st dist[T][st]`. Store parents to reconstruct the optimal edge sequence.

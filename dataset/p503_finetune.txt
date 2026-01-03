@@ -1,0 +1,530 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+503. Running City
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+Andrew has just made a breakthrough in urban orienteering: he realized that each urban orienteering contest, like the upcoming "Running City Petrozavodsk", can be represented as a simple problem in graph theory. Your task is to get from point A to point B in the city as fast as you can. City map consists of roads (corresponding to edges of a graph) and road intersections (corresponding to nodes of a graph). Points A and B are road intersections, of course. You know the running times for all roads in the city. However, you won't be able to solve your problem with a usual Dijkstra algorithm, because there are some additional difficulties. There are some routes in the city which slow you down. Some friends in the organizing committee gave you the secret map where those routes are marked. A route can be any simple path (no intersection can appear twice) in the graph. The difficulty is: if you run through the whole route, a group of volunteers waits for you in the end of the route, and the celebration begins It slows you down by the time equal to the time you spent running through the route. So it's like if you ran through the route 2 times. Also, if your path contains several such routes as subpaths, then each of them counts. For example, there can be two exactly equal routes in the input, and if your path contains such route, then it's actually as if you ran 3 times through the route. Find the shortest time to get from one node to another in such a strange graph with "bonuses".
+Input
+First line of the input file contains five integers n, m, r, S, T — number of nodes, edges, special routes in the graph, start node and finish node respectively. , , , 1 ≤ S, T ≤ n, S ≠ T. The nodes in the graph are numbered from 1 to n. Each of the following m lines contains three integers a, b, c, (), where a and b are nodes and c is the time to run through the edge (a, b). The graph is directed: you can't run from b to a along the edge (a, b). There are no more than 10 edges going out from each node. Each of the next r lines contains a description of a special route. It begins with integer k — the number of edges in the route. Then k integers follow — the numbers of the edges in the route. Edges are numbered from 1 to m in the same order that they are written above. Sum of lengths of all routes is not more than 2m. Each edge occurs no more than in 10 special routes. Each special route is correct: no vertex can appear twice in any given route, and the end of each edge of the route except the last one coincides with the start of the next edge.
+Output
+If there is a way from S to T, print the minimal time to get from S to T and any optimal path, otherwise just print -1. The format of output in case a way exists: on the first line print the minimal time, on the second line print the number of edges in the path and on the last line print the sequence of numbers of edges (ranging from 1 to m) that form the optimal path.
+Example(s)
+sample input
+sample output
+3 3 1 1 3
+1 2 2
+2 3 1
+1 3 2
+1 3
+3
+2
+1 2 
+
+sample input
+sample output
+3 3 3 1 3
+1 2 2
+2 3 2
+1 3 1
+1 3
+1 3
+1 3
+4
+2
+1 2 
+
+sample input
+sample output
+4 3 3 1 4
+1 2 3
+2 3 2
+3 4 1
+3 1 2 3
+2 2 3
+1 3
+16
+3
+1 2 3
+
+<|response|>
+## 1) Abridged problem statement (concise version)
+
+You are given a **directed weighted graph** with `n` vertices and `m` edges (edge `i` has cost `c[i]`). You must travel from `S` to `T`.
+
+Additionally, there are `r` **special routes**, each given as a sequence of **edge IDs** that forms a valid simple path in the graph.  
+Whenever your traveled edge sequence contains one of these routes as a **contiguous subpath**, you pay an **extra penalty equal to the total cost of that route**. If multiple special routes match (including duplicates in input), all penalties add up.
+
+Output the **minimum total time** and any optimal path (as edge IDs). If `T` is unreachable, output `-1`.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **A traveled path can be viewed as a “string” of edge IDs.**  
+   Your walk corresponds to a sequence `e1, e2, ..., eL` where each `ei` is an edge index (1..m).
+
+2. **Each special route is a “pattern” in that string.**  
+   The penalty rule is exactly: for every occurrence of a pattern as a substring, add `pattern_cost` once.
+
+3. **We need to track “what suffix of the current edge sequence could be the prefix of a pattern”.**  
+   This is precisely what the **Aho–Corasick automaton** does for multi-pattern substring matching.
+
+4. **Penalties are nonnegative, so Dijkstra applies** once we convert the problem to shortest path in an expanded state space.
+
+5. **Expanded state = (graph vertex, automaton state).**  
+   - Graph vertex ensures connectivity constraints.
+   - Automaton state summarizes relevant recent edge history for which patterns may complete next.
+
+---
+
+## 3) Full solution approach based on the observations
+
+### Step A — Build Aho–Corasick automaton over edge IDs
+- Alphabet symbols are edge IDs (0..m-1).
+- Insert each special route (sequence of edge IDs) as a pattern.
+- Let `pattern_cost[i]` be the sum of edge weights along special route `i`.
+
+**Why we need Aho–Corasick:**  
+While walking in the graph, we append edge IDs one by one. Aho–Corasick lets us update the “matching status” in amortized O(1) per edge extension and tells us which patterns end at the current position.
+
+---
+
+### Step B — Precompute penalty incurred when arriving at an automaton state
+Let:
+- `end_cost[state]` = sum of `pattern_cost` of patterns whose terminal node is exactly `state`  
+  (if identical routes appear multiple times, they add multiple times)
+- `state_cost[state]` = sum of `end_cost[x]` over `x = state, link(state), link(link(state)), ...` up to root  
+  This equals the total cost of **all patterns that end “now”** when we land in `state`.
+
+Then, every time we traverse a new graph edge and move the automaton to `new_state`, we add:
+```
+edge_weight + state_cost[new_state]
+```
+because all patterns ending at this step must be penalized right now.
+
+---
+
+### Step C — Dijkstra on product graph (vertex, automaton_state)
+Define shortest-path states:
+- `dist[v][st]` = minimal total cost to reach graph vertex `v` while being in automaton state `st`.
+
+Transitions:
+- From `(u, st)`, for every outgoing graph edge `edge_id: u -> v`:
+  - `new_st = go(st, edge_id)` in automaton
+  - transition cost = `c[edge_id] + state_cost[new_st]`
+  - relax `(v, new_st)`.
+
+All weights are nonnegative ⇒ Dijkstra is correct.
+
+Answer:
+- `min_st dist[T][st]`.
+
+---
+
+### Step D — Reconstruct an optimal path
+Store parent pointers during Dijkstra:
+- previous `(node, state)` and the used `edge_id`
+Backtrack from the best `(T, best_st)` to reconstruct the edge ID sequence.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+static const long long INF = (long long)4e18;
+
+/*
+  Aho–Corasick over sequences of ints (edge IDs).
+  Using unordered_map or map for sparse transitions because alphabet size = m (can be large),
+  but each trie node has limited outgoing transitions due to limited pattern total length.
+*/
+struct AhoCorasick {
+    struct Node {
+        // transition by symbol -> next state
+        unordered_map<int,int> next;
+        int link = 0;     // suffix link
+    };
+
+    vector<Node> st;
+
+    AhoCorasick() { st.push_back(Node()); st[0].link = -1; }
+
+    // Insert a pattern, return its terminal state
+    int add_word(const vector<int>& w) {
+        int v = 0;
+        for (int c : w) {
+            auto it = st[v].next.find(c);
+            if (it == st[v].next.end()) {
+                int nv = (int)st.size();
+                st[v].next[c] = nv;
+                st.push_back(Node());
+                v = nv;
+            } else {
+                v = it->second;
+            }
+        }
+        return v;
+    }
+
+    void build() {
+        queue<int> q;
+
+        // Root link = -1 already
+        // Initialize BFS with root children
+        for (auto &kv : st[0].next) {
+            int v = kv.second;
+            st[v].link = 0;
+            q.push(v);
+        }
+
+        while (!q.empty()) {
+            int v = q.front(); q.pop();
+            for (auto &kv : st[v].next) {
+                int c = kv.first;
+                int u = kv.second;
+
+                int j = st[v].link;
+                while (j != -1 && !st[j].next.count(c)) j = st[j].link;
+                st[u].link = (j == -1) ? 0 : st[j].next[c];
+
+                q.push(u);
+            }
+        }
+    }
+
+    // Move from state v by symbol c using failure links
+    int go(int v, int c) const {
+        while (v != -1 && !st[v].next.count(c)) v = st[v].link;
+        return (v == -1) ? 0 : st[v].next.at(c);
+    }
+
+    int size() const { return (int)st.size(); }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m, r, S, T;
+    cin >> n >> m >> r >> S >> T;
+
+    // edges[i] = (from, to, cost)
+    vector<int> A(m), B(m);
+    vector<long long> C(m);
+
+    // adjacency: from u -> (to v, edge_id)
+    vector<vector<pair<int,int>>> adj(n + 1);
+
+    for (int i = 0; i < m; i++) {
+        cin >> A[i] >> B[i] >> C[i];
+        adj[A[i]].push_back({B[i], i});
+    }
+
+    vector<vector<int>> routes(r);
+    for (int i = 0; i < r; i++) {
+        int k; cin >> k;
+        routes[i].resize(k);
+        for (int j = 0; j < k; j++) {
+            cin >> routes[i][j];
+            routes[i][j]--; // 0-based edge IDs
+        }
+    }
+
+    // --- Build Aho–Corasick over edge-ID sequences ---
+    AhoCorasick aho;
+
+    vector<long long> pattern_cost(r, 0);
+    vector<int> terminal(r, 0);
+
+    for (int i = 0; i < r; i++) {
+        long long sum = 0;
+        for (int e : routes[i]) sum += C[e];
+        pattern_cost[i] = sum;
+        terminal[i] = aho.add_word(routes[i]); // store terminal state
+    }
+
+    // Optional but common: insert singleton patterns {edge} with 0 cost.
+    // Not required for correctness, but keeps automaton transitions "covering" all edges nicely.
+    for (int e = 0; e < m; e++) {
+        vector<int> one = {e};
+        aho.add_word(one);
+    }
+
+    aho.build();
+    int SZ = aho.size();
+
+    // end_cost[state] = sum of costs of patterns ending exactly in 'state'
+    vector<long long> end_cost(SZ, 0);
+    for (int i = 0; i < r; i++) {
+        end_cost[terminal[i]] += pattern_cost[i];
+    }
+
+    // state_cost[state] = sum end_cost along suffix chain (patterns ending "now")
+    vector<long long> state_cost(SZ, 0);
+    for (int v = 0; v < SZ; v++) {
+        long long sum = 0;
+        int x = v;
+        while (x != -1) {
+            sum += end_cost[x];
+            x = aho.st[x].link;
+        }
+        state_cost[v] = sum;
+    }
+
+    // --- Dijkstra on expanded graph: (graph_vertex, automaton_state) ---
+    vector<vector<long long>> dist(n + 1, vector<long long>(SZ, INF));
+
+    // Parent reconstruction
+    vector<vector<pair<int,int>>> parent(n + 1, vector<pair<int,int>>(SZ, {-1, -1}));
+    vector<vector<int>> parent_edge(n + 1, vector<int>(SZ, -1));
+
+    using QItem = tuple<long long,int,int>; // (dist, node, state)
+    priority_queue<QItem, vector<QItem>, greater<QItem>> pq;
+
+    dist[S][0] = 0;
+    pq.push({0, S, 0});
+
+    while (!pq.empty()) {
+        auto [d, u, stt] = pq.top(); pq.pop();
+        if (d != dist[u][stt]) continue;
+
+        for (auto [v, eid] : adj[u]) {
+            int nst = aho.go(stt, eid);
+            long long nd = d + C[eid] + state_cost[nst];
+
+            if (nd < dist[v][nst]) {
+                dist[v][nst] = nd;
+                parent[v][nst] = {u, stt};
+                parent_edge[v][nst] = eid;
+                pq.push({nd, v, nst});
+            }
+        }
+    }
+
+    // Choose best automaton state at T
+    long long best = INF;
+    int best_st = -1;
+    for (int stt = 0; stt < SZ; stt++) {
+        if (dist[T][stt] < best) {
+            best = dist[T][stt];
+            best_st = stt;
+        }
+    }
+
+    if (best == INF) {
+        cout << -1 << "\n";
+        return 0;
+    }
+
+    // Reconstruct edge path
+    vector<int> path;
+    int cur_v = T, cur_st = best_st;
+    while (parent_edge[cur_v][cur_st] != -1) {
+        int eid = parent_edge[cur_v][cur_st];
+        path.push_back(eid);
+        auto [pv, pst] = parent[cur_v][cur_st];
+        cur_v = pv;
+        cur_st = pst;
+    }
+    reverse(path.begin(), path.end());
+
+    // Output (edge IDs are 1-based in output)
+    cout << best << "\n";
+    cout << path.size() << "\n";
+    for (int i = 0; i < (int)path.size(); i++) {
+        if (i) cout << ' ';
+        cout << path[i] + 1;
+    }
+    cout << " \n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+import heapq
+from collections import deque
+
+INF = 10**30
+
+class AhoCorasick:
+    """
+    Aho–Corasick automaton for patterns that are sequences of integers (edge IDs).
+    We store sparse transitions in dicts.
+    """
+    def __init__(self):
+        self.nxt = [dict()]   # transitions
+        self.link = [-1]      # suffix links; root has link = -1
+
+    def add_word(self, word):
+        """Insert pattern, return its terminal state."""
+        v = 0
+        for c in word:
+            if c not in self.nxt[v]:
+                self.nxt[v][c] = len(self.nxt)
+                self.nxt.append(dict())
+                self.link.append(0)
+            v = self.nxt[v][c]
+        return v
+
+    def build(self):
+        """Build suffix links via BFS."""
+        q = deque()
+
+        # root children have suffix link = root
+        for c, v in self.nxt[0].items():
+            self.link[v] = 0
+            q.append(v)
+
+        while q:
+            v = q.popleft()
+            for c, u in self.nxt[v].items():
+                j = self.link[v]
+                while j != -1 and c not in self.nxt[j]:
+                    j = self.link[j]
+                self.link[u] = 0 if j == -1 else self.nxt[j][c]
+                q.append(u)
+
+    def go(self, v, c):
+        """Transition with failure links."""
+        while v != -1 and c not in self.nxt[v]:
+            v = self.link[v]
+        return 0 if v == -1 else self.nxt[v][c]
+
+    def size(self):
+        return len(self.nxt)
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    n = int(next(it)); m = int(next(it)); r = int(next(it))
+    S = int(next(it)); T = int(next(it))
+
+    # edges: arrays A,B,C
+    A = [0]*m
+    B = [0]*m
+    C = [0]*m
+    adj = [[] for _ in range(n+1)]  # adj[u] = [(v, edge_id), ...]
+
+    for i in range(m):
+        a = int(next(it)); b = int(next(it)); c = int(next(it))
+        A[i], B[i], C[i] = a, b, c
+        adj[a].append((b, i))
+
+    routes = []
+    for _ in range(r):
+        k = int(next(it))
+        route = [int(next(it))-1 for __ in range(k)]
+        routes.append(route)
+
+    # --- Build Aho–Corasick ---
+    aho = AhoCorasick()
+
+    pattern_cost = [0]*r
+    terminal = [0]*r
+
+    for i, route in enumerate(routes):
+        pattern_cost[i] = sum(C[e] for e in route)
+        terminal[i] = aho.add_word(route)
+
+    # Optional singleton patterns with cost 0
+    for e in range(m):
+        aho.add_word([e])
+
+    aho.build()
+    SZ = aho.size()
+
+    # end_cost[state] = sum of costs of patterns ending exactly at 'state'
+    end_cost = [0]*SZ
+    for i in range(r):
+        end_cost[terminal[i]] += pattern_cost[i]
+
+    # state_cost[state] = sum end_cost along suffix chain (patterns ending now)
+    state_cost = [0]*SZ
+    for v in range(SZ):
+        s = 0
+        x = v
+        while x != -1:
+            s += end_cost[x]
+            x = aho.link[x]
+        state_cost[v] = s
+
+    # --- Dijkstra on product graph (node, automaton_state) ---
+    dist = [[INF]*SZ for _ in range(n+1)]
+    parent_node = [[-1]*SZ for _ in range(n+1)]
+    parent_state = [[-1]*SZ for _ in range(n+1)]
+    parent_edge = [[-1]*SZ for _ in range(n+1)]
+
+    pq = []
+    dist[S][0] = 0
+    heapq.heappush(pq, (0, S, 0))
+
+    while pq:
+        d, u, st = heapq.heappop(pq)
+        if d != dist[u][st]:
+            continue
+
+        for v, eid in adj[u]:
+            nst = aho.go(st, eid)
+            nd = d + C[eid] + state_cost[nst]
+            if nd < dist[v][nst]:
+                dist[v][nst] = nd
+                parent_node[v][nst] = u
+                parent_state[v][nst] = st
+                parent_edge[v][nst] = eid
+                heapq.heappush(pq, (nd, v, nst))
+
+    # best over automaton states at destination
+    best = INF
+    best_st = -1
+    for st in range(SZ):
+        if dist[T][st] < best:
+            best = dist[T][st]
+            best_st = st
+
+    if best == INF:
+        sys.stdout.write("-1\n")
+        return
+
+    # reconstruct path of edge IDs
+    path = []
+    cur_v, cur_st = T, best_st
+    while parent_edge[cur_v][cur_st] != -1:
+        eid = parent_edge[cur_v][cur_st]
+        path.append(eid)
+        pv = parent_node[cur_v][cur_st]
+        ps = parent_state[cur_v][cur_st]
+        cur_v, cur_st = pv, ps
+    path.reverse()
+
+    # output
+    out = []
+    out.append(str(best))
+    out.append(str(len(path)))
+    if path:
+        out.append(" ".join(str(e+1) for e in path) + " ")
+    else:
+        out.append("")
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also add a short correctness argument (why `state_cost[new_state]` exactly equals the sum of all penalties triggered at that step) and a tight complexity discussion tailored to the constraints/time limit.

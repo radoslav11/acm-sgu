@@ -1,0 +1,789 @@
+## 1) Concise, abridged problem statement
+
+You are given a directed graph with `n (≤100)` junctions and `m (≤5000)` one-way roads. Road `i` goes `xi → yi`, has `wi` tons of snow, and type `ti` (`1` = historical, `0` = regular).
+
+Each day one truck travels along **a directed route from A to B** (vertices/edges may repeat). Every time it traverses an edge, it removes **1 ton** of snow from that edge; it is **forbidden** to traverse an edge with **0** snow remaining.
+
+All **historical** roads must be completely cleared (their snow becomes 0). Regular roads may or may not be cleared.
+
+Among all valid sequences of daily routes that clear all historical roads, output one with the **maximum number of days** (maximum number of A→B routes). If impossible, output `0`.
+
+(You may output any maximizing set of routes.)
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key modeling idea: routes = units of flow
+Think of each **daily trip** as sending **1 unit of flow** from `A` to `B` along the directed edges used that day.  
+- Traversing an edge consumes 1 ton of snow ⇒ that edge can be used at most `wi` times overall.
+- Historical edges must be used **exactly `wi` times** overall (to remove all their snow).
+- Regular edges can be used **0..wi** times.
+
+So we want:
+- A feasible integer flow decomposable into A→B paths,
+- respecting capacities (`≤ wi` on regular edges),
+- and meeting **exact usage requirements** on historical edges (`= wi`),
+- while **maximizing total A→B flow value** (= number of days).
+
+This is a **max flow with lower bounds (demands)** problem:
+- For historical edge `(u→v)` we set **lower bound = upper bound = wi**.
+- For regular edge `(u→v)` we set **lower bound = 0**, upper bound = `wi`.
+
+Then we maximize additional A→B flow on top of satisfying mandatory (historical) flow.
+
+---
+
+### Step 1: Reduce “lower bounds” to a circulation feasibility check
+Classic reduction (as in cp-algorithms “flow with demands”):
+
+For each edge with lower bound `L` and capacity `C`:
+- Replace by capacity `C-L`.
+- Maintain a balance array `V[]` where:
+  - `V[u] -= L`
+  - `V[v] += L`
+
+After processing all demanded edges:
+- Add super source `S` and super sink `T`.
+- For each node `i`:
+  - if `V[i] > 0`, add edge `S → i` capacity `V[i]`
+  - if `V[i] < 0`, add edge `i → T` capacity `-V[i]`
+Let `k = sum of all V[i] > 0`.  
+A feasible circulation exists iff maxflow(`S`,`T`) == `k`.
+
+**In this code:**
+- Only historical edges contribute lower bounds (`L = wi`).
+- Regular edges are just normal capacity edges in the network during feasibility.
+
+---
+
+### Step 2: Allow maximizing A→B flow while keeping feasibility
+To transform circulation feasibility into “flow from A to B” feasibility, add an infinite-capacity edge:
+- `B → A` with capacity `INF`.
+
+This is standard: it allows any net A→B flow to be “returned” to form a circulation during the feasibility phase.
+
+So the algorithm is:
+1) Build network with:
+   - all regular edges (capacity `wi`)
+   - `B→A` infinite
+   - super edges from balances
+2) Run maxflow from `S` to `T`. If not all balance is satisfied, answer is `0`.
+
+At this point, we have *some* feasible flow that can satisfy all historical lower bounds (existence proven).
+
+---
+
+### Step 3: Maximize the number of days (additional A→B flow)
+After satisfying all lower bounds, we want to push as much additional flow from `A` to `B` as possible, still respecting regular capacities.
+
+The code simply runs:
+- `mf.flow(A, B)` on the **same residual network** after the feasibility stage.
+This increases total A→B flow as much as possible.
+
+---
+
+### Step 4: Reconstruct the “exact historical usage”
+The feasibility construction used lower bounds implicitly; but we ultimately want an explicit final directed multigraph of traversals.
+
+The code does:
+- For every historical edge `(x→y, w)`:
+  - explicitly add an edge `x→y` with capacity `w`,
+  - and forcibly set its flow to `w` (and reverse to `-w`).
+
+Intuition: “we must traverse this edge `w` times”; therefore fix that many uses.
+
+Now we have a directed multigraph described by all edges with **positive flow**: edge `u→v` appears `flow(u,v)` times.
+
+---
+
+### Step 5: Compute number of days = total outgoing flow from A
+The number of A→B paths equals the total flow leaving `A` (to real nodes), i.e. the maxflow value.
+
+The code sums `e.flow` for adjacency of `A` (skipping edges to super nodes).
+
+If it is 0, output 0.
+
+---
+
+### Step 6: Decompose flow into A→B routes + leftover cycles
+A flow can be decomposed into:
+- `p` paths from `A` to `B` (where `p` is the flow value),
+- plus some number of directed cycles (circulation components).
+
+The code builds `res[u][v] = count of remaining uses of edge u→v` (only positive-flow edges).
+
+#### 6.1 Extract `p` A→B paths greedily
+Repeat `p` times:
+- BFS in the directed multigraph `res` to find any path from `A` to `B` using edges with `cnt>0`.
+- Walk back with parent pointers, decrement edge counts along the found path by 1.
+This yields `p` valid routes (simple in terms of vertices due to BFS parents, but that’s not required).
+
+After removing these `p` unit paths, whatever remains must be a collection of directed cycles (because flow conservation holds at intermediate nodes).
+
+#### 6.2 Extract each remaining cycle via Euler-style DFS
+While there exists an edge with `cnt>0`:
+- Run a DFS that consumes edges until stuck (Hierholzer-like) and records vertices; this produces an Eulerian trail in that remaining component.
+- Because the leftover is balanced, this forms a directed cycle (after normalization in code).
+
+#### 6.3 Splice each cycle into one of the A→B paths
+A cycle shares at least one vertex with some existing path (the problem guarantee about reachability in historical subgraph helps ensure we can attach; the code asserts insertion is always possible).
+To insert:
+- find a vertex common to the cycle and the path,
+- rotate the cycle so it starts at that vertex,
+- insert the cycle’s vertex sequence into the path at that position.
+
+This keeps the route starting at `A` and ending at `B`, and adds extra edge traversals corresponding to the cycle.
+
+Finally, all demanded historical traversals (and any used regular traversals) are included in the printed routes.
+
+---
+
+### Complexity
+- Dinic maxflow on up to ~`n+3` nodes and `m + O(n)` edges: fine for `n≤100, m≤5000`.
+- Path extraction: `p` BFS runs, where `p` is the max number of days (bounded by total snow, at most `5000*100=500k` in worst theoretical input, but typically much smaller; constraints/time are tight but C++ with small `n` works well).
+- Cycle extraction consumes each remaining unit edge exactly once.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/maxflow.hpp>
+
+using namespace std;
+
+/*
+  Helper operator overloads (mostly unused in final logic).
+  They allow easy IO for pairs/vectors.
+*/
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+/*
+  Dinic maxflow implementation.
+  Supports generic numeric type T (here used with int64_t).
+*/
+template<class T>
+class MaxFlow {
+  private:
+    /*
+      Each directed edge in the residual graph.
+      - flow: current flow (can be negative in reverse edges)
+      - cap: capacity
+      - to: destination vertex
+      - rev: index of the reverse edge in adj[to]
+      - idx: optional original edge id (not used here)
+    */
+    struct Edge {
+        T flow, cap;
+        int idx, rev, to;
+        Edge(int _to, int _rev, T _flow, T _cap, int _idx)
+            : to(_to), rev(_rev), flow(_flow), cap(_cap), idx(_idx) {}
+    };
+
+    vector<int> dist, po; // dist = BFS levels, po = current edge pointer for DFS
+    int n;                // number of nodes (1-indexed in this code)
+
+    // Build level graph (BFS) from s to t.
+    bool bfs(int s, int t) {
+        fill(dist.begin(), dist.end(), -1); // -1 = unvisited
+        fill(po.begin(), po.end(), 0);      // reset DFS iterators
+
+        queue<int> q;
+        q.push(s);
+        dist[s] = 0;
+
+        while(!q.empty()) {
+            int u = q.front();
+            q.pop();
+
+            // traverse all outgoing residual edges
+            for(Edge e: adj[u]) {
+                // if we can push more flow through this edge
+                if(dist[e.to] == -1 && e.flow < e.cap) {
+                    dist[e.to] = dist[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return dist[t] != -1; // reachable => there is an augmenting path
+    }
+
+    // Send blocking flow with DFS on the level graph.
+    T dfs(int u, int t, T fl = inf) {
+        if(u == t) {
+            return fl; // reached sink: can send 'fl'
+        }
+
+        // Continue from where we left off for node u (Dinic optimization)
+        for(; po[u] < (int)adj[u].size(); po[u]++) {
+            auto& e = adj[u][po[u]];
+
+            // Must follow level graph forward and have residual capacity
+            if(dist[e.to] == dist[u] + 1 && e.flow < e.cap) {
+                // Try to push flow through child edge
+                T f = dfs(e.to, t, min(fl, e.cap - e.flow));
+
+                // Augment along the edge and subtract from reverse edge
+                e.flow += f;
+                adj[e.to][e.rev].flow -= f;
+
+                if(f > 0) {
+                    return f; // pushed something, return it
+                }
+            }
+        }
+
+        return 0; // no flow could be pushed from u
+    }
+
+  public:
+    constexpr static T inf = numeric_limits<T>::max();
+
+    MaxFlow(int n = 0) { init(n); }
+
+    vector<vector<Edge>> adj; // adjacency list of residual graph
+
+    // Initialize graph with _n nodes (creates arrays of size n+1).
+    void init(int _n) {
+        n = _n;
+        adj.assign(n + 1, {});
+        dist.resize(n + 1);
+        po.resize(n + 1);
+    }
+
+    /*
+      Add directed edge u->v with capacity w.
+      Also adds reverse edge v->u with capacity 0.
+    */
+    void add_edge(int u, int v, T w, int idx = -1) {
+        adj[u].push_back(Edge(v, adj[v].size(), 0, w, idx));
+        adj[v].push_back(Edge(u, adj[u].size() - 1, 0, 0, -1));
+    }
+
+    // Compute max flow from s to t.
+    T flow(int s, int t) {
+        assert(s != t);
+
+        T ret = 0, to_add;
+        while(bfs(s, t)) {            // while there exists an augmenting path
+            while((to_add = dfs(s, t))) { // send blocking flow
+                ret += to_add;
+            }
+        }
+        return ret;
+    }
+};
+
+int n, m, A, B;
+// store original edges as (x, y, w, t)
+vector<tuple<int, int, int, int>> edges;
+
+void read() {
+    cin >> n >> m >> A >> B;
+    edges.resize(m);
+    for(int i = 0; i < m; i++) {
+        auto& [x, y, w, t] = edges[i];
+        cin >> x >> y >> w >> t;
+    }
+}
+
+void solve() {
+    /*
+      High-level:
+      1) Build flow-with-demands feasibility network for historical edges (lower bound = w).
+      2) If infeasible => print 0.
+      3) Otherwise maximize additional A->B flow.
+      4) Force historical edges to carry exactly w flow.
+      5) Decompose resulting positive-flow multigraph into A->B paths + cycles, splice cycles.
+    */
+
+    int S = n + 1, T = n + 2;          // super source and super sink indices
+    MaxFlow<int64_t> mf(n + 3);        // allocate a bit more, nodes go up to n+2
+
+    // Add infinite edge B->A to allow converting A->B flow into circulation for feasibility.
+    mf.add_edge(B, A, MaxFlow<int64_t>::inf);
+
+    vector<tuple<int, int, int>> hist_edges; // keep historical edges for later reconstruction
+    vector<int> V(n + 1, 0);                 // node balance array for lower bounds
+
+    for(auto& [x, y, w, t]: edges) {
+        if(t == 0) {
+            // Regular edge: just capacity w (lower bound 0)
+            mf.add_edge(x, y, w);
+        } else {
+            // Historical edge: demand == w (lower bound = w, upper bound = w)
+            hist_edges.push_back({x, y, w});
+
+            // Apply lower-bound transformation balance:
+            // V[x] -= w, V[y] += w
+            V[x] -= w;
+            V[y] += w;
+        }
+    }
+
+    // Add edges from super source/sink to satisfy node imbalances.
+    int64_t k = 0; // total amount that must leave S to satisfy all positive balances
+    for(int i = 1; i <= n; i++) {
+        if(V[i] > 0) {
+            mf.add_edge(S, i, V[i]); // need inflow to i
+            k += V[i];
+        } else if(V[i] < 0) {
+            mf.add_edge(i, T, -V[i]); // need outflow from i
+        }
+    }
+
+    // Check feasibility of circulation meeting all historical demands.
+    int64_t circulation_flow = mf.flow(S, T);
+    if(circulation_flow != k) {
+        cout << 0 << endl; // impossible to satisfy all historical edges
+        return;
+    }
+
+    // Now maximize extra A->B flow on top of feasible circulation.
+    mf.flow(A, B);
+
+    // Explicitly add historical edges and force their flow to be exactly w.
+    // (They were modeled as demands via balances; now we materialize them in the graph.)
+    for(auto& [x, y, w]: hist_edges) {
+        mf.add_edge(x, y, w);
+        int idx = mf.adj[x].size() - 1;         // index of newly added edge in adj[x]
+        mf.adj[x][idx].flow = w;                // force forward flow = w
+        mf.adj[y][mf.adj[x][idx].rev].flow = -w;// force reverse flow = -w (residual consistency)
+    }
+
+    // The number of A->B paths (days) equals total outgoing flow from A to real nodes.
+    auto& adj_A = mf.adj[A];
+    int64_t total_paths = 0;
+    for(auto& e: adj_A) {
+        if(e.to > n) { // ignore edges to S/T (super nodes)
+            continue;
+        }
+        total_paths += e.flow;
+    }
+
+    if(total_paths == 0) {
+        cout << 0 << endl;
+        return;
+    }
+
+    // Build a multigraph of remaining positive flows:
+    // res[u][v] = how many times we need to traverse edge u->v.
+    vector<map<int, int>> res(n + 1);
+    for(int u = 1; u <= n; u++) {
+        for(int j = 0; j < (int)mf.adj[u].size(); j++) {
+            auto& e = mf.adj[u][j];
+            if(e.to >= 1 && e.to <= n && e.to != u) {
+                if(e.flow > 0) {
+                    res[u][e.to] += e.flow; // store multiplicity
+                }
+            }
+        }
+    }
+
+    vector<bool> in_paths(n + 1, false); // marks vertices that appear in extracted A->B paths
+
+    // Extract total_paths unit A->B paths by repeatedly finding any path and decrementing counts.
+    vector<vector<int>> paths;
+    for(int i = 0; i < total_paths; i++) {
+        vector<int> path;
+        vector<int> parent(n + 1, -1);
+
+        queue<int> q;
+        q.push(A);
+        parent[A] = A;
+
+        // BFS in the positive-flow multigraph to find a path to B.
+        while(!q.empty() && parent[B] == -1) {
+            int u = q.front();
+            q.pop();
+            for(auto& [v, cnt]: res[u]) {
+                if(cnt > 0 && parent[v] == -1) {
+                    parent[v] = u;
+                    q.push(v);
+                }
+            }
+        }
+
+        // Reconstruct found path B->A via parent pointers, decrement used edges.
+        for(int v = B; v != A; v = parent[v]) {
+            path.push_back(v);
+            res[parent[v]][v]--; // consume one usage of edge parent[v] -> v
+        }
+        path.push_back(A);
+        reverse(path.begin(), path.end());
+
+        paths.push_back(path);
+
+        // Mark vertices on these main paths (not strictly used later in splicing).
+        for(int v: path) {
+            in_paths[v] = true;
+        }
+    }
+
+    /*
+      Now res contains only circulation leftovers: directed cycles.
+      We extract each cycle using a Hierholzer-like DFS that consumes edges.
+    */
+    function<void(int, vector<int>&)> dfs_euler = [&](int v, vector<int>& path) {
+        // Iterate over outgoing edges; for each multiplicity consume all copies
+        for(auto& [u, cnt]: res[v]) {
+            while(cnt > 0) {
+                cnt--;
+                dfs_euler(u, path);
+            }
+        }
+        // Add vertex after exploring its edges (postorder) -> builds reversed Euler path
+        path.push_back(v);
+    };
+
+    // For every remaining edge multiplicity, extract a cycle and splice into some A->B path.
+    for(int i = 1; i <= n; i++) {
+        for(auto& [j, cnt]: res[i]) {
+            while(cnt > 0) {
+                vector<int> cycle;
+
+                // This call will consume edges reachable from i (including the current one)
+                dfs_euler(i, cycle);
+
+                reverse(cycle.begin(), cycle.end()); // now in forward order
+                cycle.pop_back(); // drop the last vertex because it's equal to the first (cycle closure)
+
+                // Put cycle vertices into a set for fast intersection test with a path.
+                set<int> in_cycle(cycle.begin(), cycle.end());
+
+                bool inserted = false;
+
+                // Find a path that shares a vertex with this cycle; splice cycle there.
+                for(auto& path: paths) {
+                    for(int pos = 0; pos < (int)path.size() && !inserted; pos++) {
+                        if(in_cycle.count(path[pos])) {
+                            // Find where in the cycle this shared vertex occurs
+                            int mid = -1;
+                            for(int w = 0; w < (int)cycle.size(); w++) {
+                                if(cycle[w] == path[pos]) {
+                                    mid = w;
+                                    break;
+                                }
+                            }
+                            // Rotate cycle so it starts at the shared vertex
+                            rotate(cycle.begin(), cycle.begin() + mid, cycle.end());
+
+                            // Insert the whole cycle sequence into the path at position pos
+                            path.insert(path.begin() + pos, cycle.begin(), cycle.end());
+                            inserted = true;
+                        }
+                    }
+                    if(inserted) break;
+                }
+
+                // Problem conditions + construction should guarantee splicing is possible.
+                assert(inserted);
+            }
+        }
+    }
+
+    // Output
+    cout << total_paths << endl;
+    for(auto& path: paths) {
+        for(int j = 0; j < (int)path.size(); j++) {
+            if(j) cout << " ";
+            cout << path[j];
+        }
+        cout << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque, defaultdict
+
+# -------- Dinic Max Flow (supports int capacities) --------
+
+class Dinic:
+    class Edge:
+        __slots__ = ("to", "rev", "cap", "flow")
+        def __init__(self, to, rev, cap):
+            self.to = to          # destination
+            self.rev = rev        # index of reverse edge in graph[to]
+            self.cap = cap        # capacity
+            self.flow = 0         # current flow
+
+    def __init__(self, n):
+        self.n = n
+        self.g = [[] for _ in range(n)]
+        self.level = [0] * n
+        self.it = [0] * n
+
+    def add_edge(self, fr, to, cap):
+        # forward edge
+        fwd = Dinic.Edge(to, len(self.g[to]), cap)
+        # reverse edge (capacity 0)
+        rev = Dinic.Edge(fr, len(self.g[fr]), 0)
+        self.g[fr].append(fwd)
+        self.g[to].append(rev)
+
+    def bfs(self, s, t):
+        self.level = [-1] * self.n
+        q = deque([s])
+        self.level[s] = 0
+        while q:
+            v = q.popleft()
+            for e in self.g[v]:
+                if self.level[e.to] < 0 and e.flow < e.cap:
+                    self.level[e.to] = self.level[v] + 1
+                    q.append(e.to)
+        return self.level[t] >= 0
+
+    def dfs(self, v, t, pushed):
+        if pushed == 0:
+            return 0
+        if v == t:
+            return pushed
+        while self.it[v] < len(self.g[v]):
+            e = self.g[v][self.it[v]]
+            if self.level[e.to] == self.level[v] + 1 and e.flow < e.cap:
+                tr = self.dfs(e.to, t, min(pushed, e.cap - e.flow))
+                if tr:
+                    e.flow += tr
+                    self.g[e.to][e.rev].flow -= tr
+                    return tr
+            self.it[v] += 1
+        return 0
+
+    def max_flow(self, s, t):
+        flow = 0
+        INF = 10**18
+        while self.bfs(s, t):
+            self.it = [0] * self.n
+            while True:
+                pushed = self.dfs(s, t, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+
+# -------- Solve Snow in Berland (p457) --------
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it)); m = int(next(it)); A = int(next(it)); B = int(next(it))
+    edges = []
+    for _ in range(m):
+        x = int(next(it)); y = int(next(it)); w = int(next(it)); t = int(next(it))
+        edges.append((x, y, w, t))
+
+    # We'll use 0-based indices internally in Dinic.
+    # Real nodes: 0..n-1
+    # Super source S = n, super sink T = n+1
+    S = n
+    T = n + 1
+    N = n + 2
+    INF = 10**18
+
+    dinic = Dinic(N)
+
+    # Edge B->A with infinite capacity to allow transforming A->B flow into circulation feasibility.
+    dinic.add_edge(B - 1, A - 1, INF)
+
+    # Balance array for lower bounds of historical edges.
+    V = [0] * n
+    hist_edges = []
+
+    # Add regular edges directly; store historical edges as demands.
+    for x, y, w, t in edges:
+        x -= 1; y -= 1
+        if t == 0:
+            dinic.add_edge(x, y, w)
+        else:
+            hist_edges.append((x, y, w))
+            V[x] -= w
+            V[y] += w
+
+    # Connect super source/sink to satisfy balances.
+    k = 0
+    for i in range(n):
+        if V[i] > 0:
+            dinic.add_edge(S, i, V[i])
+            k += V[i]
+        elif V[i] < 0:
+            dinic.add_edge(i, T, -V[i])
+
+    # Feasibility check for demands
+    if dinic.max_flow(S, T) != k:
+        sys.stdout.write("0\n")
+        return
+
+    # Maximize additional A->B flow
+    dinic.max_flow(A - 1, B - 1)
+
+    # Build a multigraph res[u][v] = number of times we traverse u->v
+    # Start with flows from Dinic edges (positive flow on real->real edges).
+    res = [defaultdict(int) for _ in range(n)]
+    for u in range(n):
+        for e in dinic.g[u]:
+            if 0 <= e.to < n and e.to != u and e.flow > 0:
+                res[u][e.to] += e.flow
+
+    # Add historical edges as forced traversals of exactly w:
+    # They must be included even if they weren't part of regular Dinic edges.
+    for x, y, w in hist_edges:
+        if w > 0:
+            res[x][y] += w
+
+    # Total number of paths = total outgoing flow from A in the final traversal multigraph,
+    # i.e., sum of res[A][*].  (This matches the number of "days".)
+    total_paths = sum(res[A - 1].values())
+    if total_paths == 0:
+        sys.stdout.write("0\n")
+        return
+
+    # Extract total_paths unit A->B paths via BFS, decrementing edge multiplicities.
+    paths = []
+    for _ in range(total_paths):
+        parent = [-1] * n
+        q = deque([A - 1])
+        parent[A - 1] = A - 1
+
+        while q and parent[B - 1] == -1:
+            u = q.popleft()
+            for v, cnt in res[u].items():
+                if cnt > 0 and parent[v] == -1:
+                    parent[v] = u
+                    q.append(v)
+
+        # Reconstruct path and consume one unit along each used edge
+        v = B - 1
+        path = [v]
+        while v != A - 1:
+            u = parent[v]
+            res[u][v] -= 1
+            v = u
+            path.append(v)
+        path.reverse()
+        paths.append(path)
+
+    # Now remaining edges in res form directed cycles.
+    sys.setrecursionlimit(1_000_000)
+
+    def dfs_euler(v, out):
+        # Consume all outgoing edges from v; recursive Hierholzer.
+        for u in list(res[v].keys()):
+            while res[v][u] > 0:
+                res[v][u] -= 1
+                dfs_euler(u, out)
+        out.append(v)
+
+    # Extract and splice cycles until no edges remain.
+    for i in range(n):
+        # iterate over a snapshot because we'll modify counts
+        for j in list(res[i].keys()):
+            while res[i][j] > 0:
+                cycle = []
+                dfs_euler(i, cycle)
+                cycle.reverse()
+                if cycle and cycle[0] == cycle[-1]:
+                    cycle.pop()  # remove duplicate end
+
+                in_cycle = set(cycle)
+
+                inserted = False
+                for p in paths:
+                    for pos, node in enumerate(p):
+                        if node in in_cycle:
+                            # rotate cycle so it starts at this node
+                            idx = cycle.index(node)
+                            cycle = cycle[idx:] + cycle[:idx]
+                            # splice it into path
+                            p[pos:pos] = cycle
+                            inserted = True
+                            break
+                    if inserted:
+                        break
+
+                if not inserted:
+                    # The original C++ asserts this can't happen under problem conditions.
+                    # We'll still guard.
+                    raise RuntimeError("Failed to splice a cycle into any A->B path")
+
+    # Output
+    out_lines = [str(total_paths)]
+    for p in paths:
+        out_lines.append(" ".join(str(x + 1) for x in p))
+    sys.stdout.write("\n".join(out_lines) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Model each day as sending 1 unit of flow from `A` to `B`.  
+- Regular edge `u→v` can be used at most `w`: capacity `w`.  
+- Historical edge must be used exactly `w`: lower bound = upper bound = `w` (flow with demands).
+
+**Feasibility (lower bounds):**
+- For each historical edge `(u→v,w)`, apply balance `V[u]-=w, V[v]+=w`.
+- Add super source `S` to nodes with `V>0`, super sink `T` from nodes with `V<0`.
+- Add infinite edge `B→A` to allow A→B flow inside a circulation.
+- Run maxflow `S→T`; if it doesn’t saturate all `S` edges, no solution.
+
+**Maximization:**
+- After feasibility, run maxflow `A→B` on the residual network to maximize number of days.
+
+**Reconstruction:**
+- Build a multigraph of all edges with positive flow; forcibly add historical edges with multiplicity `w`.
+- Let `p = outflow(A)`; extract `p` A→B paths by repeated BFS and decrementing multiplicities.
+- Remaining edges form directed cycles; extract each cycle with Euler/Hierholzer DFS and splice it into any existing A→B path at a common vertex (rotate cycle to start at that vertex).
+
+Print `p` and the resulting routes.

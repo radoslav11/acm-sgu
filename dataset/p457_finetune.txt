@@ -1,0 +1,651 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+457. Snow in Berland
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Winters are very snowy in Berland, and the current winter is not an exception. Each winter Berland government decides how to clean the roads in the country. The problem is particularly acute in the capital.
+
+You may assume that the capital of Berland consists of n junctions and m one-way roads. Each road has two distinct junctions xi,yi as its end-points, and the traffic goes from xi to yi. There are wi tons of snow on i-th road.
+
+The government hired a private company "Snow White" to clean the city from the snow. Every day the company sends one truck for cleaning the roads — the truck starts from junction A, passes some route to junction B and stops. Single route can contain any road several times, and can pass through any junction (including A and B) several times.
+
+So, the truck makes only one trip from junction A to junction B per day, and the truck's driver, of course, may not violate the traffic direction on the roads. The truck removes one ton of snow from each road it passes. If it passes the road several times during the same day, each time one ton of snow is removed from the road. Because capital residents may decide that the government spends the budget for nothing, the truck can not pass the road if there is no snow on it.
+
+Some roads in the city have historical value due to the presence of government buildings, so this set of roads must be completely cleaned from snow. In other words each road from the specified set should not have snow after "Snow White"'s work. It's known that junction A is situated in the historical center of the capital, meaning that it is possible to reach any historical road from A, walking only along historical roads in the direction of their orientation or in the opposite direction. The direction of roads is not taken into account in this particular case, because we are talking about walking, not driving.
+
+The government pays "Snow White" for each day of work, so "Snow White"'s top managers are looking for a way to work as many days as possible.
+
+Your task is to find the sequence of routes from A to B which doesn't violate the rules described above. This sequence must completely clean all historical roads from snow. Obviously, the sequence should contain as many routes as possible.
+
+Input
+The first line of the input contains integer numbers n,m,A,B (2 ≤ n ≤ 100; 0 ≤ m ≤ 5000; 1 ≤ A,B ≤ n; A ≠q B), where n — the number of junctions in the capital and m — the number of roads in it. The following m lines describe one-way roads, one road per line. Each line contains four integers xi,yi,wi,ti (1 ≤ xi,yi ≤ n; xi ≠q yi; 0 ≤ wi ≤ 100; 0 ≤ ti ≤ 1), where xi,yi are the endpoints of the road, wi — the amount of snow in tons on the road, and ti — type of the road (0 means regular road, and 1 means historical road). There will be no more than one road between two junctions in each direction. It is possible to reach any historical road from A by walking along other historical roads (again, not taking into account the direction while walking)
+
+Output
+Write p — the maximum number of days "Snow White" can work. The next p lines should contain the chosen routes. Each route should be printed as a list of junctions that starts with A and ends with B, and all junction numbers should be separated by spaces. You may print routes in any order.
+
+If there are many solutions, you may output any of them. If there is no solution, write a single integer 0 to the output.
+
+Example(s)
+sample input
+sample output
+4 7 1 4
+1 2 3 1
+2 1 100 0
+2 4 1 0
+1 3 1 0
+3 4 4 0
+2 3 2 1
+1 4 2 0
+6
+1 3 4 
+1 4 
+1 4 
+1 2 4 
+1 2 3 4 
+1 2 3 4 
+
+sample input
+sample output
+3 3 1 2
+1 3 2 0
+3 2 3 0
+1 2 1 0
+3
+1 3 2 
+1 3 2 
+1 2
+
+<|response|>
+## 1) Abridged problem statement
+
+Given a directed graph with `n ≤ 100` vertices and `m ≤ 5000` edges. Edge `i` is `xi → yi`, has `wi` tons of snow, and type `ti` (`1` = historical, `0` = regular).
+
+Each day a truck drives along **any directed route from `A` to `B`** (vertices/edges may repeat). Every time it traverses an edge, it removes **1** ton of snow from that edge. An edge **cannot** be traversed if its remaining snow is **0**.
+
+All **historical** edges must be fully cleaned (used exactly `wi` times total). Regular edges may be used up to `wi` times.
+
+Output a sequence of `p` routes (each starts at `A` ends at `B`) that fully cleans all historical edges, with **maximum possible `p`**. If impossible, output `0`.
+
+---
+
+## 2) Key observations
+
+1. **Each daily route = 1 unit of flow from `A` to `B`.**  
+   If we interpret “traversing an edge once” as sending 1 unit of flow through that directed edge, then:
+   - Total traversals of an edge cannot exceed its snow `wi` ⇒ capacity `wi`.
+   - Historical edges must be traversed exactly `wi` times ⇒ they have a **lower bound** and **upper bound** both equal to `wi`.
+
+2. This becomes a **max flow with lower bounds (demands)**:
+   - Regular edge `u→v`: `0 ≤ f ≤ wi`
+   - Historical edge `u→v`: `wi ≤ f ≤ wi` (fixed)
+
+3. Standard reduction for lower bounds:
+   - For each edge with lower bound `L` and capacity `C`, we replace it by capacity `C-L` and maintain node balances:
+     - `bal[u] -= L`, `bal[v] += L`
+   - Add super source `S` and super sink `T`:
+     - if `bal[i] > 0`, add `S→i` capacity `bal[i]`
+     - if `bal[i] < 0`, add `i→T` capacity `-bal[i]`
+   - Feasible iff maxflow(`S`,`T`) saturates all edges out of `S`.
+
+4. To allow *some* net `A→B` flow while checking circulation feasibility, add an infinite edge `B→A`.  
+   This transforms any `A→B` flow into a circulation (it can “return” via `B→A`).
+
+5. After feasibility, we can **maximize the number of days** by running a normal maxflow from `A` to `B` in the residual network.
+
+6. To output actual routes, we must **decompose the resulting integer flow** into `p` paths from `A` to `B` (plus possible cycles).  
+   - Extract `p` unit `A→B` paths by repeatedly finding any path in the positive-flow multigraph and decrementing counts.
+   - Remaining edges form directed cycles; extract each cycle (Euler/Hierholzer style) and **splice** it into some `A→B` path at a common vertex.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Build and solve “flow with demands” feasibility
+
+- Create Dinic network on nodes `1..n` plus `S=n+1`, `T=n+2`.
+- Add edge `B→A` with capacity `INF`.
+- For each regular edge `x→y` with snow `w`:
+  - add capacity edge `x→y` with cap `w`.
+- For each historical edge `x→y` with snow `w` (must be used exactly `w` times):
+  - don’t add it yet as a normal edge; instead only apply balance:
+    - `bal[x] -= w`, `bal[y] += w`
+  - store it for later.
+
+Add balance-fixing edges:
+- If `bal[i] > 0`: add `S→i` cap `bal[i]`
+- If `bal[i] < 0`: add `i→T` cap `-bal[i]`
+
+Let `need = sum(bal[i] > 0)`. Run maxflow from `S` to `T`.  
+If result != `need`, no feasible way to satisfy historical edges ⇒ output `0`.
+
+### Step B — Maximize days
+
+After feasibility is satisfied, run maxflow from `A` to `B` in the **same residual graph**.  
+This pushes as much additional `A→B` flow as possible without breaking constraints.
+
+### Step C — Build the final traversal multigraph
+
+We want a directed multigraph describing how many times each edge is traversed.
+
+- From Dinic graph, collect all edges `u→v` (real nodes only) with `flow > 0` and store multiplicity `cnt[u][v] += flow`.
+- Additionally, add each historical edge `(x→y,w)` as `cnt[x][y] += w` because it must be traversed exactly `w` times (some implementations “force” those flows explicitly; either method is fine as long as the final multiset of traversals includes them).
+
+Let `p = sum_v cnt[A][v]`. This is the total number of unit paths leaving `A`, i.e. maximum days.
+
+If `p == 0`, output `0`.
+
+### Step D — Decompose into `p` routes
+
+1. Repeat `p` times:
+   - BFS/DFS in the multigraph (edges with cnt>0) to find any path `A→B`.
+   - Decrement `cnt` along that path by 1 and store the vertex list.
+
+2. Remaining edges (all counts) must form only directed cycles (flow conservation).
+   - While some `cnt[u][v] > 0`, run a Hierholzer-style DFS consuming edges to extract one directed cycle as a vertex sequence.
+   - Splice that cycle into any existing `A→B` path that shares a vertex with the cycle:
+     - rotate cycle so it starts at the shared vertex
+     - insert cycle sequence into the path at that position
+   This preserves start `A` and end `B`, and adds exactly the needed extra traversals.
+
+Output `p` and the constructed routes.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Dinic max flow (int64 capacities/flows).
+  n is small (<= 100 + a few extra nodes), m <= 5000 => fast enough.
+*/
+struct Dinic {
+    struct Edge {
+        int to, rev;
+        long long cap, flow;
+    };
+
+    int N;
+    vector<vector<Edge>> G;
+    vector<int> level, it;
+
+    Dinic(int n = 0) { init(n); }
+
+    void init(int n) {
+        N = n;
+        G.assign(N, {});
+        level.assign(N, 0);
+        it.assign(N, 0);
+    }
+
+    void addEdge(int fr, int to, long long cap) {
+        Edge f{to, (int)G[to].size(), cap, 0};
+        Edge r{fr, (int)G[fr].size(), 0, 0};
+        G[fr].push_back(f);
+        G[to].push_back(r);
+    }
+
+    bool bfs(int s, int t) {
+        fill(level.begin(), level.end(), -1);
+        queue<int> q;
+        level[s] = 0;
+        q.push(s);
+        while (!q.empty()) {
+            int v = q.front(); q.pop();
+            for (auto &e : G[v]) {
+                if (level[e.to] == -1 && e.flow < e.cap) {
+                    level[e.to] = level[v] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] != -1;
+    }
+
+    long long dfs(int v, int t, long long pushed) {
+        if (!pushed) return 0;
+        if (v == t) return pushed;
+        for (int &i = it[v]; i < (int)G[v].size(); i++) {
+            Edge &e = G[v][i];
+            if (level[e.to] != level[v] + 1 || e.flow >= e.cap) continue;
+            long long tr = dfs(e.to, t, min(pushed, e.cap - e.flow));
+            if (!tr) continue;
+            e.flow += tr;
+            G[e.to][e.rev].flow -= tr;
+            return tr;
+        }
+        return 0;
+    }
+
+    long long maxflow(int s, int t) {
+        long long f = 0;
+        while (bfs(s, t)) {
+            fill(it.begin(), it.end(), 0);
+            while (long long pushed = dfs(s, t, (long long)4e18)) {
+                f += pushed;
+            }
+        }
+        return f;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m, A, B;
+    cin >> n >> m >> A >> B;
+
+    struct InEdge { int x, y, w, t; };
+    vector<InEdge> edges(m);
+    for (int i = 0; i < m; i++) cin >> edges[i].x >> edges[i].y >> edges[i].w >> edges[i].t;
+
+    // We'll keep nodes 1..n as-is in the reasoning, but implement 0-based in Dinic.
+    auto id = [&](int v){ return v - 1; };
+    int S = n;       // super source index (0-based): n
+    int T = n + 1;   // super sink  index (0-based): n+1
+    int N = n + 2;
+
+    const long long INF = (long long)4e18;
+
+    Dinic dinic(N);
+
+    // Add infinite edge B -> A to allow turning an A->B flow into a circulation for feasibility.
+    dinic.addEdge(id(B), id(A), INF);
+
+    vector<long long> bal(n, 0); // balances for lower bounds
+    struct Hist { int x, y, w; };
+    vector<Hist> hist;
+
+    // Regular edges become capacities directly.
+    // Historical edges contribute lower bound = w (upper bound is also w, handled via balances).
+    for (auto &e : edges) {
+        if (e.t == 0) {
+            dinic.addEdge(id(e.x), id(e.y), e.w);
+        } else {
+            hist.push_back({id(e.x), id(e.y), e.w});
+            bal[id(e.x)] -= e.w;
+            bal[id(e.y)] += e.w;
+        }
+    }
+
+    // Add super source/sink edges based on balances.
+    long long need = 0;
+    for (int i = 0; i < n; i++) {
+        if (bal[i] > 0) {
+            dinic.addEdge(S, i, bal[i]);
+            need += bal[i];
+        } else if (bal[i] < 0) {
+            dinic.addEdge(i, T, -bal[i]);
+        }
+    }
+
+    // Feasibility check for demands
+    if (dinic.maxflow(S, T) != need) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // Maximize additional A -> B flow
+    dinic.maxflow(id(A), id(B));
+
+    /*
+      Build a multigraph "cnt[u][v] = multiplicity" describing how many times to traverse each edge.
+
+      - All positive flows on real edges represent traversals.
+      - Additionally, historical edges must be traversed exactly w times, so we add them explicitly.
+        (This is equivalent to "forcing" flow w on those edges.)
+    */
+    vector<map<int,int>> cnt(n);
+
+    // Collect positive-flow edges (real->real only).
+    for (int u = 0; u < n; u++) {
+        for (auto &ed : dinic.G[u]) {
+            if (0 <= ed.to && ed.to < n && ed.flow > 0) {
+                cnt[u][ed.to] += (int)ed.flow;
+            }
+        }
+    }
+    // Add historical mandatory traversals.
+    for (auto &h : hist) {
+        if (h.w > 0) cnt[h.x][h.y] += h.w;
+    }
+
+    // Number of days = total outgoing multiplicity from A.
+    long long p = 0;
+    for (auto &kv : cnt[id(A)]) p += kv.second;
+    if (p == 0) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // Extract p unit A->B paths by BFS, decrementing counts.
+    vector<vector<int>> paths;
+    paths.reserve((size_t)p);
+
+    for (long long iter = 0; iter < p; iter++) {
+        vector<int> parent(n, -1);
+        queue<int> q;
+        int s = id(A), t = id(B);
+
+        parent[s] = s;
+        q.push(s);
+
+        while (!q.empty() && parent[t] == -1) {
+            int u = q.front(); q.pop();
+            for (auto &kv : cnt[u]) {
+                int v = kv.first;
+                int c = kv.second;
+                if (c > 0 && parent[v] == -1) {
+                    parent[v] = u;
+                    q.push(v);
+                }
+            }
+        }
+
+        // There must be a path because total outgoing from A is p and we extracted iter < p already.
+        // Reconstruct and consume.
+        vector<int> path;
+        for (int v = t; v != s; v = parent[v]) {
+            path.push_back(v);
+            cnt[parent[v]][v]--; // consume one usage
+        }
+        path.push_back(s);
+        reverse(path.begin(), path.end());
+        paths.push_back(path);
+    }
+
+    /*
+      Remaining edges in cnt form directed cycles.
+      Extract each cycle via Hierholzer-style DFS and splice it into some A->B path.
+    */
+    function<void(int, vector<int>&)> euler = [&](int v, vector<int> &out) {
+        for (auto &kv : cnt[v]) {
+            int to = kv.first;
+            int &c = kv.second;
+            while (c > 0) {
+                c--;
+                euler(to, out);
+            }
+        }
+        out.push_back(v);
+    };
+
+    for (int i = 0; i < n; i++) {
+        for (auto &kv : cnt[i]) {
+            int j = kv.first;
+            int &c = kv.second;
+            while (c > 0) {
+                vector<int> cyc;
+                euler(i, cyc);
+                reverse(cyc.begin(), cyc.end());
+
+                // cyc is a closed walk, often cyc[0]==cyc.back(). Remove last duplicate to make insertion nicer.
+                if (!cyc.empty() && cyc.front() == cyc.back()) cyc.pop_back();
+
+                // Put cycle vertices into a set for quick intersection
+                unordered_set<int> inC;
+                inC.reserve(cyc.size() * 2 + 1);
+                for (int v : cyc) inC.insert(v);
+
+                bool inserted = false;
+                for (auto &path : paths) {
+                    for (int pos = 0; pos < (int)path.size(); pos++) {
+                        if (inC.count(path[pos])) {
+                            // rotate cycle so it starts at path[pos]
+                            int start = path[pos];
+                            int idx = -1;
+                            for (int k = 0; k < (int)cyc.size(); k++) {
+                                if (cyc[k] == start) { idx = k; break; }
+                            }
+                            rotate(cyc.begin(), cyc.begin() + idx, cyc.end());
+                            // splice
+                            path.insert(path.begin() + pos, cyc.begin(), cyc.end());
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (inserted) break;
+                }
+
+                // By problem conditions + flow construction, this should always succeed.
+                assert(inserted);
+            }
+        }
+    }
+
+    // Output: convert back to 1-based.
+    cout << p << "\n";
+    for (auto &path : paths) {
+        for (int k = 0; k < (int)path.size(); k++) {
+            if (k) cout << ' ';
+            cout << (path[k] + 1);
+        }
+        cout << "\n";
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from collections import deque, defaultdict
+
+# ---------------- Dinic Max Flow ----------------
+
+class Dinic:
+    class Edge:
+        __slots__ = ("to", "rev", "cap", "flow")
+        def __init__(self, to, rev, cap):
+            self.to = to
+            self.rev = rev
+            self.cap = cap
+            self.flow = 0
+
+    def __init__(self, n):
+        self.n = n
+        self.g = [[] for _ in range(n)]
+        self.level = [-1] * n
+        self.it = [0] * n
+
+    def add_edge(self, fr, to, cap):
+        fwd = Dinic.Edge(to, len(self.g[to]), cap)
+        rev = Dinic.Edge(fr, len(self.g[fr]), 0)
+        self.g[fr].append(fwd)
+        self.g[to].append(rev)
+
+    def bfs(self, s, t):
+        self.level = [-1] * self.n
+        q = deque([s])
+        self.level[s] = 0
+        while q:
+            v = q.popleft()
+            for e in self.g[v]:
+                if self.level[e.to] == -1 and e.flow < e.cap:
+                    self.level[e.to] = self.level[v] + 1
+                    q.append(e.to)
+        return self.level[t] != -1
+
+    def dfs(self, v, t, pushed):
+        if pushed == 0:
+            return 0
+        if v == t:
+            return pushed
+        while self.it[v] < len(self.g[v]):
+            e = self.g[v][self.it[v]]
+            if self.level[e.to] == self.level[v] + 1 and e.flow < e.cap:
+                tr = self.dfs(e.to, t, min(pushed, e.cap - e.flow))
+                if tr:
+                    e.flow += tr
+                    self.g[e.to][e.rev].flow -= tr
+                    return tr
+            self.it[v] += 1
+        return 0
+
+    def max_flow(self, s, t):
+        flow = 0
+        INF = 10**18
+        while self.bfs(s, t):
+            self.it = [0] * self.n
+            while True:
+                pushed = self.dfs(s, t, INF)
+                if not pushed:
+                    break
+                flow += pushed
+        return flow
+
+# ---------------- Solve ----------------
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it)); m = int(next(it)); A = int(next(it)); B = int(next(it))
+    edges = []
+    for _ in range(m):
+        x = int(next(it)); y = int(next(it)); w = int(next(it)); t = int(next(it))
+        edges.append((x, y, w, t))
+
+    # 0-based nodes: 0..n-1
+    # super source S=n, super sink T=n+1
+    S, T = n, n + 1
+    N = n + 2
+    INF = 10**18
+
+    dinic = Dinic(N)
+
+    # B->A infinite edge for circulation feasibility trick
+    dinic.add_edge(B - 1, A - 1, INF)
+
+    bal = [0] * n
+    hist = []  # (x,y,w) in 0-based
+
+    # regular edges are just capacities; historical are lower=upper=w => only balances now
+    for x, y, w, t in edges:
+        x -= 1; y -= 1
+        if t == 0:
+            dinic.add_edge(x, y, w)
+        else:
+            hist.append((x, y, w))
+            bal[x] -= w
+            bal[y] += w
+
+    need = 0
+    for i in range(n):
+        if bal[i] > 0:
+            dinic.add_edge(S, i, bal[i])
+            need += bal[i]
+        elif bal[i] < 0:
+            dinic.add_edge(i, T, -bal[i])
+
+    # Feasibility for demands
+    if dinic.max_flow(S, T) != need:
+        print(0)
+        return
+
+    # Maximize additional A->B flow
+    dinic.max_flow(A - 1, B - 1)
+
+    # Build multiplicities cnt[u][v] from positive flows + mandatory historical traversals
+    cnt = [defaultdict(int) for _ in range(n)]
+
+    for u in range(n):
+        for e in dinic.g[u]:
+            if 0 <= e.to < n and e.flow > 0:
+                cnt[u][e.to] += e.flow
+
+    for x, y, w in hist:
+        if w:
+            cnt[x][y] += w
+
+    p = sum(cnt[A - 1].values())
+    if p == 0:
+        print(0)
+        return
+
+    # Extract p unit A->B paths
+    paths = []
+    for _ in range(p):
+        parent = [-1] * n
+        q = deque([A - 1])
+        parent[A - 1] = A - 1
+
+        while q and parent[B - 1] == -1:
+            u = q.popleft()
+            for v, c in cnt[u].items():
+                if c > 0 and parent[v] == -1:
+                    parent[v] = u
+                    q.append(v)
+
+        # reconstruct, consume 1 along edges
+        v = B - 1
+        path = [v]
+        while v != A - 1:
+            u = parent[v]
+            cnt[u][v] -= 1
+            v = u
+            path.append(v)
+        path.reverse()
+        paths.append(path)
+
+    # Remaining edges are cycles. Extract with Hierholzer DFS and splice.
+    sys.setrecursionlimit(1_000_000)
+
+    def euler(v, out):
+        # consume all outgoing edges (including multiplicities)
+        for to in list(cnt[v].keys()):
+            while cnt[v][to] > 0:
+                cnt[v][to] -= 1
+                euler(to, out)
+        out.append(v)
+
+    for i in range(n):
+        for j in list(cnt[i].keys()):
+            while cnt[i][j] > 0:
+                cyc = []
+                euler(i, cyc)
+                cyc.reverse()
+                if cyc and cyc[0] == cyc[-1]:
+                    cyc.pop()
+
+                inC = set(cyc)
+                inserted = False
+                for path in paths:
+                    for pos, node in enumerate(path):
+                        if node in inC:
+                            k = cyc.index(node)  # rotate to start at node
+                            cyc = cyc[k:] + cyc[:k]
+                            path[pos:pos] = cyc  # splice
+                            inserted = True
+                            break
+                    if inserted:
+                        break
+                if not inserted:
+                    # Should not happen given conditions and construction
+                    raise RuntimeError("Cannot splice cycle into any A->B path")
+
+    # Output
+    print(p)
+    for path in paths:
+        print(" ".join(str(v + 1) for v in path))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also provide a shorter “contest-style” implementation (fewer comments/structures) or explain why the “cycle splicing” is always possible under the problem’s reachability condition.

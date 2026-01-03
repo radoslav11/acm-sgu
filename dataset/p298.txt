@@ -1,0 +1,623 @@
+## 1) Concise abridged problem statement
+
+There are **N** daughters (1 = youngest, N = oldest) and **M** promises.  
+Each promise `(X, Y, C)` means:
+
+> dowry[X] is **at least C more** than dowry[Y]  
+> i.e. **A[X] ≥ A[Y] + C**
+
+We must assign integers `A[1..N]` such that:
+
+- All promises are satisfied.
+- `-10000 ≤ A[i] ≤ 10000` for every `i`.
+- The value **A[N] − A[1]** is **minimal** (it may be negative).
+
+If impossible, output `-1`. Otherwise output any valid `A[1..N]` minimizing `A[N] − A[1]`.
+
+Constraints: `2 ≤ N ≤ 10000`, `0 ≤ M ≤ 100000`, `0 ≤ C ≤ 1000`.
+
+---
+
+## 2) Detailed editorial
+
+### 2.1 Convert promises to graph constraints
+
+Promise `(X, Y, C)` is:
+
+`A[X] ≥ A[Y] + C`
+
+This is a “difference constraints” system. It’s convenient to view it as a directed edge:
+
+`Y -> X` with weight `C`
+
+meaning:
+
+`A[X] ≥ A[Y] + C`  
+i.e. along edge `u -> v (w)` we enforce `A[v] ≥ A[u] + w`.
+
+So we have a directed weighted graph with inequalities of type “≥”.
+
+---
+
+### 2.2 When is the system feasible? (cycles matter)
+
+If the graph is a DAG, we could assign minimal values by topological DP:
+- set sources to `-10000`
+- propagate constraints forward with `A[v] = max(A[v], A[u] + w)`.
+
+But with cycles:
+- In a directed cycle, if any edge has positive weight, constraints force a strict increase around the cycle, impossible.
+- Therefore **every edge inside a cycle must have weight 0**, and then all nodes in that cycle must share the same value.
+
+This is exactly captured by **Strongly Connected Components (SCCs)**:
+- Compress SCCs into a DAG (component graph).
+- Any original edge within the same SCC must have `C = 0`, otherwise impossible.
+
+So feasibility checking:
+1. Compute SCCs.
+2. If any edge `(u->v,w)` with `SCC[u]==SCC[v]` has `w>0` ⇒ impossible.
+3. On the component DAG, compute a value per component satisfying all edges.
+
+---
+
+### 2.3 Constructing a valid assignment within [-10000, 10000]
+
+Let each SCC be a node. For an edge between SCCs:
+
+`compU -> compV (w)` meaning `val[compV] ≥ val[compU] + w`.
+
+We need integer values `val[]` such that:
+- All inequalities hold.
+- When mapped back to vertices, all `A[i]=val[SCC[i]]` lie within `[-10000,10000]`.
+
+A common way is:
+- initialize all component values to `-10000` (as low as allowed)
+- do topological order and relax:
+
+`val[v] = max(val[v], val[u] + w)`
+
+This guarantees all constraints and tries to keep values small.
+
+**But** it may leave “slack” (unnecessarily low predecessors) and might not properly detect violations against the upper bound `10000` until late. The provided solution adds a **second pass** to “tighten upward as much as possible while keeping constraints satisfiable”:
+
+For each component `u`, constraints to its outgoing neighbors say:
+
+`val[u] ≤ val[v] - w` for all edges `u->v(w)`
+
+So the maximum allowed value for `u` is:
+
+`min_over_edges(u->v,w) (val[v] - w)`
+
+Processing in **reverse topological order**, we can raise `val[u]` to that minimum bound (if it exists). This reduces slack and is useful for the optimization goal later.
+
+Finally:
+- set `A[i] = val[SCC[i]]`
+- if any `A[i]` out of bounds ⇒ impossible.
+
+This `check()` routine runs in `O(N + M)`.
+
+---
+
+### 2.4 Optimizing: minimize A[N] − A[1]
+
+We want to minimize `A[N] - A[1]`. Equivalently, we want to **maximize** `A[1] - A[N]`.
+
+Let `K = A[1] - A[N]`.  
+Add a constraint:
+
+`A[1] ≥ A[N] + K`
+
+This is an edge `N -> 1` with weight `K`.
+
+For a fixed `K`, we can test feasibility via `check()`:
+- If feasible, we can try a larger `K` (makes `A[1]` even larger relative to `A[N]`, hence makes `A[N]-A[1]` smaller).
+- If infeasible, `K` is too large.
+
+So we **binary search** the maximum feasible `K`.
+
+Bounds:
+- Since all values are in [-10000,10000], the difference `A[1]-A[N]` lies in `[-20000, 20000]`.
+So binary search `K ∈ [-20000, 20000]`.
+
+Corner case: adding edge `N->1` may force 1 and N to become in the same SCC with nonzero weight (or create contradictions). The code handles this naturally: `check(extra_edge)` returns false if the added edge lands within an SCC (because then it would impose `0 ≥ K`-type constraints and may break feasibility). If *no* `K` works, it falls back to the base feasible assignment without the extra edge; that happens when 1 and N are already “inseparable” by SCC constraints, and the base solution already achieves the minimum.
+
+Complexity:
+- SCC + DAG DP is `O(N+M)`
+- Binary search over ~40001 values ⇒ `O((N+M) log 40000)` which fits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/scc.hpp>
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces after each element
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Kosaraju SCC implementation
+class StronglyConnectedComponents {
+  private:
+    vector<bool> visited; // visited marker for first DFS
+
+    // First pass DFS on original graph to compute finishing order
+    void dfs1(int u) {
+        visited[u] = true;
+        for(int v: adj[u]) {
+            if(!visited[v]) {
+                dfs1(v);
+            }
+        }
+        // push after exploring => finishing time order
+        top_sort.push_back(u);
+    }
+
+    // Second pass DFS on reversed graph to assign component ids
+    void dfs2(int u) {
+        for(int v: radj[u]) {
+            if(comp[v] == -1) {
+                comp[v] = comp[u]; // same component as u
+                dfs2(v);
+            }
+        }
+    }
+
+  public:
+    int n;                            // number of nodes
+    vector<vector<int>> adj, radj;    // graph and reversed graph
+    vector<int> comp;                 // comp[u] = component id of u
+    vector<int> comp_ids;             // list of component ids (0..k-1)
+    vector<int> top_sort;             // finishing order from first pass
+
+    StronglyConnectedComponents() {}
+    StronglyConnectedComponents(int _n) { init(_n); }
+
+    // Add directed edge u -> v
+    void add_edge(int u, int v) {
+        adj[u].push_back(v);
+        radj[v].push_back(u);
+    }
+
+    // Initialize for n nodes
+    void init(int _n) {
+        n = _n;
+        comp_ids.clear();
+        top_sort.clear();
+        adj.assign(n, {});
+        radj.assign(n, {});
+    }
+
+    // Run Kosaraju and fill comp[]
+    void find_components() {
+        comp.assign(n, -1);           // unassigned
+        visited.assign(n, false);     // unvisited
+
+        // First pass: DFS order
+        for(int i = 0; i < n; i++) {
+            if(!visited[i]) {
+                dfs1(i);
+            }
+        }
+
+        // Process in reverse finishing order
+        reverse(top_sort.begin(), top_sort.end());
+
+        // Second pass: assign components
+        for(int u: top_sort) {
+            if(comp[u] == -1) {
+                comp[u] = (int)comp_ids.size(); // new component id
+                comp_ids.push_back(comp[u]);
+                dfs2(u);
+            }
+        }
+    }
+};
+
+int n, m;
+// Each edge stored as (x, y, c) in original promise form:
+// A[x] >= A[y] + c
+vector<tuple<int, int, int>> edges;
+
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    for(int i = 0; i < m; i++) {
+        int x, y, c;
+        cin >> x >> y >> c;
+        x--;                 // convert to 0-based
+        y--;
+        edges[i] = {x, y, c};
+    }
+}
+
+// Check feasibility and produce one assignment, optionally with extra constraints.
+// Returns {ok, assignment}.
+pair<bool, vector<int>> check(vector<tuple<int, int, int>> extra_edges) {
+    StronglyConnectedComponents scc(n);
+
+    // Build constraint graph as (y -> x) because A[x] >= A[y] + c
+    for(auto& [x, y, c]: edges) {
+        scc.add_edge(y, x);
+    }
+    for(auto& [x, y, c]: extra_edges) {
+        scc.add_edge(y, x);
+    }
+
+    // Compress SCCs
+    scc.find_components();
+
+    // If an original edge is inside an SCC and has positive weight, impossible
+    for(auto& [x, y, c]: edges) {
+        if(scc.comp[x] == scc.comp[y] && c > 0) {
+            return {false, {}};
+        }
+    }
+    // If an extra edge is inside an SCC at all, it's considered invalid here
+    // (it would impose constraints inside a cycle; for nonzero it may break).
+    for(auto& [x, y, c]: extra_edges) {
+        if(scc.comp[x] == scc.comp[y]) {
+            return {false, {}};
+        }
+    }
+
+    int num_comps = (int)scc.comp_ids.size();
+
+    // Build component DAG with weighted edges:
+    // if we have y->x (c), then comp[y] -> comp[x] (c)
+    vector<vector<pair<int, int>>> comp_adj(num_comps);
+    vector<int> indegree(num_comps, 0);
+
+    for(auto& [x, y, c]: edges) {
+        int cx = scc.comp[x], cy = scc.comp[y];
+        if(cx != cy) {
+            // cy -> cx with weight c
+            comp_adj[cy].push_back({cx, c});
+            indegree[cx]++;
+        }
+    }
+    for(auto& [x, y, c]: extra_edges) {
+        int cx = scc.comp[x], cy = scc.comp[y];
+        if(cx != cy) {
+            comp_adj[cy].push_back({cx, c});
+            indegree[cx]++;
+        }
+    }
+
+    // Component values; start very low (like -10000), but code uses -10000 sentinel
+    vector<int> comp_val(num_comps, -10000);
+
+    // Kahn's algorithm for topological order + forward relaxation
+    vector<int> topo_order;
+    queue<int> q;
+
+    // Start with components with indegree 0
+    for(int i = 0; i < num_comps; i++) {
+        if(indegree[i] == 0) {
+            q.push(i);
+        }
+    }
+
+    // Process DAG
+    while(!q.empty()) {
+        int u = q.front();
+        q.pop();
+        topo_order.push_back(u);
+
+        // Relax outgoing constraints:
+        // val[v] >= val[u] + c
+        for(auto [v, c]: comp_adj[u]) {
+            comp_val[v] = max(comp_val[v], comp_val[u] + c);
+            indegree[v]--;
+            if(indegree[v] == 0) {
+                q.push(v);
+            }
+        }
+    }
+
+    // Second pass: traverse reverse topological order and tighten values upward.
+    // For each u, we can increase val[u] up to min(val[v] - c) over outgoing edges.
+    for(int i = num_comps - 1; i >= 0; i--) {
+        int u = topo_order[i], val = 10001; // sentinel meaning "no outgoing edges"
+        for(auto [v, c]: comp_adj[u]) {
+            val = min(val, comp_val[v] - c);
+        }
+        // If u has any outgoing edge, set it to the tightest possible value.
+        if(val < 10001) {
+            comp_val[u] = val;
+        }
+    }
+
+    // Expand component values back to vertex values
+    vector<int> ans(n);
+    for(int i = 0; i < n; i++) {
+        ans[i] = comp_val[scc.comp[i]];
+        // Must stay within allowed bounds
+        if(ans[i] < -10000 || ans[i] > 10000) {
+            return {false, {}};
+        }
+    }
+
+    return {true, ans};
+}
+
+void solve() {
+    // 1) Check base feasibility without any extra constraint.
+    auto [base_ok, base_ans] = check({});
+    if(!base_ok) {
+        cout << -1 << '\n';
+        return;
+    }
+
+    // 2) Binary search K in constraint: A[1] >= A[N] + K
+    // In 0-based indices that is: node 0 >= node (n-1) + K
+    // i.e. extra promise (0, n-1, K)
+    int low = -20000, high = 20000, mid;
+    vector<int> ans;
+
+    while(low <= high) {
+        mid = (low + high) / 2;
+
+        // Check feasibility with the extra constraint
+        auto [ok, res] = check({{0, n - 1, mid}});
+
+        if(ok) {
+            // mid feasible => try larger K (better, since minimizes A[N]-A[1])
+            ans = res;
+            low = mid + 1;
+        } else {
+            // mid infeasible => decrease K
+            high = mid - 1;
+        }
+    }
+
+    // If never feasible with extra edge, use base solution
+    if(ans.empty()) {
+        ans = base_ans;
+    }
+
+    // Print solution
+    cout << ans << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+from collections import deque
+
+# We'll implement:
+# - SCC via Kosaraju
+# - check(extra_edges): feasibility + construct assignment
+# - binary search on K for edge N -> 1 with weight K (i.e. A1 >= AN + K)
+
+def kosaraju_scc(n, adj, radj):
+    """Return comp array of size n with component ids [0..k-1]."""
+    sys.setrecursionlimit(1_000_000)
+
+    visited = [False] * n
+    order = []
+
+    def dfs1(u):
+        visited[u] = True
+        for v in adj[u]:
+            if not visited[v]:
+                dfs1(v)
+        order.append(u)
+
+    for i in range(n):
+        if not visited[i]:
+            dfs1(i)
+
+    comp = [-1] * n
+    cid = 0
+
+    def dfs2(u):
+        for v in radj[u]:
+            if comp[v] == -1:
+                comp[v] = cid
+                dfs2(v)
+
+    # reverse finishing order
+    for u in reversed(order):
+        if comp[u] == -1:
+            comp[u] = cid
+            dfs2(u)
+            cid += 1
+
+    return comp, cid  # cid = number of components
+
+
+def check(n, edges, extra_edges):
+    """
+    edges: list of (x, y, c) meaning A[x] >= A[y] + c
+    extra_edges: same format, additional constraints
+    Returns (ok, assignment list) where assignment is length n.
+    """
+
+    # Build graph for constraints: y -> x with weight c
+    # SCC needs unweighted adjacency, so store endpoints only for SCC.
+    adj = [[] for _ in range(n)]
+    radj = [[] for _ in range(n)]
+
+    def add_dir(u, v):
+        adj[u].append(v)
+        radj[v].append(u)
+
+    for x, y, c in edges:
+        add_dir(y, x)
+    for x, y, c in extra_edges:
+        add_dir(y, x)
+
+    # Compute SCCs
+    comp, k = kosaraju_scc(n, adj, radj)
+
+    # Any positive edge inside SCC => impossible
+    for x, y, c in edges:
+        if comp[x] == comp[y] and c > 0:
+            return False, []
+
+    # Extra edges inside SCC are rejected (matches C++ behavior)
+    for x, y, c in extra_edges:
+        if comp[x] == comp[y]:
+            return False, []
+
+    # Build component DAG with weights
+    comp_adj = [[] for _ in range(k)]  # comp_adj[u] = list of (v, w)
+    indeg = [0] * k
+
+    def add_comp_edge(cu, cv, w):
+        comp_adj[cu].append((cv, w))
+        indeg[cv] += 1
+
+    for x, y, c in edges:
+        cx, cy = comp[x], comp[y]
+        if cx != cy:
+            # cy -> cx, because y -> x
+            add_comp_edge(cy, cx, c)
+
+    for x, y, c in extra_edges:
+        cx, cy = comp[x], comp[y]
+        if cx != cy:
+            add_comp_edge(cy, cx, c)
+
+    # Forward topo DP: minimal feasible values starting from -10000
+    comp_val = [-10000] * k
+
+    q = deque([i for i in range(k) if indeg[i] == 0])
+    topo = []
+
+    indeg_work = indeg[:]  # copy because we'll mutate it
+    while q:
+        u = q.popleft()
+        topo.append(u)
+        for v, w in comp_adj[u]:
+            # enforce val[v] >= val[u] + w
+            nv = comp_val[u] + w
+            if nv > comp_val[v]:
+                comp_val[v] = nv
+            indeg_work[v] -= 1
+            if indeg_work[v] == 0:
+                q.append(v)
+
+    # Tighten pass (reverse topological): raise values to eliminate slack
+    for u in reversed(topo):
+        best = None
+        for v, w in comp_adj[u]:
+            # val[u] <= val[v] - w
+            cand = comp_val[v] - w
+            if best is None or cand < best:
+                best = cand
+        if best is not None:
+            comp_val[u] = best
+
+    # Expand back to vertices, check bounds
+    ans = [0] * n
+    for i in range(n):
+        val = comp_val[comp[i]]
+        if val < -10000 or val > 10000:
+            return False, []
+        ans[i] = val
+
+    return True, ans
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    edges = []
+    for _ in range(m):
+        x = int(next(it)) - 1
+        y = int(next(it)) - 1
+        c = int(next(it))
+        edges.append((x, y, c))
+
+    # Base check
+    ok, base_ans = check(n, edges, [])
+    if not ok:
+        sys.stdout.write("-1\n")
+        return
+
+    # Binary search K in [-20000, 20000] for constraint A[0] >= A[n-1] + K
+    lo, hi = -20000, 20000
+    best_ans = None
+
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        ok, res = check(n, edges, [(0, n - 1, mid)])
+        if ok:
+            best_ans = res
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    if best_ans is None:
+        best_ans = base_ans
+
+    sys.stdout.write(" ".join(map(str, best_ans)) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model each promise `(X,Y,C)` as edge `Y→X` with weight `C` meaning `A[X] ≥ A[Y] + C`.  
+Feasibility: compute SCCs; any edge with `C>0` inside an SCC makes it impossible (cycle would force strict increase). Compress SCCs into a DAG. Assign component values by topo DP starting from `-10000`: `val[v]=max(val[v], val[u]+w)`. Then tighten in reverse topological order: `val[u]=min_over(u→v,w)(val[v]-w)` to remove slack. Expand to all vertices and check bounds `[-10000,10000]`.
+
+Optimization: minimize `A[N]-A[1]` ⇔ maximize `K=A[1]-A[N]`. Add constraint `A[1] ≥ A[N] + K` (edge `N→1` weight `K`) and binary search `K` in `[-20000,20000]` using the feasibility check. Output the assignment for the maximum feasible `K`; if none works, output the base feasible assignment; if base infeasible, output `-1`.

@@ -1,0 +1,111 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, k;
+
+void read() { cin >> n >> k; }
+
+void solve() {
+    // Initially, it seems like the problem might be solvable by some pruned
+    // binary search, but it's not quite clear whether it would be fast enough.
+    // However, going for a brute force and looking at N = 3 is fairly useful.
+    // Particularly, there is a fairly simple pattern for K = 1 (which also
+    // a pears to be given in the sample tests) - we start with a coloring in
+    // the top left corner, and then consider column and row wise cyclic shifts
+    // of the N x N block.
+    //
+    //     *........
+    //     ...*.....
+    //     ......*..
+    //     .*.......
+    //     ....*....
+    //     .......*.
+    //     ..*......
+    //     .....*...
+    //     ........*
+    //
+    // If we are too look at the brute force, we can notice that there is also a
+    // similar pattern for K = 2: we will simply fill the first two cells in the
+    // first N x N square. Because we cyclic shift, every column and row will
+    // also have exactly K matches. Trivially, every N x N square will also have
+    // K matches. It might not be immediately clear, but this construction can
+    // be used for any 0 <= K <= N^2. Particularly, when we fill the first row
+    // of the N x N, or K >= N, we will have to start filling the second row.
+    // The first row can be thought of as "filling":
+    //
+    //     1) In terms of columns, each column will get N x floor(K / N)
+    //        contribution, floor(K / N) each from the N different large
+    //        squares.
+    //
+    //     2) In terms of rows, we will also get N x floor(K / N) contributions
+    //        of N each, coming from the floor(K / N) large squares.
+    //
+    // Then the rest K % N, can be reduced for the K < N case which is easy to
+    // see works.
+
+    vector<string> grid(n * n, string(n * n, '.'));
+
+    for(int c = 0; c < k; c++) {
+        grid[c / n][c % n] = '*';
+    }
+
+    for(int br = 0; br < n; br++) {
+        for(int bc = 0; bc < n; bc++) {
+            if(br == 0 && bc == 0) {
+                continue;
+            }
+            for(int i = 0; i < n; i++) {
+                for(int j = 0; j < n; j++) {
+                    grid[br * n + i][bc * n + j] =
+                        grid[(i + n - bc) % n][(j + n - br) % n];
+                }
+            }
+        }
+    }
+
+    for(int i = 0; i < n * n; i++) {
+        cout << grid[i] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}

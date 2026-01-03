@@ -1,0 +1,638 @@
+## 1) Concise, abridged problem statement
+
+A ramen shop has **N counters**; counter *c* has **C[c] seats in a line**. There are **M customer groups** arriving in increasing time order. Group *i* arrives at time **Ti**, has **Pi** people (must sit in **Pi consecutive seats within a single counter**), will wait up to **Wi** time units (inclusive) for seats, and then eats for **Ei** time units once seated. The shop closes at time **T**: groups can only start eating **strictly before T**, but if they start, they may finish after T.
+
+Groups form a **FIFO queue**: if earlier groups are waiting, a newly arrived group cannot be seated before them (even if seats are available), until earlier groups either get seated or give up.
+
+When a group is to be seated, it chooses among all possible contiguous empty blocks of length Pi using these tie-breakers:
+
+1. Maximize `min(SL, SR)`  
+2. Then maximize `max(SL, SR)`  
+3. Then smallest counter index  
+4. Then leftmost position  
+
+Here `SL`/`SR` are the numbers of consecutive empty seats directly to the left/right *after seating* within that counter; if there is no occupied seat on that side, it is treated as infinity.
+
+Satisfaction per customer in group *i*:
+- If the group leaves without eating: **-1**
+- Else: `(Wi - wait_time) / Wi` (in [0,1])
+
+Output the **average satisfaction over all customers** (weighted by group sizes).
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+- Constraints are small for the seating layout:  
+  `N ≤ 100`, each `Ci ≤ 100` ⇒ at most **10,000 seats total**.
+- But groups can be many: `M ≤ 10,000`.
+- We must simulate time with events (arrivals, departures, and also “deadline checks” due to FIFO).
+
+The tricky parts are:
+1. **FIFO waiting rule**: only the front of the waiting queue is considered for seating; others behind cannot skip ahead.
+2. **Seat choice rule**: choose the “most isolated” block by the `min/max(SL,SR)` criteria.
+
+Given small seat counts, the C++ solution uses a straightforward scan for each seating attempt rather than complex interval trees.
+
+---
+
+### Data structures in the solution
+
+- `cc[c][s]` (0/1): occupancy of seat `s` in counter `c`.
+- `waiting`: a FIFO queue of group indices that have arrived and are not yet seated/gone.
+- `ev`: a min-heap of events `(time, id)` where:
+  - `id >= 0 and id < m`: an **arrival** of group `id`
+  - `id < 0`: a **departure** event for group `(-id - 1)` (they finish eating and free seats)
+  - `id == m`: a **dummy event** at `Ti + Wi` (deadline time) used to “wake up” the simulator even if nothing else happens; it does not directly do anything, but ensures the loop revisits the queue at that time.
+
+Also stored:
+- `opts[i]`: where group `i` was seated (counter index and starting position), so we can remove them on departure.
+- `satisfaction[i]`: satisfaction value for group i (per customer).
+
+---
+
+### Event processing order
+
+The simulator repeatedly takes the earliest event time `cur_time` from `ev`. If `cur_time >= T`, stop (no one can start after closing).
+
+At each `cur_time`:
+1. Pop **all events with that same time**.
+2. Apply them:
+   - Departures first (in practice: the code checks `id < 0` and removes seats)
+   - Arrivals: push group into `waiting`
+   - Dummy deadline events: ignored besides being popped
+3. After all departures/arrivals at this time, try to seat groups from the **front** of `waiting`:
+   - Let `g = waiting.front()`.
+   - If `cur_time <= Ti + Wi`, attempt to seat them now.
+     - If can seat:
+       - schedule departure at `cur_time + Ei`
+       - compute satisfaction: `(Ti + Wi - cur_time) / Wi`
+       - pop from waiting and continue with next front
+     - If cannot seat: stop trying now (because FIFO blocks later groups).
+   - If `cur_time >= Ti + Wi`, the group’s waiting time expired; they leave with satisfaction -1, pop and continue.
+
+The dummy event at `Ti+Wi` ensures that even if nothing changes (no arrivals/departures), the simulator will still wake up exactly when a waiting group expires and can be popped.
+
+---
+
+### How seat selection is computed (`can_seat(g)`)
+
+For a group `g` of size `P`:
+
+For each counter `c`:
+- For each possible block start position `i` such that `i+P <= C[c]`:
+  - Check whether seats `[i, i+P-1]` are all empty.
+  - If yes, compute:
+    - `left_span`: distance (in empty seats) from `i-1` going left until the nearest occupied seat; if none exists, **INF**.
+    - `right_span`: distance from `i+P` going right until the nearest occupied seat; if none exists, **INF**.
+  - Define:
+    - `min_dist = min(left_span, right_span)`
+    - `max_dist = max(left_span, right_span)`
+  - Choose the best option by:
+    1) larger `min_dist`
+    2) larger `max_dist`
+    3) smaller counter index
+    4) smaller position
+
+Implementation detail: the C++ code maintains a sliding window sum to test emptiness quickly, and tracks nearest occupied on both sides as it moves the window.
+
+Once best option found:
+- Mark those seats occupied in `cc`.
+- Store option in `opts[g]`, set `seated[g]=true`.
+
+Complexity:
+- Worst-case per seating attempt: `O(total seats)` ≈ `O(10,000)` which is fine here.
+- Each group is seated at most once; plus they may be checked a few times when they are at queue front.
+- With small constants and tight time limit, the naive approach still passes given constraints (as intended by the author comment).
+
+---
+
+### Final answer computation
+
+Total satisfaction over customers:
+\[
+\frac{\sum_i satisfaction[i] \cdot P_i}{\sum_i P_i}
+\]
+Groups that never eat keep satisfaction `-1`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (not required for solution, just utility).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector: reads exactly a.size() items into the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Print a vector (space separated).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// A large integer used as "infinity" for spans when no neighbor exists.
+const int inf = (int)2e9 + 42;
+
+// Input variables:
+// n = number of counters
+// m = number of groups
+// t = closing time
+int n, m, t;
+
+// Per-counter capacity.
+vector<int> cap;
+
+// Per-group parameters.
+vector<int> start, group_size, deadline, eat_time;
+
+// Read all input.
+void read() {
+    cin >> n >> m >> t;
+
+    // Read capacities C1..Cn
+    cap.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> cap[i];
+    }
+
+    // Read group data (Ti, Pi, Wi, Ei) for i=0..m-1
+    start.resize(m);
+    group_size.resize(m);
+    deadline.resize(m);
+    eat_time.resize(m);
+    for(int i = 0; i < m; i++) {
+        cin >> start[i] >> group_size[i] >> deadline[i] >> eat_time[i];
+    }
+}
+
+// cc[c][s] = 1 if seat s in counter c is occupied, else 0.
+vector<vector<int>> cc;
+
+// Satisfaction per group (per customer).
+vector<double> satisfaction;
+
+// Whether a group got seated (mostly bookkeeping).
+vector<bool> seated;
+
+// A seating option for a group:
+struct Option {
+    int min_dist; // min(SL, SR) to maximize first
+    int max_dist; // max(SL, SR) to maximize second
+    int idx;      // counter index
+    int pos;      // starting seat position within counter
+};
+
+// Stores chosen option for each group (needed for removing later).
+vector<Option> opts;
+
+// Event priority queue: (time, id), ordered by smallest time.
+// We use greater<> to make it a min-heap.
+priority_queue<
+    pair<int64_t, int>, vector<pair<int64_t, int>>, greater<pair<int64_t, int>>>
+    ev;
+
+// FIFO queue of waiting groups (indices).
+queue<int> waiting;
+
+// Comparator implementing the problem's preference ordering.
+// Returns true if a is better than b.
+bool is_better(const Option& a, const Option& b) {
+    // Prefer larger min_dist
+    if(a.min_dist != b.min_dist) {
+        return a.min_dist > b.min_dist;
+    }
+    // Then prefer larger max_dist
+    if(a.max_dist != b.max_dist) {
+        return a.max_dist > b.max_dist;
+    }
+    // Then smaller counter index
+    if(a.idx != b.idx) {
+        return a.idx < b.idx;
+    }
+    // Then leftmost position
+    return a.pos < b.pos;
+}
+
+// Try to seat group g at current time, following all seat preference rules.
+// If successful, occupy seats and store the chosen option in opts[g].
+bool can_seat(int g) {
+    bool found = false;
+    Option best_opt; // will hold best option found so far
+
+    // Try every counter independently (group cannot span counters).
+    for(int c = 0; c < n; c++) {
+        int sum = 0;         // number of occupied seats in current sliding window
+        int last_left, last_right; // nearest occupied seat info around the window
+
+        // Try all starting positions i for a block of length group_size[g].
+        for(int i = 0; i + group_size[g] <= cap[c]; i++) {
+
+            // Maintain sliding window occupancy sum over seats [i, i+P-1].
+            if(i == 0) {
+                // Initialize sum for the first window.
+                for(int j = 0; j < group_size[g]; j++) {
+                    sum += cc[c][j];
+                }
+                // last_left: index of nearest occupied seat to the left of window.
+                // For i==0 there is nothing to the left.
+                last_left = -1;
+
+                // last_right will be advanced to the first occupied seat on the right.
+                last_right = group_size[g];
+            } else {
+                // Slide window by 1:
+                // add new rightmost seat and remove old leftmost seat.
+                sum += cc[c][i + group_size[g] - 1] - cc[c][i - 1];
+
+                // If the seat that just moved out on the left was occupied,
+                // it becomes the nearest occupied seat on the left side.
+                if(cc[c][i - 1]) {
+                    last_left = i - 1;
+                }
+
+                // Ensure last_right is at least the end of window (monotone).
+                last_right = max(last_right, i + (int)group_size[g]);
+            }
+
+            // Move last_right rightwards until it hits an occupied seat or end.
+            while(last_right < cap[c] && !cc[c][last_right]) {
+                last_right++;
+            }
+
+            // If sum==0, window is fully empty: candidate placement.
+            if(!sum) {
+                // Compute SL (empty seats to left until occupied):
+                // If no occupied on the left, treat as infinity.
+                int left_span = (last_left == -1) ? inf : (i - 1 - last_left);
+
+                // Compute SR (empty seats to right until occupied):
+                // If no occupied on the right, treat as infinity.
+                int right_span = (last_right == cap[c])
+                                     ? inf
+                                     : (last_right - i - group_size[g]);
+
+                // Build the option according to preference keys.
+                Option cur_opt = {
+                    min(left_span, right_span), // min(SL,SR)
+                    max(left_span, right_span), // max(SL,SR)
+                    c,                          // counter
+                    i                           // start position
+                };
+
+                // Keep the best option across all counters/positions.
+                if(!found || is_better(cur_opt, best_opt)) {
+                    found = true;
+                    best_opt = cur_opt;
+                }
+            }
+        }
+    }
+
+    // If found a seat block, commit it: mark seats occupied.
+    if(found) {
+        opts[g] = best_opt;
+        seated[g] = true;
+        for(int i = 0; i < group_size[g]; i++) {
+            cc[best_opt.idx][best_opt.pos + i] = 1;
+        }
+    }
+
+    return found;
+}
+
+// Remove (free) seats occupied by group g when they finish eating.
+void remove_group(int g) {
+    Option& opt = opts[g];
+    for(int i = 0; i < group_size[g]; i++) {
+        cc[opt.idx][opt.pos + i] = 0;
+    }
+}
+
+void solve() {
+    // Seat occupancy arrays per counter: initially all empty.
+    cc.resize(n);
+    for(int i = 0; i < n; i++) {
+        cc[i].assign(cap[i], 0);
+    }
+
+    satisfaction.resize(m);
+    opts.resize(m);
+    seated.assign(m, false);
+
+    // Initialize satisfaction to -1 (meaning "never ate" unless updated).
+    // Also push events: arrivals at start[i], plus a dummy at start[i]+deadline[i].
+    for(int i = 0; i < m; i++) {
+        satisfaction[i] = -1;
+        ev.emplace(start[i], i);                  // arrival event for group i
+        ev.emplace(start[i] + deadline[i], m);    // dummy event at deadline time
+    }
+
+    // Process events in chronological order.
+    while(!ev.empty()) {
+        int64_t cur_time = ev.top().first;
+
+        // No new seating can happen at/after closing time T.
+        if(cur_time >= t) {
+            break;
+        }
+
+        // Apply all events occurring at cur_time.
+        while(!ev.empty() && ev.top().first == cur_time) {
+            int id = ev.top().second;
+            ev.pop();
+
+            if(id < 0) {
+                // Departure event: id encodes group index as -(g+1).
+                remove_group(-id - 1);
+            }
+            if(id >= 0 && id < m) {
+                // Arrival event: push group into FIFO waiting queue.
+                waiting.push(id);
+            }
+            // id == m is dummy; nothing to do.
+        }
+
+        // After processing all departures/arrivals at this time,
+        // repeatedly try to seat the front waiting group (FIFO rule).
+        while(!waiting.empty()) {
+            int g = waiting.front();
+
+            // If still within allowed waiting time (inclusive at the boundary),
+            // try to seat now.
+            if(cur_time <= start[g] + deadline[g]) {
+                if(can_seat(g)) {
+                    // Schedule departure (free seats) after eating time.
+                    ev.emplace(cur_time + eat_time[g], -(g + 1));
+
+                    // Satisfaction = (remaining patience) / Wi
+                    satisfaction[g] =
+                        (double)(start[g] + deadline[g] - cur_time) /
+                        deadline[g];
+
+                    // Remove group from waiting; proceed to next.
+                    waiting.pop();
+                    continue;
+                }
+            }
+
+            // If patience expired (or exactly at end but couldn't seat),
+            // group leaves now with satisfaction -1 (already default).
+            if(cur_time >= start[g] + deadline[g]) {
+                waiting.pop();
+                continue;
+            }
+
+            // Otherwise, cannot seat now and hasn't expired => stop.
+            // FIFO means later groups cannot be tried.
+            break;
+        }
+    }
+
+    // Compute average satisfaction weighted by customer counts.
+    int64_t tot_sz = 0;
+    double tot = 0.0;
+    for(int i = 0; i < m; i++) {
+        tot += satisfaction[i] * group_size[i];
+        tot_sz += group_size[i];
+    }
+
+    cout << fixed << setprecision(16) << tot / tot_sz << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import heapq
+from collections import deque
+
+INF = 2_000_000_042  # "infinity" span used in comparisons
+
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+
+    n = int(next(it))  # number of counters
+    m = int(next(it))  # number of groups
+    Tclose = int(next(it))  # closing time
+
+    cap = [int(next(it)) for _ in range(n)]  # seats per counter
+
+    start = [0] * m
+    group_size = [0] * m
+    deadline = [0] * m
+    eat_time = [0] * m
+    for i in range(m):
+        start[i] = int(next(it))
+        group_size[i] = int(next(it))
+        deadline[i] = int(next(it))
+        eat_time[i] = int(next(it))
+
+    # cc[c][s] = 1 if occupied, else 0
+    cc = [[0] * cap[c] for c in range(n)]
+
+    # satisfaction per group, default -1 (means "gave up")
+    satisfaction = [-1.0] * m
+
+    # opts[i] stores (counter_idx, pos, group_len) to remove later
+    # We'll also store spans if we want, but only counter and pos are necessary.
+    opts = [None] * m
+
+    # Event heap: (time, id)
+    # id meanings:
+    #   0..m-1 : arrival of group id
+    #   <0     : departure of group (-id-1)
+    #   == m   : dummy wake-up at start[i] + deadline[i]
+    ev = []
+    for i in range(m):
+        heapq.heappush(ev, (start[i], i))
+        heapq.heappush(ev, (start[i] + deadline[i], m))  # dummy
+
+    waiting = deque()
+
+    def better(a, b):
+        """Return True if option a is better than b.
+        option = (min_dist, max_dist, counter_idx, pos)
+        """
+        if a[0] != b[0]:
+            return a[0] > b[0]
+        if a[1] != b[1]:
+            return a[1] > b[1]
+        if a[2] != b[2]:
+            return a[2] < b[2]
+        return a[3] < b[3]
+
+    def can_seat(g):
+        """Try to seat group g now. If success, occupy seats and save opts[g]."""
+        P = group_size[g]
+        found = False
+        best = None  # (min_dist, max_dist, c, pos)
+
+        for c in range(n):
+            C = cap[c]
+            if P > C:
+                continue
+
+            # Sliding window sum over occupancy
+            window_sum = 0
+            last_left = -1
+            last_right = P  # will move to first occupied seat to the right
+
+            # init window [0, P-1]
+            for j in range(P):
+                window_sum += cc[c][j]
+
+            # For each possible start i
+            for i0 in range(0, C - P + 1):
+                if i0 > 0:
+                    # slide window by 1:
+                    window_sum += cc[c][i0 + P - 1] - cc[c][i0 - 1]
+
+                    # if seat leaving on the left was occupied, update last_left
+                    if cc[c][i0 - 1]:
+                        last_left = i0 - 1
+
+                    # last_right must be at least end of window
+                    if last_right < i0 + P:
+                        last_right = i0 + P
+
+                # move last_right to the next occupied seat or end
+                while last_right < C and cc[c][last_right] == 0:
+                    last_right += 1
+
+                # If window is empty, compute option score
+                if window_sum == 0:
+                    left_span = INF if last_left == -1 else (i0 - 1 - last_left)
+                    right_span = INF if last_right == C else (last_right - i0 - P)
+
+                    mn = left_span if left_span < right_span else right_span
+                    mx = right_span if left_span < right_span else left_span
+                    cur = (mn, mx, c, i0)
+
+                    if (not found) or better(cur, best):
+                        found = True
+                        best = cur
+
+        if not found:
+            return False
+
+        # Occupy seats according to best option
+        _, _, c, pos = best
+        for k in range(group_size[g]):
+            cc[c][pos + k] = 1
+
+        opts[g] = (c, pos, group_size[g])
+        return True
+
+    def remove_group(g):
+        """Free seats occupied by group g."""
+        c, pos, P = opts[g]
+        for k in range(P):
+            cc[c][pos + k] = 0
+
+    # Main simulation loop
+    while ev:
+        cur_time, eid = ev[0]
+
+        # cannot start seating at/after closing time
+        if cur_time >= Tclose:
+            break
+
+        # pop all events at cur_time
+        while ev and ev[0][0] == cur_time:
+            _, eid = heapq.heappop(ev)
+
+            if eid < 0:
+                g = -eid - 1
+                remove_group(g)
+            elif 0 <= eid < m:
+                waiting.append(eid)
+            # eid == m: dummy, do nothing
+
+        # after applying all changes at this time, try to seat from the front
+        while waiting:
+            g = waiting[0]
+            # If still within patience, try to seat now
+            if cur_time <= start[g] + deadline[g]:
+                if can_seat(g):
+                    # schedule departure
+                    heapq.heappush(ev, (cur_time + eat_time[g], -(g + 1)))
+
+                    # compute satisfaction (per customer)
+                    satisfaction[g] = (start[g] + deadline[g] - cur_time) / deadline[g]
+
+                    waiting.popleft()
+                    continue
+
+            # If patience expired, group leaves now
+            if cur_time >= start[g] + deadline[g]:
+                waiting.popleft()
+                continue
+
+            # Otherwise cannot seat now and still waiting => stop (FIFO blocks)
+            break
+
+    # Weighted average satisfaction
+    tot = 0.0
+    tot_sz = 0
+    for i in range(m):
+        tot += satisfaction[i] * group_size[i]
+        tot_sz += group_size[i]
+
+    ans = tot / tot_sz
+    # print with enough precision
+    sys.stdout.write(f"{ans:.16f}\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Simulate the shop with a min-heap of time events and a FIFO waiting queue. Push an arrival event at `Ti` for each group, and also a dummy event at `Ti+Wi` to ensure the simulation wakes up when a front group’s patience expires. When processing time `cur`, first apply all departures (free seats) and arrivals (enqueue). Then repeatedly process only the front waiting group: if `cur > Ti+Wi` it leaves; otherwise attempt to seat it. Seating is done by scanning all counters and all contiguous blocks of length `Pi`, selecting the block maximizing `min(SL,SR)`, then `max(SL,SR)`, then smallest counter, then leftmost. Mark seats occupied, schedule a departure at `cur+Ei`, and set satisfaction `(Ti+Wi-cur)/Wi`. At the end output the customer-weighted average satisfaction, with groups that never ate contributing `-1`.
