@@ -65,7 +65,7 @@ dataset/
 
 ## Citing This Work
 
-If you use this dataset please cite, maybe I will add an actual PDF later:
+If you use this dataset please cite:
 
 ```bibtex
 @misc{dimitrov2025sgu,
@@ -75,6 +75,9 @@ If you use this dataset please cite, maybe I will add an actual PDF later:
   url={https://radoslav11.com/sgu-dataset/sgu-editorial.pdf}
 }
 ```
+
+[![DOI](https://zenodo.org/badge/1017171163.svg)](https://doi.org/10.5281/zenodo.18146471)
+
 
 ## Acknowledgments
 
