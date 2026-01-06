@@ -1,0 +1,463 @@
+## 1) Abridged problem statement
+
+There are **n** chameleons on a circle of length **L**, each at distinct position \(p_i\), with color \(c_i\), moving at speed 1 in direction \(d_i \in \{-1, +1\}\) (clockwise = +1, counter-clockwise = −1).  
+
+Whenever two chameleons meet:
+- the one that was moving **counter-clockwise** takes the **color** of the clockwise one;
+- **both reverse directions**.
+
+It’s guaranteed that no meeting happens exactly at time **T**.  
+Output for each chameleon (in the **original input order**) its position in \([0, L)\), its color, and its direction at time **T**.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+#### A. “Bouncing” can be replaced by “passing through” + label swapping
+Classic trick: for identical particles that reverse upon collision, the **set of trajectories** equals the set of trajectories if they simply **pass through each other**, but their **identities swap** at collisions.
+
+Here identities matter (we must output each original chameleon), and **colors** change in a directed way. Still, this trick helps in two ways:
+
+1. **Positions at time T**:  
+   If chameleons pass through each other, each one follows a straight motion on the circle:
+   \[
+   x_i(T) = (p_i + d_i \cdot T) \bmod L
+   \]
+   In the real process (with bounces), the **multiset of positions** is the same; only which original chameleon ends up at which position differs by a **cyclic shift** because the circular order of bodies is preserved.
+
+2. **Order preservation**:  
+   On a line with bounces, particles never overtake; on a circle, the **cyclic order** remains unchanged.  
+   Therefore, if we sort chameleons by initial position, then at time \(T\), sorting by final position gives the same cyclic sequence, just rotated. We only need to find **the rotation amount (shift)**.
+
+#### B. Computing the cyclic shift via crossings of coordinate 0
+Consider the “unwrapped line” model: positions live on an infinite line, with circle copies every \(L\). Moving by \(+1\) means slope +1, moving by −1 means slope −1.
+
+A cyclic shift happens when, in the unwrapped view, a chameleon crosses the cut point at 0 (equivalently, crosses an integer multiple of \(L\)).
+
+- A clockwise chameleon (+1) starting at \(p\) reaches \(p+T\).  
+  The number of times it crosses a multiple of \(L\) is:
+  \[
+  \left\lfloor \frac{p+T}{L} \right\rfloor
+  \]
+  Each such crossing corresponds to a **+1** rotation (right shift).
+
+- A counter-clockwise chameleon (−1) starting at \(p\) reaches \(p-T\).  
+  Crossings of 0 depend on how far it must travel to go below 0:
+  - if \(p=0\): it immediately goes negative after any \(t>0\), so crossings count is \(\left\lceil \frac{T}{L} \right\rceil = \left\lfloor \frac{L+T-1}{L} \right\rfloor\)
+  - if \(p>0\): first needs \(p\) time to hit 0, then every \(L\). Count:
+    \[
+    \left\lceil \frac{T-(p)}{L} \right\rceil \text{ for } T>p
+    \]
+  The code uses an equivalent integer formula:
+  \[
+  \left\lfloor \frac{(L-p)+T-1}{L} \right\rfloor
+  \]
+  Each such crossing corresponds to a **−1** rotation (left shift).
+
+Summing contributions over all chameleons gives an integer `shift` (possibly huge). Reduce modulo \(n\).
+
+After that:
+- compute all “pass-through” final positions \(x_i(T)\)
+- sort by those positions to get “slots on circle”
+- rotate slots by `shift` to match real identities.
+
+This reconstructs **position and direction** assignment of the original ordered list.
+
+#### C. Computing colors at time T
+Color changes only happen when a **counter-clockwise** meets a **clockwise** chameleon: the CCW takes the CW’s color.
+
+Using the pass-through model:
+- a CW chameleon’s color never changes (because it never “receives” a color in the rule).
+- a CCW chameleon’s final color is the color of the **last CW chameleon it met before time T**, if any; otherwise it keeps its own.
+
+How to find that last meeting efficiently?
+
+For a given CCW chameleon:
+- its final position is \(x = (q - T) \bmod L\) where \(q\) is its start.
+- any CW chameleon with start \(p\) ends at \((p+T)\bmod L\).
+- The last CW it meets corresponds (in the unwrapped picture) to the CW line whose final position is the **first CW final position strictly greater than the CCW final position**, wrapping around the circle. (This matches the code’s `lower_bound(ccw_final_pos + 1)` and wrap to begin.)
+- Once that candidate CW is chosen, the first time they would meet (moving towards each other with relative speed 2) is:
+  \[
+  t_0 =
+  \begin{cases}
+  \frac{q-p}{2} & q \ge p \\
+  \frac{q+L-p}{2} & q < p
+  \end{cases}
+  \]
+  (integer division is valid because meeting times are half-integers when needed; problem guarantees no collision at exactly \(T\), and the code only checks `t0 > T` vs `<= T`).
+- If \(t_0 \le T\), then the CCW must have met that CW (or an equivalent clone in the unwrapped model), and its color becomes that CW’s initial color; else it remains its own.
+
+If there are **no clockwise chameleons at all**, no CCW can ever take a CW color, so all keep their own.
+
+Finally, after rotating slots by `shift`, we output per original input order.
+
+Complexities:
+- Sorting: \(O(n \log n)\)
+- For each CCW, one binary search among CWs: \(O(\log n)\)
+- Total: \(O(n \log n)\), fits easily.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair: "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector of size already set: reads all elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;
+int64_t L, T;
+vector<int64_t> p, c, d;
+
+// Read input as described in the statement
+void read() {
+    cin >> n >> L;
+    p.resize(n);
+    c.resize(n);
+    d.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> p[i] >> c[i] >> d[i];
+    }
+    cin >> T;
+}
+
+void solve() {
+    // Helper: modulo that always returns value in [0, m)
+    auto mod = [](int64_t x, int64_t m) { return ((x % m) + m) % m; };
+
+    // order = indices [0..n-1], sorted by initial position p
+    vector<int> order(n);
+    iota(order.begin(), order.end(), 0);
+    sort(order.begin(), order.end(), [](int i, int j) { return p[i] < p[j]; });
+
+    // Rebuild arrays in sorted-by-position order:
+    // sorted_p[i], sorted_c[i], sorted_d[i] correspond to i-th in cyclic order at time 0.
+    vector<int64_t> sorted_p(n), sorted_c(n), sorted_d(n);
+    for(int i = 0; i < n; i++) {
+        sorted_p[i] = p[order[i]];
+        sorted_c[i] = c[order[i]];
+        sorted_d[i] = d[order[i]];
+    }
+
+    // Collect info about clockwise-moving chameleons:
+    // store (final_position_under_pass-through, index_in_sorted_arrays)
+    vector<pair<int64_t, int>> cw_info;
+    for(int i = 0; i < n; i++) {
+        if(sorted_d[i] == 1) {
+            // final position on circle if it just moves clockwise T units
+            int64_t final_pos = mod(sorted_p[i] + T, L);
+            cw_info.push_back({final_pos, i});
+        }
+    }
+    // Sort CW final positions (needed for binary searches)
+    sort(cw_info.begin(), cw_info.end());
+
+    // Extract just CW final positions into a separate vector (not essential)
+    vector<int64_t> cw_final;
+    for(int i = 0; i < (int)cw_info.size(); i++) {
+        cw_final.push_back(cw_info[i].first);
+    }
+
+    // Compute the cyclic shift of identities:
+    // + for each CW: number of times it crosses multiples of L moving forward
+    // - for each CCW: number of times it crosses 0/multiples of L moving backward
+    int64_t shift = 0;
+    for(int i = 0; i < n; i++) {
+        if(sorted_d[i] == 1) {
+            // crossings count = floor((p+T)/L)
+            shift += (sorted_p[i] + T) / L;
+        } else {
+            // for CCW, count how many times it crosses 0 going backward;
+            // use a careful integer ceiling-like formula
+            if(sorted_p[i] == 0) {
+                // starting at 0: after any positive time it goes negative in unwrapped view
+                shift -= (L + T - 1) / L;
+            } else {
+                // starting at p>0: it hits 0 after p time, then every L
+                shift -= (L - sorted_p[i] + T - 1) / L;
+            }
+        }
+    }
+    // Reduce shift to [0, n)
+    shift = mod(shift, n);
+
+    // slot_pos/dir/color describe each "passing-through" particle i (still in sorted initial order)
+    vector<double> slot_pos(n);      // final position on circle
+    vector<int64_t> slot_dir(n);     // direction (same as initial in pass-through model)
+    vector<int64_t> slot_color(n);   // final color under the real rules, computed per trajectory
+
+    for(int i = 0; i < n; i++) {
+        // pass-through final position
+        slot_pos[i] = mod(sorted_p[i] + T * sorted_d[i], L);
+        // direction doesn't change in pass-through model
+        slot_dir[i] = sorted_d[i];
+
+        if(sorted_d[i] == 1) {
+            // CW never changes color (it is never the receiver in the rule)
+            slot_color[i] = sorted_c[i];
+        } else {
+            // CCW: it may adopt a CW color if it meets one by time T
+            if(cw_info.empty()) {
+                // if there are no CW at all, no CCW can ever change color
+                slot_color[i] = sorted_c[i];
+            } else {
+                // q = initial position of this CCW
+                int64_t q = sorted_p[i];
+                // ccw_final_pos = its final position on the circle
+                int64_t ccw_final_pos = slot_pos[i];
+
+                // Find the clockwise chameleon whose CW-final-position is the first > ccw_final_pos,
+                // wrapping around the circle if needed.
+                auto it = lower_bound(
+                    cw_info.begin(), cw_info.end(),
+                    make_pair(ccw_final_pos + 1, -1)
+                );
+                if(it == cw_info.end()) {
+                    it = cw_info.begin();
+                }
+
+                // p = initial position of that candidate CW chameleon (in sorted index space)
+                int64_t p = sorted_p[it->second];
+
+                // Compute earliest meeting time t0 between CCW at q and CW at p on a circle:
+                // distance along clockwise direction from p to q, then /2 (relative speed 2).
+                int64_t t0 = (q >= p) ? (q - p) / 2 : (q + L - p) / 2;
+
+                // If they wouldn't meet by time T, CCW keeps its own color,
+                // otherwise it adopts that CW's color (color of index it->second).
+                if(t0 > T) {
+                    slot_color[i] = sorted_c[i];
+                } else {
+                    slot_color[i] = sorted_c[it->second];
+                }
+            }
+        }
+    }
+
+    // Sort "slots" by final position on the circle.
+    // These are the physical positions at time T; identities will be assigned by rotation.
+    vector<int> slot_order(n);
+    iota(slot_order.begin(), slot_order.end(), 0);
+    sort(slot_order.begin(), slot_order.end(), [&](int i, int j) {
+        return slot_pos[i] < slot_pos[j];
+    });
+
+    // final_* represent the actual outputs in sorted-initial-order identity space,
+    // after applying the computed cyclic shift.
+    vector<double> final_pos(n);
+    vector<int64_t> final_color(n), final_dir(n);
+
+    for(int i = 0; i < n; i++) {
+        // Due to collisions, identity i ends up in slot (i+shift) in cyclic order
+        int slot = slot_order[mod(i + shift, n)];
+        final_pos[i] = slot_pos[slot];
+        final_dir[i] = slot_dir[slot];
+        final_color[i] = slot_color[slot];
+    }
+
+    // Build inverse permutation to map from original input order -> sorted-by-position index
+    vector<int> inv_order(n);
+    for(int i = 0; i < n; i++) {
+        inv_order[order[i]] = i;
+    }
+
+    // Output in original input order with 3 decimals (more precision is okay too)
+    cout << fixed << setprecision(3);
+    for(int i = 0; i < n; i++) {
+        int idx = inv_order[i]; // where this original chameleon sits in sorted-initial-order
+        cout << final_pos[idx] << " " << final_color[idx] << " "
+             << final_dir[idx] << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // number of test cases (problem has 1; kept as template)
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import bisect
+
+def mod(x: int, m: int) -> int:
+    """Mathematical modulo in [0, m)."""
+    return (x % m + m) % m
+
+def solve() -> None:
+    it = iter(sys.stdin.read().strip().split())
+    n = int(next(it))
+    L = int(next(it))
+
+    p = [0] * n
+    c = [0] * n
+    d = [0] * n
+    for i in range(n):
+        p[i] = int(next(it))
+        c[i] = int(next(it))
+        d[i] = int(next(it))
+
+    T = int(next(it))
+
+    # Sort chameleons by initial position; cyclic order is preserved forever.
+    order = list(range(n))
+    order.sort(key=lambda i: p[i])
+
+    sp = [p[i] for i in order]  # sorted positions
+    sc = [c[i] for i in order]  # sorted colors
+    sd = [d[i] for i in order]  # sorted directions
+
+    # Collect clockwise chameleons with their pass-through final positions.
+    # cw_info elements: (cw_final_pos, sorted_index)
+    cw_info = []
+    for i in range(n):
+        if sd[i] == 1:
+            cw_final_pos = mod(sp[i] + T, L)
+            cw_info.append((cw_final_pos, i))
+    cw_info.sort()
+
+    # For binary search, we search by final position; keep positions list.
+    cw_final_positions = [x for x, _ in cw_info]
+
+    # Compute cyclic shift caused by crossings of the cut point 0 in the unwrapped model.
+    shift = 0
+    for i in range(n):
+        if sd[i] == 1:
+            # number of wraps when moving forward
+            shift += (sp[i] + T) // L
+        else:
+            # number of wraps when moving backward; careful at p=0
+            if sp[i] == 0:
+                shift -= (L + T - 1) // L
+            else:
+                shift -= (L - sp[i] + T - 1) // L
+
+    shift %= n  # reduce to [0, n)
+
+    # slot_* are pass-through trajectories annotated with final color logic.
+    slot_pos = [0.0] * n
+    slot_dir = [0] * n
+    slot_color = [0] * n
+
+    for i in range(n):
+        # pass-through final position on circle
+        slot_pos[i] = float(mod(sp[i] + T * sd[i], L))
+        slot_dir[i] = sd[i]
+
+        if sd[i] == 1:
+            # CW never receives a color, so it keeps its own.
+            slot_color[i] = sc[i]
+        else:
+            # CCW: may receive color from the last CW it meets before time T.
+            if not cw_info:
+                slot_color[i] = sc[i]
+            else:
+                q = sp[i]
+                ccw_final = int(slot_pos[i])
+
+                # Find first CW final position strictly greater than ccw_final, wrap around.
+                # Equivalent to C++ lower_bound on pair(ccw_final+1, -1).
+                j = bisect.bisect_left(cw_final_positions, ccw_final + 1)
+                if j == len(cw_info):
+                    j = 0
+                _, cw_idx = cw_info[j]     # sorted index of that CW
+                p0 = sp[cw_idx]            # initial position of that CW
+
+                # Earliest meeting time along the circle, then /2 due to relative speed 2.
+                if q >= p0:
+                    t0 = (q - p0) // 2
+                else:
+                    t0 = (q + L - p0) // 2
+
+                # If they meet by time T, CCW takes CW's color.
+                if t0 <= T:
+                    slot_color[i] = sc[cw_idx]
+                else:
+                    slot_color[i] = sc[i]
+
+    # Sort indices of slots by their final positions (physical positions at time T).
+    slot_order = list(range(n))
+    slot_order.sort(key=lambda i: slot_pos[i])
+
+    # Apply cyclic shift to match real identities (bouncing) with pass-through slots.
+    final_pos = [0.0] * n
+    final_dir = [0] * n
+    final_color = [0] * n
+
+    for i in range(n):
+        slot = slot_order[(i + shift) % n]
+        final_pos[i] = slot_pos[slot]
+        final_dir[i] = slot_dir[slot]
+        final_color[i] = slot_color[slot]
+
+    # Map back to original input order.
+    inv_order = [0] * n
+    for sorted_i, orig_i in enumerate(order):
+        inv_order[orig_i] = sorted_i
+
+    out_lines = []
+    for orig_i in range(n):
+        idx = inv_order[orig_i]
+        out_lines.append(f"{final_pos[idx]:.3f} {final_color[idx]} {final_dir[idx]}")
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Sort chameleons by initial position; cyclic order never changes.  
+- Use pass-through model: each has final position \((p_i + d_i T) \bmod L\). Sorting these positions gives the physical “slots” at time T.
+- Real process differs only by a **rotation** of identities. Compute rotation `shift` by counting how many times each chameleon crosses the cut point 0 in the unwrapped line:
+  - if \(d=+1\): add \(\lfloor (p+T)/L \rfloor\)
+  - if \(d=-1\): subtract \(\left\lfloor (L-p+T-1)/L \right\rfloor\) (special-case \(p=0\) as in code)
+  - `shift %= n`
+- Colors: CW never changes color. Each CCW takes the color of the last CW it meets; find candidate CW by taking the first CW whose CW-final-position is \(>\) CCW-final-position (wrap around). Check if their first meeting time \(t_0 = \text{cw->ccw clockwise distance}/2\) is \(\le T\); if yes, adopt that CW’s color else keep own.
+- Assign outputs by rotating slot list by `shift`, then map back to original input order.

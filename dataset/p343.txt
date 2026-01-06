@@ -1,0 +1,327 @@
+## 1) Concise, abridged problem statement
+
+You are given a portfolio of **N assets** (1 ≤ N ≤ 10) with known **quantities** and **historical prices** for **T+1 days** (1 ≤ T ≤ 10⁴): day 0 is today, days 1..T are previous days.  
+
+For each asset *i* and day *t (1..T)*, define the (simple) return:
+\[
+r_t(i) = \frac{price_{t-1}(i) - price_t(i)}{price_t(i)}
+\]
+Compute:
+- Today’s asset values \(V_i = qty_i \cdot price_0(i)\)
+- Portfolio value \(V_P = \sum_i V_i\)
+- Weights \(w_i = V_i / V_P\)
+- Mean return per asset \(m_i\) as the average of \(r_t(i)\) over t=1..T
+- Portfolio mean \(m_P = \sum_i w_i m_i\)
+- Portfolio standard deviation \(s_P\) using the variance-covariance (VCV) model
+- 95% VaR:
+\[
+VaR = -V_P \cdot (m_P - 1.644854 \cdot s_P)
+\]
+
+Output VaR rounded/printed to 2 decimals.
+
+---
+
+## 2) Detailed editorial (how to solve efficiently)
+
+### Key idea
+The naive way is:
+1. Compute all asset returns \(r_t(i)\)
+2. Compute covariance matrix \(S\) (N×N):
+\[
+S_{ij}=\frac{1}{T}\sum_{t=1}^{T} (r_t(i)-m_i)(r_t(j)-m_j)
+\]
+3. Compute portfolio variance \(s_P^2 = W^T S W\)
+
+But building \(S\) costs **O(T·N²)** (up to 10⁴·100 = 10⁶ ops, which is okay), yet the time limit is tiny (0.25s) and constant factors matter—especially with slow I/O and doubles.
+
+### Optimization: compute portfolio variance directly in O(T·N)
+We want:
+\[
+s_P^2 = W^T S W
+\]
+Expand using the definition of covariance:
+\[
+\begin{aligned}
+W^T S W
+&= \sum_{i,j} w_i S_{ij} w_j \\
+&= \sum_{i,j} w_i w_j \cdot \frac{1}{T}\sum_{t=1}^{T}(r_t(i)-m_i)(r_t(j)-m_j) \\
+&= \frac{1}{T}\sum_{t=1}^{T}\sum_{i,j}\big(w_i(r_t(i)-m_i)\big)\big(w_j(r_t(j)-m_j)\big) \\
+&= \frac{1}{T}\sum_{t=1}^{T}\left(\sum_i w_i(r_t(i)-m_i)\right)^2
+\end{aligned}
+\]
+
+Define the **demeaned portfolio return** for day t:
+\[
+d_t = \sum_i w_i(r_t(i)-m_i)
+\]
+Then:
+\[
+s_P^2 = \frac{1}{T}\sum_{t=1}^{T} d_t^2
+\]
+
+So we never need the NxN covariance matrix.
+
+### Steps
+1. **Read inputs**: T, N, quantities, then prices for t=0..T.
+2. **Compute today’s portfolio weights**:
+   - \(V_i = qty_i \cdot price_0(i)\)
+   - \(V_P = \sum V_i\)
+   - \(w_i = V_i / V_P\)
+3. **Compute mean return per asset**:
+   - For each t=1..T:
+     - compute \(r_t(i)\) using prices[t-1][i] and prices[t][i]
+     - accumulate sum[i] += r_t(i)
+   - \(m_i = sum[i]/T\)
+4. **Compute portfolio mean**:
+   - \(m_P = \sum_i w_i m_i\)
+5. **Compute portfolio variance directly**:
+   - var = (1/T) * Σ_t ( Σ_i w_i (r_t(i) - m_i) )²
+6. **Compute VaR**:
+   - \(s_P = \sqrt{var}\)
+   - \(VaR = -V_P (m_P - 1.644854 s_P)\)
+7. Print with 2 decimals.
+
+### Notes on performance
+- T can be 10⁴, N ≤ 10, so O(T·N) is very small.
+- The main bottleneck is **fast input parsing** of many doubles; the provided C++ uses a custom buffered reader.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Custom fast input:
+  - Reads from stdin using a large buffer.
+  - Much faster than iostreams for large inputs and tight time limits.
+*/
+char buf[1 << 20];   // 1 MB buffer
+int pos, len;        // current reading position and how many bytes are filled
+
+// Get next character from buffer (refill buffer if needed)
+inline char gc() {
+    if (pos == len) {                       // buffer empty
+        len = fread(buf, 1, sizeof(buf), stdin); // refill from stdin
+        pos = 0;
+    }
+    return pos < len ? buf[pos++] : EOF;    // return char or EOF if no more data
+}
+
+// Read a non-negative integer (skips all chars < '0', i.e. whitespace/newlines)
+inline int read_int() {
+    int x = 0;
+    char c;
+    while ((c = gc()) < '0')                // skip until digit
+        ;
+    do {
+        x = x * 10 + c - '0';               // parse digits
+    } while ((c = gc()) >= '0');
+    return x;
+}
+
+// Read a non-negative double with optional fractional part (e.g., 31.11)
+inline double read_double() {
+    int x = 0;
+    char c;
+    while ((c = gc()) < '0')                // skip until digit
+        ;
+    do {
+        x = x * 10 + c - '0';               // parse integer part
+    } while ((c = gc()) >= '0');
+
+    // If there is a decimal point, parse fractional part
+    if (c == '.') {
+        int frac = 0, div = 1;
+        while ((c = gc()) >= '0') {         // read digits after '.'
+            frac = frac * 10 + c - '0';
+            div *= 10;                      // track power of 10
+        }
+        return x + (double)frac / div;      // combine integer and fraction
+    }
+    return x;                               // no fractional part
+}
+
+int T, N;                       // T = number of return observations, N = number of assets
+vector<int> qty;                // quantities of each asset
+vector<vector<double>> price;   // price[t][i] for t=0..T, i=0..N-1
+
+// Read all input data
+void read() {
+    T = read_int();
+    N = read_int();
+
+    qty.resize(N);
+    for (int i = 0; i < N; i++) {
+        qty[i] = read_int();                 // quantity for asset i
+    }
+
+    // Read prices for days 0..T (total T+1 rows), N columns each
+    price.resize(T + 1, vector<double>(N));
+    for (int t = 0; t <= T; t++) {
+        for (int i = 0; i < N; i++) {
+            price[t][i] = read_double();     // price at day t for asset i
+        }
+    }
+}
+
+void solve() {
+    /*
+      We compute VaR using the VCV model at 95% confidence.
+
+      Rather than building covariance matrix S (O(T*N^2)),
+      we compute portfolio variance directly as:
+        var = (1/T) * sum_t ( sum_i w[i]*(r_t(i) - m[i]) )^2
+      which is O(T*N).
+    */
+
+    // Step 1: compute portfolio value VP and weights w[i]
+    double VP = 0;                 // portfolio value today
+    vector<double> w(N);           // weights
+
+    for (int i = 0; i < N; i++) {
+        w[i] = qty[i] * price[0][i];  // V_i = quantity * today's price
+        VP += w[i];                   // sum to get V_P
+    }
+    for (int i = 0; i < N; i++) {
+        w[i] /= VP;                   // w_i = V_i / V_P
+    }
+
+    // Step 2: compute mean return m[i] for each asset
+    vector<double> sum(N);            // sum of returns over t=1..T for each asset
+
+    for (int t = 1; t <= T; t++) {
+        for (int i = 0; i < N; i++) {
+            // return definition per statement:
+            // r_t(i) = (price_{t-1}(i) - price_t(i)) / price_t(i)
+            sum[i] += (price[t - 1][i] - price[t][i]) / price[t][i];
+        }
+    }
+
+    vector<double> m(N);              // mean returns per asset
+    double mP = 0;                    // mean portfolio return
+    for (int i = 0; i < N; i++) {
+        m[i] = sum[i] / T;            // average return for asset i
+        mP += w[i] * m[i];            // m_P = sum_i w_i m_i
+    }
+
+    // Step 3: compute portfolio variance directly from demeaned portfolio returns
+    double var = 0;
+    for (int t = 1; t <= T; t++) {
+        double dot = 0;               // dot = sum_i w_i * (r_t(i) - m_i)
+        for (int i = 0; i < N; i++) {
+            double r = (price[t - 1][i] - price[t][i]) / price[t][i] - m[i];
+            dot += w[i] * r;
+        }
+        var += dot * dot;             // accumulate squared demeaned portfolio return
+    }
+    var /= T;                         // average => variance
+
+    // Step 4: compute VaR at 95% confidence
+    double sP = sqrt(var);                            // portfolio std dev
+    double VaR = -VP * (mP - 1.644854 * sP);          // 95% VaR formula
+
+    // Print with 2 digits after decimal point
+    printf("%.2f\n", VaR);
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;                 // number of test cases (fixed to 1 here)
+    // cin >> T;               // (not used)
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+import math
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    # Read T (number of returns) and N (number of assets)
+    T = int(next(it))
+    N = int(next(it))
+
+    # Quantities of each asset
+    qty = [int(next(it)) for _ in range(N)]
+
+    # Prices for days 0..T (T+1 rows), N columns each
+    # price[t][i] is price of asset i at day t
+    price = [[0.0] * N for _ in range(T + 1)]
+    for t in range(T + 1):
+        for i in range(N):
+            price[t][i] = float(next(it))
+
+    # ----- Step 1: compute portfolio value VP and weights w -----
+    # V_i = qty_i * price_0(i), VP = sum V_i, w_i = V_i / VP
+    values = [qty[i] * price[0][i] for i in range(N)]
+    VP = sum(values)
+    w = [v / VP for v in values]
+
+    # ----- Step 2: compute mean return per asset m[i] -----
+    # r_t(i) = (price_{t-1}(i) - price_t(i)) / price_t(i)
+    sums = [0.0] * N
+    for t in range(1, T + 1):
+        prev_row = price[t - 1]
+        cur_row = price[t]
+        for i in range(N):
+            sums[i] += (prev_row[i] - cur_row[i]) / cur_row[i]
+
+    m = [s / T for s in sums]                  # mean return per asset
+    mP = sum(w[i] * m[i] for i in range(N))    # mean return of portfolio
+
+    # ----- Step 3: compute portfolio variance directly in O(T*N) -----
+    # var = (1/T) * sum_t ( sum_i w_i * (r_t(i) - m_i) )^2
+    var = 0.0
+    for t in range(1, T + 1):
+        prev_row = price[t - 1]
+        cur_row = price[t]
+
+        demeaned_portfolio_return = 0.0
+        for i in range(N):
+            r = (prev_row[i] - cur_row[i]) / cur_row[i]  # r_t(i)
+            demeaned_portfolio_return += w[i] * (r - m[i])
+
+        var += demeaned_portfolio_return * demeaned_portfolio_return
+
+    var /= T
+    sP = math.sqrt(var)
+
+    # ----- Step 4: compute VaR (95% z = 1.644854) -----
+    VaR = -VP * (mP - 1.644854 * sP)
+
+    # Print with 2 decimals
+    sys.stdout.write(f"{VaR:.2f}\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Compute today’s portfolio value \(V_P=\sum qty_i\cdot price_0(i)\) and weights \(w_i=V_i/V_P\).
+- For each day \(t=1..T\), compute asset returns \(r_t(i)=\frac{price_{t-1}(i)-price_t(i)}{price_t(i)}\).
+- Compute mean returns \(m_i=\frac{1}{T}\sum_t r_t(i)\) and portfolio mean \(m_P=\sum_i w_i m_i\).
+- Avoid covariance matrix: portfolio variance equals variance of the weighted demeaned return:
+  \[
+  s_P^2=\frac{1}{T}\sum_{t=1}^{T}\left(\sum_i w_i(r_t(i)-m_i)\right)^2
+  \]
+- Then \(VaR=-V_P(m_P-1.644854\,s_P)\). Output with 2 decimals.

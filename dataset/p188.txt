@@ -1,0 +1,339 @@
+## 1) Abridged problem statement
+
+There are **N (≤ 20)** soldiers on a **circular fence of length 1000**. Soldier *i* starts at integer position **Li** (0…999, all distinct) measured clockwise from a checkpoint, and moves at constant integer speed **Vi** (−100…100, Vi ≠ 0). Positive speed means clockwise; negative means counter-clockwise.
+
+During the next **T (≤ 50)** minutes (from time 0 inclusive to time T inclusive), whenever **two soldiers are at the same point at the same time and their velocities are opposite in direction**, they “meet” and **each asks the other a password**. If multiple soldiers meet at the same time/location, every pair counts.
+
+Output **Bi** = how many times soldier *i* asks a password during the period.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observation: unwrap the circle into an infinite line
+On a circle, positions are taken modulo 1000. A standard trick is to “unwrap” the circle: represent each soldier’s motion on an infinite line, but allow the starting position to be shifted by multiples of 1000.
+
+For soldier i:
+- On the line, one copy has position  
+  \[
+  x_i(t)=L_i+V_i t
+  \]
+- But on the circle, positions differing by 1000 are identical. So we must consider all “copies”:
+  \[
+  x_i^{(c)}(t)=L_i+1000c+V_i t \quad \text{for any integer } c
+  \]
+
+Two soldiers i and j meet on the circle at time t iff there exists an integer c such that:
+\[
+L_i + V_i t = L_j + 1000c + V_j t
+\]
+Rearrange:
+\[
+(V_i - V_j)t = (L_j - L_i) + 1000c
+\]
+
+### Only opposite directions can meet
+The problem defines “meet” as same point **with opposite velocities**, i.e. one clockwise and one counter-clockwise. That means:
+- if Vi and Vj have the same sign → **0 meetings**.
+
+So we only process pairs with opposite signs.
+
+### Counting meetings by counting valid integer shifts c
+Let:
+- \( dv = V_i - V_j \)
+- \( dl = L_j - L_i \)
+
+Meeting times satisfy:
+\[
+t = \frac{dl + 1000c}{dv}
+\]
+
+We need meeting times in the interval:
+- **t ∈ (0, T]** (time 0 is excluded because all Li are distinct, so no meeting at t=0 anyway; the code uses strict >0 carefully)
+- also t must be real; it’s always real, but must satisfy the inequalities.
+
+Instead of iterating over times, we count how many integers c produce a t in that range.
+
+#### Convert time bounds into bounds on c
+We need:
+\[
+0 < \frac{dl + 1000c}{dv} \le T
+\]
+
+The direction of inequalities depends on the sign of dv. The code handles this by splitting:
+
+- **Case 1: dv > 0**
+  \[
+  0 < dl + 1000c \le dvT
+  \]
+  So:
+  - lower: \( dl + 1000c \ge 1 \Rightarrow 1000c \ge -dl + 1 \)
+  - upper: \( dl + 1000c \le dvT \Rightarrow 1000c \le dvT - dl \)
+
+- **Case 2: dv < 0**
+  Multiplying flips inequalities:
+  \[
+  0 > dl + 1000c \ge dvT
+  \]
+  So:
+  - upper (since 0 > …): \( dl + 1000c \le -1 \Rightarrow 1000c \le -dl - 1 \)
+  - lower: \( dl + 1000c \ge dvT \Rightarrow 1000c \ge dvT - dl \)
+
+Thus in both cases we end up with:
+\[
+c \in [c_{\text{low}}, c_{\text{high}}]
+\]
+for integer c, where the bounds are computed with **integer ceil/floor division by 1000**.
+
+### Correct ceil/floor for possibly negative numbers
+We need:
+- `first_c_geq(val)` = smallest integer c such that **1000c ≥ val** ⇒ \( c \ge \lceil val/1000 \rceil \)
+- `last_c_leq(val)` = largest integer c such that **1000c ≤ val** ⇒ \( c \le \lfloor val/1000 \rfloor \)
+
+Because C++ integer division truncates toward zero, the code implements careful versions for negative values.
+
+### Total complexity
+For each ordered pair (i, j), i ≠ j, compute count in O(1).
+- N ≤ 20 → O(N²) = 400 operations, extremely fast.
+
+Each meeting between i and j is counted once in ans[i] and once in ans[j] because we iterate ordered pairs, matching “each asks”.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Pulls in most standard headers (ICPC-style)
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input (assumes size is already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;                  // read each element
+    }
+    return in;
+};
+
+// Print a whole vector with trailing spaces (not used for final format here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, t;                         // number of soldiers, time horizon
+vector<int> l, v;                 // l[i]=initial position, v[i]=speed
+
+void read() {
+    cin >> n >> t;                // read N and T
+    l.resize(n);
+    v.resize(n);
+    cin >> l >> v;                // read all positions then all speeds
+}
+
+// Smallest integer c such that 1000*c >= val.
+// This is ceil(val/1000) but implemented safely for negative val.
+int64_t first_c_geq(int64_t val) {
+    if(val >= 0) {
+        // For nonnegative: ceil(val/1000) = (val + 999) / 1000
+        return (val + 999) / 1000;
+    }
+    // For negative: ceil(val/1000) with truncation-toward-zero division
+    // Example: val=-1 => ceil(-0.001) = 0; formula below returns 0.
+    return -((-val) / 1000);
+}
+
+// Largest integer c such that 1000*c <= val.
+// This is floor(val/1000) but implemented safely for negative val.
+int64_t last_c_leq(int64_t val) {
+    if(val >= 0) {
+        // For nonnegative: floor(val/1000) = val/1000
+        return val / 1000;
+    }
+    // For negative: floor(val/1000).
+    // Example: val=-1 => floor(-0.001) = -1; formula below returns -1.
+    return -((-val + 999) / 1000);
+}
+
+// Count meetings where soldier 1 asks soldier 2 (i.e., meetings between them),
+// over time interval (0, t] (effectively), on a circle of length 1000.
+// (l1,v1) and (l2,v2) are initial positions/speeds.
+int64_t count_meetings(int l1, int v1, int l2, int v2) {
+    // Meeting is defined only when velocities are opposite directions.
+    // If both speeds have same sign, they never "meet" by problem definition.
+    if((v1 > 0) == (v2 > 0)) {
+        return 0;
+    }
+
+    int64_t dv = v1 - v2;         // relative speed on the unwrapped line
+    int64_t dl = l2 - l1;         // relative initial displacement
+
+    int64_t c_low, c_high;        // integer range of shifts c that yield a meeting
+    if(dv > 0) {
+        // Need: 0 < (dl + 1000c)/dv <= t
+        // => 1 <= dl + 1000c <= dv*t
+        // Lower bound on 1000c: -dl + 1
+        c_low = first_c_geq(-dl + 1);
+        // Upper bound on 1000c: dv*t - dl
+        c_high = last_c_leq(dv * t - dl);
+    } else {
+        // dv < 0:
+        // Need: 0 < (dl + 1000c)/dv <= t
+        // Multiply by negative dv flips:
+        // => dv*t <= dl + 1000c < 0
+        // Enforce strict < 0 using <= -1 because dl+1000c is integer.
+        c_low = first_c_geq(dv * t - dl);   // 1000c >= dv*t - dl
+        c_high = last_c_leq(-dl - 1);       // 1000c <= -dl - 1
+    }
+
+    // If the integer interval is empty, no meetings
+    if(c_high < c_low) {
+        return 0;
+    }
+    // Otherwise number of integers in [c_low, c_high]
+    return c_high - c_low + 1;
+}
+
+void solve() {
+    // For each ordered pair (i,j), i!=j, count their meetings and add to i.
+    // This matches the statement: each meeting causes each soldier to ask once.
+    vector<int64_t> ans(n, 0);
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            if(i != j) {
+                ans[i] += count_meetings(l[i], v[i], l[j], v[j]);
+            }
+        }
+    }
+
+    // Output in required format: N numbers separated by spaces
+    for(int i = 0; i < n; i++) {
+        cout << ans[i];
+        if(i < n - 1) {
+            cout << ' ';
+        }
+    }
+    cout << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster IO
+    cin.tie(nullptr);                 // untie cin/cout for speed
+
+    int T = 1;                        // single test case
+    // cin >> T;                      // not used (problem has only one case)
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, heavily commented)
+
+```python
+import sys
+from typing import List
+
+# We need integer ceil/floor division by 1000 that works for negatives.
+# Python's // is floor division already, which makes this easier than C++.
+
+def first_c_geq(val: int) -> int:
+    """
+    Smallest integer c such that 1000*c >= val.
+    That is: c = ceil(val/1000).
+    """
+    # ceil(a/b) for integers with b>0 can be written as -floor((-a)/b)
+    return -((-val) // 1000)
+
+def last_c_leq(val: int) -> int:
+    """
+    Largest integer c such that 1000*c <= val.
+    That is: c = floor(val/1000).
+    """
+    return val // 1000
+
+def count_meetings(l1: int, v1: int, l2: int, v2: int, T: int) -> int:
+    """
+    Count number of meeting times between soldiers (l1,v1) and (l2,v2)
+    within time interval (0, T], under the problem's 'meet' definition:
+    same point AND opposite directions.
+    """
+    # Only opposite directions count as a "meet"
+    if (v1 > 0) == (v2 > 0):
+        return 0
+
+    dv = v1 - v2     # relative speed
+    dl = l2 - l1     # initial offset
+
+    if dv > 0:
+        # Need 1 <= dl + 1000c <= dv*T
+        c_low = first_c_geq(-dl + 1)
+        c_high = last_c_leq(dv * T - dl)
+    else:
+        # dv < 0:
+        # Need dv*T <= dl + 1000c <= -1
+        c_low = first_c_geq(dv * T - dl)
+        c_high = last_c_leq(-dl - 1)
+
+    if c_high < c_low:
+        return 0
+    return c_high - c_low + 1
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    T = int(data[1])
+
+    L = list(map(int, data[2:2+n]))
+    V = list(map(int, data[2+n:2+2*n]))
+
+    ans = [0] * n
+
+    # Ordered pairs (i,j), i!=j, because each soldier asks the other.
+    for i in range(n):
+        total = 0
+        for j in range(n):
+            if i == j:
+                continue
+            total += count_meetings(L[i], V[i], L[j], V[j], T)
+        ans[i] = total
+
+    sys.stdout.write(" ".join(map(str, ans)) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Unwrap the circle into an infinite line by duplicating each soldier’s start position as \(L_i + 1000c\). A meeting between i and j occurs when for some integer c:
+\[
+L_i + V_i t = L_j + 1000c + V_j t
+\Rightarrow (V_i - V_j)t = (L_j - L_i) + 1000c
+\]
+Meetings only count if velocities have opposite signs. For fixed (i, j), define \(dv=V_i-V_j\), \(dl=L_j-L_i\), then \(t=(dl+1000c)/dv\). Count integers c such that \(t \in (0, T]\), which becomes a simple integer interval for c; compute bounds using ceil/floor division by 1000 (careful with negatives). Sum counts over all ordered pairs to get how many questions each soldier asks. Complexity \(O(N^2)\).
