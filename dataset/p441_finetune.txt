@@ -1,0 +1,269 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+441. Set Division
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Ruslan has K friends. And all of them have birthday tomorrow. He has bought N different photo albums yesterday, and wants to present these photo albums to his friends. Of course, he can't give less than 1 photo album to anybody. Your task is to calculate how many possible ways is there to do it.
+
+All photo albums are different. Two distributions are considered the same if they differ only by order of albums in the gifts or by the persons receiving gifts.
+
+Input
+In the only line of the input there are two numbers separated by a space — , .
+
+Output
+Output should contain one number — the number of possible ways to distribute the albums modulo 2007.
+
+Example(s)
+sample input
+sample output
+3 2 
+3
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You have **N distinct** photo albums and want to give them to **K friends** so that **each friend gets at least one album**.  
+Two distributions are considered the same if they differ only by:
+
+- the order of albums inside each gift bundle, and/or
+- which friend got which bundle (friends are **indistinguishable**).
+
+Compute the number of such distributions **modulo 2007**.
+
+---
+
+## 2) Key observations
+
+1. Since albums are distinct but friends are indistinguishable, the result is the number of ways to partition an **N-element labeled set** into **K non-empty unlabeled subsets**.
+2. This number is exactly the **Stirling number of the second kind**:
+   \[
+   \text{answer} = S(N, K)
+   \]
+3. Classic recurrence:
+   \[
+   S(n,k) = S(n-1,k-1) + k \cdot S(n-1,k)
+   \]
+   Meaning: place album \(n\)
+   - either as a new singleton group (increasing group count): \(S(n-1,k-1)\)
+   - or into one of the existing \(k\) groups: \(k \cdot S(n-1,k)\)
+4. If \(N < K\), it’s impossible to give everyone at least one album ⇒ answer is **0**.
+5. Constraints (implied by time limit) suggest **N can be very large** while **K is relatively small**, so an \(O(NK)\) DP may be too slow.  
+   The recurrence is **linear** in the vector \([S(n,0),\dots,S(n,K)]\), so we can use **matrix exponentiation** in:
+   \[
+   O(K^3 \log N)
+   \]
+
+---
+
+## 3) Full solution approach
+
+### Step A: Model as Stirling numbers
+We need:
+\[
+S(N,K) \bmod 2007
+\]
+
+### Step B: Turn recurrence into a linear transformation
+Define a state vector:
+\[
+\mathbf{v}_n = [S(n,0), S(n,1), \dots, S(n,K)]^T
+\]
+
+From:
+\[
+S(n,p) = S(n-1,p-1) + p\cdot S(n-1,p)
+\]
+we can write:
+\[
+\mathbf{v}_n = T \cdot \mathbf{v}_{n-1}
+\]
+where \(T\) is a \((K+1)\times(K+1)\) matrix:
+
+- Diagonal term: \(T[p][p] = p\) (for \(p \ge 1\))
+- Subdiagonal term: \(T[p][p-1] = 1\) (for \(p \ge 1\))
+
+All other entries are 0.
+
+### Step C: Exponentiate
+Base vector:
+\[
+\mathbf{v}_0 = [S(0,0), S(0,1), \dots] = [1,0,\dots,0]^T
+\]
+Thus:
+\[
+\mathbf{v}_N = T^N \cdot \mathbf{v}_0
+\]
+Since \(\mathbf{v}_0\) is 1 in position 0, \(\mathbf{v}_N\) equals the **0-th column** of \(T^N\).  
+Answer is:
+\[
+S(N,K) = (T^N)[K][0]
+\]
+
+### Step D: Edge case
+If \(N<K\): print 0.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+static const int MOD = 2007;
+
+using int64 = long long;
+using Matrix = vector<vector<int64>>;
+
+// Multiply two square matrices (size m x m) modulo MOD.
+Matrix mul(const Matrix& A, const Matrix& B) {
+    int m = (int)A.size();
+    Matrix C(m, vector<int64>(m, 0));
+
+    for (int i = 0; i < m; i++) {
+        for (int k = 0; k < m; k++) {
+            if (A[i][k] == 0) continue;           // small optimization
+            int64 aik = A[i][k];
+            for (int j = 0; j < m; j++) {
+                C[i][j] = (C[i][j] + aik * B[k][j]) % MOD;
+            }
+        }
+    }
+    return C;
+}
+
+// Fast exponentiation of a square matrix: compute M^p modulo MOD.
+Matrix mat_pow(Matrix M, int64 p) {
+    int m = (int)M.size();
+
+    // Identity matrix I
+    Matrix R(m, vector<int64>(m, 0));
+    for (int i = 0; i < m; i++) R[i][i] = 1;
+
+    // Binary exponentiation
+    while (p > 0) {
+        if (p & 1) R = mul(R, M);
+        M = mul(M, M);
+        p >>= 1;
+    }
+    return R;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int64 N;
+    int K;
+    cin >> N >> K;
+
+    // If there are fewer albums than friends, impossible to give each >= 1 album.
+    if (N < K) {
+        cout << 0 << "\n";
+        return 0;
+    }
+
+    // Build transition matrix T for Stirling numbers:
+    // v_n[p] = S(n, p), p = 0..K
+    // S(n,p) = p*S(n-1,p) + S(n-1,p-1)
+    //
+    // So:
+    // T[p][p]   = p
+    // T[p][p-1] = 1
+    int sz = K + 1;
+    Matrix T(sz, vector<int64>(sz, 0));
+
+    for (int p = 1; p <= K; p++) {
+        T[p][p] = p % MOD;   // coefficient of S(n-1, p)
+        T[p][p - 1] = 1;     // coefficient of S(n-1, p-1)
+    }
+    // Note: row 0 stays all zeros except T[0][0]=0, which is fine because
+    // S(n,0)=0 for n>0 and S(0,0)=1 is handled by v0.
+
+    // Compute T^N
+    Matrix TN = mat_pow(T, N);
+
+    // v0 = [1,0,...,0]^T, so vN = T^N * v0 = column 0 of T^N.
+    // Answer is S(N,K) = (T^N)[K][0].
+    cout << (TN[K][0] % MOD) << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+MOD = 2007
+
+def mat_mul(A, B):
+    """Multiply two square matrices modulo MOD."""
+    m = len(A)
+    C = [[0] * m for _ in range(m)]
+
+    for i in range(m):
+        Ai = A[i]
+        for k in range(m):
+            if Ai[k] == 0:
+                continue
+            aik = Ai[k]
+            Bk = B[k]
+            for j in range(m):
+                C[i][j] = (C[i][j] + aik * Bk[j]) % MOD
+    return C
+
+def mat_pow(M, p):
+    """Compute M^p modulo MOD with binary exponentiation."""
+    m = len(M)
+
+    # Identity matrix
+    R = [[0] * m for _ in range(m)]
+    for i in range(m):
+        R[i][i] = 1
+
+    while p > 0:
+        if p & 1:
+            R = mat_mul(R, M)
+        M = mat_mul(M, M)
+        p >>= 1
+    return R
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    N = int(data[0])
+    K = int(data[1])
+
+    if N < K:
+        print(0)
+        return
+
+    # Build transition matrix T for Stirling numbers:
+    # S(n,p) = p*S(n-1,p) + S(n-1,p-1)
+    sz = K + 1
+    T = [[0] * sz for _ in range(sz)]
+    for p in range(1, K + 1):
+        T[p][p] = p % MOD      # p*S(n-1,p)
+        T[p][p - 1] = 1        # + S(n-1,p-1)
+
+    TN = mat_pow(T, N)
+
+    # Since v0 = [1,0,0,...]^T, vN = TN * v0 is the 0th column of TN.
+    # We need S(N,K) which is TN[K][0].
+    print(TN[K][0] % MOD)
+
+if __name__ == "__main__":
+    solve()
+```
+
+These solutions directly compute \(S(N,K) \bmod 2007\) using matrix exponentiation, which is efficient when \(N\) is large and \(K\) is small.

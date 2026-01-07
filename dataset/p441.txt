@@ -1,0 +1,311 @@
+## 1) Concise abridged problem statement
+
+Given **N distinct** photo albums and **K friends**, count the number of ways to distribute all albums so that **each friend gets at least one album**.  
+Two distributions are considered the same if they differ only by:
+- the order of albums within a friend’s gift, or
+- the labeling/order of the friends (i.e., friends are indistinguishable).
+
+Output the answer **modulo 2007**.
+
+---
+
+## 2) Detailed editorial (solution explained)
+
+### Key interpretation
+A “distribution” is a partition of the **N labeled albums** into **K non-empty unlabeled groups** (since friends are indistinguishable).  
+This number is the **Stirling number of the second kind**:  
+\[
+S(N, K)
+\]
+We need compute \(S(N,K) \bmod 2007\).
+
+(If friends were distinguishable, the count would be \(K!\,S(N,K)\).)
+
+---
+
+### DP recurrence
+A standard recurrence for Stirling numbers:
+\[
+S(n,k) = S(n-1,k-1) + k \cdot S(n-1,k)
+\]
+Explanation by placing album \(n\):
+- Either it forms a new group by itself: choose which new group → corresponds to \(S(n-1,k-1)\)
+- Or it goes into one of the existing \(k\) groups: \(k \cdot S(n-1,k)\)
+
+Base conditions:
+- \(S(0,0)=1\)
+- \(S(n,0)=0\) for \(n>0\)
+- \(S(n,k)=0\) for \(n<k\)
+
+But \(N\) can be large; we need faster than \(O(NK)\).
+
+---
+
+### Turn recurrence into matrix exponentiation
+For fixed \(K\), the transition from \(n-1\) to \(n\) is **linear** with constant coefficients.
+
+Define a state vector over number of formed groups:
+\[
+\mathbf{v}_n[p] = S(n,p), \quad p=0..K
+\]
+
+From the recurrence:
+- For each \(p\):
+  \[
+  S(n,p) = p\cdot S(n-1,p) + S(n-1,p-1)
+  \]
+This is a linear transform \(\mathbf{v}_n = T \mathbf{v}_{n-1}\).
+
+So:
+\[
+\mathbf{v}_N = T^N \mathbf{v}_0
+\]
+Where \(\mathbf{v}_0 = [1,0,0,\dots,0]^T\) (since \(S(0,0)=1\)).
+
+Then the desired answer is:
+\[
+S(N,K) = (T^N)_{K,0}
+\]
+
+---
+
+### Build the transition matrix
+Matrix \(T\) is size \((K+1)\times(K+1)\), indexed by group count.
+
+To compute \(S(n,p)\):
+- coefficient on \(S(n-1,p)\) is \(p\)
+- coefficient on \(S(n-1,p-1)\) is 1
+
+So in matrix form (row = new p, col = old p):
+- \(T[p][p] = p\)
+- \(T[p][p-1] = 1\)  (equivalently, the code stores as \(T[p][p] = p\) and \(T[p+1][p]=1\))
+
+Compute \(T^N \bmod 2007\) via fast exponentiation in \(O(K^3 \log N)\), which is fine since \(K\) is small.
+
+---
+
+### Edge case
+If \(N < K\), impossible to give at least one album to each friend ⇒ answer is 0.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper overload: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper overload: read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper overload: read a vector by reading all its elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Helper overload: print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// All computations are modulo 2007 as required
+const int mod = 2007;
+
+// N can be large, so use 64-bit integer
+int64_t n;
+int k;
+
+// Define matrix type: vector of rows, each row is vector<int64_t>
+using matrix = vector<vector<int64_t>>;
+
+// Multiply two square matrices a and b modulo mod
+matrix multiply(const matrix& a, const matrix& b) {
+    int sz = a.size();                              // matrix dimension
+    matrix c(sz, vector<int64_t>(sz, 0));           // result initialized to 0
+    for(int i = 0; i < sz; i++) {                   // over rows of a
+        for(int j = 0; j < sz; j++) {               // over cols of b
+            for(int l = 0; l < sz; l++) {           // inner dimension
+                // Standard matrix multiplication, modded
+                c[i][j] = (c[i][j] + a[i][l] * b[l][j]) % mod;
+            }
+        }
+    }
+    return c;
+}
+
+// Fast exponentiation of a square matrix m to power p modulo mod
+matrix mat_pow(matrix m, int64_t p) {
+    int sz = m.size();
+
+    // Start with identity matrix
+    matrix result(sz, vector<int64_t>(sz, 0));
+    for(int i = 0; i < sz; i++) {
+        result[i][i] = 1;
+    }
+
+    // Binary exponentiation
+    while(p > 0) {
+        if(p & 1) {                 // if current bit is set
+            result = multiply(result, m);
+        }
+        m = multiply(m, m);         // square the base
+        p >>= 1;                    // move to next bit
+    }
+    return result;
+}
+
+// Read input N and K
+void read() { cin >> n >> k; }
+
+void solve() {
+    // If N < K, cannot give everyone at least one album
+    if(n < k) {
+        cout << 0 << "\n";
+        return;
+    }
+
+    // Build transition matrix T of size (k+1)x(k+1)
+    // State is S(n, p) for p=0..k.
+    matrix trans(k + 1, vector<int64_t>(k + 1, 0));
+
+    for(int p = 0; p <= k; p++) {
+        if(p > 0) {
+            // S(n,p) includes term p * S(n-1,p)
+            // so T[p][p] = p
+            trans[p][p] = p % mod;
+        }
+        if(p < k) {
+            // S(n,p+1) includes term 1 * S(n-1,p)
+            // because S(n, p+1) = S(n-1,p) + (p+1)S(n-1,p+1)
+            // so T[p+1][p] = 1
+            trans[p + 1][p] = 1;
+        }
+    }
+
+    // Compute T^n
+    matrix result = mat_pow(trans, n);
+
+    // v0 = [1,0,0,...]; thus vN = T^n * v0 is just column 0 of T^n
+    // We need S(n,k) which is entry (k,0)
+    cout << result[k][0] << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // only one test case in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+
+MOD = 2007
+
+def mat_mul(a, b):
+    """Multiply two square matrices modulo MOD."""
+    n = len(a)
+    c = [[0] * n for _ in range(n)]
+    for i in range(n):
+        ai = a[i]
+        for k in range(n):
+            if ai[k] == 0:
+                continue
+            aik = ai[k]
+            bk = b[k]
+            for j in range(n):
+                c[i][j] = (c[i][j] + aik * bk[j]) % MOD
+    return c
+
+def mat_pow(m, p):
+    """Raise square matrix m to power p modulo MOD using binary exponentiation."""
+    n = len(m)
+
+    # Identity matrix
+    res = [[0] * n for _ in range(n)]
+    for i in range(n):
+        res[i][i] = 1
+
+    while p > 0:
+        if p & 1:
+            res = mat_mul(res, m)
+        m = mat_mul(m, m)
+        p >>= 1
+    return res
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    N = int(data[0])
+    K = int(data[1])
+
+    # Impossible to split N distinct albums into K non-empty groups if N < K
+    if N < K:
+        print(0)
+        return
+
+    # Transition matrix for Stirling numbers S(n,k):
+    # S(n,p) = S(n-1,p-1) + p*S(n-1,p)
+    # State vector is [S(n,0), S(n,1), ..., S(n,K)]^T
+    size = K + 1
+    T = [[0] * size for _ in range(size)]
+
+    for p in range(size):
+        if p > 0:
+            T[p][p] = p % MOD      # coefficient of S(n-1,p)
+        if p < K:
+            T[p + 1][p] = 1        # coefficient of S(n-1,p) flowing to S(n,p+1)
+
+    # Compute T^N. Since v0 = [1,0,0,...]^T, S(N,K) is (T^N)[K][0].
+    TN = mat_pow(T, N)
+    print(TN[K][0] % MOD)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+We need the number of partitions of \(N\) distinct albums into \(K\) non-empty unlabeled groups, i.e. \(S(N,K)\) (Stirling numbers of the 2nd kind), modulo 2007. If \(N<K\), answer is 0.
+
+Use recurrence:
+\[
+S(n,k)=S(n-1,k-1)+kS(n-1,k)
+\]
+Represent \([S(n,0),\dots,S(n,K)]^T\) as a vector and build a constant transition matrix \(T\) of size \(K{+}1\):
+- \(T[p][p]=p\) for \(p\ge1\)
+- \(T[p+1][p]=1\) for \(p\le K-1\)
+
+Then \(v_N=T^N v_0\) with \(v_0=[1,0,\dots,0]^T\). Output \((T^N)_{K,0}\). Compute \(T^N\) via fast exponentiation in \(O(K^3\log N)\), all mod 2007.
