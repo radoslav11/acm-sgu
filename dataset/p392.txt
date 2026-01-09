@@ -1,0 +1,903 @@
+## 1) Abridged problem statement
+
+You are given an \(R \times C\) grid (\(1 \le R,C \le 30\)).  
+Each cell contains:
+- a lowercase letter
+- an arrow (`<`, `>`, `^`, `v`) pointing to a neighboring cell (or off the grid)
+
+Starting from any cell, you repeatedly:
+1. write down the current cell’s letter
+2. move to the neighbor indicated by the arrow  
+If you step outside the grid, the process stops.
+
+For each of \(Q \le 50\) queries, a word is given in **compressed form**: fragments like `(F)K` mean repeat string `F` exactly `K` times. Parentheses do **not** nest. Decompressed length \(\le 10^9\).
+
+For each query, output:
+- `YES (X,Y)` with the lexicographically smallest start cell (min row, then min col) from which the exact word is read, or
+- `NO` if impossible.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observations
+
+1. The grid defines a **functional graph**: from each cell there is exactly one outgoing edge (to the next cell or “outside”).  
+   Therefore, for a chosen start cell, the read word is exactly the sequence of letters along that unique path.
+
+2. Query strings can be up to \(10^9\) when decompressed, so we cannot build them explicitly.
+
+3. We only have at most \(900\) start positions, and at most \(50\) queries.  
+   If for each start cell we can compute a **hash** of the first \(L\) letters on its path in \(O(\log L)\), then checking all cells is feasible:
+   \[
+   900 \cdot 50 \cdot \log(10^9) \approx 900 \cdot 50 \cdot 30 \;\text{operations}
+   \]
+
+So the problem splits into two parts:
+
+- Compute the hash (and length) of each query (from compressed form) without decompressing.
+- For each cell, compute the hash of the first `len(query)` letters along its arrow-walk quickly.
+
+We use **polynomial rolling hash** modulo \(2^{61}-1\) (fast, low collision risk), and **binary lifting** on the grid paths.
+
+---
+
+### Hash representation and concatenation
+
+Let a string \(S = s_0 s_1 \dots s_{n-1}\). Define hash:
+\[
+H(S) = (((s_0)\cdot B + s_1)\cdot B + \dots )\cdot B + s_{n-1}
+\]
+Also store \(P(S)=B^{|S|}\). Then concatenation is easy:
+
+If we have monoids:
+- \(A = (H(A), P(A), |A|)\)
+- \(B = (H(B), P(B), |B|)\)
+
+Then
+\[
+H(A+B) = H(A)\cdot P(B) + H(B), \quad P(A+B)=P(A)\cdot P(B), \quad |A+B|=|A|+|B|
+\]
+
+The code wraps this in `HashMonoid` with `merge()`.
+
+---
+
+### Part A: Binary lifting over the grid (to hash a path prefix)
+
+For each cell `(i,j)`, define:
+- `jump[l][i][j]` = the cell reached after \(2^l\) arrow moves (or `(-1,-1)` if it goes outside before that)
+- `dp[l][i][j]` = `HashMonoid` of the string of letters read over the next \(2^l\) moves starting at `(i,j)`  
+  (i.e., the letters of the first \(2^l\) visited cells)
+
+Base case \(l=0\):
+- `jump[0]` is the immediate neighbor by the arrow
+- `dp[0]` is the single letter at the cell
+
+Transition:
+- If `next = jump[l-1][i][j]` is outside, then we can’t extend; `dp[l] = dp[l-1]` and `jump[l] = outside`.
+- Else:
+  - `dp[l] = dp[l-1][i][j] + dp[l-1][next]`
+  - `jump[l] = jump[l-1][next]`
+
+This is classic doubling.
+
+**Querying a prefix of length L from a start cell**:  
+Decompose `L` in binary, and for each bit from high to low:
+- append `dp[bit]` to the result hash
+- jump the position with `jump[bit]`
+If at any point we cannot provide enough characters (walk exits early), we fail.
+
+Time: \(O(\log L)\) per start cell.
+
+---
+
+### Part B: Hashing the compressed query without decompressing
+
+Compressed form has no nested parentheses. Pattern:
+- letters
+- segments `(F)K` where `F` is a non-empty sequence of letters (and/or other segments? here, parentheses don’t nest, but `F` can contain letters only in valid inputs as per statement; in practice the code supports any non-parenthesis characters as letters)
+
+We parse and build a `HashMonoid` for the fully expanded string.
+
+The only tricky part: repeating a block `combined` with:
+- hash `H`
+- power `P = B^{len}`
+- length `len`
+
+Repeated `K` times:
+\[
+S = combined^K
+\]
+\[
+H(S) = H \cdot (1 + P + P^2 + \dots + P^{K-1})
+\]
+\[
+P(S) = P^K,\quad len(S)=len\cdot K
+\]
+
+So we need the geometric series:
+\[
+G(K,P)=1+P+P^2+\dots+P^{K-1}
+\]
+
+Instead of modular inverse (which is awkward mod \(2^{61}-1\)), the code computes this in \(O(\log K)\) using a doubling-style method (like fast exponentiation), maintaining:
+- `current_pow = P^(2^t)`
+- `subsum = 1 + P + ... + P^(2^t - 1)` for the current chunk
+- `result` accumulates chosen chunks when bits of `K` are set
+
+This gives `geometric_series_sum(K, P)` efficiently.
+
+Parsing is done with a stack:
+- push a marker when encountering `'('`
+- push single-character monoids for letters
+- when encountering `')'`, pop until marker to get the inside block `combined`, then read digits for `K`, compute the repeated monoid, and push it back.
+
+They also wrap each whole query into `("(" + query + ")1")` so the parser always ends by processing a `')'` and leaving exactly one monoid on stack.
+
+---
+
+### Final check
+
+For each query:
+1. compute `target = (hash, pow, len)`
+2. for every grid cell `(i,j)`:
+   - compute hash of `len` letters from `(i,j)` via binary lifting
+   - if successful and hashes match → candidate
+3. output minimal `(row,col)` among candidates, else `NO`.
+
+Complexities:
+- Preprocessing lifting tables: \(O(RC \log 10^9)\) ≈ \(900 \cdot 31\)
+- Each query parse: \(O(|compressed| + \log K\) per repetition segment) ≤ manageable
+- Each query check: \(O(RC \log L)\)
+
+Collision risk exists (hashing), but with 61-bit mod and random base it’s extremely low for contest purposes.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/strings/hashing.hpp>
+
+using namespace std;
+
+// Helper: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper: read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper: read a whole vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Helper: print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+/*
+ * HashMeta: implements arithmetic mod (2^61 - 1) and rolling hash tools.
+ * Uses a random base for safety.
+ *
+ * Note: mod = 2^61 - 1 is a Mersenne prime; we can reduce fast.
+ */
+class HashMeta {
+  private:
+    // Pick a random base in [0, mod-1] using a seeded RNG.
+    void set_random_base() {
+        seed_seq seed{
+            (uint32_t)chrono::duration_cast<chrono::nanoseconds>(
+                chrono::high_resolution_clock::now().time_since_epoch()
+            )
+                .count(),
+            (uint32_t)random_device()(), (uint32_t)42
+        };
+        mt19937 rng(seed);
+        base = uniform_int_distribution<uint64_t>(0, mod - 1)(rng);
+    }
+
+    // Precompute base^i for i=0..n-1 (as hash_t)
+    void precompute_base_pow(size_t n) {
+        base_pow.resize(n);
+        base_pow[0] = 1;
+        for(size_t i = 1; i < n; i++) {
+            base_pow[i] = mul(base_pow[i - 1], base);
+        }
+    }
+
+    // Fast addition mod (2^61-1)
+    static constexpr uint64_t add(uint64_t a, uint64_t b) {
+        a += b + 1;
+        a = (a & mod) + (a >> 61);
+        return a - 1;
+    }
+
+    // Fast subtraction mod (2^61-1)
+    static constexpr uint64_t sub(uint64_t a, uint64_t b) {
+        return add(a, mod - b);
+    }
+
+    // Fast multiplication mod (2^61-1) using 128-bit decomposition trick
+    static constexpr uint64_t mul(uint64_t a, uint64_t b) {
+        uint64_t l1 = (uint32_t)a, h1 = a >> 32, l2 = (uint32_t)b, h2 = b >> 32;
+        uint64_t l = l1 * l2, m = l1 * h2 + l2 * h1, h = h1 * h2;
+        uint64_t ret =
+            (l & mod) + (l >> 61) + (h << 3) + (m >> 29) + (m << 35 >> 3) + 1;
+        ret = (ret & mod) + (ret >> 61);
+        ret = (ret & mod) + (ret >> 61);
+        return ret - 1;
+    }
+
+  public:
+    /*
+     * hash_t: small wrapper around uint64_t that overloads +,-,*
+     * with mod operations.
+     */
+    class hash_t {
+        uint64_t h;
+
+      public:
+        hash_t() : h(0) {}
+        hash_t(uint64_t h) : h(h) {}
+        operator uint64_t() const { return h; }
+
+        hash_t& operator+=(const hash_t& other) {
+            h = add(h, other.h);
+            return *this;
+        }
+
+        hash_t& operator-=(const hash_t& other) {
+            h = sub(h, other.h);
+            return *this;
+        }
+
+        hash_t& operator*=(const hash_t& other) {
+            h = mul(h, other.h);
+            return *this;
+        }
+
+        hash_t operator+(const hash_t& other) const {
+            return hash_t(*this) += other;
+        }
+        hash_t operator-(const hash_t& other) const {
+            return hash_t(*this) -= other;
+        }
+        hash_t operator*(const hash_t& other) const {
+            return hash_t(*this) *= other;
+        }
+
+        bool operator==(const hash_t& other) const { return h == other.h; }
+        bool operator!=(const hash_t& other) const { return h != other.h; }
+
+        bool operator<(const hash_t& other) const { return h < other.h; }
+    };
+
+    uint64_t base;              // random base B
+    vector<hash_t> base_pow;    // precomputed powers B^i
+    static constexpr uint64_t mod = (1ull << 61) - 1;
+
+    // Initialize: choose base and precompute some powers (here called with 1)
+    void init(size_t n) {
+        set_random_base();
+        precompute_base_pow(n);
+    }
+
+    // Build prefix hashes for an indexable container (not used in final solve)
+    template<typename T>
+    vector<hash_t> rabin_karp(const T& container) {
+        vector<hash_t> h(container.size());
+        for(size_t i = 0; i < container.size(); i++) {
+            h[i] = (i ? h[i - 1] : hash_t(0)) * hash_t(base) +
+                   hash_t(container[i]);
+        }
+        return h;
+    }
+
+    // Get hash of [l..r] from prefix hashes (also not used)
+    hash_t hash_range(int l, int r, const vector<hash_t>& h) {
+        if(l == 0) {
+            return h[r];
+        }
+        return h[r] - h[l - 1] * base_pow[r - l + 1];
+    }
+};
+
+HashMeta hash_meta;
+using hash_t = HashMeta::hash_t;
+
+/*
+ * HashMonoid represents a string by:
+ *  - h: hash of the string
+ *  - pow: B^(len) (needed for concatenation)
+ *  - len: length
+ *
+ * merge(a,b) corresponds to concatenating a then b.
+ */
+struct HashMonoid {
+    hash_t h;     // H(S)
+    hash_t pow;   // B^(|S|)
+    int64_t len;  // |S|
+
+    // Empty string
+    static HashMonoid identity() { return {hash_t(0), hash_t(1), 0}; }
+
+    // String of length 1: the single character c
+    static HashMonoid single(char c, hash_t base) {
+        return {hash_t((unsigned char)c), base, 1};
+    }
+
+    // Concatenate this + other
+    HashMonoid merge(const HashMonoid& other) const {
+        return {h * other.pow + other.h, pow * other.pow, len + other.len};
+    }
+};
+
+int r, c, q;
+vector<string> arrows, letters;
+vector<string> compressed_queries;
+vector<vector<vector<pair<int, int>>>> jumps; // jumps[level][i][j] = position after 2^level steps
+vector<HashMonoid> query_hashes;              // full expanded hash of each query
+
+// Read input
+void read() {
+    cin >> r >> c;
+    arrows.resize(r);
+    letters.resize(r);
+    for(int i = 0; i < r; i++) {
+        cin >> arrows[i];
+    }
+    for(int i = 0; i < r; i++) {
+        cin >> letters[i];
+    }
+    cin >> q;
+    compressed_queries.resize(q);
+    for(int i = 0; i < q; i++) {
+        cin >> compressed_queries[i];
+    }
+}
+
+// Compute next cell according to arrow, or (-1,-1) if outside
+pair<int, int> get_next_cell(int x, int y) {
+    char arrow = arrows[x][y];
+    int nx = x, ny = y;
+    if(arrow == '<') {
+        ny--;
+    } else if(arrow == '>') {
+        ny++;
+    } else if(arrow == '^') {
+        nx--;
+    } else if(arrow == 'v') {
+        nx++;
+    }
+    if(nx < 0 || nx >= r || ny < 0 || ny >= c) {
+        return {-1, -1};
+    }
+    return {nx, ny};
+}
+
+// Apply a precomputed 2^level jump to a position (or keep outside)
+pair<int, int> apply_jump(pair<int, int> pos, int level) {
+    if(pos.first == -1) {
+        return {-1, -1};
+    }
+    return jumps[level][pos.first][pos.second];
+}
+
+/*
+ * Compute hash of the word formed by taking `steps` letters starting at `pos`,
+ * using binary lifting table `dp[level][i][j]` which stores hash of 2^level letters.
+ *
+ * Returns:
+ *  - HashMonoid of exactly `steps` letters if possible
+ *  - success=false if we walk out of grid before collecting all letters
+ */
+pair<HashMonoid, bool> compute_hash_from_pos(
+    pair<int, int> pos, int64_t steps,
+    const vector<vector<vector<HashMonoid>>>& dp
+) {
+    if(steps == 0) {
+        return {HashMonoid::identity(), true};
+    }
+    if(pos.first == -1) {
+        return {HashMonoid::identity(), false};
+    }
+
+    HashMonoid result = HashMonoid::identity();
+
+    // Walk bits from high to low (up to 2^30 ~ 1e9)
+    for(int i = 30; i >= 0; i--) {
+        if(steps & (1LL << i)) {
+            // If we're already outside, fail
+            if(pos.first == -1) {
+                return {HashMonoid::identity(), false};
+            }
+
+            // m represents next 2^i letters from pos
+            const auto& m = dp[i][pos.first][pos.second];
+
+            // If m.len is smaller than 2^i, the path ended early
+            if(m.len < (1LL << i)) {
+                return {HashMonoid::identity(), false};
+            }
+
+            // Append this chunk and jump forward
+            result = result.merge(m);
+            pos = apply_jump(pos, i);
+        }
+    }
+    return {result, true};
+}
+
+/*
+ * Compute geometric series:
+ *   1 + p + p^2 + ... + p^(k-1)
+ * in O(log k), avoiding modular inverse.
+ *
+ * This is used for repeating block hashes.
+ */
+hash_t geometric_series_sum(int64_t k, hash_t p) {
+    if(k == 0) {
+        return hash_t(0);
+    }
+    hash_t result = hash_t(0);     // sum for processed bits so far
+    hash_t subsum = hash_t(1);     // sum for current power-of-two block
+    hash_t current_pow = p;        // p^(current block length)
+    while(k > 0) {
+        if(k % 2 == 1) {
+            // If we append a block of size t, new result:
+            // result' = result * p^t + (1 + p + ... + p^(t-1))
+            result = result * current_pow + subsum;
+        }
+        // Double block size: subsum for 2t becomes subsum*(1 + p^t)
+        subsum = subsum * (current_pow + hash_t(1));
+        // p^t becomes p^(2t)
+        current_pow = current_pow * current_pow;
+        k /= 2;
+    }
+    return result;
+}
+
+// Fast exponentiation for hash_t
+hash_t power(hash_t base, int64_t exp) {
+    hash_t result = hash_t(1);
+    while(exp > 0) {
+        if(exp % 2 == 1) {
+            result = result * base;
+        }
+        base = base * base;
+        exp /= 2;
+    }
+    return result;
+}
+
+void solve() {
+    // Initialize hashing (random base). Only base itself is used; base_pow is unused.
+    hash_meta.init(1);
+    hash_t base_hash = hash_t(hash_meta.base);
+
+    // We need log2(1e9) ~ 30, use 31 levels: 0..30
+    int max_log = 31;
+
+    // jumps[level][i][j] and dp[level][i][j]
+    jumps.resize(max_log);
+    vector<vector<vector<HashMonoid>>> dp(
+        max_log, vector<vector<HashMonoid>>(r, vector<HashMonoid>(c))
+    );
+
+    // Allocate jumps array and initialize to outside
+    for(int l = 0; l < max_log; l++) {
+        jumps[l].resize(r);
+        for(int i = 0; i < r; i++) {
+            jumps[l][i].resize(c, {-1, -1});
+        }
+    }
+
+    // Base level (2^0 = 1):
+    // - jump to next cell
+    // - hash chunk is just the current letter
+    for(int i = 0; i < r; i++) {
+        for(int j = 0; j < c; j++) {
+            jumps[0][i][j] = get_next_cell(i, j);
+            dp[0][i][j] = HashMonoid::single(letters[i][j], base_hash);
+        }
+    }
+
+    // Build higher levels of binary lifting
+    for(int l = 1; l < max_log; l++) {
+        for(int i = 0; i < r; i++) {
+            for(int j = 0; j < c; j++) {
+                auto next = jumps[l - 1][i][j]; // after 2^(l-1) steps
+
+                if(next.first == -1) {
+                    // If we already exit, cannot extend; keep what we have
+                    jumps[l][i][j] = {-1, -1};
+                    dp[l][i][j] = dp[l - 1][i][j];
+                } else {
+                    // Concatenate two halves of length 2^(l-1)
+                    dp[l][i][j] =
+                        dp[l - 1][i][j].merge(dp[l - 1][next.first][next.second]
+                        );
+                    // Jump another 2^(l-1) from `next`
+                    jumps[l][i][j] = jumps[l - 1][next.first][next.second];
+                }
+            }
+        }
+    }
+
+    // Parse each compressed query into a HashMonoid (hash, pow, length)
+    query_hashes.resize(q);
+    for(int qi = 0; qi < q; qi++) {
+        // Wrap in "(...)1" so the parser always reduces to a single item
+        string query = "(" + compressed_queries[qi] + ")1";
+        vector<HashMonoid> st; // stack of monoids; marker has len=-1
+
+        for(int idx = 0; idx < (int)query.size(); idx++) {
+            char ch = query[idx];
+
+            if(ch == '(') {
+                // Marker: len=-1 means start of group
+                st.push_back({hash_t(0), hash_t(1), -1});
+            } else if(ch == ')') {
+                // Pop and concatenate until marker to form the group content
+                HashMonoid combined = HashMonoid::identity();
+                while(st.back().len != -1) {
+                    combined = st.back().merge(combined);
+                    st.pop_back();
+                }
+                st.pop_back(); // remove marker
+
+                // Read repetition count K right after ')'
+                idx++;
+                int64_t cnt = 0;
+                while(idx < (int)query.size() && isdigit(query[idx])) {
+                    cnt = cnt * 10ll + query[idx] - '0';
+                    idx++;
+                }
+                idx--; // compensate for the for-loop idx++
+
+                // combined repeated cnt times:
+                // pow_repeat = (B^len)^cnt = B^(len*cnt)
+                hash_t pow_repeat = power(combined.pow, cnt);
+
+                // hash_repeat = H * (1 + P + ... + P^(cnt-1))
+                hash_t h_repeat =
+                    combined.h * geometric_series_sum(cnt, combined.pow);
+
+                st.push_back({h_repeat, pow_repeat, combined.len * cnt});
+            } else {
+                // Regular letter: push as a single-character monoid
+                st.push_back(HashMonoid::single(ch, base_hash));
+            }
+        }
+
+        // The final expanded query is at stack top
+        query_hashes[qi] = st.back();
+    }
+
+    // For each query, try all start cells and choose minimal (row,col)
+    for(int qi = 0; qi < q; qi++) {
+        HashMonoid target = query_hashes[qi];
+
+        pair<int, int> answer = {-1, -1};
+
+        for(int i = 0; i < r; i++) {
+            for(int j = 0; j < c; j++) {
+                // Hash the path prefix of length target.len from (i,j)
+                auto [result, success] =
+                    compute_hash_from_pos({i, j}, target.len, dp);
+
+                // If path exists and hashes match -> candidate
+                if(success && result.h == target.h) {
+                    // Choose lexicographically smallest cell
+                    if(answer.first == -1 || (i < answer.first) ||
+                       (i == answer.first && j < answer.second)) {
+                        answer = {i, j};
+                    }
+                }
+            }
+        }
+
+        if(answer.first == -1) {
+            cout << "NO\n";
+        } else {
+            cout << "YES (" << answer.first + 1 << "," << answer.second + 1
+                 << ")\n";
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import random
+import time
+
+# We implement modulo M = 2^61 - 1 arithmetic (Mersenne prime),
+# similar to the C++ solution, for fast-ish hashing.
+M = (1 << 61) - 1
+
+def mod_add(a: int, b: int) -> int:
+    x = a + b
+    x = (x & M) + (x >> 61)
+    if x >= M:
+        x -= M
+    return x
+
+def mod_sub(a: int, b: int) -> int:
+    return mod_add(a, M - b)
+
+def mod_mul(a: int, b: int) -> int:
+    # Python has big integers, so we can multiply then reduce.
+    # Reduce using Mersenne property:
+    x = a * b
+    x = (x & M) + (x >> 61)
+    x = (x & M) + (x >> 61)
+    if x >= M:
+        x -= M
+    return x
+
+def mod_pow(a: int, e: int) -> int:
+    res = 1
+    while e > 0:
+        if e & 1:
+            res = mod_mul(res, a)
+        a = mod_mul(a, a)
+        e >>= 1
+    return res
+
+class HashMonoid:
+    __slots__ = ("h", "p", "l")  # hash, power, length
+
+    def __init__(self, h: int, p: int, l: int):
+        self.h = h
+        self.p = p
+        self.l = l
+
+    @staticmethod
+    def identity():
+        # Empty string: H=0, B^0=1, len=0
+        return HashMonoid(0, 1, 0)
+
+    @staticmethod
+    def single(ch: str, base: int):
+        # Single character: H=ord(ch), power=B, len=1
+        return HashMonoid(ord(ch), base, 1)
+
+    def merge(self, other: "HashMonoid") -> "HashMonoid":
+        # Concatenation:
+        # H = H1 * B^{len2} + H2
+        # P = B^{len1+len2} = P1 * P2
+        return HashMonoid(
+            mod_add(mod_mul(self.h, other.p), other.h),
+            mod_mul(self.p, other.p),
+            self.l + other.l
+        )
+
+def geometric_series_sum(k: int, p: int) -> int:
+    """
+    Return 1 + p + p^2 + ... + p^(k-1) mod M, in O(log k),
+    using the same doubling technique as the C++ solution.
+    """
+    if k == 0:
+        return 0
+    result = 0     # sum for selected blocks
+    subsum = 1     # sum for current block length t: 1 + p + ... + p^(t-1)
+    current_pow = p  # p^t
+
+    while k > 0:
+        if k & 1:
+            # result = result * p^t + subsum
+            result = mod_add(mod_mul(result, current_pow), subsum)
+        # double the block:
+        # subsum(2t) = subsum(t) * (1 + p^t)
+        subsum = mod_mul(subsum, mod_add(current_pow, 1))
+        current_pow = mod_mul(current_pow, current_pow)
+        k >>= 1
+    return result
+
+def parse_compressed(query: str, base: int) -> HashMonoid:
+    """
+    Parse compressed query (no nested parentheses) and return HashMonoid
+    of the fully expanded string, without expanding explicitly.
+    """
+    # Wrap in "(...)1" so we always reduce at the end.
+    s = "(" + query + ")1"
+
+    # Stack of HashMonoid; marker is l = -1
+    st = []
+
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == '(':
+            st.append(HashMonoid(0, 1, -1))
+            i += 1
+        elif ch == ')':
+            # Pop until marker, building the inside group.
+            combined = HashMonoid.identity()
+            while st and st[-1].l != -1:
+                combined = st[-1].merge(combined)
+                st.pop()
+            st.pop()  # pop marker
+
+            # Read repetition count
+            i += 1
+            cnt = 0
+            while i < len(s) and s[i].isdigit():
+                cnt = cnt * 10 + (ord(s[i]) - 48)
+                i += 1
+
+            # Repeat combined cnt times:
+            pow_repeat = mod_pow(combined.p, cnt)
+            h_repeat = mod_mul(combined.h, geometric_series_sum(cnt, combined.p))
+            st.append(HashMonoid(h_repeat, pow_repeat, combined.l * cnt))
+        else:
+            # Regular character
+            st.append(HashMonoid.single(ch, base))
+            i += 1
+
+    return st[-1]
+
+def get_next_cell(arrows, r, c, x, y):
+    a = arrows[x][y]
+    nx, ny = x, y
+    if a == '<':
+        ny -= 1
+    elif a == '>':
+        ny += 1
+    elif a == '^':
+        nx -= 1
+    else:  # 'v'
+        nx += 1
+    if nx < 0 or nx >= r or ny < 0 or ny >= c:
+        return (-1, -1)
+    return (nx, ny)
+
+def compute_hash_from_pos(pos, steps, dp, jumps):
+    """
+    Using binary lifting, compute the HashMonoid of exactly `steps` letters
+    read starting at pos, or fail if we exit the grid too early.
+    """
+    if steps == 0:
+        return (HashMonoid.identity(), True)
+    x, y = pos
+    if x == -1:
+        return (HashMonoid.identity(), False)
+
+    res = HashMonoid.identity()
+    # We need up to 2^30 for 1e9
+    for bit in range(30, -1, -1):
+        if steps & (1 << bit):
+            if x == -1:
+                return (HashMonoid.identity(), False)
+            m = dp[bit][x][y]
+            # If we couldn't build a full 2^bit segment (exited early), fail.
+            if m.l < (1 << bit):
+                return (HashMonoid.identity(), False)
+            res = res.merge(m)
+            x, y = jumps[bit][x][y]
+    return (res, True)
+
+def solve():
+    input_data = sys.stdin.read().strip().splitlines()
+    it = iter(input_data)
+    r, c = map(int, next(it).split())
+    arrows = [next(it).strip() for _ in range(r)]
+    letters = [next(it).strip() for _ in range(r)]
+    q = int(next(it))
+    queries = [next(it).strip() for _ in range(q)]
+
+    # Random base (non-zero preferred); keep it in [1, M-1]
+    random.seed(time.time_ns())
+    base = random.randrange(1, M)
+
+    max_log = 31
+
+    # jumps[bit][i][j] = (ni,nj) after 2^bit moves
+    jumps = [[ [(-1, -1) for _ in range(c)] for _ in range(r) ] for _ in range(max_log)]
+    # dp[bit][i][j] = HashMonoid of 2^bit letters from (i,j), or shorter if exits
+    dp = [[ [None for _ in range(c)] for _ in range(r) ] for _ in range(max_log)]
+
+    # Level 0
+    for i in range(r):
+        for j in range(c):
+            jumps[0][i][j] = get_next_cell(arrows, r, c, i, j)
+            dp[0][i][j] = HashMonoid.single(letters[i][j], base)
+
+    # Build lifting tables
+    for bit in range(1, max_log):
+        for i in range(r):
+            for j in range(c):
+                ni, nj = jumps[bit - 1][i][j]
+                if ni == -1:
+                    # Can't extend beyond exiting the grid
+                    jumps[bit][i][j] = (-1, -1)
+                    dp[bit][i][j] = dp[bit - 1][i][j]
+                else:
+                    dp[bit][i][j] = dp[bit - 1][i][j].merge(dp[bit - 1][ni][nj])
+                    jumps[bit][i][j] = jumps[bit - 1][ni][nj]
+
+    # Parse all queries
+    targets = [parse_compressed(s, base) for s in queries]
+
+    out_lines = []
+    for target in targets:
+        best = None
+        for i in range(r):
+            for j in range(c):
+                got, ok = compute_hash_from_pos((i, j), target.l, dp, jumps)
+                if ok and got.h == target.h:
+                    if best is None or (i, j) < best:
+                        best = (i, j)
+        if best is None:
+            out_lines.append("NO")
+        else:
+            out_lines.append(f"YES ({best[0]+1},{best[1]+1})")
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- The grid defines a unique deterministic path from any start cell (functional graph).  
+- Queries decompress up to \(10^9\), so compare using rolling hashes.
+
+**Hash monoid**: store `(H, P, len)` where `P = B^len`.  
+Concatenation: `H = H1*P2 + H2`, `P = P1*P2`, `len = len1+len2`.
+
+**Binary lifting on grid** (31 levels):
+- `jump[l][cell]` = cell after `2^l` moves
+- `dp[l][cell]` = hash of next `2^l` letters starting at cell  
+Build via doubling; if path exits early, keep shorter length.
+
+To hash `L` letters from a start cell, walk bits of `L` and merge `dp[bit]`; fail if any required chunk is shorter.
+
+**Parse compressed query** using a stack with a marker for `'('`.  
+For a block `S` repeated `K` times:
+- `P = P(S)^K`
+- `H = H(S) * (1 + P(S) + ... + P(S)^(K-1))`
+Compute the geometric sum in `O(log K)` (doubling method, no inverses).
+
+For each query, compute target `(H,len)`; test all `R*C` cells via lifting; output minimal `(row,col)` match else `NO`.
