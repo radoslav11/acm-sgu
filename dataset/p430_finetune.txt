@@ -1,0 +1,442 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+430. Unit-distance graph
+Time limit per test: 0.75 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+A graph is called unit-distance graph when it's possible to map its vertices to points on a plane in such a way that the distance between the points that correspond to vertices that are connected by an edge is exactly 1, and the distance between the points that correspond to vertices that are not connected by an edge is not equal to 1 (but still greater than 0).
+
+Given a graph, find out whether it's a unit-distance graph, and if yes, output the corresponding points on the plane.
+
+Input
+The first line of the input file contains two integers n and m — the number of vertices and edges of the graph (1 ≤ n ≤ 7). The next m lines contain two distinct integers each, describing two vertices connected by an edge (the vertices are numbered starting from 0). Every two vertices can be connected by at most one edge.
+
+Output
+If the graph is unit-distance, print "Yes" (without quotes) on the first line of output file, otherwise print "No" (without quotes). In the former case, then print n lines, each containing two floating-point numbers not exceeding 100 by absolute value — the coordinates of the corresponding points in the order the vertices are numbered. Your solution will be considered correct if no two points are closer than 10-2, the distance between points corresponding to connected vertices differs from 1 by no more than 10-7, and the distance between two points corresponding to non-connected vertices differs from 1 by at least 10-2.
+Example(s)
+sample input
+sample output
+4 6
+0 1
+0 2
+0 3
+2 1
+3 1
+2 3
+No
+
+sample input
+sample output
+5 6
+0 1
+1 2
+2 3
+3 0
+3 4
+4 0
+Yes
+0.0 0.0
+1.0 0.0
+1.0 1.0
+0.0 1.0
+-0.8660254037844386 0.5
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+Given an undirected simple graph with \(1 \le n \le 7\), decide whether it can be drawn in the plane so that:
+
+- For every edge \((u,v)\), the Euclidean distance between points \(u\) and \(v\) is **exactly 1** (tolerance \(10^{-7}\)).
+- For every non-edge \((u,v)\), the distance is **not equal to 1** and must differ from 1 by **at least \(10^{-2}\)**.
+- Any two vertices must be at least \(10^{-2}\) apart.
+- Output coordinates (absolute value \(\le 100\)) if possible, otherwise output `No`.
+
+---
+
+## 2) Key observations
+
+1. **Very small n (≤ 7)**  
+   Only up to \(\binom{7}{2} = 21\) vertex pairs exist, so we can afford heavy constant-factor work: many iterations, random restarts, etc.
+
+2. **Constraints are geometric equalities/inequalities**  
+   Edge constraints are exact equalities \(d_{uv}=1\). Non-edges are “avoid a band” around 1: \(|d_{uv}-1|\ge 10^{-2}\). This resembles a continuous feasibility problem.
+
+3. **Convert feasibility into optimization (“energy minimization”)**  
+   Instead of solving with combinatorial geometry, we can search for coordinates minimizing a penalty function:
+   - edges: penalize deviation from 1
+   - non-edges: penalize only when too close to 1 (inside forbidden band)
+   - distinctness: penalize if points get too close
+
+4. **Use gradient descent + random restarts**  
+   The penalty is non-convex, so a single run can get stuck. Random initialization and multiple restarts greatly increase success chance within the time limit.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Represent the graph
+Build an adjacency matrix `adj[n][n]` for \(O(1)\) checks whether \((i,j)\) is an edge.
+
+### Step B: Variables
+Assign each vertex \(i\) planar coordinates \((x_i, y_i)\).
+
+Let:
+\[
+d_{ij} = \sqrt{(x_i-x_j)^2 + (y_i-y_j)^2}
+\]
+
+### Step C: Penalty (energy) function
+We want \(E=0\) when all constraints are satisfied.
+
+We add pairwise penalties:
+
+1) **Edge penalty** (always active for edges):
+\[
+(d_{ij}-1)^2
+\]
+
+2) **Non-edge forbidden band** (only active if too close to 1):  
+Let \(\varepsilon = 10^{-2}\). If \(|d_{ij}-1| < \varepsilon\), pick the nearest “safe boundary”:
+- if \(d_{ij} < 1\), target \(T = 1-\varepsilon\)
+- else target \(T = 1+\varepsilon\)
+
+Add:
+\[
+(d_{ij}-T)^2
+\]
+
+3) **Distinctness**: enforce \(d_{ij} \ge \delta\) where \(\delta = 10^{-2}\).  
+If \(d_{ij} < \delta\), add:
+\[
+(d_{ij}-\delta)^2
+\]
+
+### Step D: Gradient for a pair term
+For a term \((d_{ij}-T)^2\), where \(T\) is target distance:
+
+- \(\nabla_{p_i} d_{ij} = \dfrac{p_i - p_j}{d_{ij}}\)
+- \(\nabla_{p_i}(d_{ij}-T)^2 = 2(d_{ij}-T)\cdot \dfrac{p_i-p_j}{d_{ij}}\)
+
+Implementation trick:
+- `dx = x[i]-x[j]`, `dy = y[i]-y[j]`
+- `d = sqrt(dx*dx+dy*dy) + 1e-12` to avoid division by zero
+- `g = 2*(d - T)/d`
+- add `(g*dx, g*dy)` to gradient of `i`, subtract from `j`
+
+### Step E: Optimization loop
+Repeat until time budget (e.g. 0.6s out of 0.75s):
+
+1. Randomly initialize all points in a small square, e.g. \([-7,7]^2\).
+2. Run gradient descent for fixed number of iterations (e.g. 10,000) with learning rate decay:
+   - `lr = 0.05`, each step `lr *= 0.999`
+3. After optimization, **verify** using exact judge tolerances:
+   - edge: \(|d-1| \le 10^{-7}\)
+   - non-edge: \(|d-1| \ge 10^{-2}\)
+   - distinctness: \(d \ge 10^{-2}\)
+
+If verification passes, print `Yes` and coordinates. Otherwise, after time runs out, print `No`.
+
+### Why coordinates stay within bounds
+Starting in \([-7,7]\) and only applying these “spring-like” forces tends to keep points near the origin. In practice it stays far below \(|100|\).
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Unit-distance graph embedding via:
+    - penalty minimization (edges must be length 1)
+    - non-edges must avoid distance 1 by at least 1e-2
+    - points must be at least 1e-2 apart
+  Using gradient descent + random restarts until a small time budget expires.
+*/
+
+static const long double EPS_EDGE = 1e-7;      // edge distance tolerance around 1
+static const long double EPS_NON_EDGE = 1e-2;  // forbidden band half-width for non-edges
+static const long double EPS_DISTINCT = 1e-2;  // minimum allowed distance between any two points
+
+static const long double INIT_RANGE = 7.0;     // random initialization range [-7,7]
+static const long double TIME_LIMIT = 0.60;    // search time budget (seconds), under 0.75 TL
+
+static const long double LR_START = 0.05;      // initial learning rate
+static const long double LR_DECAY = 0.999;     // learning rate decay factor per iteration
+static const int MAX_ITERS = 10000;            // gradient steps per restart
+
+int n, m;
+vector<vector<bool>> adj;   // adjacency matrix
+vector<long double> x, y;   // coordinates
+
+// Read graph input.
+void read_input() {
+    cin >> n >> m;
+    adj.assign(n, vector<bool>(n, false));
+    x.assign(n, 0);
+    y.assign(n, 0);
+
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        adj[u][v] = adj[v][u] = true;
+    }
+}
+
+// Verify current coordinates against exact judge constraints.
+bool verify_solution() {
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            long double dx = x[i] - x[j];
+            long double dy = y[i] - y[j];
+            long double d = sqrt(dx * dx + dy * dy);
+
+            // Must not be too close.
+            if (d < EPS_DISTINCT) return false;
+
+            if (adj[i][j]) {
+                // Edge must be unit length within 1e-7
+                if (fabsl(d - 1.0L) > EPS_EDGE) return false;
+            } else {
+                // Non-edge must NOT be within 1e-2 of 1
+                if (fabsl(d - 1.0L) < EPS_NON_EDGE) return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Add gradient contribution for a squared distance-to-target penalty: (d - T)^2.
+// The gradient w.r.t i is 2(d-T)*(pi-pj)/d; j gets the negative.
+inline void add_pair_gradient(int i, int j, long double target,
+                              long double &gxi, long double &gyi,
+                              long double &gxj, long double &gyj) {
+    long double dx = x[i] - x[j];
+    long double dy = y[i] - y[j];
+    long double d = sqrt(dx * dx + dy * dy) + 1e-12L; // avoid division by zero
+    long double diff = d - target;
+    long double g = 2.0L * diff / d;                  // scalar multiplier
+
+    gxi += g * dx;
+    gyi += g * dy;
+    gxj -= g * dx;
+    gyj -= g * dy;
+}
+
+void solve() {
+    // RNG for random restarts.
+    mt19937 rng((uint32_t)chrono::steady_clock::now().time_since_epoch().count());
+    uniform_real_distribution<long double> dist(-INIT_RANGE, INIT_RANGE);
+
+    clock_t start_clock = clock();
+
+    // Keep trying until time is up.
+    while ((long double)(clock() - start_clock) / CLOCKS_PER_SEC < TIME_LIMIT) {
+        // Random initialization.
+        for (int i = 0; i < n; i++) {
+            x[i] = dist(rng);
+            y[i] = dist(rng);
+        }
+
+        long double lr = LR_START;
+
+        // Gradient descent iterations.
+        for (int iter = 0; iter < MAX_ITERS; iter++) {
+            vector<long double> gx(n, 0.0L), gy(n, 0.0L);
+
+            // Accumulate gradients from all unordered pairs (i,j).
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    // Compute distance once for branch decisions.
+                    long double dx = x[i] - x[j];
+                    long double dy = y[i] - y[j];
+                    long double d = sqrt(dx * dx + dy * dy) + 1e-12L;
+
+                    if (adj[i][j]) {
+                        // Edge: enforce d = 1.
+                        long double target = 1.0L;
+                        long double diff = d - target;
+                        long double g = 2.0L * diff / d;
+                        gx[i] += g * dx; gy[i] += g * dy;
+                        gx[j] -= g * dx; gy[j] -= g * dy;
+                    } else {
+                        // Non-edge: only penalize if too close to 1.
+                        if (fabsl(d - 1.0L) < EPS_NON_EDGE) {
+                            long double target = (d < 1.0L ? 1.0L - EPS_NON_EDGE
+                                                          : 1.0L + EPS_NON_EDGE);
+                            long double diff = d - target;
+                            long double g = 2.0L * diff / d;
+                            gx[i] += g * dx; gy[i] += g * dy;
+                            gx[j] -= g * dx; gy[j] -= g * dy;
+                        }
+                    }
+
+                    // Distinctness: if d < EPS_DISTINCT, push apart to EPS_DISTINCT.
+                    if (d < EPS_DISTINCT) {
+                        long double target = EPS_DISTINCT;
+                        long double diff = d - target;      // negative if too close
+                        long double g = 2.0L * diff / d;
+                        gx[i] += g * dx; gy[i] += g * dy;
+                        gx[j] -= g * dx; gy[j] -= g * dy;
+                    }
+                }
+            }
+
+            // Apply update: p := p - lr * grad
+            for (int i = 0; i < n; i++) {
+                x[i] -= lr * gx[i];
+                y[i] -= lr * gy[i];
+            }
+
+            lr *= LR_DECAY;
+        }
+
+        // Check against strict constraints.
+        if (verify_solution()) {
+            cout << "Yes\n";
+            cout << fixed << setprecision(12);
+            for (int i = 0; i < n; i++) {
+                cout << x[i] << " " << y[i] << "\n";
+            }
+            return;
+        }
+    }
+
+    cout << "No\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    read_input();
+    solve();
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys, time, math, random
+
+# Judge tolerances
+EPS_EDGE = 1e-7        # edges must be within 1e-7 of 1
+EPS_NON_EDGE = 1e-2    # non-edges must differ from 1 by at least 1e-2
+EPS_DISTINCT = 1e-2    # all pairs must be at least 1e-2 apart
+
+# Optimization hyperparameters
+INIT_RANGE = 7.0
+TIME_LIMIT = 0.60
+LR_START = 0.05
+LR_DECAY = 0.999
+MAX_ITERS = 10000
+
+def verify(n, adj, x, y):
+    """Verify coordinates against the exact constraints required by the judge."""
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = math.hypot(x[i] - x[j], y[i] - y[j])
+
+            if d < EPS_DISTINCT:
+                return False
+
+            if adj[i][j]:
+                if abs(d - 1.0) > EPS_EDGE:
+                    return False
+            else:
+                if abs(d - 1.0) < EPS_NON_EDGE:
+                    return False
+    return True
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Adjacency matrix
+    adj = [[False] * n for _ in range(n)]
+    for _ in range(m):
+        u = int(next(it)); v = int(next(it))
+        adj[u][v] = adj[v][u] = True
+
+    x = [0.0] * n
+    y = [0.0] * n
+
+    start = time.perf_counter()
+
+    while time.perf_counter() - start < TIME_LIMIT:
+        # Random initialization
+        for i in range(n):
+            x[i] = random.uniform(-INIT_RANGE, INIT_RANGE)
+            y[i] = random.uniform(-INIT_RANGE, INIT_RANGE)
+
+        lr = LR_START
+
+        for _ in range(MAX_ITERS):
+            gx = [0.0] * n
+            gy = [0.0] * n
+
+            # Accumulate gradients over all pairs
+            for i in range(n):
+                xi, yi = x[i], y[i]
+                for j in range(i + 1, n):
+                    dx = xi - x[j]
+                    dy = yi - y[j]
+                    d = math.hypot(dx, dy) + 1e-12  # avoid division by 0
+
+                    # Edge: enforce d=1
+                    if adj[i][j]:
+                        diff = d - 1.0
+                        g = 2.0 * diff / d
+                        gx[i] += g * dx; gy[i] += g * dy
+                        gx[j] -= g * dx; gy[j] -= g * dy
+
+                    # Non-edge: penalize only if |d-1| < EPS_NON_EDGE
+                    else:
+                        if abs(d - 1.0) < EPS_NON_EDGE:
+                            target = (1.0 - EPS_NON_EDGE) if d < 1.0 else (1.0 + EPS_NON_EDGE)
+                            diff = d - target
+                            g = 2.0 * diff / d
+                            gx[i] += g * dx; gy[i] += g * dy
+                            gx[j] -= g * dx; gy[j] -= g * dy
+
+                    # Distinctness: if too close, push to EPS_DISTINCT
+                    if d < EPS_DISTINCT:
+                        diff = d - EPS_DISTINCT
+                        g = 2.0 * diff / d
+                        gx[i] += g * dx; gy[i] += g * dy
+                        gx[j] -= g * dx; gy[j] -= g * dy
+
+            # Apply gradient step
+            for i in range(n):
+                x[i] -= lr * gx[i]
+                y[i] -= lr * gy[i]
+
+            lr *= LR_DECAY
+
+        if verify(n, adj, x, y):
+            out = ["Yes"]
+            for i in range(n):
+                out.append(f"{x[i]:.12f} {y[i]:.12f}")
+            sys.stdout.write("\n".join(out))
+            return
+
+    sys.stdout.write("No")
+
+if __name__ == "__main__":
+    solve()
+```
+
+**Note on Python:** this is heuristic and time-limited; it often works for \(n \le 7\), but C++ is typically more reliable under strict time limits. Adjusting `MAX_ITERS` vs. restart count can help if needed.

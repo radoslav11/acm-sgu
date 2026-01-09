@@ -1,0 +1,489 @@
+## 1) Abridged problem statement
+
+Given an undirected simple graph with \(1 \le n \le 7\), decide whether it is a **unit-distance graph**: can we place its vertices as points in the plane so that:
+
+- If \((u,v)\) is an edge, then the Euclidean distance between their points is **exactly 1** (tolerance \(10^{-7}\)).
+- If \((u,v)\) is **not** an edge, then their distance is **not 1** (must differ from 1 by at least \(10^{-2}\)).
+- No two points are closer than \(10^{-2}\).
+- Coordinates must have absolute value \(\le 100\).
+
+Output `"Yes"` and coordinates if possible, otherwise output `"No"`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution approach)
+
+### Key idea: turn geometry constraints into optimization (“energy minimization”)
+
+We must assign 2D coordinates \((x_i, y_i)\) for each vertex \(i\). Define the distance between vertices \(i,j\):
+
+\[
+d_{ij} = \sqrt{(x_i-x_j)^2 + (y_i-y_j)^2}
+\]
+
+We need:
+- For edges: \(d_{ij} = 1\)
+- For non-edges: \(d_{ij} \ne 1\) and specifically \(|d_{ij}-1| \ge 10^{-2}\)
+- Distinctness: \(d_{ij} \ge 10^{-2}\)
+
+Instead of solving these constraints combinatorially, the solution uses **continuous optimization with gradient descent** and **random restarts**.
+
+---
+
+### Energy (loss) function
+
+The code implicitly minimizes a sum of penalties over all unordered pairs \((i,j)\):
+
+#### (A) Edge penalty
+For edges, enforce distance 1 via squared error:
+
+\[
+E_{\text{edge}} = \sum_{(i,j)\in E} (d_{ij}-1)^2
+\]
+
+#### (B) Non-edge “forbidden band” around 1
+For non-edges, distance must not be near 1. The checker requires \(|d_{ij}-1| \ge \varepsilon\) where \(\varepsilon=10^{-2}\).
+
+The optimization uses a penalty **only if** a non-edge falls inside this band:
+
+If \(|d_{ij}-1| < \varepsilon\), push it to the nearest boundary:
+- target \(= 1-\varepsilon\) if \(d_{ij}<1\)
+- target \(= 1+\varepsilon\) if \(d_{ij}>1\)
+
+Penalty:
+
+\[
+E_{\text{nonedge}} += (d_{ij} - \text{target})^2
+\]
+
+If \(|d_{ij}-1|\ge \varepsilon\), add nothing.
+
+This avoids forcing non-edges to be far away; they just must not be ~1.
+
+#### (C) Distinctness penalty
+If points get too close (< \(10^{-2}\)), push them apart:
+
+If \(d_{ij} < \delta\) where \(\delta=10^{-2}\):
+
+\[
+E_{\text{distinct}} += (d_{ij}-\delta)^2
+\]
+
+Otherwise 0.
+
+---
+
+### Gradient computation
+
+For a term \((d_{ij}-T)^2\), where \(T\) is the desired target distance (1, or \(1\pm\varepsilon\), or \(\delta\)), we need gradient w.r.t. coordinates.
+
+Let \(p_i=(x_i,y_i)\). Then:
+- \(d_{ij} = \|p_i-p_j\|\)
+- \(\nabla_{p_i} d_{ij} = \dfrac{p_i-p_j}{d_{ij}}\)
+
+So:
+
+\[
+\nabla_{p_i} (d_{ij}-T)^2 = 2(d_{ij}-T)\cdot \frac{p_i-p_j}{d_{ij}}
+\]
+
+The gradient on \(j\) is the negative (equal and opposite force), which preserves translation invariance and tends to keep the system balanced.
+
+The code computes:
+- \(dx=x_i-x_j\), \(dy=y_i-y_j\)
+- \(d=\sqrt{dx^2+dy^2} + 10^{-12}\) (tiny additive to avoid divide-by-zero)
+- scalar \(g = 2(d-T)/d\)
+- then add \(g\cdot dx\) and \(g\cdot dy\) to \(i\), subtract from \(j\)
+
+---
+
+### Optimization loop and random restarts
+
+The loss is non-convex (many local minima), especially because:
+- non-edge penalty is conditional (piecewise)
+- multiple constraints may conflict
+
+So the code repeatedly:
+1. Randomly initializes all points uniformly in a square \([-7,7]^2\).
+2. Runs gradient descent for up to 10,000 iterations with:
+   - initial learning rate 0.05
+   - exponential decay by 0.999 each iteration
+3. Verifies with the exact judge tolerances.
+4. Stops when time limit (~0.6s inside a 0.75s limit) is reached.
+
+Because \(n \le 7\), the pairwise loop is tiny: \(\binom{7}{2}=21\) pairs, so many iterations and restarts are feasible.
+
+---
+
+### Verification (matches statement tolerances)
+
+After optimization, the program checks:
+- distinctness: \(d \ge 10^{-2}\)
+- edges: \(|d-1| \le 10^{-7}\)
+- non-edges: \(|d-1| \ge 10^{-2}\)
+
+If satisfied, it prints `"Yes"` and the coordinates.
+
+---
+
+### Complexity
+
+For each gradient step, it considers all pairs: \(O(n^2)\) with \(n\le7\) → constant-time.
+Total work is “iterations × restarts” until time runs out; bounded by the time limit.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>               // Includes almost all standard C++ headers
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                  // Iterate by reference so we can assign into elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {                   // Iterate by value (fine for printing)
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Tolerances and optimization hyperparameters tuned to match judge requirements
+const long double EPS_EDGE = 1e-7;     // Edge distances must be within 1e-7 of 1
+const long double EPS_NON_EDGE = 1e-2; // Non-edges must differ from 1 by at least 1e-2
+const long double EPS_DISTINCT = 1e-2; // Points must be at least 1e-2 apart
+const long double MAX_COORD = 7.0;     // Initial random coords are in [-7, 7]
+const long double TIME_LIMIT = 0.6;    // Spend up to 0.6s searching (under 0.75s TL)
+const long double LR_START = 0.05;     // Initial learning rate
+const long double LR_DECAY = 0.999;    // Multiply learning rate each iter
+const int MAX_ITERS = 10000;           // Gradient steps per restart
+
+int n, m;                              // Number of vertices and edges
+vector<pair<int, int>> edges;          // Edge list
+vector<vector<bool>> adj;              // Adjacency matrix for O(1) edge lookup
+vector<long double> x, y;              // Coordinates for each vertex
+
+// Read graph input and build adjacency matrix + edge list
+void read() {
+    cin >> n >> m;
+    adj.assign(n, vector<bool>(n, false)); // n x n initialized to false
+    x.resize(n);                           // allocate coordinate arrays
+    y.resize(n);
+    edges.clear();                         // clear edge list for safety
+
+    for(int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        edges.emplace_back(u, v);          // store edge
+        adj[u][v] = adj[v][u] = true;      // undirected graph
+    }
+}
+
+// Check whether current coordinates satisfy all judge constraints
+bool verify_solution() {
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            long double dx = x[i] - x[j];
+            long double dy = y[i] - y[j];
+            long double d = sqrt(dx * dx + dy * dy); // actual distance
+
+            // Distinctness constraint: must not be too close
+            if(d < EPS_DISTINCT) {
+                return false;
+            }
+
+            if(adj[i][j]) {
+                // Edge must have length 1 (within EPS_EDGE)
+                if(fabsl(d - 1.0) > EPS_EDGE) {
+                    return false;
+                }
+            } else {
+                // Non-edge must not be within EPS_NON_EDGE of 1
+                if(fabsl(d - 1.0) < EPS_NON_EDGE) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true; // all constraints satisfied
+}
+
+void solve() {
+    // Use random restarts + gradient descent on a custom "energy":
+    //  - edges: force distances to 1
+    //  - non-edges: if too close to 1, push away to boundary 1±EPS_NON_EDGE
+    //  - distinctness: if too close (< EPS_DISTINCT), push apart
+
+    auto start = clock(); // starting CPU time
+    mt19937 rng(chrono::steady_clock::now().time_since_epoch().count()); // RNG seed
+    uniform_real_distribution<long double> init(-MAX_COORD, MAX_COORD);  // random init range
+
+    // Keep trying new random starts until we run out of time
+    while((long double)(clock() - start) / CLOCKS_PER_SEC < TIME_LIMIT) {
+
+        // Randomly initialize all vertex coordinates
+        for(int i = 0; i < n; i++) {
+            x[i] = init(rng);
+            y[i] = init(rng);
+        }
+
+        long double lr = LR_START; // learning rate for this restart
+
+        // Run gradient descent iterations
+        for(int iter = 0; iter < MAX_ITERS; iter++) {
+            vector<long double> gx(n, 0), gy(n, 0); // accumulate gradients per vertex
+
+            // For every unordered pair (i,j), add appropriate penalty gradients
+            for(int i = 0; i < n; i++) {
+                for(int j = i + 1; j < n; j++) {
+                    long double dx = x[i] - x[j];
+                    long double dy = y[i] - y[j];
+                    // Add tiny constant to avoid division by zero in gradients
+                    long double d = sqrt(dx * dx + dy * dy) + 1e-12;
+
+                    if(adj[i][j]) {
+                        // Edge: target distance = 1
+                        long double diff = d - 1.0;        // d - target
+                        long double g = 2 * diff / d;      // scalar factor for gradient
+                        gx[i] += g * dx;                   // grad w.r.t x_i
+                        gy[i] += g * dy;                   // grad w.r.t y_i
+                        gx[j] -= g * dx;                   // opposite for vertex j
+                        gy[j] -= g * dy;
+                    } else {
+                        // Non-edge: only penalize if it is too close to 1
+                        if(abs(d - 1.0) < EPS_NON_EDGE) {
+                            // Choose nearest "safe" boundary (1 - eps) or (1 + eps)
+                            long double target =
+                                (d < 1.0 ? 1.0 - EPS_NON_EDGE
+                                         : 1.0 + EPS_NON_EDGE);
+                            long double diff = d - target;
+                            long double g = 2 * diff / d;
+                            gx[i] += g * dx;
+                            gy[i] += g * dy;
+                            gx[j] -= g * dx;
+                            gy[j] -= g * dy;
+                        }
+                    }
+
+                    // Distinctness: if too close, push them apart to at least EPS_DISTINCT
+                    if(d < EPS_DISTINCT) {
+                        long double diff = d - EPS_DISTINCT; // negative when too close
+                        long double g = 2 * diff / d;
+                        gx[i] += g * dx;
+                        gy[i] += g * dy;
+                        gx[j] -= g * dx;
+                        gy[j] -= g * dy;
+                    }
+                }
+            }
+
+            // Apply the gradient step: p := p - lr * grad
+            for(int i = 0; i < n; i++) {
+                x[i] -= lr * gx[i];
+                y[i] -= lr * gy[i];
+            }
+
+            // Slightly decay learning rate to stabilize convergence
+            lr *= LR_DECAY;
+        }
+
+        // After optimization, check if we satisfy exact constraints
+        if(verify_solution()) {
+            cout << "Yes\n";
+            cout << fixed << setprecision(12); // print enough precision
+            for(int i = 0; i < n; i++) {
+                cout << x[i] << " " << y[i] << "\n";
+            }
+            return;
+        }
+    }
+
+    // Failed to find a valid embedding within the time budget
+    cout << "No\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster I/O
+    cin.tie(nullptr);                 // untie cin/cout for speed
+
+    int T = 1;
+    // cin >> T; // problem has a single test; left here as template
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys, time, math, random
+
+# Judge tolerances (match statement)
+EPS_EDGE = 1e-7        # |d-1| must be <= 1e-7 for edges
+EPS_NON_EDGE = 1e-2    # |d-1| must be >= 1e-2 for non-edges
+EPS_DISTINCT = 1e-2    # all pairs must have d >= 1e-2
+
+# Optimization hyperparameters (ported from C++)
+MAX_COORD = 7.0
+TIME_LIMIT = 0.6       # keep some margin under 0.75s
+LR_START = 0.05
+LR_DECAY = 0.999
+MAX_ITERS = 10000
+
+def verify(n, adj, xs, ys):
+    """Check all constraints exactly as required by the judge."""
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = xs[i] - xs[j]
+            dy = ys[i] - ys[j]
+            d = math.hypot(dx, dy)
+
+            # Points must be distinct enough
+            if d < EPS_DISTINCT:
+                return False
+
+            if adj[i][j]:
+                # Edge must be unit length
+                if abs(d - 1.0) > EPS_EDGE:
+                    return False
+            else:
+                # Non-edge must not be near 1
+                if abs(d - 1.0) < EPS_NON_EDGE:
+                    return False
+
+    return True
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Build adjacency matrix for O(1) edge check
+    adj = [[False] * n for _ in range(n)]
+    for _ in range(m):
+        u = int(next(it)); v = int(next(it))
+        adj[u][v] = adj[v][u] = True
+
+    # Coordinate arrays
+    xs = [0.0] * n
+    ys = [0.0] * n
+
+    start = time.perf_counter()
+
+    # Random restarts until time budget is exhausted
+    while time.perf_counter() - start < TIME_LIMIT:
+        # Random initial placement
+        for i in range(n):
+            xs[i] = random.uniform(-MAX_COORD, MAX_COORD)
+            ys[i] = random.uniform(-MAX_COORD, MAX_COORD)
+
+        lr = LR_START
+
+        # Gradient descent iterations
+        for _ in range(MAX_ITERS):
+            gx = [0.0] * n
+            gy = [0.0] * n
+
+            # Accumulate gradient from each pair (i,j)
+            for i in range(n):
+                xi, yi = xs[i], ys[i]
+                for j in range(i + 1, n):
+                    dx = xi - xs[j]
+                    dy = yi - ys[j]
+                    d = math.hypot(dx, dy) + 1e-12  # avoid division by zero
+
+                    # (1) Edge constraint: target distance 1
+                    if adj[i][j]:
+                        diff = d - 1.0
+                        g = 2.0 * diff / d
+                        gx[i] += g * dx
+                        gy[i] += g * dy
+                        gx[j] -= g * dx
+                        gy[j] -= g * dy
+
+                    # (2) Non-edge forbidden band near 1
+                    else:
+                        if abs(d - 1.0) < EPS_NON_EDGE:
+                            target = (1.0 - EPS_NON_EDGE) if d < 1.0 else (1.0 + EPS_NON_EDGE)
+                            diff = d - target
+                            g = 2.0 * diff / d
+                            gx[i] += g * dx
+                            gy[i] += g * dy
+                            gx[j] -= g * dx
+                            gy[j] -= g * dy
+
+                    # (3) Distinctness constraint
+                    if d < EPS_DISTINCT:
+                        diff = d - EPS_DISTINCT
+                        g = 2.0 * diff / d
+                        gx[i] += g * dx
+                        gy[i] += g * dy
+                        gx[j] -= g * dx
+                        gy[j] -= g * dy
+
+            # Apply update step
+            for i in range(n):
+                xs[i] -= lr * gx[i]
+                ys[i] -= lr * gy[i]
+
+            # Decay learning rate to stabilize convergence
+            lr *= LR_DECAY
+
+        # After optimization, verify against strict constraints
+        if verify(n, adj, xs, ys):
+            out = ["Yes"]
+            for i in range(n):
+                # Print enough precision; must be within abs <= 100 (this method stays small)
+                out.append(f"{xs[i]:.12f} {ys[i]:.12f}")
+            sys.stdout.write("\n".join(out))
+            return
+
+    # No embedding found in time
+    sys.stdout.write("No")
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes:
+- This is a heuristic like the C++ version; it may be slightly less reliable in Python under strict time. Using PyPy and lowering `MAX_ITERS` while increasing restarts can help.
+
+---
+
+## 5) Compressed editorial
+
+Model vertex coordinates \((x_i,y_i)\) and define distances \(d_{ij}\). Minimize an “energy” with gradient descent + random restarts:
+- For edges, add \((d_{ij}-1)^2\).
+- For non-edges, only if \(|d_{ij}-1|<10^{-2}\), push to boundary \(1\pm10^{-2}\) via \((d_{ij}-\text{target})^2\).
+- If \(d_{ij}<10^{-2}\), push apart via \((d_{ij}-10^{-2})^2\).
+Gradient for \((d-T)^2\) contributes \(2(d-T)\frac{(p_i-p_j)}{d}\) to \(i\) and the negative to \(j\).
+Repeat from random initial placements until time budget; verify with judge tolerances and print coordinates if valid, else `"No"`.
