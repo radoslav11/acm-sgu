@@ -1,0 +1,432 @@
+## 1) Concise (abridged) problem statement
+
+You are at junction **S** in an undirected graph with **N** junctions and **M** corridors.  
+Each corridor \(i\) between \(A_i, B_i\) has:
+
+- travel time \(T_i\) (seconds),
+- initial temperature \(R_i\),
+- heating speed \(P_i \ge 0\) (degrees per second).
+
+Junctions always have temperature 0.
+
+If you enter a corridor at time \(t\), then while traversing it your suit reaches the corridor’s current temperature, and the **maximum** temperature experienced on that corridor is at its end:
+\[
+\text{heat} = R_i + (t + T_i)\cdot P_i
+\]
+You have a suit that can withstand up to **H** degrees. There are **E** exit junctions.
+
+Task: Find a path from **S** to any exit such that the **maximum heat encountered along the path** is minimized.  
+If you can escape without exceeding **H**, output `YES`, that minimal possible maximum heat, and one corresponding path. Otherwise output `NO`.
+
+Constraints: \(N \le 100\), \(M \le 10000\), values up to 10000.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observation: “minimize the maximum” → binary search on the answer
+Let’s denote by \(X\) a candidate value for the maximum heat your suit will ever experience.
+
+If we fix \(X\), the question becomes:
+
+> Is there a path from \(S\) to any exit such that **every used corridor** is traversed at a time where  
+> \[
+> R + (t + T)\cdot P \le X
+> \]
+> where \(t\) is the arrival time at the corridor’s start junction?
+
+If the answer is “yes” for some \(X\), then it is also “yes” for any larger \(X\) (relaxing the constraint can’t hurt).  
+So feasibility is monotone, enabling binary search for the minimum \(X\).
+
+We only need to search \(X \in [0, H]\) because temperatures above \(H\) are fatal anyway; if the best \(X\) exceeds \(H\), escape is impossible.
+
+---
+
+### How to check feasibility for a fixed \(X\)
+
+We need to know whether we can reach an exit. But the corridor condition depends on the **time** \(t\) when we start traversing it, and \(t\) depends on the chosen path.
+
+For a fixed \(X\), we want the **earliest arrival times** at junctions, because arriving earlier can only help satisfy
+\[
+R + (t + T)\cdot P \le X
+\]
+(since \(P \ge 0\), higher \(t\) makes the left side larger or equal).
+
+Thus, for a given \(X\), we run Dijkstra-like shortest path on travel time, **but only allow an edge** \(u\to v\) if it is safe when departing at time `dist[u]`:
+
+- current time at \(u\): \(t = \text{dist}[u]\)
+- edge parameters: \(T, R, P\)
+- safe iff \(R + (t+T)\cdot P \le X\)
+
+If safe, we can relax:
+\[
+\text{dist}[v] \leftarrow \min(\text{dist}[v],\ \text{dist}[u] + T)
+\]
+
+Because \(N \le 100\), the provided solution uses the \(O(N^2)\) Dijkstra variant (no priority queue), which is fast and simple and avoids overhead.
+
+After computing distances, if any exit has finite distance, \(X\) is feasible. We can also store parents to reconstruct an actual path.
+
+---
+
+### Overall algorithm
+
+1. Read input, build adjacency list of corridors.
+2. Binary search \(X\) in \([0, H]\):
+   - run `check(X)`:
+     - Dijkstra earliest times with edge-allowed-by-\(X\)
+     - if any exit reachable, return success and a reconstructed path
+3. If no \(X\) feasible → `NO`
+4. Else output `YES`, minimal feasible \(X\), and the path.
+
+---
+
+### Correctness sketch
+
+- **Monotonicity**: If a path is safe under \(X\), it remains safe under any \(X' \ge X\). Hence binary search is valid.
+- **Earliest times suffice**: With \(P \ge 0\), corridor heat at traversal end is nondecreasing in start time \(t\). If we can reach a node at time \(t_1\), reaching it later \(t_2 \ge t_1\) can only make future edges harder to satisfy, never easier. So considering minimal arrival times is optimal for feasibility.
+- **Dijkstra validity**: Edge travel times \(T\) are nonnegative, and we relax by time, so standard Dijkstra reasoning applies within the subgraph of edges allowed by \(X\).
+
+---
+
+### Complexity
+
+- `check(X)` with quadratic Dijkstra: \(O(N^2 + M)\) (the code is effectively \(O(N^2 + M)\)).
+- Binary search over \([0,H]\): \(O(\log H)\) iterations, \(H \le 10000\) → ~14 iterations.
+- Total: \(O((N^2+M)\log H)\), easily fine for given limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>      // Includes almost all standard C++ headers
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector: assumes it already has the right size, reads elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (trailing space is okay)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int64_t inf = 1e18;     // A large value used as "infinity" for distances
+
+int n, m, h, s, e;            // N nodes, M edges, suit limit H, start S, #exits E
+vector<int> exits;            // List of exit junctions
+
+// Edge in adjacency list:
+// to = neighbor vertex
+// t  = travel time T
+// r  = initial temperature R
+// p  = heating speed P
+struct Edge {
+    int to, t, r, p;
+};
+
+vector<vector<Edge>> adj;     // Graph adjacency list (1-indexed)
+
+void read() {
+    cin >> n >> m >> h >> s >> e;     // Read graph sizes and parameters
+    adj.resize(n + 1);                // Prepare adjacency list for nodes 1..N
+
+    for(int i = 0; i < m; i++) {
+        int a, b, t, r, p;
+        cin >> a >> b >> t >> r >> p; // Read corridor endpoints and parameters
+
+        // Undirected corridor: add both directions
+        adj[a].push_back({b, t, r, p});
+        adj[b].push_back({a, t, r, p});
+    }
+
+    exits.resize(e);                  // Read E exit nodes
+    cin >> exits;
+}
+
+// For a fixed heat limit x, checks if escape is possible.
+// Returns:
+//  - first = true/false (feasible or not)
+//  - second = one feasible path (list of vertices) if feasible, else empty
+pair<bool, vector<int>> check(int64_t x) {
+    // dist[v] = earliest time to reach vertex v
+    vector<int64_t> dist(n + 1, inf);
+
+    // parent[v] = previous vertex on best found path to v (for reconstruction)
+    vector<int> parent(n + 1, -1);
+
+    // visited[v] = whether vertex v has been "settled" by Dijkstra
+    vector<bool> visited(n + 1, false);
+
+    dist[s] = 0;                      // Start at S at time 0
+
+    // Quadratic Dijkstra: repeat N times selecting the unvisited vertex
+    // with minimum dist
+    for(int i = 0; i < n; i++) {
+        int u = -1;
+
+        // Find the unvisited vertex with the smallest current dist
+        for(int v = 1; v <= n; v++) {
+            if(!visited[v] && (u == -1 || dist[v] < dist[u])) {
+                u = v;
+            }
+        }
+
+        // If nothing reachable remains, stop
+        if(u == -1 || dist[u] == inf) {
+            break;
+        }
+
+        visited[u] = true;            // Finalize dist[u]
+
+        // Try all outgoing edges from u
+        for(auto& [to, t, r, p]: adj[u]) {
+            // If we traverse this corridor starting at time dist[u],
+            // the maximum corridor temperature (at the end) is:
+            // heat = r + (dist[u] + t) * p
+            int64_t heat = r + (dist[u] + t) * (int64_t)p;
+
+            // Only allow this edge if it doesn't exceed the fixed limit x
+            if(heat <= x) {
+                int64_t new_dist = dist[u] + t;  // arrival time at 'to'
+                if(new_dist < dist[to]) {        // standard relaxation
+                    dist[to] = new_dist;
+                    parent[to] = u;              // remember path
+                }
+            }
+        }
+    }
+
+    // Find any reachable exit. The code picks the first exit in input order.
+    int best_exit = -1;
+    for(int ex: exits) {
+        if(dist[ex] < inf) {
+            best_exit = ex;
+            break;
+        }
+    }
+
+    // No exit reachable under limit x
+    if(best_exit == -1) {
+        return {false, {}};
+    }
+
+    // Reconstruct path by following parent pointers backward from best_exit
+    vector<int> path;
+    int cur = best_exit;
+    while(cur != -1) {
+        path.push_back(cur);
+        cur = parent[cur];
+    }
+    reverse(path.begin(), path.end()); // reverse to get S -> exit order
+
+    return {true, path};
+}
+
+void solve() {
+    // We binary search the minimal maximum heat X.
+    // For each X, we run check(X) to see if there exists a path from S
+    // to any exit using only edges safe under X at the time we traverse them.
+
+    int low = 0, high = h, mid, ret = -1;
+    vector<int> best_path;
+
+    while(low <= high) {
+        mid = (low + high) / 2;
+
+        // Is escape possible with max heat <= mid?
+        auto [ok, path] = check(mid);
+
+        if(ok) {
+            // mid is feasible: store it and try smaller
+            ret = mid;
+            best_path = path;
+            high = mid - 1;
+        } else {
+            // mid not feasible: need larger limit
+            low = mid + 1;
+        }
+    }
+
+    // If even H isn't feasible, answer is NO
+    if(ret == -1) {
+        cout << "NO\n";
+    } else {
+        cout << "YES\n";
+        cout << ret << "\n";                          // minimal possible max heat
+        cout << best_path.size() << " " << best_path  // path length and nodes
+             << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;                      // Problem has a single test; left as stub
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+INF = 10**30
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    # Read N, M, H, S, E
+    n = int(next(it))
+    m = int(next(it))
+    h = int(next(it))
+    s = int(next(it))
+    e = int(next(it))
+
+    # Build adjacency list (1-indexed)
+    adj = [[] for _ in range(n + 1)]
+    for _ in range(m):
+        a = int(next(it))
+        b = int(next(it))
+        t = int(next(it))
+        r = int(next(it))
+        p = int(next(it))
+        # undirected
+        adj[a].append((b, t, r, p))
+        adj[b].append((a, t, r, p))
+
+    # Read exits
+    exits = [int(next(it)) for _ in range(e)]
+
+    def check(x: int):
+        """
+        Returns (ok, path)
+        ok: True if reachable to any exit under max heat limit x
+        path: one reconstructed path if ok else []
+        """
+        dist = [INF] * (n + 1)        # earliest arrival times
+        parent = [-1] * (n + 1)       # for path reconstruction
+        used = [False] * (n + 1)      # Dijkstra settled set
+
+        dist[s] = 0
+
+        # O(N^2) Dijkstra (N <= 100)
+        for _ in range(n):
+            u = -1
+            best = INF
+            # pick unvisited node with smallest dist
+            for v in range(1, n + 1):
+                if not used[v] and dist[v] < best:
+                    best = dist[v]
+                    u = v
+
+            if u == -1:               # nothing reachable
+                break
+
+            used[u] = True
+
+            # relax edges out of u if allowed by heat constraint
+            du = dist[u]
+            for to, t, r, p in adj[u]:
+                # Heat at corridor end time (du + t):
+                heat = r + (du + t) * p
+                if heat <= x:
+                    nd = du + t
+                    if nd < dist[to]:
+                        dist[to] = nd
+                        parent[to] = u
+
+        # Choose first reachable exit in input order
+        exit_node = -1
+        for ex in exits:
+            if dist[ex] < INF:
+                exit_node = ex
+                break
+
+        if exit_node == -1:
+            return False, []
+
+        # Reconstruct path S -> exit
+        path = []
+        cur = exit_node
+        while cur != -1:
+            path.append(cur)
+            cur = parent[cur]
+        path.reverse()
+        return True, path
+
+    # Binary search minimal feasible X in [0, H]
+    lo, hi = 0, h
+    best_x = -1
+    best_path = []
+
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        ok, path = check(mid)
+        if ok:
+            best_x = mid
+            best_path = path
+            hi = mid - 1
+        else:
+            lo = mid + 1
+
+    out = []
+    if best_x == -1:
+        out.append("NO\n")
+    else:
+        out.append("YES\n")
+        out.append(f"{best_x}\n")
+        out.append(str(len(best_path)) + " " + " ".join(map(str, best_path)) + "\n")
+
+    sys.stdout.write("".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Binary search the minimal maximum heat \(X \in [0,H]\).  
+For fixed \(X\), compute earliest arrival times from \(S\) using Dijkstra on travel time, but allow an edge \((u\to v)\) only if
+\[
+R + (\text{dist}[u] + T)\cdot P \le X
+\]
+(because corridor temperature increases with time, \(P\ge 0\), so earliest arrivals are best).  
+If any exit is reachable, \(X\) is feasible; store parents to reconstruct a path.  
+Binary search yields the minimal feasible \(X\); if none exists → `NO`, else output `YES`, \(X\), and the path.

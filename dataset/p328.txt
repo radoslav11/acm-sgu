@@ -1,0 +1,278 @@
+## 1) Abridged problem statement
+
+You are given a path (chain) of **N** vertices. Each vertex is either:
+
+- `0` = uncolored
+- `1` = black
+- `2` = white
+
+Already-colored vertices satisfy the rule: **adjacent vertices never share the same color**.
+
+Two players alternate moves. On a move, a player chooses an uncolored vertex and colors it `1` or `2` such that the rule remains satisfied. If a player has no legal move, they lose.
+
+Given the current position, determine whether the next player to move wins with optimal play. Output `"FIRST"` if the next player wins, else `"SECOND"`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: the game splits into independent zero-segments
+
+Because the graph is a path, the only constraint for coloring a `0` vertex is its **immediate neighbors**. Already-colored vertices act like “walls” that separate the remaining uncolored vertices into **contiguous segments of zeros**:
+
+Example: `1 0 0 2 0 0 0 1`  
+Zero segments are `00` between `1` and `2`, and `000` between `2` and `1`.
+
+A move inside one zero segment never affects legal moves in a different zero segment (they are separated by already-colored vertices), so the position is a **disjunctive sum** of subgames (one per zero-segment).
+
+By the **Sprague–Grundy theorem**, the whole position is winning iff the XOR of Grundy numbers of all segments is non-zero.
+
+So we just need the Grundy number of a zero-segment given its boundary conditions.
+
+---
+
+### Segment types by boundary colors
+
+For a zero segment of length `len`, look at the colors immediately to its left and right:
+
+- `left = 0` if segment touches left end of the chain, else `1/2`
+- `right = 0` if segment touches right end, else `1/2`
+
+Four cases:
+
+1. **free**: `left = 0` and `right = 0` (segment is the whole chain)
+2. **boundary**: exactly one side colored (touches an end)
+3. **match**: both colored and equal (`1 ... 1` or `2 ... 2`)
+4. **diff**: both colored and different (`1 ... 2` or `2 ... 1`)
+
+---
+
+### Grundy values used by the solution
+
+The code uses these closed forms:
+
+- `sg_diff(len) = 0`
+- `sg_match(len) = 1 if len >= 1 else 0`
+- `sg_boundary(len) = len`
+- `sg_free(len) = len % 2`
+
+The comment in the C++ solution includes a small table showing the pattern. With these formulas, we can compute the XOR in a single scan.
+
+Intuition sketch (why these make sense):
+
+- **diff** (`1 ... 2`): every uncolored vertex has *exactly one* legal color forced by parity, so the segment becomes a sequence of forced moves with no branching → behaves like a “zero” nim-heap in SG terms (P-position), hence SG = 0.
+- **match** (`1 ... 1`): there is exactly one “conflict parity” location where you get a choice/impact; for any `len>=1` it behaves like a single nim-heap of size 1 → SG = 1.
+- **boundary** (one side fixed, other open): behaves like a heap of size `len` (each move splits into smaller boundary-like subsegments), giving SG = len.
+- **free** (both ends open): only parity matters, giving SG = len mod 2.
+
+(Full mex-derivations are possible but would be longer; the intended solution is to recognize/verify these patterns and then use them.)
+
+---
+
+### Algorithm
+
+1. Scan the string `s`.
+2. Every time you find a maximal block of zeros `[start, i)` of length `len`:
+   - Determine `left` color (or 0 if none)
+   - Determine `right` color (or 0 if none)
+   - Compute segment Grundy `sg` using the above formulas
+   - XOR into `xor_sum`
+3. If `xor_sum != 0` output `"FIRST"`, else `"SECOND"`.
+
+**Complexity:** `O(N)` time, `O(1)` extra memory.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Import almost all standard headers (competitive programming style)
+using namespace std;
+
+// Helper to print a pair (not actually used in this solution)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper to read a pair (not actually used in this solution)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper to read a vector (not used here)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {             // Read each element
+        in >> x;
+    }
+    return in;
+};
+
+// Helper to print a vector (not used here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;                             // Number of vertices in the chain
+string s;                          // Current coloring as a string of digits '0','1','2'
+
+// Read input
+void read() { cin >> n >> s; }
+
+// Grundy number for a zero-segment of length len when both neighbors exist and match (1...1 or 2...2)
+int sg_match(int len) { return len >= 1 ? 1 : 0; }
+
+// Grundy number for a zero-segment when neighbors exist and differ (1...2 or 2...1)
+int sg_diff(int len) { return 0; }
+
+// Grundy number for a zero-segment touching exactly one end of the chain (one neighbor colored, other side open)
+int sg_boundary(int len) { return len; }
+
+// Grundy number for a zero-segment with no colored neighbors (whole chain is zeros)
+int sg_free(int len) { return len % 2; }
+
+void solve() {
+    // We use Sprague-Grundy theorem:
+    // - Each maximal contiguous segment of '0's is an independent subgame.
+    // - The whole game Grundy value is XOR of segment Grundy values.
+    // Winning iff XOR != 0.
+
+    int xor_sum = 0;               // XOR of Grundy numbers of all zero segments
+    int i = 0;                     // Current scanning index
+
+    while(i < n) {
+        if(s[i] == '0') {          // Found start of a zero segment
+            int start = i;         // Remember segment start
+            while(i < n && s[i] == '0') {
+                i++;               // Advance to end of zero segment
+            }
+            int len = i - start;   // Segment length
+
+            // Determine colors adjacent to the segment.
+            // If segment touches chain end, we use 0 as "no neighbor".
+            char left = (start > 0) ? s[start - 1] : 0;
+            char right = (i < n) ? s[i] : 0;
+
+            int sg;                // Grundy number for this segment
+
+            // Classify by boundary condition and compute SG using closed-form formulas
+            if(left == 0 && right == 0) {
+                sg = sg_free(len);         // Both ends open
+            } else if(left == 0 || right == 0) {
+                sg = sg_boundary(len);     // Exactly one end open
+            } else if(left == right) {
+                sg = sg_match(len);        // Both sides colored and equal
+            } else {
+                sg = sg_diff(len);         // Both sides colored and different
+            }
+
+            xor_sum ^= sg;         // Combine via XOR (Sprague–Grundy theorem)
+        } else {
+            i++;                   // Not a zero: move on
+        }
+    }
+
+    // Non-zero XOR => winning position for next player
+    cout << (xor_sum != 0 ? "FIRST" : "SECOND") << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O
+    cin.tie(nullptr);                 // Untie cin/cout for speed
+
+    int T = 1;
+    // cin >> T;                      // Only one test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read N and configuration string
+        // cout << "Case #" << test << ": ";
+        solve();                      // Solve and print answer
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same logic) with detailed comments
+
+```python
+import sys
+
+def sg_match(length: int) -> int:
+    # Both neighbors exist and are the same color.
+    # Closed form from the known pattern.
+    return 1 if length >= 1 else 0
+
+def sg_diff(length: int) -> int:
+    # Both neighbors exist and have different colors.
+    return 0
+
+def sg_boundary(length: int) -> int:
+    # Segment touches one end of the chain (only one colored neighbor).
+    return length
+
+def sg_free(length: int) -> int:
+    # Segment touches both ends (entire chain is zeros).
+    return length % 2
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    s = data[1].strip()
+    # n is not strictly needed except for safety; s length should be n.
+
+    xor_sum = 0
+    i = 0
+
+    # Scan the string and extract maximal zero segments
+    while i < n:
+        if s[i] == '0':
+            start = i
+            while i < n and s[i] == '0':
+                i += 1
+            length = i - start
+
+            # Determine boundary colors; use '\0' sentinel (or None) for "no neighbor"
+            left = s[start - 1] if start > 0 else None
+            right = s[i] if i < n else None
+
+            # Classify and compute the segment Grundy number
+            if left is None and right is None:
+                sg = sg_free(length)
+            elif left is None or right is None:
+                sg = sg_boundary(length)
+            elif left == right:
+                sg = sg_match(length)
+            else:
+                sg = sg_diff(length)
+
+            xor_sum ^= sg
+        else:
+            i += 1
+
+    # Decide winner from XOR
+    sys.stdout.write("FIRST\n" if xor_sum != 0 else "SECOND\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Split the path into maximal contiguous blocks of `0`s. Each block is an independent subgame.
+- Overall position is winning iff XOR of Grundy numbers of blocks is non-zero.
+- For a zero-block of length `len`, let `left/right` be adjacent colors or “missing” if at chain end:
+  - both missing: `SG = len % 2`
+  - exactly one missing: `SG = len`
+  - both present and equal: `SG = 1` if `len≥1` else `0`
+  - both present and different: `SG = 0`
+- Scan string in `O(N)`, XOR the block SGs, print `"FIRST"` if XOR≠0 else `"SECOND"`.

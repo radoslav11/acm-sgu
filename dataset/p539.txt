@@ -1,0 +1,464 @@
+## 1) Concise abridged problem statement
+
+Given an array `a[1..n]` ( `1 ≤ n ≤ 1000` ), you may perform **steps**.  
+In one step, you choose any number of **disjoint index pairs** `(i, j)` (no index appears in two pairs), and swap `a[i]` with `a[j]` **simultaneously**.
+
+Your task: sort the array in nondecreasing order using the **minimum number of steps**, and output that minimum `k` and one valid sequence of steps (each step is listed as `p i1 j1 i2 j2 ... ip jp`).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observations
+
+1. **Answer is always 0, 1, or 2 steps.**
+   - If the array is already sorted → `0`.
+   - Sometimes it can be sorted in one parallel step (a set of disjoint swaps).
+   - Otherwise it can always be done in `2` steps.
+
+2. A “one-step sort” means:
+   - There exists a set of disjoint pairs `(i, j)` such that after swapping those pairs, the array becomes sorted.
+   - If an index is already correct (`a[i] == sorted[i]`), you must not move it (or you would make it incorrect unless swapped with identical value).
+
+---
+
+### Step A: Build the sorted target
+
+Let:
+- `p` = original array
+- `q` = sorted copy of `p`
+
+If `p == q`, output `0`.
+
+---
+
+### Step B: Check if 1 step is possible (greedy pairing)
+
+We want to transform `p` into `q` using disjoint swaps in a single step.
+
+In one step, any moved index must be swapped with exactly one other index. Therefore, for any swap `(i, j)` we need:
+
+- After swap, position `i` receives `q[i]`, so we need `p[j] == q[i]`
+- After swap, position `j` receives `q[j]`, so we need `p[i] == q[j]`
+
+Equivalently:
+- `p[i] == q[j]` and `p[j] == q[i]`
+
+So the algorithm:
+- Maintain `visited[i]` indicating index already committed to a swap.
+- For each index `i`:
+  - If `p[i] == q[i]` or already visited, skip.
+  - Search some `j` (not visited) that forms a 2-cycle with `i` w.r.t. target:  
+    `p[i] == q[j]` and `p[j] == q[i]`.
+  - If no such `j` exists, 1-step solution is impossible.
+  - Otherwise mark `i` and `j` visited and add swap `(i, j)`.
+
+If this succeeds for all mismatched indices, we output `1` and these swaps.
+
+Complexity: `O(n^2)` search, fine for `n ≤ 1000`.
+
+Why this works:
+- A one-step solution must pair every “wrong” index with exactly one other index (since it must be changed), hence the required condition above; we just find such pairings greedily.
+
+---
+
+### Step C: Otherwise, always solve in 2 steps using permutation cycles
+
+When 1 step is impossible, we construct a plan that always works in 2 steps.
+
+#### C1) Turn the “array with duplicates” into a permutation mapping
+If all elements were distinct, sorting corresponds to applying a permutation to indices. With duplicates, we can still create a consistent permutation by distinguishing equal values by occurrence order.
+
+Method used:
+- For each value `x`, track how many times we’ve seen it so far (`cnt[x]`).
+- In sorted array `q`, the block of value `x` starts at `lower_bound(q, x)`.
+- For `p[i] = x`, map it to the position:
+  ```
+  perm[i] = lower_bound(q, x) + cnt[x]
+  cnt[x]++
+  ```
+Now `perm` is a permutation of `0..n-1` such that moving element from index `i` to index `perm[i]` will make the array match `q` (with stable occurrence matching).
+
+So sorting reduces to applying permutation `perm`.
+
+#### C2) Decompose permutation into cycles
+Any permutation is a disjoint union of cycles. A 1-cycle is already correct.
+
+- Cycle length 2: can be fixed with one swap in any step.
+- Cycle length ≥ 3: cannot be fixed in one parallel step if you only swap disjoint pairs once; but it can be fixed in **two** steps.
+
+#### C3) Fix each cycle in two steps by “making 2-cycles”, then “finishing”
+Consider a cycle of indices:
+`v[0] -> v[1] -> ... -> v[k-1] -> v[0]` (k ≥ 3)
+
+The code uses a known construction:
+
+- In step 1: swap pairs  
+  `(v[0], v[k-2]), (v[1], v[k-3]), ...` (mirroring inward, excluding the last element `v[k-1]`)
+- In step 2: swap pairs  
+  `(v[0], v[k-1]), (v[1], v[k-2]), ...` and possibly one extra when k is odd.
+
+Intuition:
+- These swaps transform the k-cycle into disjoint 2-cycles after the first step (conceptually), which can be resolved by the second step.
+- All swaps within a step are disjoint by construction (each `v[t]` is used at most once per step).
+
+The implementation builds two lists `turns[0]` and `turns[1]` and outputs them.
+
+Total steps:
+- Always exactly `2` in this branch.
+
+Complexity:
+- Building permutation: `O(n log n)` due to `lower_bound` and map.
+- Cycle decomposition: `O(n)`.
+- Total well within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Pulls in almost all standard headers (CP convenience)
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector: reads all elements in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;                      // read each element
+    }
+    return in;
+};
+
+// Print a vector with spaces (note: always prints trailing space)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';              // print each element
+    }
+    return out;
+};
+
+int n;                                // array size
+vector<int> p;                        // original array (called p in code)
+
+// Read input
+void read() {
+    cin >> n;                         // read n
+    p.resize(n);                      // allocate p
+    cin >> p;                         // read p[0..n-1]
+}
+
+/*
+ check_1(p, q):
+ Try to decide if p can be transformed into q in exactly ONE parallel step
+ (a set of disjoint swaps), and if yes return those swaps.
+
+ Returns:
+  - first: true/false indicating if possible
+  - second: list of swaps (0-based indices) if possible
+*/
+pair<bool, vector<pair<int, int>>> check_1(
+    const vector<int>& p, const vector<int>& q
+) {
+    vector<bool> visited(p.size(), false);     // visited[i]=already used in some swap
+    vector<pair<int, int>> swaps;              // resulting list of swaps for the single step
+
+    for(int i = 0; i < (int)p.size(); i++) {
+        // If already used in a swap, or already correct, skip
+        if(visited[i] || p[i] == q[i]) {
+            continue;
+        }
+
+        int found = -1;                        // partner index j for i
+        for(int j = 0; j < (int)p.size(); j++) {
+            // We need disjoint swaps, so j must be unused.
+            // Condition for a swap (i,j) to put both positions correct after swap:
+            // p[i] should go to position j, so p[i] == q[j]
+            // p[j] should go to position i, so p[j] == q[i]
+            if(!visited[j] && p[i] == q[j] && p[j] == q[i]) {
+                found = j;
+                break;
+            }
+        }
+
+        // If i cannot find a partner j, then a 1-step solution is impossible
+        if(found == -1) {
+            return {false, {}};
+        }
+
+        // Commit swap (i, found)
+        visited[i] = true;
+        visited[found] = true;
+        swaps.push_back({i, found});
+    }
+
+    // Successfully paired all mismatching indices
+    return {true, swaps};
+}
+
+void solve() {
+    // Make sorted target q
+    vector<int> q = p;
+    sort(q.begin(), q.end());
+
+    // If already sorted, 0 steps
+    if(p == q) {
+        cout << 0 << endl;
+        return;
+    }
+
+    // Try 1 step solution
+    auto [ok_1, swaps_1] = check_1(p, q);
+
+    if(ok_1) {
+        cout << 1 << endl;                    // minimum steps is 1
+        cout << swaps_1.size() << " ";        // number of pairs in this step
+        for(auto [i, j]: swaps_1) {
+            cout << i + 1 << " " << j + 1 << " ";   // output 1-based indices
+        }
+        cout << endl;
+        return;
+    }
+
+    // Otherwise, we will output 2 steps.
+
+    // Build a permutation perm that maps each index i to its target index in q.
+    // This handles duplicates by assigning occurrences in sorted order.
+    vector<int> perm;                         // perm[i] = destination index for element currently at i
+    map<int, int> cnt;                        // how many times each value has appeared so far in p
+    for(int i = 0; i < n; i++) {
+        // First position of p[i] in sorted array q
+        int base = lower_bound(q.begin(), q.end(), p[i]) - q.begin();
+        // Add occurrence offset to pick the correct duplicate slot
+        int pi = base + cnt[p[i]];
+        cnt[p[i]]++;
+        perm.push_back(pi);
+    }
+
+    // turns[0] is step 1 swap list, turns[1] is step 2 swap list
+    vector<pair<int, int>> turns[2];
+
+    // Decompose perm into cycles
+    vector<bool> visited(n, false);
+    for(int i = 0; i < n; i++) {
+        if(!visited[i]) {
+            int u = i;
+            vector<int> cycle;
+
+            // Follow perm pointers until cycle closes
+            while(!visited[u]) {
+                cycle.push_back(u);
+                visited[u] = true;
+                u = perm[u];
+            }
+
+            // Cycle of length 1 is already correct
+            if(cycle.size() == 1) {
+                continue;
+            }
+            // Cycle of length 2 can be fixed by one swap; put it in step 1
+            else if(cycle.size() == 2) {
+                turns[0].push_back({cycle[0], cycle[1]});
+            }
+            // Longer cycle: use the 2-step construction
+            else {
+                // We pair from the ends inward, excluding the last element initially.
+                // r starts at size-2, so cycle[r+1] is the last element of the cycle.
+                int l = 0, r = (int)cycle.size() - 2;
+
+                while(l < r) {
+                    // Step 1 swap
+                    turns[0].push_back({cycle[l], cycle[r]});
+                    // Step 2 swap
+                    turns[1].push_back({cycle[l], cycle[r + 1]});
+                    l++;
+                    r--;
+                }
+
+                // If there is a middle element left (odd-length case),
+                // add the final step-2 swap.
+                if(r == l) {
+                    turns[1].push_back({cycle[l], cycle[r + 1]});
+                }
+            }
+        }
+    }
+
+    // Output exactly 2 steps
+    cout << 2 << endl;
+    for(int t = 0; t < 2; t++) {
+        cout << turns[t].size() << " ";             // number of pairs in step t
+        for(auto [i, j]: turns[t]) {
+            cout << i + 1 << " " << j + 1 << " ";   // print 1-based indices
+        }
+        cout << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // fast I/O
+    cin.tie(nullptr);                 // untie cin/cout for speed
+
+    int T = 1;                        // problem has a single test
+    // cin >> T;                      // (disabled)
+    for(int test = 1; test <= T; test++) {
+        read();                       // read input
+        // cout << "Case #" << test << ": ";
+        solve();                      // solve and print answer
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from bisect import bisect_left
+from collections import defaultdict
+
+def check_one_step(p, q):
+    """
+    Try to transform p into q in ONE parallel step (a set of disjoint swaps).
+    Returns (ok, swaps) where swaps is a list of (i, j) in 0-based indices.
+    """
+    n = len(p)
+    used = [False] * n
+    swaps = []
+
+    for i in range(n):
+        # Already fixed or already used in some swap
+        if used[i] or p[i] == q[i]:
+            continue
+
+        found = -1
+        # Find a partner j such that swapping i and j fixes both positions:
+        # after swap, position i should become q[i], so we need p[j] == q[i]
+        # after swap, position j should become q[j], so we need p[i] == q[j]
+        for j in range(n):
+            if not used[j] and p[i] == q[j] and p[j] == q[i]:
+                found = j
+                break
+
+        if found == -1:
+            return False, []
+
+        used[i] = True
+        used[found] = True
+        swaps.append((i, found))
+
+    return True, swaps
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    p = list(map(int, data[1:]))
+
+    q = sorted(p)
+
+    # 0 steps if already sorted
+    if p == q:
+        print(0)
+        return
+
+    # Try 1 step
+    ok, swaps = check_one_step(p, q)
+    if ok:
+        print(1)
+        # Output: p i1 j1 i2 j2 ...
+        out = [str(len(swaps))]
+        for i, j in swaps:
+            out.append(str(i + 1))
+            out.append(str(j + 1))
+        print(" ".join(out))
+        return
+
+    # Otherwise, construct a permutation mapping with duplicate handling.
+    # perm[i] = target index in q for the element currently at i
+    cnt = defaultdict(int)
+    perm = [0] * n
+    for i, val in enumerate(p):
+        base = bisect_left(q, val)    # first occurrence position of val in sorted q
+        perm[i] = base + cnt[val]     # take the cnt[val]-th slot among duplicates
+        cnt[val] += 1
+
+    # Decompose perm into cycles and build two-step swap plans
+    turns = [[], []]                  # turns[0] = step 1 swaps, turns[1] = step 2 swaps
+    vis = [False] * n
+
+    for i in range(n):
+        if vis[i]:
+            continue
+
+        # Extract cycle starting at i
+        cycle = []
+        u = i
+        while not vis[u]:
+            vis[u] = True
+            cycle.append(u)
+            u = perm[u]
+
+        k = len(cycle)
+        if k == 1:
+            continue
+        if k == 2:
+            # Fix 2-cycle in step 1
+            turns[0].append((cycle[0], cycle[1]))
+            continue
+
+        # For k >= 3, use the 2-step construction from the C++ solution
+        l = 0
+        r = k - 2
+        while l < r:
+            turns[0].append((cycle[l], cycle[r]))       # step 1
+            turns[1].append((cycle[l], cycle[r + 1]))   # step 2
+            l += 1
+            r -= 1
+        if l == r:
+            turns[1].append((cycle[l], cycle[r + 1]))
+
+    # Output 2 steps
+    print(2)
+    for t in range(2):
+        out = [str(len(turns[t]))]
+        for i, j in turns[t]:
+            out.append(str(i + 1))
+            out.append(str(j + 1))
+        print(" ".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Let `q = sorted(p)`. If `p == q`, answer is `0`.
+- To check if `1` step is possible: every mismatched index must be paired with another index `j` such that swapping `(i, j)` makes both positions correct, i.e. `p[i] == q[j]` and `p[j] == q[i]`. Greedily find disjoint such pairs; if any `i` fails, 1-step is impossible.
+- Otherwise answer is always `2`:
+  - Build a permutation `perm` mapping each index to its destination in `q`, distinguishing duplicates by occurrence count:  
+    `perm[i] = lower_bound(q, p[i]) + occurrence_of_p[i]_so_far`.
+  - Decompose `perm` into cycles.
+    - 1-cycles: ignore.
+    - 2-cycles: swap in step 1.
+    - k-cycles (k≥3): add swaps to step 1 and step 2 using the symmetric pairing construction:
+      - step1: `(v0, v{k-2}), (v1, v{k-3}), ...`
+      - step2: `(v0, v{k-1}), (v1, v{k-2}), ...` (plus one extra for odd k)
+  - Output the two steps; all swaps within a step are disjoint by construction.
