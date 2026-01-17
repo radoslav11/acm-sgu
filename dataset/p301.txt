@@ -1,0 +1,412 @@
+## 1) Abridged problem statement
+
+Given an undirected weighted graph with `N` junctions and `M` roads. A criminal starts at junction `X` and will travel to junction `Y` using **some shortest path** from `X` to `Y` (not necessarily unique).
+
+For each junction `K` (1..N), consider the moment when the criminal **could be** at junction `K` (i.e., after `dist(X,K)` time units). At that same time, depending on which shortest path the criminal chose, he might be in multiple possible points of the village: either exactly at some junction or at some point inside a road.
+
+Let `A_K` be the number of distinct points in the graph that the criminal could occupy **at time `dist(X,K)`**, assuming he follows a shortest `X→Y` route. If junction `K` is not on any shortest `X→Y` route, then `A_K = 0`.
+
+Output `A_1, A_2, ..., A_N`.
+
+---
+
+## 2) Detailed editorial (explaining the given solution)
+
+### Key idea: Only shortest-path structure matters
+
+Let `dist[u]` be the shortest distance from `X` to `u` (Dijkstra from `X`).
+
+A path from `X` to `Y` is shortest iff it always moves along edges `(u,v,w)` where:
+- `dist[u] + w = dist[v]` (in the direction of increasing distance)
+
+These edges form a directed acyclic graph (DAG) when oriented from smaller `dist` to larger `dist`. Call it the **shortest-path DAG from X**.
+
+But we only care about shortest paths that actually can reach `Y`. So we further restrict to nodes/edges that lie on **some** shortest path from `X` to `Y`.
+
+---
+
+### Step 1: Dijkstra from `X`
+
+Compute all `dist[u]` in `O((N+M) log N)`.
+
+---
+
+### Step 2: Build reverse graph of shortest-path DAG and mark nodes that can reach `Y`
+
+For every undirected road `(u,v,w)`, if `dist[u]+w==dist[v]`, then in the DAG we have `u -> v`.
+To compute which nodes lie on some shortest path to `Y`, it’s convenient to store **reverse edges**:
+
+- If `u -> v` is a shortest edge, store `u` in `dag_rev[v]`.
+
+Then run DFS/BFS starting from `Y` in `dag_rev`.  
+If `reachable[u] = true`, then there exists a shortest path from `X` to `Y` passing through `u`.
+
+If `reachable[K]` is false, then `A_K = 0` immediately.
+
+---
+
+### Step 3: What are the possible positions at a given time `t`?
+
+Fix a time value `t`. The criminal moves at constant speed 1 along roads.
+
+Along any shortest-path-to-Y route:
+- He can be at a vertex `u` exactly when `t = dist[u]`.
+- He can be inside a DAG edge `u -> v` (length `w`) at time `t` iff:
+  - he has reached `u` at time `dist[u]`,
+  - then moves along the edge,
+  - so possible times along that edge are in `(dist[u], dist[v])`.
+
+Because we query only at times `t = dist[K]` (integers), and we must not count vertex points as “inside an edge”, the edge contributes for integer times:
+
+- `t ∈ [dist[u]+1, dist[v]-1]`
+
+But only for edges that are actually usable on a shortest path to `Y`, i.e. where `reachable[v] = true` (since after entering `v`, you must still be able to get to `Y` via DAG).
+
+Also, every reachable vertex `u` contributes **one possible point** at time `dist[u]` (being exactly at `u`), no matter what.
+
+So for each reachable vertex `k`, `A_k` equals:
+
+> (# of reachable vertices u with dist[u] == dist[k])  
+> + (# of shortest DAG edges u->v with reachable[v] where dist[k] is strictly between dist[u] and dist[v])
+
+---
+
+### Step 4: Reduce to offline “range add + point query”
+
+Each usable edge `u -> v` contributes +1 to all integer times in:
+- `[L, R] = [dist[u]+1, dist[v]-1]` (if `L <= R`)
+
+Each reachable vertex `u` contributes +1 at the single time:
+- `t = dist[u]`
+
+Then for each reachable `k`, we query the total count at `t = dist[k]`.
+
+This is a classic offline sweep-line with events:
+
+- IN event at `L`: `balance += 1`
+- OUT event at `R`: `balance -= 1` (done after queries at `R`)
+- vertex point contribution can be handled as a tiny range `[dist[u], dist[u]]` via IN at `dist[u]` and OUT at `dist[u]`
+- QUERY event at `dist[k]`: record current `balance`
+
+Important: ordering at same coordinate must be:
+1. IN
+2. QUERY
+3. OUT  
+so that ranges including the point are counted.
+
+The code encodes event type as:
+- `0` = IN
+- `1` = QUERY
+- `2` = OUT  
+and sorts tuples `(pos, type, data)` so this priority is automatic.
+
+Complexity: sorting `O(E log E)` where `E = O(N + M)` events.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector, space-separated (note: ends with a space)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int64_t inf = (int64_t)1e18 + 42; // large "infinity" for distances
+
+int n, x, y, m;
+vector<vector<pair<int, int>>> adj; // adjacency list: (neighbor, weight)
+
+void read() {
+    cin >> n >> x >> y; // number of nodes and endpoints
+    x--;                // convert to 0-based index
+    y--;
+    cin >> m;           // number of edges
+    adj.assign(n, {});  // clear and resize adjacency list
+
+    for(int i = 0; i < m; i++) {
+        int u, v, w;
+        cin >> u >> v >> w;
+        u--; v--; // convert to 0-based
+
+        // undirected graph: add both directions
+        adj[u].push_back({v, w});
+        adj[v].push_back({u, w});
+    }
+}
+
+void solve() {
+    // 1) Dijkstra from x to compute dist[]
+    vector<int64_t> dist(n, inf); // dist[u] = shortest distance from x
+    priority_queue<pair<int64_t, int>, vector<pair<int64_t, int>>, greater<>>
+        pq; // min-heap by (distance, node)
+
+    dist[x] = 0;       // source has distance 0
+    pq.push({0, x});   // start from x
+
+    while(!pq.empty()) {
+        auto [d, u] = pq.top();
+        pq.pop();
+
+        if(d > dist[u]) {
+            continue; // outdated heap entry
+        }
+
+        // relax all edges out of u
+        for(auto [v, w]: adj[u]) {
+            if(dist[u] + w < dist[v]) {
+                dist[v] = dist[u] + w;
+                pq.push({dist[v], v});
+            }
+        }
+    }
+
+    // 2) Build reverse edges of the shortest-path DAG:
+    // If dist[u] + w == dist[v], then u -> v is a DAG edge,
+    // store it reversed as u in dag_rev[v].
+    vector<vector<int>> dag_rev(n);
+    for(int u = 0; u < n; u++) {
+        for(auto [v, w]: adj[u]) {
+            if(dist[u] + w == dist[v]) {
+                dag_rev[v].push_back(u);
+            }
+        }
+    }
+
+    // 3) Mark nodes that can reach y via DAG edges (i.e., lie on some shortest X->Y path)
+    vector<bool> reachable(n, false);
+
+    function<void(int)> dfs = [&](int u) {
+        if(reachable[u]) {
+            return; // already visited
+        }
+        reachable[u] = true;
+        // go backwards in DAG: from u to its predecessors
+        for(int v: dag_rev[u]) {
+            dfs(v);
+        }
+    };
+
+    dfs(y); // start from destination; mark all nodes that can reach y in DAG
+
+    // 4) Build sweep-line events:
+    // event tuple = (position, type, data)
+    // type: 0=IN(+1), 1=QUERY, 2=OUT(-1)
+    vector<tuple<int64_t, int, int>> events;
+
+    for(int u = 0; u < n; u++) {
+        // If vertex u is on some shortest path to y, it contributes 1 at time dist[u].
+        // We implement a point contribution as IN and OUT at the same coordinate.
+        if(reachable[u]) {
+            events.push_back({dist[u], 0, 0}); // IN at dist[u]
+            events.push_back({dist[u], 2, 0}); // OUT at dist[u]
+        }
+
+        // For each shortest DAG edge u -> v (i.e., dist[u]+w==dist[v])
+        // where v is still able to reach y, add +1 for all integer times strictly inside it:
+        // [dist[u]+1, dist[v]-1]
+        for(auto [v, w]: adj[u]) {
+            if(dist[u] + w == dist[v] && reachable[v]) {
+                int64_t l = dist[u] + 1; // first integer strictly after dist[u]
+                int64_t r = dist[v] - 1; // last integer strictly before dist[v]
+                if(l <= r) {
+                    events.push_back({l, 0, 0}); // IN at l
+                    events.push_back({r, 2, 0}); // OUT at r
+                }
+            }
+        }
+    }
+
+    // Add queries: we want answer[k] = balance at time dist[k], but only if reachable[k]
+    for(int k = 0; k < n; k++) {
+        if(reachable[k]) {
+            events.push_back({dist[k], 1, k}); // QUERY at dist[k], store into answer[k]
+        }
+    }
+
+    // Sort by (position, type). Because type order is 0,1,2:
+    // IN happens before QUERY before OUT at the same position.
+    sort(events.begin(), events.end());
+
+    vector<int> answer(n, 0); // default 0 for unreachable nodes
+    int balance = 0;          // how many active ranges currently cover this position
+
+    // Sweep in increasing "position"
+    for(auto [pos, type, data]: events) {
+        if(type == 0) {
+            balance++;            // entering a range / point
+        } else if(type == 1) {
+            answer[data] = balance; // record current coverage
+        } else {
+            balance--;            // leaving a range / point
+        }
+    }
+
+    cout << answer << '\n'; // prints all answers with trailing spaces
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // only one test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import heapq
+
+INF = 10**30
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    it = iter(data)
+
+    n = next(it)
+    x = next(it) - 1   # 0-based
+    y = next(it) - 1
+
+    m = next(it)
+
+    # Build adjacency list for undirected weighted graph
+    adj = [[] for _ in range(n)]
+    for _ in range(m):
+        u = next(it) - 1
+        v = next(it) - 1
+        w = next(it)
+        adj[u].append((v, w))
+        adj[v].append((u, w))
+
+    # 1) Dijkstra from x to get shortest distances dist[]
+    dist = [INF] * n
+    dist[x] = 0
+    pq = [(0, x)]  # (distance, node)
+
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d != dist[u]:
+            continue  # stale entry
+        for v, w in adj[u]:
+            nd = d + w
+            if nd < dist[v]:
+                dist[v] = nd
+                heapq.heappush(pq, (nd, v))
+
+    # 2) Build reverse edges of shortest-path DAG:
+    # if dist[u] + w == dist[v], then u -> v is in DAG, so store u in dag_rev[v]
+    dag_rev = [[] for _ in range(n)]
+    for u in range(n):
+        du = dist[u]
+        for v, w in adj[u]:
+            if du + w == dist[v]:
+                dag_rev[v].append(u)
+
+    # 3) Mark all nodes that can reach y using only DAG edges (reverse DFS/BFS from y)
+    reachable = [False] * n
+    stack = [y]
+    while stack:
+        u = stack.pop()
+        if reachable[u]:
+            continue
+        reachable[u] = True
+        for p in dag_rev[u]:   # predecessors in DAG
+            if not reachable[p]:
+                stack.append(p)
+
+    # 4) Build offline sweep-line events:
+    # event = (pos, type, data), type: 0=IN, 1=QUERY, 2=OUT
+    events = []
+
+    for u in range(n):
+        if reachable[u]:
+            # vertex point at time dist[u] (as IN and OUT at same position)
+            events.append((dist[u], 0, -1))
+            events.append((dist[u], 2, -1))
+
+        # for each DAG edge u->v with reachable[v], add range [dist[u]+1, dist[v]-1]
+        du = dist[u]
+        for v, w in adj[u]:
+            if du + w == dist[v] and reachable[v]:
+                l = du + 1
+                r = dist[v] - 1
+                if l <= r:
+                    events.append((l, 0, -1))
+                    events.append((r, 2, -1))
+
+    # queries: answer[k] at time dist[k] for reachable nodes
+    for k in range(n):
+        if reachable[k]:
+            events.append((dist[k], 1, k))
+
+    # Sort so that at same pos: IN (0) before QUERY (1) before OUT (2)
+    events.sort()
+
+    ans = [0] * n
+    balance = 0
+    for pos, typ, dat in events:
+        if typ == 0:
+            balance += 1
+        elif typ == 1:
+            ans[dat] = balance
+        else:
+            balance -= 1
+
+    # Print all answers space-separated (matching the C++ behavior)
+    sys.stdout.write(" ".join(map(str, ans)) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+1. Run Dijkstra from `X` to get `dist[u]`.
+2. Build shortest-path DAG edges by condition `dist[u]+w==dist[v]` (directed increasing `dist`). Store them reversed.
+3. DFS from `Y` on reversed DAG to mark `reachable[u]` = node lies on some shortest `X→Y` path.
+4. For each reachable vertex `u`, add a point contribution at time `dist[u]`.
+5. For each DAG edge `u→v` with `reachable[v]`, add a +1 range on integer times `[dist[u]+1, dist[v]-1]`.
+6. Offline sweep-line over all range endpoints and queries at `dist[k]`:
+   - IN before QUERY before OUT at equal coordinate.
+   - Current `balance` gives `A_k`. Unreachable nodes output 0.

@@ -1,0 +1,290 @@
+## 1) Abridged problem statement
+
+A platform has length \(L\) (0…\(L\)). There are \(M\) passengers at sorted positions \(P_1 \le \dots \le P_M\). A train has \(N\) doors: door 1 is at offset \(0\), and the remaining door offsets \(D_2,\dots,D_N\) are given, strictly increasing (so \(D_1=0\)).
+
+If the train stops with its first door at position \(S\) on the platform, then door \(j\) is at position \(S + D_j\). The train must satisfy \(0 \le S\) and \(S + D_N \le L\).
+
+For each passenger \(i\), define their distance to the closest door as
+\[
+\min_j |(S + D_j) - P_i|.
+\]
+Find a stop position \(S\) that **maximizes the sum** of these minimal distances over all passengers, and output \(S\) and the maximum sum. If multiple \(S\) work, output any.
+
+Constraints: \(L \le 5000\), \(M,N \le 300\).
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: optimal \(S\) lies on integer or half-integer grid
+For a fixed passenger at \(P\), the distance to the nearest door among positions \(\{S + D_j\}\) is a “V-shaped” piecewise-linear function of \(S\), and the *identity of the nearest door* changes when the passenger is exactly midway between two adjacent doors.
+
+Midpoints between two doors \(S + D_j\) and \(S + D_{j+1}\) occur at:
+\[
+P = S + \frac{D_j + D_{j+1}}{2}
+\quad\Rightarrow\quad
+S = P - \frac{D_j + D_{j+1}}{2}.
+\]
+All \(P\) and \(D\) are integers, so \((D_j + D_{j+1})/2\) is integer or half-integer; therefore these “change points” for \(S\) are integer or half-integer. The sum over passengers is still piecewise-linear, with slope changes only at such points. Thus a maximum can be attained at some boundary point, i.e., on the grid of step \(0.5\).
+
+So we can brute-force all feasible \(S \in \{0, 0.5, 1.0, \dots\}\) within \([0, L - D_N]\).
+
+### Avoid floating point: scale all coordinates by 2
+Multiply everything by 2:
+- \(L_2 = 2L\)
+- \(P_{i,2} = 2P_i\)
+- \(D_{j,2} = 2D_j\)
+- \(S_2 = 2S\) is now an integer iterating by 1.
+
+Feasible range:
+\[
+0 \le S_2 \le L_2 - D_{N,2}.
+\]
+
+### Evaluating the score for a fixed \(S\)
+For a passenger at \(P_{i,2}\), define the passenger coordinate in the “door-offset frame”:
+\[
+T = P_{i,2} - S_2.
+\]
+Now we need the nearest door offset \(D_{j,2}\) to \(T\) (minimizing \(|T - D_{j,2}|\)).
+
+Because door offsets are sorted, the nearest door index \(j\) moves monotonically as \(T\) increases. Passengers \(P_i\) are given sorted, hence \(T\) is also sorted as we scan passengers for a fixed \(S\). Therefore we can use a single pointer \(j\) and advance it when the midpoint condition says “next door is closer”.
+
+Nearest-door switch condition between \(D_j\) and \(D_{j+1}\) happens when \(T\) crosses their midpoint:
+\[
+T > \frac{D_j + D_{j+1}}{2}
+\quad\Leftrightarrow\quad
+2T > D_j + D_{j+1}.
+\]
+All in doubled integers, so we can test:
+```cpp
+while (j+1 < n && 2*T > D2[j] + D2[j+1]) j++;
+```
+Then add \(|T - D2[j]|\) to the sum.
+
+This computes the total in \(O(M+N)\) per \(S\) (because \(j\) only moves forward), and we try \(O(L)\) half-steps, so:
+\[
+O((2L)\cdot(M+N)) \le 10000 \cdot 600 = 6\cdot 10^6
+\]
+which is fine.
+
+### Track best and print in halves
+Keep the best (maximum) doubled sum and doubled \(S\). To print:
+- if value is even → print integer `/2`
+- else → print integer part with `.5`
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>            // Pulls in almost all standard C++ headers
+using namespace std;
+
+// Helper to print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper to read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper to read a whole vector<T> (assumes vector already sized)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {               // read each element by reference
+        in >> x;
+    }
+    return in;
+};
+
+// Helper to print a vector<T> (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int l, m, n;                        // L (platform length), M passengers, N doors
+vector<int> p;                      // passenger positions P1..PM (sorted)
+vector<int> d;                      // door offsets D1..DN (with D1 = 0)
+
+void read() {
+    cin >> l >> m;                  // read L and M
+    p.resize(m);                    // allocate M passenger positions
+    cin >> p;                       // read all P1..PM
+    cin >> n;                       // read number of doors N
+    d.resize(n);                    // allocate N door offsets
+    d[0] = 0;                       // D1 is always 0 per statement
+    for(int i = 1; i < n; i++) {    // read D2..DN
+        cin >> d[i];
+    }
+}
+
+void solve() {
+    // Since L <= 5000, we can brute-force all S on a 0.5 grid:
+    // S in {0, 0.5, 1.0, ...}. For each S compute total "utility":
+    // sum over passengers of distance to nearest door.
+
+    int l2 = l * 2;                 // work in doubled coordinates to avoid floats
+    vector<int> p2(m), d2(n);       // doubled passengers and doubled door offsets
+
+    for(int i = 0; i < m; i++) {
+        p2[i] = p[i] * 2;           // Pi -> 2*Pi
+    }
+    for(int i = 0; i < n; i++) {
+        d2[i] = d[i] * 2;           // Di -> 2*Di
+    }
+
+    // In doubled world, S2 must satisfy: 0 <= S2 <= 2L - 2*D_N
+    int max_s = l2 - d2[n - 1];
+
+    int64_t best_sum = -1;          // best total (in doubled units) found so far
+    int best_s = 0;                 // best S2 found so far
+
+    // Try all possible doubled S (step 1 => original step 0.5)
+    for(int s = 0; s <= max_s; s++) {
+        int64_t sum = 0;            // total distance for this s
+        int j = 0;                  // pointer to current nearest door index
+
+        // Scan passengers left-to-right (p is sorted in input)
+        for(int i = 0; i < m; i++) {
+            int target = p2[i] - s; // T = passenger coordinate relative to door1 offset frame
+
+            // Move j forward while door j+1 becomes closer than door j.
+            // Switching threshold is midpoint: T > (D_j + D_{j+1})/2
+            // Multiply by 2 to keep integers: 2*T > D_j + D_{j+1}
+            while(j + 1 < n && 2 * target > d2[j] + d2[j + 1]) {
+                j++;
+            }
+
+            // Add distance from target to nearest door offset d2[j]
+            sum += abs(target - d2[j]);
+        }
+
+        // We want to maximize the sum of minimal distances.
+        if(sum > best_sum) {
+            best_sum = sum;
+            best_s = s;
+        }
+    }
+
+    // Helper to print a doubled integer as integer or x.5
+    auto print_half = [](int64_t x) {
+        if(x % 2 == 0) {            // even => whole integer
+            cout << x / 2;
+        } else {                    // odd => half-integer
+            cout << x / 2 << ".5";
+        }
+    };
+
+    // Output best S and best sum, converting from doubled units
+    print_half(best_s);
+    cout << " ";
+    print_half(best_sum);
+    cout << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster I/O
+    cin.tie(nullptr);
+
+    int T = 1;                        // single test case (no T in input)
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();                       // read platform + train description
+        // cout << "Case #" << test << ": ";
+        solve();                      // compute and print answer
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+
+def print_half(x2: int) -> str:
+    """Convert doubled integer to string with .5 if needed."""
+    if x2 % 2 == 0:
+        return str(x2 // 2)
+    else:
+        return f"{x2//2}.5"
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.read().split()))
+    it = iter(data)
+
+    # Read platform
+    L = next(it)               # platform length
+    M = next(it)               # number of passengers
+    P = [next(it) for _ in range(M)]  # passenger positions (sorted)
+
+    # Read train
+    N = next(it)               # number of doors
+    D = [0] * N                # door offsets, with D1 = 0
+    for i in range(1, N):
+        D[i] = next(it)        # read D2..DN
+
+    # Work in doubled coordinates to avoid floating point and to enumerate half-steps.
+    L2 = 2 * L
+    P2 = [2 * x for x in P]
+    D2 = [2 * x for x in D]
+
+    # Train must fit: 0 <= S <= L - D_N  =>  0 <= S2 <= 2L - 2D_N
+    max_s2 = L2 - D2[-1]
+
+    best_sum2 = -1
+    best_s2 = 0
+
+    # Enumerate all possible S2 (integer), corresponding to S in steps of 0.5.
+    for s2 in range(0, max_s2 + 1):
+        total2 = 0
+        j = 0  # index of currently closest door for increasing targets
+
+        # Scan passengers in sorted order; target = P2[i] - s2 is also sorted.
+        for p2 in P2:
+            target = p2 - s2
+
+            # Advance to the next door while it becomes closer than current door.
+            # Condition: target is beyond midpoint of D2[j] and D2[j+1]
+            # midpoint test: target > (D_j + D_{j+1}) / 2
+            # doubled: 2*target > D2[j] + D2[j+1]
+            while j + 1 < N and 2 * target > D2[j] + D2[j + 1]:
+                j += 1
+
+            # Add distance to nearest door
+            total2 += abs(target - D2[j])
+
+        # Maximize the total distance
+        if total2 > best_sum2:
+            best_sum2 = total2
+            best_s2 = s2
+
+    # Output S and sum, both in original units (possibly .5)
+    sys.stdout.write(f"{print_half(best_s2)} {print_half(best_sum2)}\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Optimal nearest-door assignments change only when a passenger is at a midpoint between two adjacent doors; these midpoints imply \(S\) is integer or half-integer.
+- Multiply coordinates by 2, enumerate all integer \(S_2 \in [0, 2L-2D_N]\).
+- For fixed \(S_2\), for each passenger compute \(T = P_2 - S_2\) and find nearest door offset among sorted \(D_2\).
+- Because passengers are sorted, \(T\) increases; maintain a pointer \(j\) to nearest door and advance while \(2T > D_2[j]+D_2[j+1]\).
+- Sum \(|T - D_2[j]|\); keep maximal sum and corresponding \(S_2\).
+- Print \(S\) and sum by converting doubled integers to integer/“.5”.

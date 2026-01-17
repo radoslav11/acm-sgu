@@ -1,0 +1,471 @@
+## 1) Concise, abridged problem statement
+
+You need to inflate **M** balloons using **one** balloon-filling device that can be operated by **at most one volunteer per minute**.  
+There are **N** volunteers. If volunteer *i* works for one minute, they inflate **Ai** balloons, and then must rest for **Bi** minutes before they can work again.  
+Find the **minimum number of minutes** needed to inflate at least **M** balloons (or output `-1` if impossible).
+
+Constraints: `1 ≤ M ≤ 100`, `1 ≤ N ≤ 10`, `0 ≤ Ai ≤ 10`, `1 ≤ Bi ≤ 4`.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observations
+
+- Time proceeds in **whole minutes**.
+- Each minute, you either:
+  1) assign **one available volunteer** to work, producing `Ai` balloons, then that volunteer enters cooldown for `Bi` minutes, while everyone else’s cooldown (if any) decreases by 1, or
+  2) if **nobody is available**, the device sits idle and only cooldown timers tick down by 1.
+
+So this is a shortest-time problem on states.
+
+### Naive DP state is too large
+If we store cooldown time for every volunteer, we’d have up to `5^N` combinations (because cooldown remaining is 0..4), which is too big in worst case.
+
+### Crucial constraint: `Bi ≤ 4` implies sparsity
+A volunteer’s cooldown is at most 4, and cooldown decreases by 1 each minute.  
+That means at any moment, the number of volunteers with **positive** cooldown is limited:
+
+- A volunteer set to cooldown `Bi` stays positive for `Bi` minutes.
+- With `Bi ≤ 4`, each “used” volunteer disappears from the positive set quickly.
+- In fact, the solution leverages the known bound that at most **4 volunteers** need to be tracked as “currently resting” in an optimal state representation, and enumerates only those subsets.
+
+The provided code explicitly enumerates all subsets of volunteers of size ≤ 4 and stores cooldowns only for those volunteers; everyone not in the subset is assumed to have cooldown 0 (available).
+
+### State representation
+
+We maintain:
+- `bal` = balloons still needed (clamped to `[0..M]`)
+- a subset `S` of volunteers currently resting (|S| ≤ 4)
+- for each volunteer in `S`, an integer `rest[i]` in `{1,2,3,4}` = minutes remaining until available
+
+To make this fast, the subset `S` is represented by an index `ci` into a precomputed list `combos[ci] = positions`, and the remaining times are packed into an integer `v` using 2 bits per person (since 1..4 fits in 2 bits after subtracting 1).
+
+So BFS/DP state is `(bal, ci, v)`.
+
+### Transitions (one minute step)
+
+From a state, define the set of **available volunteers**:
+- those not currently in `S` (i.e., `rest[i] == 0`) and with `Ai > 0` (using someone with `Ai=0` is never helpful).
+
+Two cases:
+
+1) **At least one available volunteer exists**  
+   Choose one such volunteer `i` to work this minute:
+   - balloons decrease: `bal' = max(0, bal - Ai)`
+   - cooldowns tick down for everyone currently resting: `rest[j] = max(0, rest[j]-1)`
+   - chosen volunteer gets reset: `rest[i] = Bi`
+   - recompute the new resting subset `S' = { i | rest[i] > 0 }` (still size ≤ 4), encode to `(ci', v')`.
+
+2) **No available volunteer exists**  
+   Device idles:
+   - balloons unchanged
+   - all cooldowns tick down by 1
+   - recompute subset and encode
+
+Each transition costs exactly **1 minute**, so we want the shortest number of steps to reach `bal=0`. That’s exactly BFS on an unweighted graph.
+
+### Why precompute a graph?
+The transitions on `(ci, v)` do **not** depend on `bal` (only the balloon decrement does).  
+So we can precompute:
+- `available[ci][v]`: list of volunteers that can be used now
+- `adj[ci][v][used]`: the resulting `(ci', v')` if we either idle (`used = -1`) or use volunteer `used`.
+
+Then BFS over `(bal, ci, v)` is fast enough.
+
+### Complexity
+- Number of subsets of size ≤ 4 among N≤10 is:
+  \[
+  \sum_{k=0}^4 \binom{10}{k} = 386
+  \]
+- For each subset size `k`, there are `4^k ≤ 256` cooldown configurations.
+So `(ci, v)` combinations are at most about `386 * 256 ≈ 98k`.
+
+BFS adds factor `(M+1) ≤ 101`, so around `~10 million` states worst-case, but actual reachable states are typically much fewer; with tight precompute and O(1) transitions it fits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector (assumes vector already sized)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) in >> x;
+    return in;
+}
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) out << x << ' ';
+    return out;
+}
+
+int m, n;              // m = balloons needed, n = number of volunteers
+vector<int> a, b;      // a[i] = balloons per minute, b[i] = rest minutes after use
+
+// Read input
+void read() {
+    cin >> m >> n;
+    a.resize(n);
+    b.resize(n);
+    for (int i = 0; i < n; i++) {
+        cin >> a[i] >> b[i];
+    }
+}
+
+// combos[ci] stores the list of volunteer indices in the "resting subset" for combo index ci
+vector<vector<int>> combos;
+
+// combo_index[mask] gives combo index for a subset bitmask (only valid for popcount<=4)
+vector<int> combo_index;
+
+// available[ci][v] = list of volunteers currently available to use (rest==0 and a[i]>0)
+vector<vector<vector<int>>> available;
+
+// adj[ci][v][used+1] = resulting (new_ci,new_v) after 1 minute,
+// where used = -1 means idle; used in [0..n-1] means use volunteer used.
+vector<vector<vector<pair<int, int>>>> adj;
+
+// Encode remaining rest times into an integer v using 2 bits per person in combos[ci].
+// rest[pos] is in {1..4} for resting people; we store (rest-1) in 2 bits.
+int encode_state(const vector<int>& rest, const vector<int>& positions) {
+    int v = 0;
+    for (int i = 0; i < (int)positions.size(); i++) {
+        v |= (rest[positions[i]] - 1) << (2 * i);
+    }
+    return v;
+}
+
+// Decode integer v into rest[] for the volunteers in positions; others set to 0.
+void decode_state(int v, const vector<int>& positions, vector<int>& rest) {
+    fill(rest.begin(), rest.end(), 0);
+    for (int i = 0; i < (int)positions.size(); i++) {
+        // Extract 2 bits, get value 0..3, then +1 to get 1..4
+        rest[positions[i]] = ((v >> (2 * i)) & 3) + 1;
+    }
+}
+
+// Precompute all subset-combos of size <= 4 and all transitions among (ci,v) states.
+void build_graph() {
+    // Prepare mapping from subset bitmask to combo index
+    combo_index.assign(1 << n, -1);
+
+    // Enumerate all subsets; keep only those with at most 4 bits set
+    for (int mask = 0; mask < (1 << n); mask++) {
+        if (__builtin_popcount(mask) <= 4) {
+            combo_index[mask] = (int)combos.size();
+
+            // Build the list of indices in this subset
+            vector<int> positions;
+            for (int i = 0; i < n; i++) {
+                if (mask & (1 << i)) positions.push_back(i);
+            }
+            combos.push_back(positions);
+        }
+    }
+
+    int num_combos = (int)combos.size();
+
+    // available[ci] has 256 possible v values (maximum 4^4), we allocate 256 for all
+    available.assign(num_combos, vector<vector<int>>(256));
+
+    // adj[ci][v] has (n+1) transitions: idle + using each volunteer
+    adj.assign(
+        num_combos,
+        vector<vector<pair<int, int>>>(256, vector<pair<int, int>>(n + 1))
+    );
+
+    // For each subset combo ci...
+    for (int ci = 0; ci < num_combos; ci++) {
+        int sz = (int)combos[ci].size();
+
+        // For subset size sz, encoded v ranges 0..(4^sz - 1) == 1<<(2*sz) - 1
+        int max_v = 1 << (2 * sz);
+
+        for (int v = 0; v < max_v; v++) {
+            // Decode v into a full rest array of size n
+            vector<int> rest(n, 0);
+            decode_state(v, combos[ci], rest);
+
+            // Compute which volunteers are available right now:
+            // rest==0 means not resting; a[i]>0 means they can contribute
+            for (int i = 0; i < n; i++) {
+                if (rest[i] == 0 && a[i] > 0) {
+                    available[ci][v].push_back(i);
+                }
+            }
+
+            // Precompute transitions for idle (used=-1) and for using each volunteer
+            for (int used = -1; used < n; used++) {
+                vector<int> new_rest(n);
+
+                // Advance one minute:
+                // - if used this minute, set their rest to b[used]
+                // - otherwise decrement any existing rest timers
+                for (int i = 0; i < n; i++) {
+                    if (i == used) {
+                        new_rest[i] = b[i];
+                    } else {
+                        new_rest[i] = max(0, rest[i] - 1);
+                    }
+                }
+
+                // Build new mask of those who are resting (>0)
+                int new_mask = 0;
+                for (int i = 0; i < n; i++) {
+                    if (new_rest[i] > 0) new_mask |= (1 << i);
+                }
+
+                // Map mask to combo index (guaranteed popcount<=4 in reachable states)
+                int new_ci = combo_index[new_mask];
+
+                // Encode new_rest restricted to the new combo's positions
+                int new_v = encode_state(new_rest, combos[new_ci]);
+
+                // Store transition; shift by +1 so used=-1 maps to index 0
+                adj[ci][v][used + 1] = {new_ci, new_v};
+            }
+        }
+    }
+}
+
+void solve() {
+    // We do BFS in a state space:
+    // (bal, ci, v) where:
+    //  bal = balloons still needed (0..m),
+    //  ci  = which subset (<=4 people) are currently resting,
+    //  v   = packed remaining rest times for those people.
+    //
+    // Each BFS step corresponds to exactly 1 minute.
+    // We precompute transitions on (ci,v) because they don't depend on bal.
+
+    build_graph();
+
+    int num_combos = (int)combos.size();
+
+    // dist[bal][ci][v] = minimal minutes to reach this state, or -1 if not visited
+    vector<vector<vector<int>>> dist(
+        m + 1, vector<vector<int>>(num_combos, vector<int>(256, -1))
+    );
+
+    queue<tuple<int, int, int>> q;
+
+    // Start: need m balloons, nobody resting => empty subset => ci=0, v=0
+    dist[m][0][0] = 0;
+    q.push({m, 0, 0});
+
+    while (!q.empty()) {
+        auto [bal, ci, v] = q.front();
+        q.pop();
+
+        // If we already have enough balloons, return the time
+        if (bal == 0) {
+            cout << dist[bal][ci][v] << '\n';
+            return;
+        }
+
+        int d = dist[bal][ci][v];
+        const auto& avail = available[ci][v];
+
+        // If nobody can operate now, we must idle for 1 minute
+        if (avail.empty()) {
+            auto [new_ci, new_v] = adj[ci][v][0]; // used=-1 => index 0
+            if (dist[bal][new_ci][new_v] == -1) {
+                dist[bal][new_ci][new_v] = d + 1;
+                q.push({bal, new_ci, new_v});
+            }
+        } else {
+            // Otherwise try using each available volunteer i
+            for (int i : avail) {
+                auto [new_ci, new_v] = adj[ci][v][i + 1]; // used=i => index i+1
+
+                // Decrease remaining balloons; clamp at 0
+                int new_bal = max(0, bal - a[i]);
+
+                if (dist[new_bal][new_ci][new_v] == -1) {
+                    dist[new_bal][new_ci][new_v] = d + 1;
+                    q.push({new_bal, new_ci, new_v});
+                }
+            }
+        }
+    }
+
+    // If BFS exhausts, it's impossible (e.g., all Ai=0)
+    cout << -1 << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    M = int(next(it))
+    N = int(next(it))
+    A = [0] * N
+    B = [0] * N
+    for i in range(N):
+        A[i] = int(next(it))
+        B[i] = int(next(it))
+
+    # If nobody can produce balloons, impossible unless M==0 (but M>=1).
+    if all(a == 0 for a in A):
+        print(-1)
+        return
+
+    # ---- Precompute combos (subsets of size <= 4) and mapping mask -> combo index ----
+    combos = []                 # combos[ci] = list of indices in the subset
+    combo_index = [-1] * (1 << N)
+
+    for mask in range(1 << N):
+        if mask.bit_count() <= 4:
+            combo_index[mask] = len(combos)
+            positions = [i for i in range(N) if (mask >> i) & 1]
+            combos.append(positions)
+
+    num_combos = len(combos)
+
+    # Encode/decode rest times for indices in positions using 2 bits each.
+    # Stored value is (rest-1) in 0..3.
+    def encode_state(rest, positions):
+        v = 0
+        for j, idx in enumerate(positions):
+            v |= (rest[idx] - 1) << (2 * j)
+        return v
+
+    def decode_state(v, positions):
+        rest = [0] * N
+        for j, idx in enumerate(positions):
+            rest[idx] = ((v >> (2 * j)) & 3) + 1
+        return rest
+
+    # available[ci][v] = list of usable volunteers when in (ci,v)
+    available = [[[] for _ in range(256)] for __ in range(num_combos)]
+    # adj[ci][v][used+1] -> (new_ci,new_v), used=-1 means idle
+    adj = [[[None] * (N + 1) for _ in range(256)] for __ in range(num_combos)]
+
+    # Build transitions for each (ci,v) that is valid for that combo size
+    for ci in range(num_combos):
+        positions = combos[ci]
+        sz = len(positions)
+        max_v = 1 << (2 * sz)   # equals 4^sz
+
+        for v in range(max_v):
+            rest = decode_state(v, positions)
+
+            # Determine available volunteers (not resting and A[i]>0)
+            avail = []
+            for i in range(N):
+                if rest[i] == 0 and A[i] > 0:
+                    avail.append(i)
+            available[ci][v] = avail
+
+            # Precompute transitions for idle and for using each volunteer
+            for used in range(-1, N):
+                new_rest = [0] * N
+                for i in range(N):
+                    if i == used:
+                        new_rest[i] = B[i]        # used volunteer starts cooldown
+                    else:
+                        new_rest[i] = rest[i] - 1 # time passes
+                        if new_rest[i] < 0:
+                            new_rest[i] = 0
+
+                new_mask = 0
+                for i in range(N):
+                    if new_rest[i] > 0:
+                        new_mask |= 1 << i
+
+                new_ci = combo_index[new_mask]
+                # new_mask must be size <= 4 for reachable states in this modeling
+                # (the intended solution relies on that property).
+                new_v = encode_state(new_rest, combos[new_ci])
+                adj[ci][v][used + 1] = (new_ci, new_v)
+
+        # For v >= max_v, (ci,v) is not a valid encoding; we leave as defaults.
+        # BFS will never generate them.
+
+    # ---- BFS over (balloons_left, ci, v) with unit cost per minute ----
+    # dist[bal][ci][v] = minutes, use -1 for unvisited
+    dist = [[[-1] * 256 for _ in range(num_combos)] for __ in range(M + 1)]
+
+    q = deque()
+    dist[M][0][0] = 0
+    q.append((M, 0, 0))
+
+    while q:
+        bal, ci, v = q.popleft()
+        d = dist[bal][ci][v]
+
+        if bal == 0:
+            print(d)
+            return
+
+        avail = available[ci][v]
+        if not avail:
+            # Must idle
+            new_ci, new_v = adj[ci][v][0]
+            if dist[bal][new_ci][new_v] == -1:
+                dist[bal][new_ci][new_v] = d + 1
+                q.append((bal, new_ci, new_v))
+        else:
+            # Try using each available volunteer
+            for i in avail:
+                new_ci, new_v = adj[ci][v][i + 1]
+                new_bal = bal - A[i]
+                if new_bal < 0:
+                    new_bal = 0
+                if dist[new_bal][new_ci][new_v] == -1:
+                    dist[new_bal][new_ci][new_v] = d + 1
+                    q.append((new_bal, new_ci, new_v))
+
+    print(-1)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model each minute as a BFS step in an unweighted state graph. A state is `(bal, cooldowns)` where `bal` is balloons still needed, and `cooldowns[i]` is minutes until volunteer `i` can work again. Directly this is huge, but since `Bi ≤ 4`, we only need to explicitly store volunteers with positive cooldown, and in reachable states there are at most 4 of them. Enumerate all subsets of volunteers of size ≤ 4 and encode their cooldowns with 2 bits each (values 1..4). Precompute, for every `(subset, encoded_times)`, which volunteers are available and what the next `(subset, encoded_times)` becomes after idling or using a volunteer. Then BFS over `(bal, subset, encoded_times)` with transitions costing 1 minute; when `bal==0` output distance, else `-1` if unreachable.
