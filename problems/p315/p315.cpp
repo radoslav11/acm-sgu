@@ -1,0 +1,437 @@
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = long double;
+
+const coord_t inf = 1e18;
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    Point perp() const { return Point(-y, x); }
+    Point unit() const { return *this / norm(); }
+    Point normal() const { return perp().unit(); }
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+};
+
+int n;
+vector<Point> seg_a, seg_b;
+
+void read() {
+    cin >> n;
+    seg_a.resize(n);
+    seg_b.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> seg_a[i] >> seg_b[i];
+    }
+}
+
+void solve() {
+    // Let's start with building a graph with vertices being all the endpoints
+    // and intersection points. Let us also sort all points by angle around the
+    // origin / capital. This makes the rule of half-lines to intersecting in
+    // more than two points a bit simpler as it forces us to either always go
+    // clockwise or counterclockwise based on angle. It's not hard to prove this
+    // is if this isn't the case we can always choose a vertex where we switch
+    // the direction and this trivially creates a two-intersection.
+    //
+    // To make it more concrete, let's choose an arbitrary point that we want to
+    // include and walk clockwise. We can form a DAG if we enforce going only
+    // CW/CCW, which means that we effectively have a DP on a this DAG for
+    // finding the longest path. This can be solved in O(|E|). Both the number
+    // of vertices and edges in O(N^2), meaning that overall the complexity is
+    // O(N^4), which is fine for this problem.
+    //
+    // We should be careful about whether the origin point is within the
+    // polyline we are building. To do this nicely, we can remember the
+    // algorithm to check if a point is within a polygon - we start a half-line
+    // from it, and count the number of intersection. If this count is odd, then
+    // the point is inside. We can do exactly the same here by putting a
+    // vertical half-line starting from the origin. Whenever we add a segment to
+    // the polyline, we will update the parity, so this can be done with a O(1)
+    // state in the DP without changing the overall complexity.
+
+    Point origin(0, 0);
+
+    vector<bool> seg_valid(n, true);
+    for(int i = 0; i < n; i++) {
+        if(point_on_segment(seg_a[i], seg_b[i], origin)) {
+            seg_valid[i] = false;
+        }
+    }
+
+    vector<vector<Point>> seg_pts(n);
+    for(int i = 0; i < n; i++) {
+        if(!seg_valid[i]) {
+            continue;
+        }
+        seg_pts[i].push_back(seg_a[i]);
+        seg_pts[i].push_back(seg_b[i]);
+    }
+
+    for(int i = 0; i < n; i++) {
+        if(!seg_valid[i]) {
+            continue;
+        }
+        for(int j = i + 1; j < n; j++) {
+            if(!seg_valid[j]) {
+                continue;
+            }
+            Point d1 = seg_b[i] - seg_a[i];
+            Point d2 = seg_b[j] - seg_a[j];
+            if(abs(d1 ^ d2) < Point::eps) {
+                if(point_on_segment(seg_a[i], seg_b[i], seg_a[j])) {
+                    seg_pts[i].push_back(seg_a[j]);
+                }
+                if(point_on_segment(seg_a[i], seg_b[i], seg_b[j])) {
+                    seg_pts[i].push_back(seg_b[j]);
+                }
+                if(point_on_segment(seg_a[j], seg_b[j], seg_a[i])) {
+                    seg_pts[j].push_back(seg_a[i]);
+                }
+                if(point_on_segment(seg_a[j], seg_b[j], seg_b[i])) {
+                    seg_pts[j].push_back(seg_b[i]);
+                }
+            } else {
+                Point p = line_line_intersection(
+                    seg_a[i], seg_b[i], seg_a[j], seg_b[j]
+                );
+                if(point_on_segment(seg_a[i], seg_b[i], p) &&
+                   point_on_segment(seg_a[j], seg_b[j], p)) {
+                    seg_pts[i].push_back(p);
+                    seg_pts[j].push_back(p);
+                }
+            }
+        }
+    }
+
+    for(int i = 0; i < n; i++) {
+        sort(
+            seg_pts[i].begin(), seg_pts[i].end(),
+            [&](const Point& p, const Point& q) {
+                return (p - seg_a[i]).norm2() < (q - seg_a[i]).norm2();
+            }
+        );
+        seg_pts[i].erase(
+            unique(
+                seg_pts[i].begin(), seg_pts[i].end(),
+                [](const Point& p, const Point& q) {
+                    return (p - q).norm() < Point::eps;
+                }
+            ),
+            seg_pts[i].end()
+        );
+    }
+
+    vector<Point> pts;
+    for(int i = 0; i < n; i++) {
+        for(const Point& p: seg_pts[i]) {
+            pts.push_back(p);
+        }
+    }
+    sort(pts.begin(), pts.end());
+    pts.erase(
+        unique(
+            pts.begin(), pts.end(),
+            [](const Point& p, const Point& q) {
+                return (p - q).norm() < Point::eps;
+            }
+        ),
+        pts.end()
+    );
+
+    int m = pts.size();
+    if(m == 0) {
+        cout << "0\n";
+        return;
+    }
+
+    auto get_idx = [&](const Point& p) -> int {
+        for(int i = 0; i < m; i++) {
+            if((pts[i] - p).norm() < Point::eps) {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    auto crosses_up_ray = [&](const Point& a, const Point& b) -> bool {
+        coord_t min_x = min(a.x, b.x);
+        coord_t max_x = max(a.x, b.x);
+        if(!(min_x <= 0 && 0 < max_x)) {
+            return false;
+        }
+        coord_t t = -a.x / (b.x - a.x);
+        coord_t y_at_cross = a.y + t * (b.y - a.y);
+        return y_at_cross > Point::eps;
+    };
+
+    vector<vector<tuple<int, coord_t, int>>> adj(m);
+    vector<set<tuple<int, coord_t, int>>> adj_set(m);
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j + 1 < (int)seg_pts[i].size(); j++) {
+            int u = get_idx(seg_pts[i][j]);
+            int v = get_idx(seg_pts[i][j + 1]);
+            coord_t d = (seg_pts[i][j] - seg_pts[i][j + 1]).norm();
+            if(d < Point::eps) {
+                continue;
+            }
+            if(abs(pts[u].angle() - pts[v].angle()) < Point::eps) {
+                continue;
+            }
+            int cross = crosses_up_ray(pts[u], pts[v]) ? 1 : 0;
+            adj_set[u].insert({v, d, cross});
+            adj_set[v].insert({u, d, cross});
+        }
+    }
+    for(int i = 0; i < m; i++) {
+        for(auto& e: adj_set[i]) {
+            adj[i].push_back(e);
+        }
+    }
+
+    coord_t ans = 0;
+
+    for(int dir = 0; dir < 2; dir++) {
+        vector<int> order(m);
+        iota(order.begin(), order.end(), 0);
+        sort(order.begin(), order.end(), [&](int i, int j) {
+            coord_t ai = pts[i].angle(), aj = pts[j].angle();
+            if(abs(ai - aj) > Point::eps) {
+                return dir == 0 ? ai < aj : ai > aj;
+            }
+            return pts[i].norm() < pts[j].norm();
+        });
+
+        vector<int> global_pos(m);
+        for(int i = 0; i < m; i++) {
+            global_pos[order[i]] = i;
+        }
+
+        for(int start = 0; start < m; start++) {
+            vector<int> rel_pos(m);
+            for(int v = 0; v < m; v++) {
+                rel_pos[v] = (global_pos[v] - global_pos[start] + m) % m;
+            }
+
+            vector<int> vertex_at(m);
+            for(int v = 0; v < m; v++) {
+                vertex_at[rel_pos[v]] = v;
+            }
+
+            vector<array<coord_t, 2>> dp(m + 1, {-inf, -inf});
+            dp[0][0] = 0;
+
+            for(int i = 0; i < m; i++) {
+                int v = vertex_at[i];
+                for(int parity = 0; parity < 2; parity++) {
+                    if(dp[i][parity] < 0) {
+                        continue;
+                    }
+                    for(auto [u, d, cross]: adj[v]) {
+                        int pu = rel_pos[u];
+                        if(pu == 0) {
+                            pu = m;
+                        }
+                        if(pu > i) {
+                            int new_parity = parity ^ cross;
+                            dp[pu][new_parity] =
+                                max(dp[pu][new_parity], dp[i][parity] + d);
+                        }
+                    }
+                }
+            }
+
+            if(dp[m][1] > ans) {
+                ans = dp[m][1];
+            }
+        }
+    }
+
+    cout << fixed << setprecision(9) << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}

@@ -1,0 +1,891 @@
+## 1) Abridged problem statement
+
+You are given **N (1..50)** line segments (“roads”) in the plane. The capital is at the **origin (0,0)**.
+
+You must build a **closed polyline** (a polygonal cycle) using only **subsegments of the given roads** such that it is **star-shaped with respect to the origin in a very strong sense**:
+
+> Every ray (half-line) starting at the origin intersects the polyline in **exactly one point**.
+
+Among all such possible closed polylines, output the **maximum possible perimeter length**.  
+If no positive-length belt is possible, output **0**.
+
+---
+
+## 2) Detailed editorial (explaining the idea used in the provided solution)
+
+### Key geometric interpretation
+
+The condition “every ray from the origin intersects the belt in exactly one point” is equivalent to saying:
+
+- The belt is a **simple closed curve** around the origin, and
+- In polar angle order around the origin, the belt intersects each angle exactly once.
+
+Informally: as you rotate a ray around the origin, its intersection point with the belt moves continuously around the belt and never “appears twice” for the same direction.
+
+This implies the belt can be traversed **monotonically in angle**: when you walk along the belt, the polar angle of points on the belt should consistently increase (counterclockwise) or consistently decrease (clockwise), except for the wrap-around at \(2\pi\).
+
+### Turn the roads into a planar graph
+
+We can only use existing segments (or parts). So first we create a graph whose vertices are:
+
+- Every road endpoint, and
+- Every intersection point between any two roads (including overlaps / collinear touches).
+
+For each original road, we collect all points lying on it (endpoints + intersections), sort them along the road, then connect consecutive points with an edge. These edges are the smallest atomic usable pieces.
+
+This produces a graph \(G=(V,E)\) embedded in the plane.
+
+**Filtering:** If a road contains the origin (origin lies on that segment), it cannot be used.  
+Reason: then some rays would intersect the belt at the origin (degenerate / violates uniqueness). The code simply marks such segments invalid and ignores them.
+
+Complexities here:
+- \(N \le 50\), so intersections are \(O(N^2)\).
+- Vertices/edges are also \(O(N^2)\).
+
+### Enforce the “exactly one intersection per ray” using angle-monotone cycles
+
+If we take any valid belt and pick a starting point on it, then traversing it in one direction yields points whose polar angle around the origin changes monotonically (all CW or all CCW), otherwise you’d have a “switch” that creates some ray intersecting twice.
+
+So the algorithm searches for the **longest closed walk that is monotone in angle**.
+
+To make this algorithmic:
+
+1. Compute for each vertex \(v\) its polar angle \(\theta(v)=\text{atan2}(y,x)\).
+2. Consider a fixed direction of monotonicity:
+   - `dir=0`: angles increasing (CCW order)
+   - `dir=1`: angles decreasing (CW order)
+
+For a chosen `dir`, sort all vertices by:
+- primary: angle (increasing or decreasing),
+- tie-break: radius (distance to origin) to get deterministic ordering.
+
+Now pick a vertex `start` as the place where we “cut” the circular order into a linear order of length \(m\) (number of vertices). Define `rel_pos[v]` = position of vertex `v` in this order relative to `start` (modulo \(m\)). Thus `start` has `rel_pos=0`, and coming back to start after full turn corresponds to reaching position `m`.
+
+### Ensure the belt encloses the origin: parity of crossings
+
+Angle-monotone is not sufficient by itself; the cycle might not enclose the origin.
+
+The standard point-in-polygon test says:
+- Cast a ray from the origin (e.g., upward ray along positive y-axis), count how many times the polygon edges cross it.
+- Odd count ⇒ inside.
+
+The solution incorporates this into DP as a **parity bit** (0 or 1).  
+Each time we traverse an edge, we determine whether that edge crosses a fixed ray from the origin and toggle parity if it does. At the end, we only accept paths that return to start with parity = 1 (origin inside).
+
+In the code, the “test ray” is actually the **vertical half-line above the origin**, represented by the condition `x` crosses from ≤0 to >0 and intersection y>0 (implemented as `crosses_up_ray`).
+
+### DP on a DAG (longest path)
+
+Once a start vertex is fixed and we enforce moving only forward in `rel_pos`, the graph becomes a DAG:
+
+- We allow transitions from `v` (at position `i`) to `u` only if `rel_pos[u] > i` (forward).
+- Special case: returning to `start` is treated as reaching position `m`.
+
+Define DP state:
+
+- `dp[pos][parity]` = maximum length achievable when we have reached the vertex at relative position `pos` with current crossing parity.
+
+Initialize:
+- `dp[0][0] = 0` (start at start, length 0, parity even)
+
+Transitions:
+- From vertex at `pos=i`, try all adjacent edges `(v->u)` with length `d`.
+- Let `pu = rel_pos[u]` (if `pu==0`, treat as `m`).
+- If `pu > i`, then:
+  - `new_parity = parity XOR cross`, where `cross` is 1 if edge crosses the ray.
+  - `dp[pu][new_parity] = max(dp[pu][new_parity], dp[i][parity] + d)`.
+
+Answer for this `start` and `dir`:
+- candidate = `dp[m][1]` (came back to start after full angular sweep and encloses origin)
+
+Take maximum over all starts and both directions.
+
+### Why this matches the required belt property
+
+- Monotone angle traversal ensures no ray intersects the belt more than once.
+- Being closed and enclosing origin (odd crossing) ensures every ray intersects at least once.
+- Together this yields “exactly once”.
+
+### Complexity
+
+Let \(m = |V| = O(N^2)\), \( |E| = O(N^2)\).
+
+For each `dir` (2) and each `start` (m):
+- DP runs over positions (m) and scans adjacency lists; worst-case \(O(m \cdot |E|)\).
+
+Total worst-case about \(O(m^2 |E|) = O(N^6)\) by crude bounds, but with actual constraints and deduplication it behaves like the intended ~\(O(N^4)\) in practice for \(N \le 50\), and passes in optimized C++.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Use long double for better precision in geometry
+using coord_t = long double;
+
+const coord_t inf = 1e18;
+
+// Basic 2D point / vector structure with many helpers
+struct Point {
+    // Epsilon for floating comparisons
+    static constexpr coord_t eps = 1e-9;
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D scalar)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Exact comparisons (used only for sorting; geometry uses eps elsewhere)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+
+    // Lexicographic ordering: by x then y
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Squared length and length
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+
+    // Polar angle in [-pi, pi]
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate by angle a around origin
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector
+    Point perp() const { return Point(-y, x); }
+
+    // Unit vector (normalize)
+    Point unit() const { return *this / norm(); }
+
+    // Unit normal (perpendicular unit vector)
+    Point normal() const { return perp().unit(); }
+
+    // Project point p onto the direction of *this (as a vector from origin)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+
+    // Reflect p across the line through origin along *this direction
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Stream output/input
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // ccw test: orientation of triangle (a,b,c)
+    // returns 0 if collinear, 1 if ccw, -1 if cw
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    // Check if p lies on segment [a,b] (with eps tolerance)
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    // Point inside or on boundary of triangle abc
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection point of infinite lines (a1-b1) and (a2-b2)
+    // Assumes they are not parallel
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    // Check if two vectors are collinear (cross ~ 0)
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    // Circumcenter of triangle abc
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    // Signed area contribution of circular arc (unused in this problem)
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    // Intersection points of circles (unused in this problem)
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+};
+
+int n;
+vector<Point> seg_a, seg_b;
+
+// Read input roads
+void read() {
+    cin >> n;
+    seg_a.resize(n);
+    seg_b.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> seg_a[i] >> seg_b[i];
+    }
+}
+
+void solve() {
+    // We build a graph whose vertices are all road endpoints + intersection points.
+    // Then we restrict to cycles that are monotone in polar angle around the origin.
+    // Such a cycle can be found with DP on a DAG after choosing a start point and direction.
+    // We also track parity of intersections with a fixed ray from origin to ensure origin is inside.
+
+    Point origin(0, 0);
+
+    // Mark segments that pass through the origin as invalid (cannot use)
+    vector<bool> seg_valid(n, true);
+    for(int i = 0; i < n; i++) {
+        if(point_on_segment(seg_a[i], seg_b[i], origin)) {
+            seg_valid[i] = false;
+        }
+    }
+
+    // For each segment, maintain the list of points that lie on it (endpoints + intersections)
+    vector<vector<Point>> seg_pts(n);
+    for(int i = 0; i < n; i++) {
+        if(!seg_valid[i]) {
+            continue;
+        }
+        seg_pts[i].push_back(seg_a[i]);
+        seg_pts[i].push_back(seg_b[i]);
+    }
+
+    // Find all intersections (including collinear overlaps handled via endpoint inclusion)
+    for(int i = 0; i < n; i++) {
+        if(!seg_valid[i]) {
+            continue;
+        }
+        for(int j = i + 1; j < n; j++) {
+            if(!seg_valid[j]) {
+                continue;
+            }
+            Point d1 = seg_b[i] - seg_a[i];
+            Point d2 = seg_b[j] - seg_a[j];
+
+            // Parallel (cross ~ 0) => check if endpoints lie on the other segment
+            if(abs(d1 ^ d2) < Point::eps) {
+                if(point_on_segment(seg_a[i], seg_b[i], seg_a[j])) {
+                    seg_pts[i].push_back(seg_a[j]);
+                }
+                if(point_on_segment(seg_a[i], seg_b[i], seg_b[j])) {
+                    seg_pts[i].push_back(seg_b[j]);
+                }
+                if(point_on_segment(seg_a[j], seg_b[j], seg_a[i])) {
+                    seg_pts[j].push_back(seg_a[i]);
+                }
+                if(point_on_segment(seg_a[j], seg_b[j], seg_b[i])) {
+                    seg_pts[j].push_back(seg_b[i]);
+                }
+            } else {
+                // Non-parallel => compute line intersection and check if it lies on both segments
+                Point p = line_line_intersection(
+                    seg_a[i], seg_b[i], seg_a[j], seg_b[j]
+                );
+                if(point_on_segment(seg_a[i], seg_b[i], p) &&
+                   point_on_segment(seg_a[j], seg_b[j], p)) {
+                    seg_pts[i].push_back(p);
+                    seg_pts[j].push_back(p);
+                }
+            }
+        }
+    }
+
+    // For each segment, sort its points along the segment and remove duplicates (eps-based)
+    for(int i = 0; i < n; i++) {
+        sort(
+            seg_pts[i].begin(), seg_pts[i].end(),
+            [&](const Point& p, const Point& q) {
+                // sort by distance from seg_a[i] along the segment
+                return (p - seg_a[i]).norm2() < (q - seg_a[i]).norm2();
+            }
+        );
+        seg_pts[i].erase(
+            unique(
+                seg_pts[i].begin(), seg_pts[i].end(),
+                [](const Point& p, const Point& q) {
+                    return (p - q).norm() < Point::eps;
+                }
+            ),
+            seg_pts[i].end()
+        );
+    }
+
+    // Gather all unique points across all segments => global vertex list
+    vector<Point> pts;
+    for(int i = 0; i < n; i++) {
+        for(const Point& p: seg_pts[i]) {
+            pts.push_back(p);
+        }
+    }
+    sort(pts.begin(), pts.end());
+    pts.erase(
+        unique(
+            pts.begin(), pts.end(),
+            [](const Point& p, const Point& q) {
+                return (p - q).norm() < Point::eps;
+            }
+        ),
+        pts.end()
+    );
+
+    int m = (int)pts.size();
+    if(m == 0) {
+        cout << "0\n";
+        return;
+    }
+
+    // Find index of point p in pts (linear scan with eps check)
+    auto get_idx = [&](const Point& p) -> int {
+        for(int i = 0; i < m; i++) {
+            if((pts[i] - p).norm() < Point::eps) {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    // Check if segment (a,b) crosses the chosen "upward ray" from origin.
+    // Implementation actually checks crossing of the vertical line x=0 with x from <=0 to >0,
+    // and y at intersection > 0.
+    auto crosses_up_ray = [&](const Point& a, const Point& b) -> bool {
+        coord_t min_x = min(a.x, b.x);
+        coord_t max_x = max(a.x, b.x);
+
+        // Must straddle x=0 with a strict inequality to avoid double counting
+        if(!(min_x <= 0 && 0 < max_x)) {
+            return false;
+        }
+
+        // Compute parameter t where x(t)=0 on segment a + t(b-a)
+        coord_t t = -a.x / (b.x - a.x);
+        coord_t y_at_cross = a.y + t * (b.y - a.y);
+
+        // Only count if intersection is above origin (positive y)
+        return y_at_cross > Point::eps;
+    };
+
+    // Build adjacency list over the atomic edges on subdivided segments.
+    // Store edges as (to, length, crossParityToggle)
+    vector<vector<tuple<int, coord_t, int>>> adj(m);
+
+    // Use a set to deduplicate multiple identical edges
+    vector<set<tuple<int, coord_t, int>>> adj_set(m);
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j + 1 < (int)seg_pts[i].size(); j++) {
+            int u = get_idx(seg_pts[i][j]);
+            int v = get_idx(seg_pts[i][j + 1]);
+
+            // Edge length
+            coord_t d = (seg_pts[i][j] - seg_pts[i][j + 1]).norm();
+            if(d < Point::eps) {
+                continue;
+            }
+
+            // If angles equal, moving along this edge doesn't progress in angular order;
+            // skip to keep DAG property later.
+            if(abs(pts[u].angle() - pts[v].angle()) < Point::eps) {
+                continue;
+            }
+
+            // Whether this edge toggles the ray-crossing parity
+            int cross = crosses_up_ray(pts[u], pts[v]) ? 1 : 0;
+
+            // Undirected edge (can traverse either way in DP, direction filtering is later)
+            adj_set[u].insert({v, d, cross});
+            adj_set[v].insert({u, d, cross});
+        }
+    }
+
+    // Convert sets to vectors
+    for(int i = 0; i < m; i++) {
+        for(auto& e: adj_set[i]) {
+            adj[i].push_back(e);
+        }
+    }
+
+    coord_t ans = 0;
+
+    // Try both angular directions: CCW (dir=0) and CW (dir=1)
+    for(int dir = 0; dir < 2; dir++) {
+        // order = vertices sorted by angle in the chosen direction, tie by radius
+        vector<int> order(m);
+        iota(order.begin(), order.end(), 0);
+        sort(order.begin(), order.end(), [&](int i, int j) {
+            coord_t ai = pts[i].angle(), aj = pts[j].angle();
+            if(abs(ai - aj) > Point::eps) {
+                return dir == 0 ? ai < aj : ai > aj;
+            }
+            return pts[i].norm() < pts[j].norm();
+        });
+
+        // global_pos[v] = position of vertex v in that sorted order
+        vector<int> global_pos(m);
+        for(int i = 0; i < m; i++) {
+            global_pos[order[i]] = i;
+        }
+
+        // Choose each possible start vertex as the "cut" in the circular order
+        for(int start = 0; start < m; start++) {
+            // rel_pos[v] = position relative to start in [0..m-1]
+            vector<int> rel_pos(m);
+            for(int v = 0; v < m; v++) {
+                rel_pos[v] = (global_pos[v] - global_pos[start] + m) % m;
+            }
+
+            // vertex_at[i] = vertex whose rel_pos is i
+            vector<int> vertex_at(m);
+            for(int v = 0; v < m; v++) {
+                vertex_at[rel_pos[v]] = v;
+            }
+
+            // dp[i][parity]: best length reaching relative position i with parity
+            // We also use dp[m] as "returned to start after full sweep"
+            vector<array<coord_t, 2>> dp(m + 1, {-inf, -inf});
+            dp[0][0] = 0;
+
+            // Process positions in increasing order => DAG longest path
+            for(int i = 0; i < m; i++) {
+                int v = vertex_at[i];
+
+                for(int parity = 0; parity < 2; parity++) {
+                    if(dp[i][parity] < 0) {
+                        continue; // unreachable
+                    }
+
+                    // Try all edges v->u
+                    for(auto [u, d, cross]: adj[v]) {
+                        int pu = rel_pos[u];
+
+                        // rel_pos==0 means "start"; treat that as position m (closing the loop)
+                        if(pu == 0) {
+                            pu = m;
+                        }
+
+                        // Only allow forward movement in relative order
+                        if(pu > i) {
+                            int new_parity = parity ^ cross;
+                            dp[pu][new_parity] =
+                                max(dp[pu][new_parity], dp[i][parity] + d);
+                        }
+                    }
+                }
+            }
+
+            // A valid belt must end at position m (back to start) and have odd parity (origin inside)
+            if(dp[m][1] > ans) {
+                ans = dp[m][1];
+            }
+        }
+    }
+
+    // Output with sufficient precision
+    cout << fixed << setprecision(9) << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+import math
+from collections import defaultdict
+
+EPS = 1e-9
+INF = 1e100
+
+class Point:
+    __slots__ = ("x", "y")
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def __add__(self, other): return Point(self.x + other.x, self.y + other.y)
+    def __sub__(self, other): return Point(self.x - other.x, self.y - other.y)
+    def __mul__(self, k):     return Point(self.x * k, self.y * k)
+
+    def dot(self, other):   return self.x * other.x + self.y * other.y
+    def cross(self, other): return self.x * other.y - self.y * other.x
+
+    def norm2(self): return self.x * self.x + self.y * self.y
+    def norm(self):  return math.hypot(self.x, self.y)
+    def angle(self): return math.atan2(self.y, self.x)
+
+def ccw(a: Point, b: Point, c: Point) -> int:
+    """Orientation of triangle a-b-c with EPS tolerance."""
+    v = (b - a).cross(c - a)
+    if -EPS <= v <= EPS: return 0
+    return 1 if v > 0 else -1
+
+def point_on_segment(a: Point, b: Point, p: Point) -> bool:
+    """Check if p lies on segment [a,b] with EPS tolerance."""
+    if ccw(a, b, p) != 0:
+        return False
+    return (min(a.x, b.x) - EPS <= p.x <= max(a.x, b.x) + EPS and
+            min(a.y, b.y) - EPS <= p.y <= max(a.y, b.y) + EPS)
+
+def line_line_intersection(a1: Point, b1: Point, a2: Point, b2: Point) -> Point:
+    """Intersection of infinite lines (a1-b1) and (a2-b2). Assumes not parallel."""
+    d1 = b1 - a1
+    d2 = b2 - a2
+    # a1 + d1 * t, where t = cross(a2-a1, d2) / cross(d1, d2)
+    t = (a2 - a1).cross(d2) / d1.cross(d2)
+    return a1 + d1 * t
+
+def crosses_up_ray(a: Point, b: Point) -> int:
+    """
+    Same test as in C++:
+    count crossing of the half-line starting at origin going upward,
+    implemented as crossing of x=0 with x from <=0 to >0 and y_at_cross > 0.
+    """
+    min_x = min(a.x, b.x)
+    max_x = max(a.x, b.x)
+    if not (min_x <= 0.0 and 0.0 < max_x):
+        return 0
+    # param t where x=0 on segment
+    t = -a.x / (b.x - a.x)
+    y = a.y + t * (b.y - a.y)
+    return 1 if y > EPS else 0
+
+def same_point(p: Point, q: Point) -> bool:
+    return (p - q).norm() < EPS
+
+def solve():
+    it = iter(sys.stdin.read().strip().split())
+    n = int(next(it))
+    seg_a, seg_b = [], []
+    for _ in range(n):
+        x1 = float(next(it)); y1 = float(next(it))
+        x2 = float(next(it)); y2 = float(next(it))
+        seg_a.append(Point(x1, y1))
+        seg_b.append(Point(x2, y2))
+
+    origin = Point(0.0, 0.0)
+
+    # Filter out segments that contain the origin
+    seg_valid = [True] * n
+    for i in range(n):
+        if point_on_segment(seg_a[i], seg_b[i], origin):
+            seg_valid[i] = False
+
+    # Collect points on each segment: endpoints + intersections
+    seg_pts = [[] for _ in range(n)]
+    for i in range(n):
+        if not seg_valid[i]:
+            continue
+        seg_pts[i].append(seg_a[i])
+        seg_pts[i].append(seg_b[i])
+
+    # Add intersection points / collinear endpoint inclusions
+    for i in range(n):
+        if not seg_valid[i]:
+            continue
+        for j in range(i + 1, n):
+            if not seg_valid[j]:
+                continue
+
+            d1 = seg_b[i] - seg_a[i]
+            d2 = seg_b[j] - seg_a[j]
+
+            if abs(d1.cross(d2)) < EPS:
+                # Parallel: only handle overlap by checking endpoints
+                if point_on_segment(seg_a[i], seg_b[i], seg_a[j]):
+                    seg_pts[i].append(seg_a[j])
+                if point_on_segment(seg_a[i], seg_b[i], seg_b[j]):
+                    seg_pts[i].append(seg_b[j])
+                if point_on_segment(seg_a[j], seg_b[j], seg_a[i]):
+                    seg_pts[j].append(seg_a[i])
+                if point_on_segment(seg_a[j], seg_b[j], seg_b[i]):
+                    seg_pts[j].append(seg_b[i])
+            else:
+                p = line_line_intersection(seg_a[i], seg_b[i], seg_a[j], seg_b[j])
+                if point_on_segment(seg_a[i], seg_b[i], p) and point_on_segment(seg_a[j], seg_b[j], p):
+                    seg_pts[i].append(p)
+                    seg_pts[j].append(p)
+
+    # Sort points on each segment and unique them
+    for i in range(n):
+        if not seg_valid[i]:
+            continue
+        a = seg_a[i]
+        seg_pts[i].sort(key=lambda p: (p - a).norm2())
+        uniq = []
+        for p in seg_pts[i]:
+            if not uniq or not same_point(uniq[-1], p):
+                uniq.append(p)
+        seg_pts[i] = uniq
+
+    # Build global unique vertex list
+    pts = []
+    for i in range(n):
+        for p in seg_pts[i]:
+            pts.append(p)
+
+    # Deduplicate globally: sort lexicographically then eps-unique
+    pts.sort(key=lambda p: (p.x, p.y))
+    uniq = []
+    for p in pts:
+        if not uniq or not same_point(uniq[-1], p):
+            uniq.append(p)
+    pts = uniq
+    m = len(pts)
+
+    if m == 0:
+        print("0")
+        return
+
+    # Map point -> index via linear search with EPS (matches C++ approach).
+    # For speed, we can also use rounded hashing, but keep it conceptually identical.
+    def get_idx(p: Point) -> int:
+        for i in range(m):
+            if same_point(pts[i], p):
+                return i
+        return -1
+
+    # Build adjacency with deduplication using a dict keyed by (u,v,cross) storing best length
+    adj_best = [dict() for _ in range(m)]
+
+    for i in range(n):
+        if not seg_valid[i]:
+            continue
+        arr = seg_pts[i]
+        for j in range(len(arr) - 1):
+            u = get_idx(arr[j])
+            v = get_idx(arr[j + 1])
+            d = (arr[j] - arr[j + 1]).norm()
+            if d < EPS:
+                continue
+            if abs(pts[u].angle() - pts[v].angle()) < EPS:
+                continue
+            cross = crosses_up_ray(pts[u], pts[v])
+
+            # undirected: add both ways
+            key_uv = (v, cross)
+            key_vu = (u, cross)
+            if key_uv not in adj_best[u] or adj_best[u][key_uv] < d:
+                adj_best[u][key_uv] = d
+            if key_vu not in adj_best[v] or adj_best[v][key_vu] < d:
+                adj_best[v][key_vu] = d
+
+    adj = [[] for _ in range(m)]
+    for v in range(m):
+        for (to, cross), dist in adj_best[v].items():
+            adj[v].append((to, dist, cross))
+
+    ans = 0.0
+
+    # Try both angular directions
+    for direction in (0, 1):
+        order = list(range(m))
+        order.sort(key=lambda i: (pts[i].angle(), pts[i].norm()) if direction == 0
+                              else (-pts[i].angle(), pts[i].norm()))
+        global_pos = [0] * m
+        for idx, v in enumerate(order):
+            global_pos[v] = idx
+
+        for start in range(m):
+            rel_pos = [0] * m
+            for v in range(m):
+                rel_pos[v] = (global_pos[v] - global_pos[start] + m) % m
+
+            vertex_at = [0] * m
+            for v in range(m):
+                vertex_at[rel_pos[v]] = v
+
+            # dp[pos][parity]
+            dp0 = [-INF] * (m + 1)
+            dp1 = [-INF] * (m + 1)
+            dp0[0] = 0.0
+
+            for i in range(m):
+                v = vertex_at[i]
+
+                for parity in (0, 1):
+                    cur = dp0[i] if parity == 0 else dp1[i]
+                    if cur < -1e50:
+                        continue
+
+                    for (u, dist, cross) in adj[v]:
+                        pu = rel_pos[u]
+                        if pu == 0:
+                            pu = m
+                        if pu > i:
+                            np = parity ^ cross
+                            val = cur + dist
+                            if np == 0:
+                                if val > dp0[pu]:
+                                    dp0[pu] = val
+                            else:
+                                if val > dp1[pu]:
+                                    dp1[pu] = val
+
+            if dp1[m] > ans:
+                ans = dp1[m]
+
+    # If impossible to build positive length, answer stays 0
+    print(f"{ans:.9f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+1. Subdivide all roads at all pairwise intersections (and overlapping endpoint inclusions). Each resulting smallest subsegment is a usable edge. Ignore any road that contains the origin.
+2. Build graph \(G(V,E)\) of all unique points and atomic edges; store edge length and whether it crosses a fixed ray from the origin (used for inside-test parity).
+3. A valid belt must be traversable with **monotone polar angle** (always CW or always CCW). For each direction, sort vertices by angle (tie by radius).
+4. For each start vertex, “cut” the circular order into linear order 0..m−1; only allow edges going forward in this order. This yields a DAG.
+5. Run DP for longest path with state `(position, parity)` where parity is the crossing parity with the fixed ray. Start at `(0,0)`. Transition along forward edges; toggle parity if edge crosses the ray. Returning to start is treated as reaching position `m`.
+6. Best valid belt length is `max dp[m][1]` over all starts and both directions (odd parity ⇒ origin inside). Output it, else 0.
+

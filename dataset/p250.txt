@@ -1,0 +1,623 @@
+## 1) Concise, abridged problem statement
+
+You are given an `N × M` grid (`1 ≤ N, M ≤ 180`) of `0/1` where `1` is a tree (blocked) and `0` is empty.
+
+You must place a “C”-shaped house composed of **three non-overlapping rectangles** (top, middle, bottom) such that:
+
+1. Each rectangle has **positive area**.
+2. Rectangles **touch** each other (adjacent along edges), but **do not overlap**.
+3. The **top-left cell** of all three rectangles lies on the **same column** (same left edge).
+4. The **middle rectangle’s width is strictly smaller** than the widths of both top and bottom rectangles.
+5. The house can only occupy `0` cells.
+
+Maximize total area.  
+Output the maximum area and the grid with house cells marked as `8` (trees remain `1`, other empty cells remain `0`). If impossible, output `-1`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: Fix the left edge (column)
+All three rectangles must start at the same left column `c`. If we fix `c`, then for each row `r` we can compute:
+
+- `dist[r][c]` = how many consecutive empty cells (`0`) exist starting at `(r, c)` going right.
+
+This gives us a “histogram” of possible widths for rectangles whose left edge is at column `c`:
+`height[r] = dist[r][c]`.
+
+Any rectangle that starts at column `c` and spans some consecutive rows `[a..b]` can have width at most:
+`min(height[a..b])`.
+
+This is the same setup as the classic “largest rectangle in a histogram / maximal rectangle in binary matrix” approach.
+
+### Precompute `dist`
+For each row, compute distances to the next tree to the right:
+
+- If `grid[row][col] == 1` (tree), `dist=0`.
+- Else `dist[row][col] = 1 + dist[row][col+1]` (or 1 at last column).
+
+This is `O(N*M)`.
+
+### For a fixed column `c`, solve best “C” in `O(N^2)`
+We need 3 rectangles stacked vertically: top, middle, bottom, all starting at column `c`.
+
+Let:
+- top uses some rows ending above middle,
+- middle uses some rows between,
+- bottom uses rows below.
+
+Widths:
+- `w1` (top), `w2` (middle), `w3` (bottom),
+- must satisfy `w2 < w1` and `w2 < w3` and all > 0.
+
+The solution iterates over:
+- a “critical” row `i` that determines the top width `w1 = height[i]`,
+- a “critical” row `j` (with `j >= i+2`) that determines the bottom width `w3 = height[j]`.
+
+Then it tries to place the middle section between them.
+
+#### Nearest smaller elements: `l[]` and `r[]`
+For each row `k`, compute:
+- `l[k]` = nearest index above `k` with `height[l[k]] < height[k]` (or `-1`)
+- `r[k]` = nearest index below `k` with `height[r[k]] < height[k]` (or `n`)
+
+These are computed with monotonic stacks in `O(N)`.
+
+Interpretation:
+- The maximal vertical span where `height >= height[k]` is `(l[k]+1 .. r[k]-1)`.
+
+So:
+- Top rectangle with width `w1=height[i]` can extend up/down within those bounds, but in our construction we only use it above the middle.
+- Bottom rectangle with width `w3=height[j]` can extend similarly.
+
+#### Middle section cases
+We want the middle width `w2` to be as large as possible but strictly smaller than both `w1` and `w3`.
+
+The code handles three configurations depending on overlap of the maximal spans:
+
+**Case 1: `r[i] >= j`**  
+The “tall-enough” region for `i` reaches down to (or beyond) `j`.  
+So between top and bottom there is no guaranteed gap; we can choose a **single middle row** placed near the boundary.
+
+- Pick a middle row `mid_row` near `j`’s left boundary: `mid_row = max(i+1, l[j])` (as in code)
+- Set `w2 = min(w1, w3) - 1` (strictly smaller than both)
+- Compute area:
+  - top part rows `[top_start..top_end]` width `w1`
+  - middle part 1 row width `w2`
+  - bottom part rows `[bot_start..bot_end]` width `w3`
+
+Check `w2 > 0` (required), maximize area.
+
+**Case 2: `l[j] <= i`**  
+Symmetric to case 1, place a 1-row middle close to `i`’s right boundary.
+
+**Case 3: `r[i] <= l[j]`**  
+Now there is a real “middle band” of rows between them. The middle rectangle can have height > 1.
+
+But its width is limited by:
+- it must be < `w1` and < `w3`, i.e. `w2 ≤ w1-1` and `w2 ≤ w3-1`
+- and must fit all rows in the middle band: `w2 ≤ min(height[mid_start..mid_end])`
+
+To answer `min(height[L..R])` quickly, the code precomputes a quadratic table:
+
+`min_h[a][b] = min(height[a..b])` in `O(N^2)`.
+
+Then:
+- `min_middle = min_h[r[i]][l[j]]`
+- `w2 = min(w1-1, w3-1, min_middle)`
+
+Area is computed as three rectangles: top band, middle band, bottom band.
+
+#### Complexity
+For each column:
+- build `l,r` in `O(N)`
+- build `min_h` in `O(N^2)`
+- loop over `(i,j)` in `O(N^2)` with O(1) case evaluation
+
+So per column: `O(N^2)`. Total: `O(M*N^2)`.
+
+With `N,M ≤ 180`, worst case ~ `180*180^2 ≈ 5.8M` iterations plus small constants, fits in 0.25s in optimized C++ (tight but plausible with low overhead).
+
+### Reconstruction / output
+The solver stores the best configuration: column, row ranges for the three parts, and widths.
+Then it writes `8` into those cells in the original `grid` and prints.
+
+If no valid “C” found, print `-1`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (GNU extension)
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes correct size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                // Iterate by reference to fill elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces (mostly for debugging; not used here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                             // Grid dimensions
+vector<vector<int>> grid;             // The original grid: 0 empty, 1 tree, later 8 house
+vector<vector<int>> dist;             // dist[r][c] = consecutive empty cells to the right from (r,c)
+
+// Stores one candidate answer (the best for some column/histogram)
+struct Result {
+    int area;                         // Total area of the 3 rectangles
+    int col;                          // Common left column of all rectangles
+
+    // Rectangle 1 (top): rows [r1_start..r1_end], width w1
+    int r1_start, r1_end, w1;
+
+    // Rectangle 2 (middle): rows [r2_start..r2_end], width w2
+    int r2_start, r2_end, w2;
+
+    // Rectangle 3 (bottom): rows [r3_start..r3_end], width w3
+    int r3_start, r3_end, w3;
+
+    // Default constructor: "invalid" result
+    Result()
+        : area(-1),
+          col(-1),
+          r1_start(-1),
+          r1_end(-1),
+          w1(-1),
+          r2_start(-1),
+          r2_end(-1),
+          w2(-1),
+          r3_start(-1),
+          r3_end(-1),
+          w3(-1) {}
+
+    // Constructor for a real result
+    Result(
+        int a, int c, int rs1, int re1, int ww1, int rs2, int re2, int ww2,
+        int rs3, int re3, int ww3
+    )
+        : area(a),
+          col(c),
+          r1_start(rs1),
+          r1_end(re1),
+          w1(ww1),
+          r2_start(rs2),
+          r2_end(re2),
+          w2(ww2),
+          r3_start(rs3),
+          r3_end(re3),
+          w3(ww3) {}
+};
+
+void read() {
+    cin >> n >> m;                               // Read dimensions
+    grid.assign(n, vector<int>(m));              // Allocate grid
+    cin >> grid;                                 // Read grid values
+    dist.assign(n, vector<int>(m));              // Allocate dist
+
+    // Compute dist row by row from right to left
+    for(int row = 0; row < n; row++) {
+        for(int col = m - 1; col >= 0; col--) {
+            if(grid[row][col] == 1) {            // Tree blocks everything
+                dist[row][col] = 0;
+            } else {
+                // If last column and empty => width 1; else 1 + dist to the right
+                dist[row][col] = (col == m - 1) ? 1 : dist[row][col + 1] + 1;
+            }
+        }
+    }
+}
+
+// Solve best "C" when the common left edge is fixed to column `col`
+Result solve_histogram(int col) {
+    vector<int> height(n);
+    for(int row = 0; row < n; row++) {
+        height[row] = dist[row][col];            // Histogram height = max width from this cell to right
+    }
+
+    // l[i] = nearest index above i with height strictly smaller, else -1
+    // r[i] = nearest index below i with height strictly smaller, else n
+    vector<int> l(n), r(n);
+    stack<int> s;
+
+    // Compute l[] with a monotonic increasing stack
+    for(int i = 0; i < n; i++) {
+        while(!s.empty() && height[s.top()] >= height[i]) {
+            s.pop();                             // Maintain strictly increasing heights on stack
+        }
+        l[i] = s.empty() ? -1 : s.top();         // Closest smaller to the top
+        s.push(i);
+    }
+    while(!s.empty()) {
+        s.pop();
+    }
+
+    // Compute r[] similarly scanning from bottom to top
+    for(int i = n - 1; i >= 0; i--) {
+        while(!s.empty() && height[s.top()] >= height[i]) {
+            s.pop();
+        }
+        r[i] = s.empty() ? n : s.top();          // Closest smaller below
+        s.push(i);
+    }
+
+    // Precompute min_h[i][j] = min(height[i..j]) for fast range minimum queries.
+    // This is O(N^2) DP: min_h[i][j] = min(min_h[i][j-1], height[j])
+    vector<vector<int>> min_h(n, vector<int>(n, INT_MAX));
+    for(int i = 0; i < n; i++) {
+        min_h[i][i] = height[i];
+        for(int j = i + 1; j < n; j++) {
+            min_h[i][j] = min(min_h[i][j - 1], height[j]);
+        }
+    }
+
+    Result best;                                  // Best configuration for this column
+
+    // Choose i as a "critical" row for the top width w1
+    for(int i = 0; i < n; i++) {
+        if(height[i] == 0) {                      // Can't place rectangle if width is zero
+            continue;
+        }
+
+        int top_start = l[i] + 1;                 // Top rectangle can extend up to just after l[i]
+        int top_end;                              // Will be decided based on where middle begins
+
+        // Choose j as a "critical" row for the bottom width w3, ensure at least one row gap
+        for(int j = i + 2; j < n; j++) {
+            if(height[j] == 0) {
+                continue;
+            }
+
+            int bot_start;                        // Will be decided based on where middle ends
+            int bot_end = r[j] - 1;               // Bottom rectangle can extend down to just before r[j]
+            int w1 = height[i];                   // Width of top
+            int w3 = height[j];                   // Width of bottom
+
+            // Case 1: the maximal span of i reaches row j or beyond (no guaranteed middle band)
+            if(r[i] >= j) {
+                // Choose middle row close to the boundary so rectangles just touch
+                int mid_row = max(i + 1, l[j]);   // As in author's construction
+                top_end = mid_row - 1;            // Top ends right above middle
+                bot_start = mid_row + 1;          // Bottom starts right below middle
+
+                int w2 = min(w1, w3) - 1;         // Middle must be strictly narrower than both
+                int area = (top_end - top_start + 1) * w1
+                         + 1 * w2
+                         + (bot_end - bot_start + 1) * w3;
+
+                // Valid only if middle has positive width
+                if(w2 > 0 && area > best.area) {
+                    best = Result(
+                        area, col,
+                        top_start, top_end, w1,
+                        mid_row, mid_row, w2,
+                        bot_start, bot_end, w3
+                    );
+                }
+            }
+
+            // Case 2: symmetric: maximal span of j reaches i or above
+            if(l[j] <= i) {
+                int mid_row = min(j - 1, r[i]);   // Place middle near i's boundary
+                top_end = mid_row - 1;
+                bot_start = mid_row + 1;
+
+                int w2 = min(w1, w3) - 1;
+                int area = (top_end - top_start + 1) * w1
+                         + 1 * w2
+                         + (bot_end - bot_start + 1) * w3;
+
+                if(w2 > 0 && area > best.area) {
+                    best = Result(
+                        area, col,
+                        top_start, top_end, w1,
+                        mid_row, mid_row, w2,
+                        bot_start, bot_end, w3
+                    );
+                }
+            }
+
+            // Case 3: There is a true middle segment between them: r[i] <= l[j]
+            if(r[i] <= l[j]) {
+                top_end = r[i] - 1;               // Top extends down to just before r[i]
+                bot_start = l[j] + 1;             // Bottom starts after l[j]
+
+                int mid_start = r[i];             // Middle rows are [r[i] .. l[j]]
+                int mid_end = l[j];
+
+                int min_middle = min_h[r[i]][l[j]];        // Min histogram height in middle band
+                int w2 = min({w1 - 1, w3 - 1, min_middle}); // Must be narrower and fit all rows
+
+                int area = (top_end - top_start + 1) * w1
+                         + (mid_end - mid_start + 1) * w2
+                         + (bot_end - bot_start + 1) * w3;
+
+                if(w2 > 0 && area > best.area) {
+                    best = Result(
+                        area, col,
+                        top_start, top_end, w1,
+                        mid_start, mid_end, w2,
+                        bot_start, bot_end, w3
+                    );
+                }
+            }
+        }
+    }
+
+    return best;                                   // Best "C" for this fixed column
+}
+
+void solve() {
+    // Find best over all possible left columns
+    Result best;
+    for(int col = 0; col < m; col++) {
+        Result res = solve_histogram(col);
+        if(res.area > best.area) {
+            best = res;
+        }
+    }
+
+    // If no solution exists
+    if(best.area == -1) {
+        cout << -1 << '\n';
+        return;
+    }
+
+    cout << best.area << '\n';                     // Print maximal area
+
+    int col = best.col;
+
+    // Paint top rectangle with 8
+    for(int row = best.r1_start; row <= best.r1_end; row++) {
+        for(int c = col; c < col + best.w1; c++) {
+            grid[row][c] = 8;
+        }
+    }
+
+    // Paint middle rectangle with 8
+    for(int row = best.r2_start; row <= best.r2_end; row++) {
+        for(int c = col; c < col + best.w2; c++) {
+            grid[row][c] = 8;
+        }
+    }
+
+    // Paint bottom rectangle with 8
+    for(int row = best.r3_start; row <= best.r3_end; row++) {
+        for(int c = col; c < col + best.w3; c++) {
+            grid[row][c] = 8;
+        }
+    }
+
+    // Output the resulting grid
+    for(int row = 0; row < n; row++) {
+        for(int c = 0; c < m; c++) {
+            if(c > 0) cout << ' ';
+            cout << grid[row][c];
+        }
+        cout << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);              // Fast I/O
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;                                   // The task is single-test in provided solution
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Read grid
+    grid = [[int(next(it)) for _ in range(m)] for _ in range(n)]
+
+    # dist[r][c] = number of consecutive empty cells (0s) from (r,c) to the right
+    dist = [[0] * m for _ in range(n)]
+    for r in range(n):
+        # Compute from right to left
+        for c in range(m - 1, -1, -1):
+            if grid[r][c] == 1:
+                dist[r][c] = 0
+            else:
+                dist[r][c] = 1 if c == m - 1 else dist[r][c + 1] + 1
+
+    # Store best solution info
+    best_area = -1
+    best = None  # will hold (col, r1s,r1e,w1, r2s,r2e,w2, r3s,r3e,w3)
+
+    # Solve independently for each left column
+    for col in range(m):
+        height = [dist[r][col] for r in range(n)]
+
+        # Compute nearest strictly smaller on the left (upwards): l[i]
+        l = [-1] * n
+        stack = []
+        for i in range(n):
+            while stack and height[stack[-1]] >= height[i]:
+                stack.pop()
+            l[i] = stack[-1] if stack else -1
+            stack.append(i)
+
+        # Compute nearest strictly smaller on the right (downwards): r[i]
+        rgt = [n] * n
+        stack.clear()
+        for i in range(n - 1, -1, -1):
+            while stack and height[stack[-1]] >= height[i]:
+                stack.pop()
+            rgt[i] = stack[-1] if stack else n
+            stack.append(i)
+
+        # Precompute min_h[a][b] = min(height[a..b]) in O(n^2)
+        # Using Python lists; n <= 180 so fine.
+        min_h = [[10**9] * n for _ in range(n)]
+        for i in range(n):
+            cur = height[i]
+            min_h[i][i] = cur
+            for j in range(i + 1, n):
+                if height[j] < cur:
+                    cur = height[j]
+                min_h[i][j] = cur
+
+        # Enumerate critical rows i (top) and j (bottom)
+        for i in range(n):
+            if height[i] == 0:
+                continue
+
+            top_start = l[i] + 1
+            w1 = height[i]
+
+            for j in range(i + 2, n):
+                if height[j] == 0:
+                    continue
+
+                w3 = height[j]
+                bot_end = rgt[j] - 1
+
+                # --- Case 1: r[i] >= j (place 1-row middle) ---
+                if rgt[i] >= j:
+                    mid_row = max(i + 1, l[j])
+                    top_end = mid_row - 1
+                    bot_start = mid_row + 1
+
+                    w2 = min(w1, w3) - 1
+                    if w2 > 0:
+                        area = (top_end - top_start + 1) * w1 + w2 + (bot_end - bot_start + 1) * w3
+                        if area > best_area:
+                            best_area = area
+                            best = (col,
+                                    top_start, top_end, w1,
+                                    mid_row, mid_row, w2,
+                                    bot_start, bot_end, w3)
+
+                # --- Case 2: l[j] <= i (symmetric 1-row middle) ---
+                if l[j] <= i:
+                    mid_row = min(j - 1, rgt[i])
+                    top_end = mid_row - 1
+                    bot_start = mid_row + 1
+
+                    w2 = min(w1, w3) - 1
+                    if w2 > 0:
+                        area = (top_end - top_start + 1) * w1 + w2 + (bot_end - bot_start + 1) * w3
+                        if area > best_area:
+                            best_area = area
+                            best = (col,
+                                    top_start, top_end, w1,
+                                    mid_row, mid_row, w2,
+                                    bot_start, bot_end, w3)
+
+                # --- Case 3: r[i] <= l[j] (true middle band) ---
+                if rgt[i] <= l[j]:
+                    top_end = rgt[i] - 1
+                    bot_start = l[j] + 1
+
+                    mid_start = rgt[i]
+                    mid_end = l[j]
+
+                    min_middle = min_h[mid_start][mid_end]
+                    w2 = min(w1 - 1, w3 - 1, min_middle)
+
+                    if w2 > 0:
+                        area = ((top_end - top_start + 1) * w1
+                                + (mid_end - mid_start + 1) * w2
+                                + (bot_end - bot_start + 1) * w3)
+                        if area > best_area:
+                            best_area = area
+                            best = (col,
+                                    top_start, top_end, w1,
+                                    mid_start, mid_end, w2,
+                                    bot_start, bot_end, w3)
+
+    # No solution
+    if best_area < 0:
+        sys.stdout.write("-1\n")
+        return
+
+    # Paint the best solution onto the grid (mark with 8)
+    (col,
+     r1s, r1e, w1,
+     r2s, r2e, w2,
+     r3s, r3e, w3) = best
+
+    for rr in range(r1s, r1e + 1):
+        for cc in range(col, col + w1):
+            grid[rr][cc] = 8
+
+    for rr in range(r2s, r2e + 1):
+        for cc in range(col, col + w2):
+            grid[rr][cc] = 8
+
+    for rr in range(r3s, r3e + 1):
+        for cc in range(col, col + w3):
+            grid[rr][cc] = 8
+
+    # Output
+    out_lines = [str(best_area)]
+    for r in range(n):
+        out_lines.append(" ".join(map(str, grid[r])))
+    sys.stdout.write("\n".join(out_lines) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Precompute `dist[r][c]`: consecutive empty cells to the right from each cell (`0`→positive, `1`→0).
+- Fix a left column `c`. Define histogram `height[r]=dist[r][c]` (max possible width starting at `c` in row `r`).
+- Compute nearest smaller indices `l[r], r[r]` with monotonic stacks (classic histogram technique).
+- Enumerate two critical rows `i` (top width `w1=height[i]`) and `j` (bottom width `w3=height[j]`, with `j≥i+2`).
+- Middle width must be `w2 < min(w1,w3)` and fit its rows; handle 3 positional cases:
+  1) `r[i] ≥ j`: place a 1-row middle; `w2=min(w1,w3)-1`.
+  2) `l[j] ≤ i`: symmetric to (1).
+  3) `r[i] ≤ l[j]`: middle spans rows `[r[i]..l[j]]`; `w2=min(w1-1,w3-1,min(height over middle))`.
+- Precompute `min(height[L..R])` via `O(N^2)` DP table for O(1) middle-band min.
+- Track best area and reconstruction info, paint chosen cells with `8`.
+- Total complexity `O(M*N^2)`; `N,M≤180` fits.
+
