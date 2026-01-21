@@ -1,0 +1,365 @@
+## 1) Abridged problem statement
+
+You have an \(n \times m\) grid (\(1 \le n,m \le 200\)). Each cell \((i,j)\) must end up with a target number of pumpkins \(a_{ij}\) where \(1 \le a_{ij} \le 5\).
+
+You must perform exactly \(n \cdot m\) operations, choosing each cell **exactly once** (cannot repeat a cell). When you “plant” on a chosen cell \(c\):
+
+- that cell gets +1 pumpkin,
+- and every **already non-empty** orthogonally adjacent cell also gets +1.
+
+Find any order of visiting all cells that produces exactly the given target grid, or print `"No solution"` if impossible.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution idea)
+
+### Key observation: reverse the process
+Forward simulation is hard because the side-effect “adjacent cells that already have ≥1” depends on the past.
+
+Instead, reason **backwards** from the final target grid. Suppose we already have the final numbers \(a\). Consider what the **last** operation in the forward process could have been.
+
+#### What must be true about the last chosen cell?
+In the forward direction, when you choose a cell for the **first time**, it goes from 0 to 1 (since you never choose a cell twice). Therefore, at the moment it is chosen, it gains +1 (from its own planting), and may additionally receive +1’s later due to neighbors being chosen.
+
+In reverse, when we “undo” the last operation, the chosen cell must currently be exactly **1** (because after the last move, nothing happens later to increase it further). So:
+
+- **The last planted cell must have final value 1.**
+
+Thus, in reverse we repeatedly remove cells with value 1.
+
+### Undoing one last move
+If the last move planted at cell \(v\), then in forward direction it added:
+- +1 to \(v\)
+- +1 to each adjacent cell that already had ≥1 at that moment
+
+In reverse, removing \(v\) means:
+- mark \(v\) as “done/removed”
+- subtract 1 from each non-removed neighbor (because those neighbors were already non-empty in forward time: since all targets are ≥1, any not-yet-removed cell corresponds to a cell that had been planted earlier, hence non-empty)
+
+So reverse step:
+- remove the 1-cell itself
+- decrement all its currently “alive” neighbors by 1
+
+### Removing multiple 1-cells in one round
+There can be many cells of value 1. Can we remove them all at once?
+
+Potential problem: if two adjacent cells are both 1 and you remove one first, the other would be decremented (becoming 0), which is invalid.
+
+So a necessary condition to remove all 1s in a batch:
+- **No two currently alive 1-cells are adjacent.**
+
+If this holds, their neighbor-decrements don’t hit another 1-cell directly (at least not as a selected cell), and we can compute combined decrements safely.
+
+### Validity constraints during undo
+When removing a batch of 1-cells, each alive cell \(u\) might be adjacent to multiple removed 1-cells. Let `cnt(u)` be how many removed 1-cells touch it. Then we will do:
+\[
+a_u \leftarrow a_u - cnt(u)
+\]
+We must ensure:
+- no cell ever drops below 1 (targets are 1..5 and represent “still planted at least once” in remaining reverse timeline)
+
+So we check:
+- for every affected cell \(u\): \(a_u - cnt(u) \ge 1\), otherwise impossible.
+
+### Producing the final order
+In reverse, we build a list `answer` of removed cells (these are last-to-first in the forward order). At the end:
+- if we removed exactly \(n\cdot m\) cells, reverse the list and print it.
+
+### Efficiency: \(O(nm)\) data structure trick
+Naively finding all 1-cells after each decrement could be too slow.
+
+But values are only 1..5. Maintain 6 lists `by_value[v]` of coordinates currently having value v, plus an iterator for each cell so we can delete/move it in O(1).
+
+Each time a cell’s value decreases, we:
+- erase it from its old value list via stored iterator
+- push it into the new value list and store the new iterator
+
+Each cell’s value decreases a limited number of times (bounded by initial value and neighbor decrements), and since values are tiny (≤5), the total work is linear in number of cells plus neighbor interactions.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (not used for final output here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;
+vector<vector<int>> a;
+
+void read() {
+    cin >> n >> m;                       // read grid size
+    a.assign(n, vector<int>(m));         // allocate n x m grid
+    cin >> a;                            // read all values (1..5)
+}
+
+void solve() {
+    // We'll run the process backwards:
+    // - Repeatedly take all currently-alive cells with value 1
+    // - They represent candidates for "last planted" cells
+    // - Remove them and decrement their neighbors
+    //
+    // Maintain for each value v=1..5 a list of cells with that value.
+    // Also store an iterator per cell so we can erase it from its list in O(1).
+
+    list<pair<int, int>> by_value[6]; // lists for values 0..5 (0 unused normally)
+    vector<vector<list<pair<int, int>>::iterator>> iters(
+        n, vector<list<pair<int, int>>::iterator>(m)
+    );
+
+    // done[x][y] == true means this cell has been "removed" in reverse,
+    // i.e., already fixed as one of the last operations in forward order.
+    vector<vector<bool>> done(n, vector<bool>(m, false));
+
+    // Initialize the lists and iterators with the initial target values.
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            by_value[a[i][j]].push_back({i, j});         // add cell to its value bucket
+            iters[i][j] = prev(by_value[a[i][j]].end()); // store iterator to its node
+        }
+    }
+
+    // 4-neighborhood directions
+    const int dx[] = {-1, 1, 0, 0};
+    const int dy[] = {0, 0, -1, 1};
+
+    vector<pair<int, int>> answer; // reverse order (last -> first in forward)
+
+    // While there is at least one alive cell of value 1, remove them in a batch.
+    while (!by_value[1].empty()) {
+        // Copy current 1-cells to a vector because we'll be erasing from the list.
+        vector<pair<int, int>> ones(by_value[1].begin(), by_value[1].end());
+
+        // Condition: no two alive 1-cells may be adjacent,
+        // otherwise undoing one would decrement the other to 0.
+        for (auto [x, y] : ones) {
+            for (int d = 0; d < 4; d++) {
+                int nx = x + dx[d], ny = y + dy[d];
+                if (nx >= 0 && nx < n && ny >= 0 && ny < m &&
+                    !done[nx][ny] && a[nx][ny] == 1) {
+                    cout << "No solution\n";
+                    return;
+                }
+            }
+        }
+
+        // Compute how many times each alive cell should be decremented:
+        // for each removed 1-cell, all its alive neighbors get -1.
+        map<pair<int, int>, int> decr; // (cell) -> number of decrements
+        for (auto [x, y] : ones) {
+            for (int d = 0; d < 4; d++) {
+                int nx = x + dx[d], ny = y + dy[d];
+                if (nx >= 0 && nx < n && ny >= 0 && ny < m && !done[nx][ny]) {
+                    decr[{nx, ny}]++; // this neighbor will be decreased once
+                }
+            }
+        }
+
+        // Validate: after all decrements, no alive cell can drop below 1.
+        for (auto& [pos, cnt] : decr) {
+            auto [nx, ny] = pos;
+            if (a[nx][ny] - cnt < 1) {
+                cout << "No solution\n";
+                return;
+            }
+        }
+
+        // Actually remove all selected 1-cells.
+        for (auto [x, y] : ones) {
+            answer.push_back({x, y});        // record that this was a "last" move
+            done[x][y] = true;               // mark removed
+            by_value[1].erase(iters[x][y]);  // remove from list of ones
+        }
+
+        // Apply decrements to neighbors and update their bucket membership.
+        for (auto& [pos, cnt] : decr) {
+            auto [nx, ny] = pos;
+            int old_val = a[nx][ny];
+
+            // Remove from old value list
+            by_value[old_val].erase(iters[nx][ny]);
+
+            // Decrease the value
+            a[nx][ny] -= cnt;
+
+            // Insert into new value list and store iterator
+            by_value[a[nx][ny]].push_back({nx, ny});
+            iters[nx][ny] = prev(by_value[a[nx][ny]].end());
+        }
+    }
+
+    // If we couldn't remove all cells, it means some cells never reached 1 -> impossible.
+    if ((int)answer.size() != n * m) {
+        cout << "No solution\n";
+        return;
+    }
+
+    // Reverse to obtain the forward planting order (first -> last).
+    reverse(answer.begin(), answer.end());
+
+    // Output 1-based coordinates as required.
+    for (auto [x, y] : answer) {
+        cout << x + 1 << ' ' << y + 1 << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque, defaultdict
+
+def solve() -> None:
+    input = sys.stdin.readline
+    n, m = map(int, input().split())
+    a = [list(map(int, input().split())) for _ in range(n)]
+
+    # done[x][y] indicates the cell has been removed in the reverse process
+    done = [[False] * m for _ in range(n)]
+
+    # Values are 1..5. We maintain buckets of coordinates by current value.
+    # In Python we won't try to do O(1) deletions from a linked list like in C++.
+    # Instead, we use deques and "lazy deletion":
+    # - when a cell's value changes, we append it to the new bucket
+    # - when popping from a bucket, we discard entries that are outdated
+    buckets = [deque() for _ in range(6)]
+    for i in range(n):
+        for j in range(m):
+            buckets[a[i][j]].append((i, j))
+
+    # Directions for 4-neighbors
+    dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    # answer will store reverse order (last -> first in forward)
+    answer = []
+
+    # Helper to clean the front of a bucket:
+    # remove entries that no longer have that value or are already done.
+    def normalize_bucket(v: int) -> None:
+        dq = buckets[v]
+        while dq and (done[dq[0][0]][dq[0][1]] or a[dq[0][0]][dq[0][1]] != v):
+            dq.popleft()
+
+    # We keep processing while there exists at least one alive "1" cell.
+    while True:
+        normalize_bucket(1)
+        if not buckets[1]:
+            break
+
+        # Collect all current alive 1-cells.
+        # We must take all of them currently present; however with lazy deletion,
+        # we iterate through the deque and filter by current validity.
+        ones = []
+        for (x, y) in list(buckets[1]):
+            if not done[x][y] and a[x][y] == 1:
+                ones.append((x, y))
+
+        # Safety: if lazy structure got too many stale entries, that's fine,
+        # normalize_bucket will remove them next time.
+
+        # Check that no two adjacent alive cells are both 1.
+        # If they were, removing one would decrement the other below 1.
+        ones_set = set(ones)
+        for x, y in ones:
+            for dx, dy in dirs:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < n and 0 <= ny < m and not done[nx][ny]:
+                    if (nx, ny) in ones_set:
+                        sys.stdout.write("No solution\n")
+                        return
+
+        # Compute total decrements for each alive neighbor.
+        decr = defaultdict(int)  # (nx,ny) -> count
+        for x, y in ones:
+            for dx, dy in dirs:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < n and 0 <= ny < m and not done[nx][ny]:
+                    decr[(nx, ny)] += 1
+
+        # Validate no cell drops below 1
+        for (nx, ny), cnt in decr.items():
+            if a[nx][ny] - cnt < 1:
+                sys.stdout.write("No solution\n")
+                return
+
+        # Remove all ones (mark done and record)
+        for x, y in ones:
+            done[x][y] = True
+            answer.append((x, y))
+
+        # Apply decrements and push updated cells into their new buckets
+        for (nx, ny), cnt in decr.items():
+            a[nx][ny] -= cnt
+            buckets[a[nx][ny]].append((nx, ny))
+
+    # If not all cells were removed, some never became 1 in reverse => impossible
+    if len(answer) != n * m:
+        sys.stdout.write("No solution\n")
+        return
+
+    # Reverse to get forward order and print in 1-based coordinates
+    answer.reverse()
+    out = []
+    for x, y in answer:
+        out.append(f"{x+1} {y+1}")
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes:
+- This Python version uses lazy deletion; it’s simpler but may be tighter on time in worst-case. For strict limits, a more elaborate structure (like explicit doubly-linked lists or arrays of linked indices) can emulate the C++ O(1) erase exactly.
+
+---
+
+## 5) Compressed editorial
+
+Work backwards. The last planted cell must end with value 1, so repeatedly remove all currently alive 1-cells. They cannot be adjacent (else undoing one makes the other 0). Removing a 1-cell decrements each alive neighbor by 1; aggregate decrements for a batch and ensure no cell drops below 1. Record removed cells; if all \(nm\) removed, reverse the recorded list to output the forward order, otherwise print `"No solution"`. Maintain buckets by value (1..5) for efficiency.

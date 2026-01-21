@@ -1,0 +1,365 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+479. Funny Feature
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+In the process of preparation to Halloween it was decided to plant some pumpkins on the n × m meters rectangular platform. The platform is divided to n × m identical square cells with 1 meter length sides.
+
+The arrangement of pumpkins was carefully prepared, and you are given the resulting plan. For each cell of this platform it is given how many pumpkins should be planted in it. All these quantities appear to be from 1 to 5, inclusive.
+
+Special pumpkin-landing machine was bought to plant Halloween symbols. It can perform a simple operation: plant pumpkin to the cell, specified by its coordinates (the first coordinate ranges 1 to n, and the second one ranges 1 to m).
+
+At the last moment an unpleasant feature of the machine was discovered. Every time this machine plants a pumpkin to the specified cell, one more pumpkin is also planted to all cells, which are adjacent to the specified one and already have at least one pumpkin in it. One cell is called adjacent to another one if they share a side.
+
+Besides for technical reasons you cannot specify the same cell twice.
+
+Now Halloween celebration is under the threat of failure. You are asked to write the program which finds the sequence of n × m operations leading to demanded landing of pumpkins, or informs that it is impossible.
+
+Input
+The first line of input contains two integers n and m  — sizes of the field (1 ≤ n,m ≤ 200). Next n lines contain m integers from 1 to 5  — how many pumpkins should be planted in each cell of the platform. Numbers in lines are separated by single spaces.
+
+Output
+If the solution exists, print n × m lines with two numbers in each: a line and a column numbers, where the next pumpkin should be landed. If there are multiple solutions, print any of them.
+
+If the solution does not exist, print a single line "No solution" (quotes for clarity).
+
+Example(s)
+sample input
+sample output
+1 2
+1 2
+1 2
+1 1
+
+sample input
+sample output
+1 3
+1 3 1
+1 2
+1 3
+1 1
+
+sample input
+sample output
+3 3
+2 4 2
+2 1 2
+3 2 3
+1 2
+3 1
+3 3
+1 1
+1 3
+3 2
+2 1
+2 3
+2 2
+
+sample input
+sample output
+2 1
+1
+1
+No solution
+
+<|response|>
+## 1) Abridged problem statement
+
+You have an \(n \times m\) grid (\(1 \le n,m \le 200\)). Each cell \((i,j)\) must end with a target number \(a_{ij}\) (each in \([1,5]\)).
+
+You must perform exactly \(n\cdot m\) operations, choosing every cell **exactly once**. When you plant on cell \(c\):
+
+- \(c\) increases by \(+1\)
+- every orthogonally adjacent cell that already has at least 1 pumpkin at that moment also increases by \(+1\)
+
+Output any valid order of visiting all cells that yields exactly the target grid, or print `No solution`.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Reverse thinking makes the process deterministic.**  
+   Forward, the “adjacent non-empty” condition depends on history. Backward, we can interpret which move could have happened last.
+
+2. **The last planted cell must have final value exactly 1.**  
+   Since each cell is chosen once, when a cell is planted it gets \(+1\) from itself, and can only get extra \(+1\) later from neighbors. The very last planted cell has no “later”, so its final value must be exactly 1.
+
+3. **Undo rule (reverse operation).**  
+   If cell \(v\) was last, then undoing it:
+   - removes \(v\) from the “alive” set
+   - subtracts 1 from each alive neighbor of \(v\) (those neighbors were already non-empty at that time)
+
+4. **We can undo many 1-cells at once—but only if they are not adjacent.**  
+   If two alive 1-cells are adjacent and you remove one, the other would be decremented to 0, impossible (alive cells must stay \(\ge 1\) in reverse).
+
+5. **Values are small (1..5), enabling efficient bucket maintenance.**  
+   Maintain lists/buckets of alive cells by current value, and update a cell’s bucket in \(O(1)\) whenever its value decreases.
+
+---
+
+## 3) Full solution approach
+
+We simulate the process **backwards** from the final grid \(a\).
+
+### Reverse simulation invariant
+- “Alive” cells are those not yet removed in reverse.
+- Alive cells represent cells that have already been planted at some time in the forward process, so they must keep value \(\ge 1\) while alive.
+
+### Reverse step (one “round”)
+1. Collect all currently alive cells with value 1 (call them `ones`). These are candidates for “last moves”.
+2. If any two cells in `ones` are adjacent → **No solution**.
+3. For each alive cell \(u\), compute how many of `ones` are adjacent to it: `cnt(u)`.
+   - This is exactly how much \(u\) should be decremented in this round.
+4. If for any affected alive cell \(u\), \(a_u - cnt(u) < 1\) → **No solution**.
+5. Mark all cells in `ones` as removed and record them to an answer list (these are last-to-first in forward order).
+6. Apply all decrements to neighbors and update their buckets.
+
+Repeat until there are no alive 1-cells.
+
+### Finish
+- If we removed exactly \(n\cdot m\) cells, reverse the recorded list to obtain the forward planting order.
+- Otherwise, some cells never became 1 → **No solution**.
+
+### Complexity
+Each decrement moves a cell from bucket \(v\) to \(v-1\), and values are at most 5, so total bucket moves are \(O(nm)\). Neighbor work is \(O(4nm)\). Overall \(O(nm)\), suitable for the constraints.
+
+---
+
+## 4) C++ implementation (with detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p479 - Funny Feature
+
+  We solve by reversing the process.
+  Maintain:
+    - current values a[i][j]
+    - done[i][j]: removed in reverse (i.e., already fixed as a late move)
+    - by_value[v]: list of alive cells currently having value v
+    - iters[i][j]: iterator pointing to the node of (i,j) in by_value[a[i][j]]
+  This allows O(1) erase/move between buckets.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n, m;
+    cin >> n >> m;
+    vector<vector<int>> a(n, vector<int>(m));
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < m; j++)
+            cin >> a[i][j];
+
+    // Buckets for values 0..5 (0 is not expected for alive cells, but keep array sized 6).
+    list<pair<int,int>> by_value[6];
+
+    // Iterator for each cell to erase it from its current bucket in O(1).
+    vector<vector<list<pair<int,int>>::iterator>> iters(
+        n, vector<list<pair<int,int>>::iterator>(m)
+    );
+
+    vector<vector<bool>> done(n, vector<bool>(m, false));
+
+    // Initialize buckets.
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            by_value[a[i][j]].push_back({i, j});
+            iters[i][j] = prev(by_value[a[i][j]].end());
+        }
+    }
+
+    const int dx[4] = {-1, 1, 0, 0};
+    const int dy[4] = {0, 0, -1, 1};
+
+    // Will store removed cells in reverse order (last -> first in forward).
+    vector<pair<int,int>> answer;
+    answer.reserve(n * m);
+
+    // Repeat while there is at least one alive cell with value 1.
+    while (!by_value[1].empty()) {
+        // Snapshot all current "1" cells; we will remove them as a batch.
+        vector<pair<int,int>> ones(by_value[1].begin(), by_value[1].end());
+
+        // Condition: no two alive 1-cells may be adjacent.
+        for (auto [x, y] : ones) {
+            for (int d = 0; d < 4; d++) {
+                int nx = x + dx[d], ny = y + dy[d];
+                if (0 <= nx && nx < n && 0 <= ny && ny < m &&
+                    !done[nx][ny] && a[nx][ny] == 1) {
+                    cout << "No solution\n";
+                    return 0;
+                }
+            }
+        }
+
+        // Compute total decrements for each alive neighbor cell.
+        // Using map is OK because each removed cell contributes to at most 4 entries;
+        // total work remains linear-ish for constraints.
+        map<pair<int,int>, int> decr;
+        for (auto [x, y] : ones) {
+            for (int d = 0; d < 4; d++) {
+                int nx = x + dx[d], ny = y + dy[d];
+                if (0 <= nx && nx < n && 0 <= ny && ny < m && !done[nx][ny]) {
+                    decr[{nx, ny}]++;
+                }
+            }
+        }
+
+        // Validate no alive cell will drop below 1 after applying the batch decrements.
+        for (auto &kv : decr) {
+            auto [nx, ny] = kv.first;
+            int cnt = kv.second;
+            if (a[nx][ny] - cnt < 1) {
+                cout << "No solution\n";
+                return 0;
+            }
+        }
+
+        // Remove all ones: they are "last operations" in forward order.
+        for (auto [x, y] : ones) {
+            answer.push_back({x, y});
+            done[x][y] = true;
+            by_value[1].erase(iters[x][y]);
+        }
+
+        // Apply decrements and update bucket membership for affected cells.
+        for (auto &kv : decr) {
+            auto [nx, ny] = kv.first;
+            int cnt = kv.second;
+
+            int old_val = a[nx][ny];
+
+            // Remove from old bucket.
+            by_value[old_val].erase(iters[nx][ny]);
+
+            // Decrease value.
+            a[nx][ny] -= cnt;
+
+            // Insert into new bucket and store iterator.
+            by_value[a[nx][ny]].push_back({nx, ny});
+            iters[nx][ny] = prev(by_value[a[nx][ny]].end());
+        }
+    }
+
+    // If we didn't remove all cells, some never became 1 in reverse => impossible.
+    if ((int)answer.size() != n * m) {
+        cout << "No solution\n";
+        return 0;
+    }
+
+    // Reverse to get forward planting order (first -> last).
+    reverse(answer.begin(), answer.end());
+
+    // Output 1-based coordinates.
+    for (auto [x, y] : answer) {
+        cout << x + 1 << ' ' << y + 1 << '\n';
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (with detailed comments)
+
+Note: Python needs care with performance. A direct translation of the C++ “O(1) erase from list” is non-trivial. Below is a practical approach using **bucket deques with lazy deletion**, which is simpler but may be tighter under very strict limits. (For maximum safety, prefer C++ for this problem.)
+
+```python
+import sys
+from collections import deque, defaultdict
+
+def solve() -> None:
+    input = sys.stdin.readline
+    n, m = map(int, input().split())
+    a = [list(map(int, input().split())) for _ in range(n)]
+
+    done = [[False] * m for _ in range(n)]
+
+    # buckets[v] stores coordinates that *were at some time* value v.
+    # We'll use lazy deletion: when taking from a bucket, we skip entries
+    # that are outdated (value changed) or already done.
+    buckets = [deque() for _ in range(6)]
+    for i in range(n):
+        for j in range(m):
+            buckets[a[i][j]].append((i, j))
+
+    dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    answer = []
+
+    def normalize_front(v: int) -> None:
+        """Pop stale entries from the front of bucket v."""
+        dq = buckets[v]
+        while dq and (done[dq[0][0]][dq[0][1]] or a[dq[0][0]][dq[0][1]] != v):
+            dq.popleft()
+
+    while True:
+        normalize_front(1)
+        if not buckets[1]:
+            break
+
+        # Collect all current alive 1-cells.
+        # (We scan the bucket; stale entries are filtered out.)
+        ones = []
+        for (x, y) in list(buckets[1]):
+            if not done[x][y] and a[x][y] == 1:
+                ones.append((x, y))
+
+        # If there are adjacent ones -> impossible.
+        ones_set = set(ones)
+        for x, y in ones:
+            for dx, dy in dirs:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < n and 0 <= ny < m and not done[nx][ny]:
+                    if (nx, ny) in ones_set:
+                        sys.stdout.write("No solution\n")
+                        return
+
+        # Compute aggregated decrements for each alive neighbor.
+        decr = defaultdict(int)
+        for x, y in ones:
+            for dx, dy in dirs:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < n and 0 <= ny < m and not done[nx][ny]:
+                    decr[(nx, ny)] += 1
+
+        # Validate.
+        for (nx, ny), cnt in decr.items():
+            if a[nx][ny] - cnt < 1:
+                sys.stdout.write("No solution\n")
+                return
+
+        # Remove ones and record.
+        for x, y in ones:
+            done[x][y] = True
+            answer.append((x, y))
+
+        # Apply decrements and push updated states into corresponding buckets.
+        for (nx, ny), cnt in decr.items():
+            a[nx][ny] -= cnt
+            buckets[a[nx][ny]].append((nx, ny))
+
+    if len(answer) != n * m:
+        sys.stdout.write("No solution\n")
+        return
+
+    answer.reverse()
+    out = [f"{x+1} {y+1}" for x, y in answer]
+    sys.stdout.write("\n".join(out) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want, I can also provide a faster Python version that mimics the C++ bucket-with-iterators behavior using custom doubly linked arrays (true \(O(1)\) removals), but it’s significantly more code.

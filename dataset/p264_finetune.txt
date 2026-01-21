@@ -1,0 +1,354 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+264. Travel
+time limit per test: 1 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Travel agency decides to make a summer trip to Petrozavodsk for its best clients. N men and N women were selected to take part in this trip. There are N cars in the travel agency and in each car there are exactly two places for passengers, and one for driver. The head of the customer service of agency decided to place one man and one woman in each car, that's why they decided to ask customers to prepare their preference lists.
+The preference list for each person is a list of persons of opposite sex in order from best to worst. So, each man lists all women in the order of preference, and vice versa.
+Suppose we've assigned woman and men in such a way that each man has got exactly one woman and each woman has got exactly one man. We'll call this situation a 'perfect assignment'.
+If in a perfect assignment there is a pair of man and woman not assigned to each other and they prefer each other to the current partners, this pair is called 'unstable'. Given men and women preference lists, you should create a perfect assignment without unstable pairs.
+
+Input
+First line of input file contains one number N (1 <= N <= 800). The following N lines contain men preference lists in the form: <man> <woman1> ... <womanN>.
+The following N lines contain woman preference lists in the form: <woman> <man1> ... <manN>. Names consist of lowercase and uppercase English letters with length no more than 10 characters.
+It's guaranteed that there are exactly N distinct man names and N distinct woman names in the input file.
+
+Output
+First line on output file should be 'YES' if requested assignment exists and 'NO' otherwise. If the answer is 'YES', you should output the requested assignment - N lines with pairs <man> <woman> in any order. If multiple solutions exist, you can choose any one of them.
+
+Sample test(s)
+
+Input
+3
+Vasya Anna Elena Katya
+Petya Elena Anna Katya
+Egor Anna Elena Katya
+Anna Petya Vasya Egor
+Elena Vasya Petya Egor
+Katya Vasya Petya Egor
+
+Output
+YES
+Vasya Anna
+Petya Elena
+Egor Katya
+
+Note
+This problem has huge tests. Some read/write routines work very slow in several compilers (especially, C/C++: try to use getc() putc() functions to avoid IO troubles).
+Author:	Roman V. Alekseenkov
+Resource:	Saratov SU Contest: Golden Fall 2004
+Date:	October 2, 2004
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+There are **N men** and **N women** (1 ≤ N ≤ 800). Each person provides a **complete ranking** of all people of the opposite sex (best → worst).  
+
+A **perfect assignment** pairs every man with exactly one woman (and vice versa).  
+A pair (m, w) not matched to each other is **unstable** if:
+- m prefers w over his assigned woman, and
+- w prefers m over her assigned man.
+
+Output **YES** and any **perfect assignment with no unstable pairs** (a stable matching). If impossible output **NO**.  
+(With complete preference lists, a stable matching always exists.)
+
+---
+
+## 2) Key observations
+
+1. This is exactly the **Stable Marriage** problem.
+2. Because preference lists are **complete** (everyone ranks everyone), a **stable matching is guaranteed to exist**.
+3. The standard method is the **Gale–Shapley deferred acceptance algorithm**:
+   - Men propose in order of preference.
+   - Women keep the best proposal so far (may “trade up” later).
+4. Efficient implementation requires:
+   - Mapping names → integer ids (0…N−1)
+   - Precomputing `woman_rank[w][m]` = how woman `w` ranks man `m` (O(1) comparisons)
+5. Complexity:
+   - At most **N² proposals**, so **O(N²)** time.
+   - Storing preferences/ranks costs **O(N²)** memory, feasible for N ≤ 800.
+
+---
+
+## 3) Full solution approach
+
+### Data preparation
+1. Read N.
+2. Read N lines of men:
+   - Each line: `<man> <woman1> <woman2> ... <womanN>`
+3. Read N lines of women:
+   - Each line: `<woman> <man1> <man2> ... <manN>`
+4. Build:
+   - `man_id[name] -> int`, `woman_id[name] -> int`
+   - `man_name[id]`, `woman_name[id]` for output
+5. Convert preference lists to integer arrays:
+   - `man_pref[m][k]` = woman id at position k in man m’s list
+   - `woman_pref[w][k]` = man id at position k in woman w’s list
+6. Build rank lookup for women:
+   - `woman_rank[w][m]` = position of man m in woman w’s list (smaller = better)
+
+### Gale–Shapley (men propose)
+Maintain:
+- `man_match[m]` = matched woman id or -1
+- `woman_match[w]` = matched man id or -1
+- `next_idx[m]` = next woman index to propose to
+- queue of free men
+
+Algorithm:
+1. Initialize all men free, push all men into queue.
+2. While queue not empty:
+   - pop a free man `m`
+   - let `w = man_pref[m][next_idx[m]++]` (his next choice)
+   - if `w` is free: match (m, w)
+   - else let `cur = woman_match[w]`
+     - if `woman_rank[w][m] < woman_rank[w][cur]`:
+       - w prefers m, so she switches: match (m,w), make `cur` free (push `cur`)
+     - else:
+       - w rejects m, push m back (still free)
+3. When finished, everyone is matched and the result is stable.
+
+Output:
+- Always print `YES`
+- Print pairs `<man_name[m]> <woman_name[man_match[m]]>` for all m
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Stable Marriage (Gale–Shapley), N up to 800.
+
+  Steps:
+  - Read names + preference lists (strings)
+  - Map names -> ids
+  - Convert preferences -> integer arrays
+  - Precompute woman_rank[w][m] for O(1) preference comparisons
+  - Run Gale–Shapley with a queue of free men
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+
+    vector<string> man_name(N), woman_name(N);
+
+    // Name -> id maps
+    unordered_map<string,int> man_id, woman_id;
+    man_id.reserve(N * 2);
+    woman_id.reserve(N * 2);
+
+    // Temporarily store preference lists as strings until we know all ids.
+    vector<vector<string>> man_pref_str(N, vector<string>(N));
+    vector<vector<string>> woman_pref_str(N, vector<string>(N));
+
+    // Read men's preference lists
+    for (int i = 0; i < N; i++) {
+        cin >> man_name[i];
+        man_id[man_name[i]] = i;
+        for (int j = 0; j < N; j++) {
+            cin >> man_pref_str[i][j];   // woman name
+        }
+    }
+
+    // Read women's preference lists
+    for (int i = 0; i < N; i++) {
+        cin >> woman_name[i];
+        woman_id[woman_name[i]] = i;
+        for (int j = 0; j < N; j++) {
+            cin >> woman_pref_str[i][j]; // man name
+        }
+    }
+
+    // Convert preference lists from names -> ids
+    vector<vector<int>> man_pref(N, vector<int>(N));
+    vector<vector<int>> woman_pref(N, vector<int>(N));
+
+    for (int m = 0; m < N; m++) {
+        for (int k = 0; k < N; k++) {
+            man_pref[m][k] = woman_id[man_pref_str[m][k]];
+        }
+    }
+    for (int w = 0; w < N; w++) {
+        for (int k = 0; k < N; k++) {
+            woman_pref[w][k] = man_id[woman_pref_str[w][k]];
+        }
+    }
+
+    // Precompute ranks for women:
+    // woman_rank[w][m] = position of man m in woman w's preference list
+    vector<vector<int>> woman_rank(N, vector<int>(N));
+    for (int w = 0; w < N; w++) {
+        for (int pos = 0; pos < N; pos++) {
+            int m = woman_pref[w][pos];
+            woman_rank[w][m] = pos;
+        }
+    }
+
+    // Matches: -1 means free/unmatched
+    vector<int> man_match(N, -1);
+    vector<int> woman_match(N, -1);
+
+    // next_idx[m] indicates which woman in man_pref[m] he proposes to next
+    vector<int> next_idx(N, 0);
+
+    queue<int> q;
+    for (int m = 0; m < N; m++) q.push(m);
+
+    // Gale–Shapley loop
+    while (!q.empty()) {
+        int m = q.front();
+        q.pop();
+
+        // m proposes to his next preferred woman
+        int w = man_pref[m][next_idx[m]++];
+        
+        if (woman_match[w] == -1) {
+            // woman is free -> engage
+            woman_match[w] = m;
+            man_match[m] = w;
+        } else {
+            int cur = woman_match[w]; // current fiancé of w
+            // if w prefers new man m over current cur, she switches
+            if (woman_rank[w][m] < woman_rank[w][cur]) {
+                woman_match[w] = m;
+                man_match[m] = w;
+
+                // cur becomes free again
+                man_match[cur] = -1;
+                q.push(cur);
+            } else {
+                // rejected: m stays free and will propose to next woman later
+                q.push(m);
+            }
+        }
+    }
+
+    // With complete lists, stable matching always exists
+    cout << "YES\n";
+    for (int m = 0; m < N; m++) {
+        cout << man_name[m] << " " << woman_name[man_match[m]] << "\n";
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    # Fast input: read all tokens at once
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+
+    # Read men block:
+    # <man> <woman1> ... <womanN>
+    men_names = [None] * n
+    men_pref_names = [[None] * n for _ in range(n)]
+    man_id = {}
+
+    for i in range(n):
+        name = next(it).decode()
+        men_names[i] = name
+        man_id[name] = i
+        for j in range(n):
+            men_pref_names[i][j] = next(it).decode()
+
+    # Read women block:
+    # <woman> <man1> ... <manN>
+    women_names = [None] * n
+    women_pref_names = [[None] * n for _ in range(n)]
+    woman_id = {}
+
+    for i in range(n):
+        name = next(it).decode()
+        women_names[i] = name
+        woman_id[name] = i
+        for j in range(n):
+            women_pref_names[i][j] = next(it).decode()
+
+    # Convert men's preferences to woman ids
+    men_pref = [[0] * n for _ in range(n)]
+    for m in range(n):
+        for k in range(n):
+            men_pref[m][k] = woman_id[men_pref_names[m][k]]
+
+    # Convert women's preferences to man ids
+    women_pref = [[0] * n for _ in range(n)]
+    for w in range(n):
+        for k in range(n):
+            women_pref[w][k] = man_id[women_pref_names[w][k]]
+
+    # Build ranking table for women:
+    # woman_rank[w][m] = preference position (smaller is better)
+    woman_rank = [[0] * n for _ in range(n)]
+    for w in range(n):
+        for pos in range(n):
+            m = women_pref[w][pos]
+            woman_rank[w][m] = pos
+
+    # Matching arrays, -1 means unmatched/free
+    man_match = [-1] * n
+    woman_match = [-1] * n
+
+    # Next proposal pointer for each man
+    next_idx = [0] * n
+
+    # Queue of free men
+    q = deque(range(n))
+
+    # Gale–Shapley
+    while q:
+        m = q.popleft()
+
+        # Propose to next woman on m's list
+        w = men_pref[m][next_idx[m]]
+        next_idx[m] += 1
+
+        if woman_match[w] == -1:
+            # Woman is free
+            woman_match[w] = m
+            man_match[m] = w
+        else:
+            cur = woman_match[w]
+            # If woman prefers new proposer, switch
+            if woman_rank[w][m] < woman_rank[w][cur]:
+                woman_match[w] = m
+                man_match[m] = w
+
+                man_match[cur] = -1
+                q.append(cur)
+            else:
+                # Rejected, man stays free
+                q.append(m)
+
+    # Output stable matching (always exists here)
+    out = ["YES"]
+    for m in range(n):
+        out.append(f"{men_names[m]} {women_names[man_match[m]]}")
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+

@@ -82,4 +82,5 @@ If you use this dataset please cite:
 ## Acknowledgments
 
 - SGU (Saratov State University) for the original problem set.
-- OpenAI for the GPT gpt5.2 thinking model used in editorial generation.
+- OpenAI for their GPT models used in editorial generation.
+- Anthropic for claude code.
