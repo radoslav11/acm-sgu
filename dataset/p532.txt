@@ -1,0 +1,312 @@
+## 1) Abridged problem statement
+
+You are given **n (1 ≤ n ≤ 600)** axis-aligned line segments with integer endpoints.  
+Each segment is either horizontal or vertical, has positive length, and the input guarantees:
+
+- No two horizontal segments intersect or even touch each other.
+- No two vertical segments intersect or even touch each other.
+- Therefore, the only possible intersections are between a horizontal and a vertical segment.
+
+Count how many **axis-aligned rectangles with positive area** can be formed such that **every point of the rectangle’s perimeter lies on the union of the given segments** (i.e., the rectangle’s four sides are fully covered by segments).
+
+Output the number of such rectangles.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observation: what makes a valid rectangle?
+
+An axis-aligned rectangle is determined by:
+- two distinct horizontal lines \(y = y_1\) and \(y = y_2\) (top and bottom),
+- two distinct vertical lines \(x = x_L\) and \(x = x_R\) (left and right),
+
+with \(x_L < x_R\) and \(y_1 \ne y_2\).
+
+To have the rectangle perimeter fully covered by given segments:
+
+- The **top side** \([x_L, x_R] \times \{y_1\}\) must lie entirely on some horizontal hardened segment.
+- The **bottom side** \([x_L, x_R] \times \{y_2\}\) must lie entirely on some horizontal hardened segment.
+- The **left side** \(\{x_L\} \times [y_{\min}, y_{\max}]\) must lie entirely on some vertical hardened segment.
+- The **right side** \(\{x_R\} \times [y_{\min}, y_{\max}]\) must lie entirely on some vertical hardened segment.
+
+Given the constraints, each side must be contained in **one** segment (you can’t “stitch” a side from multiple horizontal segments because horizontal segments never touch each other).
+
+So, a rectangle corresponds to choosing:
+- two horizontal segments \(H_1, H_2\),
+- and two vertical segments \(V_L, V_R\),
+such that:
+- \(V_L\) intersects **both** \(H_1\) and \(H_2\),
+- \(V_R\) intersects **both** \(H_1\) and \(H_2\),
+- and the intersection x-coordinates satisfy \(x_L < x_R\) (positive width).
+
+### Reframing counting
+
+Fix a pair of horizontal segments \(H_i\) and \(H_j\).
+
+Let:
+- \(H_i\) be at y = \(y_1\) covering x in \([a_1, b_1]\)
+- \(H_j\) be at y = \(y_2\) covering x in \([a_2, b_2]\)
+
+For a vertical segment at x = \(x\) to intersect both horizontals, we need:
+1. \(x\) is within the overlap of the two horizontal x-ranges:
+   \[
+   x \in [\max(a_1,a_2), \min(b_1,b_2)]
+   \]
+2. The vertical segment’s y-range covers both \(y_1\) and \(y_2\), i.e. if \(y_{\min} = \min(y_1,y_2)\), \(y_{\max} = \max(y_1,y_2)\), then:
+   \[
+   v.y_{low} \le y_{\min} \quad \text{and} \quad v.y_{high} \ge y_{\max}
+   \]
+
+Let \(L\) be the number of vertical segments satisfying both conditions.  
+Any **pair** of such vertical segments (choosing left and right sides) forms a rectangle (and because vertical segments are disjoint, they cannot share the same x; the positive area is guaranteed when we pick two distinct vertical segments).
+
+So for this horizontal pair, number of rectangles contributed is:
+\[
+\binom{L}{2} = \frac{L(L-1)}{2}
+\]
+
+Then sum over all pairs of horizontal segments.
+
+### Complexity
+
+- Let \(H\) = number of horizontal segments, \(V\) = number of vertical segments, \(H+V=n \le 600\).
+- Enumerate all pairs of horizontals: \(O(H^2)\) ≤ \(O(n^2)\).
+- For each pair, scan all verticals to count valid ones: \(O(V)\) ≤ \(O(n)\).
+
+Total: \(O(H^2 \cdot V) \subseteq O(n^3)\).  
+With \(n \le 600\), worst-case about \(600^3 = 216\) million simple integer checks, which is acceptable in optimized C++ under 1.5s in many CF-like settings (and this is exactly the intended approach for this classic problem).
+
+### Why the disjointness constraints matter
+
+- If multiple horizontal segments could overlap/touch, a side could be covered by multiple pieces and counting would be harder.
+- Here, each side must lie on a single segment, so the intersection logic is clean and counting reduces to “common intersecting verticals between two horizontals”.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (debug helper)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;
+
+// We store segments in normalized form:
+// Horizontal: {y, x_left, x_right}
+// Vertical:   {x, y_low, y_high}
+vector<array<int, 3>> h_segs, v_segs;
+
+void read() {
+    cin >> n;
+    for(int i = 0; i < n; i++) {
+        int x1, y1, x2, y2;
+        cin >> x1 >> y1 >> x2 >> y2;
+
+        // If y1 == y2: horizontal segment
+        if(y1 == y2) {
+            // Normalize so x1 <= x2
+            if(x1 > x2) {
+                swap(x1, x2);
+            }
+            // Store as (y, x_left, x_right)
+            h_segs.push_back({y1, x1, x2});
+        } else {
+            // Otherwise it's vertical (given axis-aligned input)
+            // Normalize so y1 <= y2
+            if(y1 > y2) {
+                swap(y1, y2);
+            }
+            // Store as (x, y_low, y_high)
+            v_segs.push_back({x1, y1, y2});
+        }
+    }
+}
+
+void solve() {
+    // Count rectangles by:
+    // - choosing a pair of horizontal segments
+    // - counting vertical segments that intersect both
+    // - adding C(cnt, 2)
+    //
+    // This is O(H^2 * V) ~ O(n^3), good for n<=600.
+
+    int64_t ans = 0;
+
+    // Iterate over all horizontal segments as first side
+    for(int i = 0; i < (int)h_segs.size(); i++) {
+        int y1 = h_segs[i][0];
+        int x1_min = h_segs[i][1];
+        int x1_max = h_segs[i][2];
+
+        // Pair it with a second horizontal segment (j>i)
+        for(int j = i + 1; j < (int)h_segs.size(); j++) {
+            int y2 = h_segs[j][0];
+            int x2_min = h_segs[j][1];
+            int x2_max = h_segs[j][2];
+
+            // Overlap interval in x where a vertical line could hit both horizontals
+            int x_left = max(x1_min, x2_min);
+            int x_right = min(x1_max, x2_max);
+
+            // If no positive overlap, no vertical segment can intersect both
+            // (Note: using x_left >= x_right as in code; disjoint verticals prevent
+            // degenerate rectangles; this also avoids zero-width cases.)
+            if(x_left >= x_right) {
+                continue;
+            }
+
+            // y-range that a vertical segment must cover to connect the two horizontals
+            int y_min = min(y1, y2);
+            int y_max = max(y1, y2);
+
+            int cnt = 0; // number of vertical segments that can serve as rectangle sides
+
+            // Test every vertical segment
+            for(auto& v: v_segs) {
+                int vx = v[0];
+                int vy_min = v[1];
+                int vy_max = v[2];
+
+                // Conditions:
+                // 1) its x is within the overlap [x_left, x_right]
+                // 2) it spans from <= y_min to >= y_max (covers both horizontals)
+                if(vx >= x_left && vx <= x_right && vy_min <= y_min &&
+                   vy_max >= y_max) {
+                    cnt++;
+                }
+            }
+
+            // Any pair of such vertical segments forms a rectangle with these horizontals
+            ans += (int64_t)cnt * (cnt - 1) / 2;
+        }
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Single test case in this problem
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+
+    # Store normalized segments:
+    # horizontals: (y, x_left, x_right)
+    # verticals:   (x, y_low, y_high)
+    horizontals = []
+    verticals = []
+
+    for _ in range(n):
+        x1 = int(next(it)); y1 = int(next(it))
+        x2 = int(next(it)); y2 = int(next(it))
+
+        if y1 == y2:
+            # Horizontal segment: normalize x1 <= x2
+            if x1 > x2:
+                x1, x2 = x2, x1
+            horizontals.append((y1, x1, x2))
+        else:
+            # Vertical segment: normalize y1 <= y2
+            if y1 > y2:
+                y1, y2 = y2, y1
+            verticals.append((x1, y1, y2))
+
+    ans = 0
+
+    # Enumerate all pairs of horizontal segments
+    H = len(horizontals)
+    for i in range(H):
+        y1, a1, b1 = horizontals[i]
+        for j in range(i + 1, H):
+            y2, a2, b2 = horizontals[j]
+
+            # Compute the x-overlap interval where a vertical can hit both
+            x_left = max(a1, a2)
+            x_right = min(b1, b2)
+
+            # Need positive width possibility; if no overlap, skip
+            if x_left >= x_right:
+                continue
+
+            # Vertical must span between these y's
+            y_min = y1 if y1 < y2 else y2
+            y_max = y2 if y1 < y2 else y1
+
+            cnt = 0
+            # Count vertical segments that can serve as left/right sides
+            for vx, vy_low, vy_high in verticals:
+                if (x_left <= vx <= x_right) and (vy_low <= y_min) and (vy_high >= y_max):
+                    cnt += 1
+
+            # Add number of ways to choose two verticals
+            ans += cnt * (cnt - 1) // 2
+
+    sys.stdout.write(str(ans))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Normalize segments into horizontals \((y, x_l, x_r)\) and verticals \((x, y_l, y_r)\).  
+For every pair of horizontal segments \(H_1, H_2\), compute their x-overlap \([L, R]\). If \(L \ge R\), skip. Let \(y_{min}, y_{max}\) be their y’s. Count vertical segments with \(x \in [L, R]\) and \(y_l \le y_{min}\) and \(y_r \ge y_{max}\); call it \(cnt\). This pair of horizontals forms \(\binom{cnt}{2}\) rectangles (choose left/right vertical sides). Sum over all horizontal pairs. Complexity \(O(H^2 V) \le O(n^3)\), fits for \(n \le 600\).

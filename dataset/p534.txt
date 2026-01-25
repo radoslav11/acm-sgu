@@ -1,0 +1,854 @@
+## 1) Abridged problem statement
+
+You are given a tree with `n` nodes and `n-1` edges.  
+Each edge `i` connects `ai—bi`, has transmission time `ti` and replacement cost `pi`.
+
+If an edge is replaced, its transmission time becomes `0` (endpoints stay the same).
+
+Let the **diameter** of the tree be the maximum path-sum of `ti` over all pairs of nodes.  
+Initially the diameter is `D`. Choose a set of edges to replace so that the new diameter is **strictly less than `D`**, and the total replacement cost is minimized.
+
+Output the minimum total cost, the number of replaced edges, and their indices (1-based). Any optimal set is acceptable.
+
+Constraints: `2 ≤ n ≤ 1e5`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: we only need to “break” all diameter paths
+Let the original tree diameter length be `D`. After setting some edges to `0`, path lengths can only decrease. The requirement is that **no path of length `D` remains**, i.e. the new diameter `< D`.
+
+So we must ensure that **every original length-`D` candidate path becomes shorter** after replacements.
+
+In a tree, long paths are formed by combining two downward paths meeting at some LCA (or meeting point). This suggests a rooted DP.
+
+---
+
+### Step A: Compute the original diameter `D`
+Standard approach:
+
+1. BFS/DFS from an arbitrary node (say `1`) to find the farthest node `u`.
+2. BFS/DFS from `u` to find farthest node `v`; distance `dist(u,v)` is the diameter `D`.
+
+Because it’s a tree, BFS with edge weights accumulated still works if you just traverse once (it’s effectively a DFS since no cycles); the code uses a queue and distance relaxation via parent discovery.
+
+---
+
+### Step B: Root the tree and compute `depth[u]`
+Root at node `1`.
+
+Define:
+
+- `depth[u]` = maximum weighted distance from `u` down to any leaf in its subtree (with respect to the root).
+
+Compute by DFS:
+```
+depth[u] = max over children c of (depth[c] + w(u,c))
+```
+
+This gives the length of the best downward path from each node.
+
+---
+
+### Step C: DP states and their meaning
+We need to enforce: **after modifications**, no path of length `D` exists anywhere.
+
+For each node `u`, compute:
+
+- `dp0[u]`: minimum cost to modify edges in subtree `u` so that the **maximum downward path length from `u` becomes strictly less than the original `depth[u]`**.  
+  Intuition: subtree `u` cannot provide its original best contribution upward anymore.
+
+- `dp1[u]`: minimum cost so that the maximum downward path length from `u` is **exactly `depth[u]`**, but the subtree is modified such that **no diameter-length path `D` is formed entirely within this subtree, and also we will ensure when combining children at `u` that `u` is not the “center” of a diameter path**.
+
+This is subtle: `dp1` is “keep the best depth available”, but still prevent forming diameter paths.
+
+Base case:
+- If `u` is a leaf: `depth[u]=0`.
+  - `dp1[u]=0` (keep depth 0)
+  - `dp0[u]=INF` (cannot make it “strictly smaller than 0”)
+
+---
+
+### Step D: How can we “reduce” a child contribution?
+For child `c` of `u` with edge weight `w` and replacement cost `p`:
+
+Child’s contribution to `u`’s downward path is:
+```
+contrib = depth[c] + w
+```
+
+To make this contribution **smaller than before**, we have two options:
+
+1. Modify inside child subtree so that `c` no longer reaches its original `depth[c]`:
+   cost = `dp0[c]` (then `depth[c]` decreases ⇒ contrib decreases)
+
+2. Replace edge `(u,c)` to make `w=0`:
+   cost = `p + min(dp0[c], dp1[c])`
+   (after replacing edge, we can keep child subtree in whichever valid state is cheaper)
+
+Take:
+```
+cost_reduce(c) = min( dp0[c], p + min(dp0[c], dp1[c]) )
+```
+
+To keep the child’s full contribution `contrib` unchanged, we must keep its depth:
+```
+cost_keep(c) = dp1[c]
+```
+
+---
+
+### Step E: Transition for `dp0[u]` (force depth strictly smaller)
+To make `u`’s resulting depth < `depth[u]`, we must ensure that **every child that could realize the maximum `depth[u]` is reduced**, because otherwise the maximum stays.
+
+So:
+- For children with `contrib == depth[u]` ⇒ must reduce.
+- For others ⇒ can choose reduce or keep, whichever cheaper.
+
+Thus:
+```
+dp0[u] = sum over children:
+    if contrib == depth[u]: cost_reduce
+    else: min(cost_reduce, cost_keep)
+```
+
+---
+
+### Step F: Transition for `dp1[u]` (keep depth, but forbid diameter paths)
+To keep depth exactly `depth[u]`, at least one “max child” (with contrib == depth[u]) must be kept, otherwise depth would drop.
+
+But also we must prevent a diameter path of length `D` passing through `u`. A diameter path through `u` would be formed by taking two downward paths from two children, whose contributions sum to `D`:
+```
+(contrib from child A) + (contrib from child B) == D
+```
+If we leave both available, diameter remains.
+
+Let `first_contrib` and `second_contrib` be the largest and second largest child contributions.
+
+Special rule:
+- If `depth[u] == D`, then keeping depth at `u` means there exists a downward path of length `D` from `u` to some leaf; that alone would keep diameter `D`. So:
+  ```
+  dp1[u] = INF
+  ```
+
+Otherwise there are two main cases:
+
+#### Case 1: `first_contrib + second_contrib < D`
+Then no pair of children can form a diameter path through `u` anyway.  
+So the only remaining constraint for `dp1[u]` is: **keep at least one max child**.
+
+Compute:
+- `base = sum min(reduce, keep)` for all children (free choice).
+- Among max children, we must force at least one to be kept. If for a max child we chose `min(reduce, keep)`, we may need to pay an extra delta to switch it to “keep”.
+
+So:
+```
+dp1[u] = base + min_delta
+min_delta = min over max-children of (keep - min(reduce, keep))
+```
+
+#### Case 2: `first_contrib + second_contrib >= D`
+Now diameter through `u` is possible. We must ensure that for any child with `contrib >= D - depth[u]`, if we keep that contribution, then together with the max path of length `depth[u]` we could reach `D`. The solution enforces a safe condition: **reduce all “dangerous” children except the one max child we keep**.
+
+Let:
+```
+threshold = D - depth[u]
+```
+
+Then:
+- For children with `contrib >= threshold`, we must reduce (otherwise they could pair with the kept max path and make a D-path).
+- For smaller contrib, choose min(reduce, keep).
+- Also must keep one max child, handled by choosing which max child to keep with minimal extra delta.
+
+This is exactly what the code computes.
+
+Complexity stays linear because per node we only scan its children a constant number of times.
+
+---
+
+### Step G: Reconstruction
+After computing `dp0[1]` and `dp1[1]`, choose the better. Then run another DFS that repeats the same decisions and:
+- whenever “replace edge” option was chosen, record its index.
+
+Finally print total cost, number of replaced edges, and indices.
+
+---
+
+## 3) Provided C++ solution with detailed comments (line-by-line)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print for pairs (not essential to solution, but handy for debugging).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input for vectors: reads all elements.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Output for vectors: prints with spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// A very large number to represent "impossible".
+const int64_t inf = (int64_t)1e18 + 42;
+
+int n;
+// adjacency list:
+// adj[u] contains tuples (neighbor, edge_time, edge_index)
+vector<vector<tuple<int, int, int>>> adj;
+// prices[i] = replacement cost of edge i (0-based edge index)
+vector<int> prices;
+
+void read() {
+    cin >> n;
+    adj.resize(n + 1);       // nodes are 1..n
+    prices.resize(n - 1);    // edges are 0..n-2
+    for(int i = 0; i < n - 1; i++) {
+        int a, b, t, p;
+        cin >> a >> b >> t >> p;
+        // store undirected edge with its time and its index
+        adj[a].push_back({b, t, i});
+        adj[b].push_back({a, t, i});
+        prices[i] = p;
+    }
+}
+
+void solve() {
+    // If n==2, the diameter is exactly that single edge.
+    // To make diameter smaller, we must replace it.
+    if(n == 2) {
+        cout << prices[0] << "\n1\n1\n";
+        return;
+    }
+
+    // BFS/DFS on a tree to compute distances from a start node.
+    // Because it's a tree, once we set dist[nb], it never needs relaxation.
+    auto bfs = [&](int start) {
+        vector<int64_t> dist(n + 1, -1);
+        queue<int> q;
+        q.push(start);
+        dist[start] = 0;
+        while(!q.empty()) {
+            int cur = q.front();
+            q.pop();
+            for(auto& [nb, t, idx]: adj[cur]) {
+                if(dist[nb] == -1) {              // unvisited
+                    dist[nb] = dist[cur] + t;     // accumulate edge time
+                    q.push(nb);
+                }
+            }
+        }
+        return dist;
+    };
+
+    // Find one endpoint u of the diameter: farthest from node 1.
+    auto d1 = bfs(1);
+    int u = 1;
+    for(int i = 2; i <= n; i++) {
+        if(d1[i] > d1[u]) u = i;
+    }
+
+    // From u, find farthest node v: u-v is the diameter.
+    auto dist_u = bfs(u);
+    int v = u;
+    for(int i = 1; i <= n; i++) {
+        if(dist_u[i] > dist_u[v]) v = i;
+    }
+
+    // Original diameter length.
+    int64_t D = dist_u[v];
+
+    // depth[u] = maximum distance from u down to a leaf in rooted tree at 1.
+    vector<int64_t> depth(n + 1, 0);
+
+    // parent arrays (only partially used; parent_edge/weight not used later)
+    vector<int> parent(n + 1, -1);
+    vector<int> parent_edge(n + 1, -1);
+    vector<int> parent_weight(n + 1, 0);
+
+    // First DFS: compute depths.
+    function<void(int, int)> calc_depth = [&](int cur, int par) {
+        parent[cur] = par;
+        for(auto& [nb, w, idx]: adj[cur]) {
+            if(nb != par) {
+                parent_edge[nb] = idx;
+                parent_weight[nb] = w;
+                calc_depth(nb, cur); // compute child depth first
+                depth[cur] = max(depth[cur], depth[nb] + w);
+            }
+        }
+    };
+    calc_depth(1, -1);
+
+    // dp0[u], dp1[u] as described in editorial.
+    vector<int64_t> dp0(n + 1), dp1(n + 1);
+
+    function<void(int, int)> dfs = [&](int cur, int par) {
+        // For convenience store children info:
+        // (contrib = depth[child]+w, w, price, child_node, edge_index)
+        vector<tuple<int64_t, int64_t, int, int, int>> children;
+        for(auto& [nb, w, idx]: adj[cur]) {
+            if(nb != par) {
+                dfs(nb, cur); // compute dp for child first
+                int64_t contrib = depth[nb] + w;
+                children.push_back({contrib, w, prices[idx], nb, idx});
+            }
+        }
+
+        // Leaf: cannot reduce below 0, can keep depth 0 at cost 0.
+        if(children.empty()) {
+            dp0[cur] = inf;
+            dp1[cur] = 0;
+            return;
+        }
+
+        // Find top two contributions to detect possible diameter through cur.
+        int64_t first_contrib = 0, second_contrib = 0;
+        for(auto& [contrib, w, price, child, idx]: children) {
+            if(contrib > first_contrib) {
+                second_contrib = first_contrib;
+                first_contrib = contrib;
+            } else if(contrib > second_contrib) {
+                second_contrib = contrib;
+            }
+        }
+
+        // Minimal cost to make this child contribution smaller than before:
+        // either reduce inside child subtree (dp0),
+        // or replace edge (pay price) and keep child's subtree in best state.
+        auto cost_reduce = [&](int64_t contrib, int64_t w, int price,
+                               int child) -> int64_t {
+            int64_t opt1 = dp0[child];
+            int64_t opt2 =
+                (w > 0) ? (price + min(dp0[child], dp1[child])) : inf;
+            return min(opt1, opt2);
+        };
+
+        // Cost to keep child's contribution unchanged:
+        // child must keep its depth => dp1.
+        auto cost_keep = [&](int child) -> int64_t { return dp1[child]; };
+
+        // Compute dp0[cur]: force resulting depth < depth[cur].
+        dp0[cur] = 0;
+        for(auto& [contrib, w, price, child, idx]: children) {
+            if(contrib == depth[cur]) {
+                // Any child that realizes the maximum must be reduced.
+                dp0[cur] += cost_reduce(contrib, w, price, child);
+            } else {
+                // Others can be reduced or kept.
+                dp0[cur] +=
+                    min(cost_reduce(contrib, w, price, child),
+                        cost_keep(child));
+            }
+        }
+
+        // Compute dp1[cur]: keep depth[cur] but forbid diameter D.
+        if(depth[cur] == D) {
+            // Keeping depth D from cur would keep diameter D (a downward path).
+            dp1[cur] = inf;
+        } else if(first_contrib + second_contrib < D) {
+            // No pair through cur can reach diameter anyway.
+            // Just ensure at least one max-child is kept to maintain depth[cur].
+            int64_t base = 0;
+            int64_t min_delta = inf;
+            for(auto& [contrib, w, price, child, idx]: children) {
+                int64_t cr = cost_reduce(contrib, w, price, child);
+                int64_t ck = cost_keep(child);
+                base += min(cr, ck);
+                if(contrib == depth[cur]) {
+                    // If we didn't keep this max child, compute extra cost to keep it.
+                    min_delta = min(min_delta, ck - min(cr, ck));
+                }
+            }
+            dp1[cur] = base + min_delta;
+        } else {
+            // There exists a possible diameter through cur; restrict "dangerous" children.
+            int64_t threshold = D - depth[cur];
+
+            // Base cost: any child with contrib >= threshold must be reduced;
+            // others choose cheaper of reduce/keep.
+            int64_t base = 0;
+            for(auto& [contrib, w, price, child, idx]: children) {
+                if(contrib >= threshold) {
+                    base += cost_reduce(contrib, w, price, child);
+                } else {
+                    base +=
+                        min(cost_reduce(contrib, w, price, child),
+                            cost_keep(child));
+                }
+            }
+
+            // Additionally we must keep exactly depth[cur], meaning keep one max-child.
+            // But in base we reduced all contrib>=threshold, possibly including max ones.
+            // Choose one max child to keep by paying minimal extra delta.
+            int64_t min_delta = inf;
+            for(auto& [contrib, w, price, child, idx]: children) {
+                if(contrib == depth[cur]) {
+                    int64_t cr = cost_reduce(contrib, w, price, child);
+                    int64_t ck = cost_keep(child);
+                    min_delta = min(min_delta, ck - cr);
+                }
+            }
+            dp1[cur] = base + min_delta;
+        }
+    };
+
+    // Run DP from root 1.
+    dfs(1, -1);
+
+    // Choose best of states at root.
+    int64_t ans = min(dp0[1], dp1[1]);
+    int target_state = (dp0[1] <= dp1[1]) ? 0 : 1;
+
+    // Store indices (0-based) of edges we decide to replace.
+    vector<int> cut_edges;
+
+    // Second DFS to reconstruct decisions and collect replaced edges.
+    function<void(int, int, int)> reconstruct = [&](int cur, int par,
+                                                    int state) {
+        vector<tuple<int64_t, int64_t, int, int, int>> children;
+        for(auto& [nb, w, idx]: adj[cur]) {
+            if(nb != par) {
+                int64_t contrib = depth[nb] + w;
+                children.push_back({contrib, w, prices[idx], nb, idx});
+            }
+        }
+
+        if(children.empty()) return;
+
+        // Find top two contributions again for the same case split.
+        int64_t first_contrib = 0, second_contrib = 0;
+        for(auto& [contrib, w, price, child, idx]: children) {
+            if(contrib > first_contrib) {
+                second_contrib = first_contrib;
+                first_contrib = contrib;
+            } else if(contrib > second_contrib) {
+                second_contrib = contrib;
+            }
+        }
+
+        auto cost_reduce = [&](int64_t contrib, int64_t w, int price,
+                               int child) -> int64_t {
+            int64_t opt1 = dp0[child];
+            int64_t opt2 =
+                (w > 0) ? (price + min(dp0[child], dp1[child])) : inf;
+            return min(opt1, opt2);
+        };
+        auto cost_keep = [&](int child) -> int64_t { return dp1[child]; };
+
+        // Enact a "reduce" decision on a child: either recurse with dp0,
+        // or replace the edge then recurse with best of dp0/dp1.
+        auto do_reduce = [&](int64_t contrib, int64_t w, int price, int child,
+                             int idx) {
+            int64_t opt1 = dp0[child]; // reduce internally
+            int64_t opt2 =
+                (w > 0) ? (price + min(dp0[child], dp1[child])) : inf; // replace edge
+            if(opt1 <= opt2) {
+                // Choose internal reduction
+                reconstruct(child, cur, 0);
+            } else {
+                // Choose edge replacement
+                cut_edges.push_back(idx);
+                // After replacement, choose cheaper state for child
+                if(dp0[child] <= dp1[child]) reconstruct(child, cur, 0);
+                else reconstruct(child, cur, 1);
+            }
+        };
+
+        // For a child where we can choose min(reduce,keep), pick the cheaper
+        // and reconstruct accordingly.
+        auto do_opt = [&](int64_t contrib, int64_t w, int price, int child,
+                          int idx) {
+            int64_t cr = cost_reduce(contrib, w, price, child);
+            int64_t ck = cost_keep(child);
+            if(ck <= cr) {
+                reconstruct(child, cur, 1); // keep
+            } else {
+                do_reduce(contrib, w, price, child, idx); // reduce
+            }
+        };
+
+        if(state == 0) {
+            // Must reduce all max-contrib children.
+            for(auto& [contrib, w, price, child, idx]: children) {
+                if(contrib == depth[cur]) do_reduce(contrib, w, price, child, idx);
+                else do_opt(contrib, w, price, child, idx);
+            }
+        } else {
+            // state==1: keep depth[cur], avoid diameter cases
+            if(first_contrib + second_contrib < D) {
+                // Need to keep one max-child; choose one with minimal delta.
+                int keep_child = -1;
+                int64_t min_delta = inf;
+                for(auto& [contrib, w, price, child, idx]: children) {
+                    if(contrib == depth[cur]) {
+                        int64_t cr = cost_reduce(contrib, w, price, child);
+                        int64_t ck = cost_keep(child);
+                        int64_t delta = ck - min(cr, ck);
+                        if(delta < min_delta) {
+                            min_delta = delta;
+                            keep_child = child;
+                        }
+                    }
+                }
+                // Reconstruct: forced keep for chosen child, others optimal.
+                for(auto& [contrib, w, price, child, idx]: children) {
+                    if(child == keep_child) reconstruct(child, cur, 1);
+                    else do_opt(contrib, w, price, child, idx);
+                }
+            } else {
+                // Diameter through cur is possible.
+                int64_t threshold = D - depth[cur];
+
+                // Choose which max-child will be kept.
+                int keep_child = -1;
+                int64_t min_delta = inf;
+                for(auto& [contrib, w, price, child, idx]: children) {
+                    if(contrib == depth[cur]) {
+                        int64_t cr = cost_reduce(contrib, w, price, child);
+                        int64_t ck = cost_keep(child);
+                        if(ck - cr < min_delta) {
+                            min_delta = ck - cr;
+                            keep_child = child;
+                        }
+                    }
+                }
+
+                // All other dangerous children (contrib>=threshold) must be reduced.
+                for(auto& [contrib, w, price, child, idx]: children) {
+                    if(child == keep_child) {
+                        reconstruct(child, cur, 1); // keep chosen max-child
+                    } else if(contrib >= threshold) {
+                        do_reduce(contrib, w, price, child, idx); // must reduce
+                    } else {
+                        do_opt(contrib, w, price, child, idx); // free choice
+                    }
+                }
+            }
+        }
+    };
+
+    // Reconstruct solution from root.
+    reconstruct(1, -1, target_state);
+
+    // Output result.
+    cout << ans << "\n" << cut_edges.size() << "\n";
+    for(int i = 0; i < (int)cut_edges.size(); i++) {
+        if(i > 0) cout << " ";
+        cout << cut_edges[i] + 1; // convert to 1-based edge number
+    }
+    cout << " \n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+sys.setrecursionlimit(300000)
+
+INF = 10**30
+
+def solve():
+    input = sys.stdin.readline
+    n = int(input().strip())
+
+    # adjacency list: adj[u] = list of (v, time, edge_index)
+    adj = [[] for _ in range(n + 1)]
+    prices = [0] * (n - 1)
+
+    for i in range(n - 1):
+        a, b, t, p = map(int, input().split())
+        adj[a].append((b, t, i))
+        adj[b].append((a, t, i))
+        prices[i] = p
+
+    # Special case n==2: only one edge, must replace it to reduce diameter.
+    if n == 2:
+        print(prices[0])
+        print(1)
+        print(1)
+        return
+
+    # Tree "BFS": since it's a tree, we can do a stack/queue traversal
+    # to compute distances without priority queue.
+    from collections import deque
+    def bfs(start: int):
+        dist = [-1] * (n + 1)
+        q = deque([start])
+        dist[start] = 0
+        while q:
+            u = q.popleft()
+            for v, w, ei in adj[u]:
+                if dist[v] == -1:
+                    dist[v] = dist[u] + w
+                    q.append(v)
+        return dist
+
+    # Compute diameter endpoints and length D
+    d1 = bfs(1)
+    u = max(range(1, n + 1), key=lambda i: d1[i])
+    du = bfs(u)
+    v = max(range(1, n + 1), key=lambda i: du[i])
+    D = du[v]
+
+    # Root tree at 1 and compute depth[u] = best downward distance.
+    depth = [0] * (n + 1)
+    parent = [-1] * (n + 1)
+
+    def calc_depth(u: int, p: int):
+        parent[u] = p
+        best = 0
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            calc_depth(v, u)
+            best = max(best, depth[v] + w)
+        depth[u] = best
+
+    calc_depth(1, -1)
+
+    dp0 = [INF] * (n + 1)
+    dp1 = [INF] * (n + 1)
+
+    def dfs(u: int, p: int):
+        children = []  # list of (contrib, w, price, child, edge_index)
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            dfs(v, u)
+            children.append((depth[v] + w, w, prices[ei], v, ei))
+
+        # Leaf
+        if not children:
+            dp0[u] = INF  # cannot reduce below 0
+            dp1[u] = 0    # keep depth 0
+            return
+
+        # Find largest and second largest contrib
+        first = 0
+        second = 0
+        for contrib, w, price, v, ei in children:
+            if contrib > first:
+                second = first
+                first = contrib
+            elif contrib > second:
+                second = contrib
+
+        def cost_reduce(contrib, w, price, v):
+            # Option 1: reduce inside child's subtree => dp0[v]
+            opt1 = dp0[v]
+            # Option 2: replace edge (u,v), making w=0 => pay price,
+            # then child can be in cheaper of dp0/dp1.
+            opt2 = price + min(dp0[v], dp1[v])
+            return opt1 if opt1 < opt2 else opt2
+
+        def cost_keep(v):
+            return dp1[v]
+
+        # dp0[u]: force resulting depth strictly smaller than original depth[u]
+        total = 0
+        for contrib, w, price, v, ei in children:
+            if contrib == depth[u]:
+                total += cost_reduce(contrib, w, price, v)
+            else:
+                cr = cost_reduce(contrib, w, price, v)
+                ck = cost_keep(v)
+                total += cr if cr < ck else ck
+        dp0[u] = total
+
+        # dp1[u]: keep depth[u] but avoid any diameter D appearing
+        if depth[u] == D:
+            dp1[u] = INF
+        elif first + second < D:
+            base = 0
+            min_delta = INF
+            for contrib, w, price, v, ei in children:
+                cr = cost_reduce(contrib, w, price, v)
+                ck = cost_keep(v)
+                m = cr if cr < ck else ck
+                base += m
+                if contrib == depth[u]:
+                    # extra cost to force keep on a max child
+                    min_delta = min(min_delta, ck - m)
+            dp1[u] = base + min_delta
+        else:
+            threshold = D - depth[u]
+            base = 0
+            for contrib, w, price, v, ei in children:
+                if contrib >= threshold:
+                    base += cost_reduce(contrib, w, price, v)
+                else:
+                    cr = cost_reduce(contrib, w, price, v)
+                    ck = cost_keep(v)
+                    base += cr if cr < ck else ck
+
+            min_delta = INF
+            for contrib, w, price, v, ei in children:
+                if contrib == depth[u]:
+                    cr = cost_reduce(contrib, w, price, v)
+                    ck = cost_keep(v)
+                    min_delta = min(min_delta, ck - cr)
+            dp1[u] = base + min_delta
+
+    dfs(1, -1)
+
+    # Choose best state at root
+    if dp0[1] <= dp1[1]:
+        ans = dp0[1]
+        root_state = 0
+    else:
+        ans = dp1[1]
+        root_state = 1
+
+    cut_edges = []
+
+    def reconstruct(u: int, p: int, state: int):
+        children = []
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            children.append((depth[v] + w, w, prices[ei], v, ei))
+
+        if not children:
+            return
+
+        first = 0
+        second = 0
+        for contrib, w, price, v, ei in children:
+            if contrib > first:
+                second = first
+                first = contrib
+            elif contrib > second:
+                second = contrib
+
+        def cost_reduce(contrib, w, price, v):
+            opt1 = dp0[v]
+            opt2 = price + min(dp0[v], dp1[v])
+            return opt1 if opt1 < opt2 else opt2
+
+        def cost_keep(v):
+            return dp1[v]
+
+        def do_reduce(contrib, w, price, v, ei):
+            opt1 = dp0[v]
+            opt2 = price + min(dp0[v], dp1[v])
+            if opt1 <= opt2:
+                reconstruct(v, u, 0)
+            else:
+                cut_edges.append(ei)
+                reconstruct(v, u, 0 if dp0[v] <= dp1[v] else 1)
+
+        def do_opt(contrib, w, price, v, ei):
+            cr = cost_reduce(contrib, w, price, v)
+            ck = cost_keep(v)
+            if ck <= cr:
+                reconstruct(v, u, 1)
+            else:
+                do_reduce(contrib, w, price, v, ei)
+
+        if state == 0:
+            for contrib, w, price, v, ei in children:
+                if contrib == depth[u]:
+                    do_reduce(contrib, w, price, v, ei)
+                else:
+                    do_opt(contrib, w, price, v, ei)
+        else:
+            if first + second < D:
+                keep_child = -1
+                min_delta = INF
+                for contrib, w, price, v, ei in children:
+                    if contrib == depth[u]:
+                        cr = cost_reduce(contrib, w, price, v)
+                        ck = cost_keep(v)
+                        m = cr if cr < ck else ck
+                        delta = ck - m
+                        if delta < min_delta:
+                            min_delta = delta
+                            keep_child = v
+
+                for contrib, w, price, v, ei in children:
+                    if v == keep_child:
+                        reconstruct(v, u, 1)
+                    else:
+                        do_opt(contrib, w, price, v, ei)
+            else:
+                threshold = D - depth[u]
+                keep_child = -1
+                min_delta = INF
+                for contrib, w, price, v, ei in children:
+                    if contrib == depth[u]:
+                        cr = cost_reduce(contrib, w, price, v)
+                        ck = cost_keep(v)
+                        if ck - cr < min_delta:
+                            min_delta = ck - cr
+                            keep_child = v
+
+                for contrib, w, price, v, ei in children:
+                    if v == keep_child:
+                        reconstruct(v, u, 1)
+                    elif contrib >= threshold:
+                        do_reduce(contrib, w, price, v, ei)
+                    else:
+                        do_opt(contrib, w, price, v, ei)
+
+    reconstruct(1, -1, root_state)
+
+    # Output
+    print(ans)
+    print(len(cut_edges))
+    # Convert to 1-based indices
+    if cut_edges:
+        print(" ".join(str(ei + 1) for ei in cut_edges))
+    else:
+        print()
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+1. Compute tree diameter length `D` via two traversals (farthest-from-1 gives `u`, farthest-from-`u` gives `v`, distance is `D`).  
+2. Root tree at `1`, compute `depth[u]=max(depth[child]+w)` (best downward path).
+3. DP per node `u`:
+   - `dp0[u]`: min cost to make resulting subtree depth `< depth[u]` (must reduce all children achieving `depth[u]`).
+   - `dp1[u]`: min cost to keep depth `=depth[u]` but ensure no path of length `D` remains (avoid combining two child contributions to sum to `D`; also `dp1[u]=INF` if `depth[u]==D`).
+   Child “reduce” cost is `min(dp0[child], price(edge)+min(dp0[child],dp1[child]))`; “keep” cost is `dp1[child]`.
+4. Answer is `min(dp0[1],dp1[1])`.  
+5. Reconstruct choices with a second DFS, output chosen replaced edges.

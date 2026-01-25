@@ -1,0 +1,109 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;
+vector<array<int, 3>> h_segs, v_segs;
+
+void read() {
+    cin >> n;
+    for(int i = 0; i < n; i++) {
+        int x1, y1, x2, y2;
+        cin >> x1 >> y1 >> x2 >> y2;
+        if(y1 == y2) {
+            if(x1 > x2) {
+                swap(x1, x2);
+            }
+            h_segs.push_back({y1, x1, x2});
+        } else {
+            if(y1 > y2) {
+                swap(y1, y2);
+            }
+            v_segs.push_back({x1, y1, y2});
+        }
+    }
+}
+
+void solve() {
+    // A native solution is to first fix each of the O(N^2) pairs of a vertical
+    // and horizontal segment, and then in O(N^2) check all pairs of
+    // intersections with these two lines. This might end up being a bit too
+    // slow, so we should try to get something cubic.
+    //
+    // Instead we will go through the pairs of parallel horizontal lines in
+    // O(N^2), and then in O(N) go through all vertical lines that intersect
+    // with both of these two. Let this number be L. We have L*(L+1)/2 pairs
+    // that are valid.
+
+    int64_t ans = 0;
+    for(int i = 0; i < (int)h_segs.size(); i++) {
+        int y1 = h_segs[i][0], x1_min = h_segs[i][1], x1_max = h_segs[i][2];
+        for(int j = i + 1; j < (int)h_segs.size(); j++) {
+            int y2 = h_segs[j][0], x2_min = h_segs[j][1], x2_max = h_segs[j][2];
+
+            int x_left = max(x1_min, x2_min);
+            int x_right = min(x1_max, x2_max);
+
+            if(x_left >= x_right) {
+                continue;
+            }
+
+            int y_min = min(y1, y2);
+            int y_max = max(y1, y2);
+
+            int cnt = 0;
+            for(auto& v: v_segs) {
+                int vx = v[0], vy_min = v[1], vy_max = v[2];
+                if(vx >= x_left && vx <= x_right && vy_min <= y_min &&
+                   vy_max >= y_max) {
+                    cnt++;
+                }
+            }
+
+            ans += (int64_t)cnt * (cnt - 1) / 2;
+        }
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        // cout << "Case #" << test << ": ";
+        solve();
+    }
+
+    return 0;
+}

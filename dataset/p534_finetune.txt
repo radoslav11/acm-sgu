@@ -1,0 +1,808 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+534. Computer Network
+Time limit per test: 1 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+Computer network of Berland's best physical and mathematical school has a "tree" topology. That is, the network has no cycles; it connects n computers by n-1 cables. Each cable connects exactly two different computers.
+
+The school has really old equipment and the network is slow. The network administrator defined for each cable a value ti, which represents the average time to transmit a packet from computer ai to computer bi (or vice versa), where ai, bi are computers connected by the i-th cable.
+
+For two computers a and b the average time to transmit a packet from one computer to another is the sum of all ti's for the cables on the path from a to b. Of course, an important characteristic of the network is the maximum possible average time of transmitting a packet between two computers. This characteristic is called .
+
+In light of national innovations and modernizations it was decided to improve the school computer network and reduce the value of .
+
+It was decided to replace some cables with new ones. New cables have such a high speed of data transmission that any packet passes through the cable in negligibly little time. In practice, the time of a packet transmission for new cables equals 0. For each cable its price pi was determined — the cost of replacing the i-th cable by the new one. Of course, after replacing the i-th cable, the new one will still connect computers ai and bi.
+
+Help the network administrator to find such set of cables, that after they are replaced, the value of  becomes less and the total cost of replacing these cables is minimal. Note that in this problem you do not have to minimize , but you should make it less than its initial value.
+
+Input
+The first line contains a single integer n (2 ≤ n ≤ 105), n is the number of computers in the network. Then n-1 lines contain descriptions of all cables in the form of four integers ai, bi, ti, pi (1 ≤ ai,bi ≤ n; 1 ≤ ti,pi ≤ 104), where ai,bi are numbers of computers connected by the i-th cable, ti is the average transmission time of a packet through the cable and pi is the cost of replacing the i-th cable with a new one.
+
+Output
+In the first line print the required minimum possible cost of replacements. In the second line print the number of cables in the required set in arbitrary order. In the third line print the numbers of these cables. Consider the cables numbered from 1 in the order they appear in the input. If there are multiple solutions, print any of them.
+
+Example(s)
+sample input
+sample output
+4
+1 2 3 3
+1 3 8 33
+1 4 3 7
+10
+2
+1 3 
+
+sample input
+sample output
+4
+1 2 3 5
+2 3 5 2
+3 4 5 4
+2
+1
+2
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given a weighted tree with `n` nodes and `n-1` edges.  
+Edge `i` has:
+- transmission time `t_i` (used in path length sums),
+- replacement cost `p_i`.
+
+If you replace an edge, its time becomes `0` (endpoints unchanged).
+
+Let `D` be the **original diameter** of the tree (maximum path sum of `t_i`).  
+Choose a set of edges to replace so that the **new diameter is strictly less than `D`**, with **minimum total replacement cost**.
+
+Output:
+- minimum cost,
+- number of replaced edges,
+- their indices (1-based, in any order).
+
+Constraints: `n ≤ 1e5`.
+
+---
+
+## 2) Key observations
+
+1. **Replacing edges only decreases path lengths.**  
+   So the new diameter `< D` iff **no path of length exactly `D` survives** after replacements.
+
+2. The diameter in a rooted tree can be threatened in two ways:
+   - A **single downward path** of length `D` from some node to a leaf remains.
+   - A **path passing through a node `u`**, formed by combining two downward paths from different children, reaches `D`.
+
+3. Root the tree at node `1` and define:
+   - `depth[u] = max distance (by times) from u down to any node in its subtree`.
+   This is computable by one DFS.
+
+4. We need a DP that, for every subtree, either:
+   - forces its best downward path to become **strictly smaller** than before (so it can’t contribute to any original-diameter path), or
+   - allows keeping the best depth, but ensures **no diameter-length path is created inside** or **through** the current node.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Compute the original diameter `D`
+Use the classic “two farthest nodes” method:
+1. Traverse from node `1` to find farthest node `u`.
+2. Traverse from `u` to find farthest node `v`.
+3. Distance `dist(u, v)` is the diameter `D`.
+
+Because it’s a tree, you can do a simple queue/stack traversal accumulating distances (no need for Dijkstra).
+
+---
+
+### Step B — Root the tree and compute `depth[u]`
+Root at `1`. Compute:
+
+\[
+depth[u] = \max_{child\ c} (depth[c] + w(u,c))
+\]
+
+where `w(u,c) = t_edge`.
+
+---
+
+### Step C — DP states
+For each node `u`, compute two values:
+
+- `dp0[u]`: minimum cost to modify edges in subtree of `u` so that  
+  **the maximum downward path from `u` becomes strictly less than the original `depth[u]`**.
+
+- `dp1[u]`: minimum cost so that  
+  **the maximum downward path from `u` remains exactly `depth[u]`**, but after modifications:
+  - no path of length `D` exists completely inside this subtree,
+  - and no diameter path of length `D` is formed **through** `u`.
+
+Leaf base case:
+- `depth[leaf]=0`
+- `dp1[leaf]=0` (keep depth 0)
+- `dp0[leaf]=INF` (cannot make depth < 0)
+
+---
+
+### Step D — Child handling: “keep” vs “reduce”
+For a child `c` of `u` over edge with time `w` and cost `p`:
+
+Child contributes:
+
+\[
+contrib = depth[c] + w
+\]
+
+To **keep** this contribution unchanged, we must keep child’s depth:
+- `cost_keep(c) = dp1[c]`
+
+To **reduce** this contribution (make it smaller than before), we have two options:
+1. Reduce inside child subtree:
+   - cost `dp0[c]`
+2. Replace edge `(u,c)` so `w` becomes `0`:
+   - cost `p + min(dp0[c], dp1[c])`
+
+So:
+
+\[
+cost\_reduce(c)=\min(dp0[c],\ p+\min(dp0[c],dp1[c]))
+\]
+
+---
+
+### Step E — Transition for `dp0[u]` (force depth smaller)
+To make the resulting depth at `u` strictly smaller than `depth[u]`,
+**every child that achieves the maximum** (`contrib == depth[u]`) must be reduced.
+
+Other children can be reduced or kept, whichever is cheaper.
+
+---
+
+### Step F — Transition for `dp1[u]` (keep depth, forbid diameter)
+If `depth[u] == D`, then keeping that depth means there’s still a downward path of length `D`, so diameter remains `D`. Hence:
+
+- `dp1[u] = INF` if `depth[u] == D`.
+
+Otherwise, let `first` and `second` be the largest two `contrib` values among children.
+
+- If `first + second < D`, no diameter can pass through `u`.  
+  We just need to ensure **at least one max child is kept** so depth stays `depth[u]`.
+
+- If `first + second >= D`, a diameter through `u` is possible.  
+  Let:
+
+\[
+threshold = D - depth[u]
+\]
+
+Any child with `contrib >= threshold` is “dangerous”: if we keep it while also keeping the max path, we can create a length-`D` path through `u`.  
+So in `dp1[u]` we reduce all dangerous children, except we must still **keep one max child** to maintain depth.
+
+All of this is doable in linear total time by scanning children a constant number of times.
+
+---
+
+### Step G — Reconstruction
+After DP, pick best root state:
+
+- answer = `min(dp0[1], dp1[1])`
+
+Then run a second DFS that repeats the same choices and records which edges were replaced.
+
+---
+
+### Complexity
+- Time: `O(n)`
+- Memory: `O(n)`
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+static const long long INF = (long long)4e18;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+
+    // adj[u] = list of (v, time, edgeIndex)
+    vector<vector<tuple<int,int,int>>> adj(n + 1);
+    vector<int> price(n - 1);
+
+    for (int i = 0; i < n - 1; i++) {
+        int a, b, t, p;
+        cin >> a >> b >> t >> p;
+        adj[a].push_back({b, t, i});
+        adj[b].push_back({a, t, i});
+        price[i] = p;
+    }
+
+    // n==2: diameter is exactly the single edge. To make it smaller, must replace it.
+    if (n == 2) {
+        cout << price[0] << "\n";
+        cout << 1 << "\n";
+        cout << 1 << "\n";
+        return 0;
+    }
+
+    // Tree traversal to compute distances from start.
+    // On a tree, we can do a simple queue: each node discovered once.
+    auto dist_from = [&](int start) {
+        vector<long long> dist(n + 1, -1);
+        queue<int> q;
+        q.push(start);
+        dist[start] = 0;
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (auto [v, w, ei] : adj[u]) {
+                if (dist[v] == -1) {
+                    dist[v] = dist[u] + w;
+                    q.push(v);
+                }
+            }
+        }
+        return dist;
+    };
+
+    // Diameter: farthest from 1 => u; farthest from u => v; distance is D
+    auto d1 = dist_from(1);
+    int u = 1;
+    for (int i = 2; i <= n; i++) if (d1[i] > d1[u]) u = i;
+
+    auto du = dist_from(u);
+    int v = u;
+    for (int i = 1; i <= n; i++) if (du[i] > du[v]) v = i;
+
+    long long D = du[v];
+
+    // Root at 1 and compute depth[u] = max downward distance in subtree
+    vector<long long> depth(n + 1, 0);
+
+    function<void(int,int)> calc_depth = [&](int cur, int par) {
+        depth[cur] = 0;
+        for (auto [nb, w, ei] : adj[cur]) {
+            if (nb == par) continue;
+            calc_depth(nb, cur);
+            depth[cur] = max(depth[cur], depth[nb] + w);
+        }
+    };
+    calc_depth(1, -1);
+
+    // dp0[u], dp1[u] as described
+    vector<long long> dp0(n + 1, INF), dp1(n + 1, INF);
+
+    function<void(int,int)> dfs = [&](int cur, int par) {
+        // Gather children info:
+        // (contrib, w, price, childNode, edgeIndex)
+        vector<tuple<long long,long long,int,int,int>> children;
+        for (auto [nb, w, ei] : adj[cur]) {
+            if (nb == par) continue;
+            dfs(nb, cur);
+            children.push_back({depth[nb] + w, w, price[ei], nb, ei});
+        }
+
+        // Leaf
+        if (children.empty()) {
+            dp0[cur] = INF; // cannot make depth < 0
+            dp1[cur] = 0;   // keep depth 0
+            return;
+        }
+
+        // Find largest two contributions
+        long long first = 0, second = 0;
+        for (auto &ch : children) {
+            long long contrib = get<0>(ch);
+            if (contrib > first) { second = first; first = contrib; }
+            else if (contrib > second) { second = contrib; }
+        }
+
+        auto cost_keep = [&](int child) -> long long {
+            return dp1[child];
+        };
+
+        auto cost_reduce = [&](long long w, int p, int child) -> long long {
+            // 1) reduce in subtree
+            long long opt1 = dp0[child];
+            // 2) replace edge => w becomes 0; child can be in cheaper state
+            long long opt2 = (long long)p + min(dp0[child], dp1[child]);
+            return min(opt1, opt2);
+        };
+
+        // ---- dp0[cur]: force resulting depth < depth[cur] ----
+        dp0[cur] = 0;
+        for (auto &ch : children) {
+            long long contrib = get<0>(ch);
+            long long w = get<1>(ch);
+            int p = get<2>(ch);
+            int child = get<3>(ch);
+
+            long long reduce = cost_reduce(w, p, child);
+            long long keep = cost_keep(child);
+
+            if (contrib == depth[cur]) {
+                // must reduce all max contributors
+                dp0[cur] += reduce;
+            } else {
+                dp0[cur] += min(reduce, keep);
+            }
+        }
+
+        // ---- dp1[cur]: keep depth==depth[cur], forbid diameter D ----
+        if (depth[cur] == D) {
+            // keeping a downward path of length D keeps diameter D
+            dp1[cur] = INF;
+            return;
+        }
+
+        if (first + second < D) {
+            // Can't form D through cur using two children.
+            // We must keep at least one child with contrib==depth[cur].
+            long long base = 0;
+            long long min_delta = INF;
+
+            for (auto &ch : children) {
+                long long contrib = get<0>(ch);
+                long long w = get<1>(ch);
+                int p = get<2>(ch);
+                int child = get<3>(ch);
+
+                long long reduce = cost_reduce(w, p, child);
+                long long keep = cost_keep(child);
+
+                long long best = min(reduce, keep);
+                base += best;
+
+                if (contrib == depth[cur]) {
+                    // extra cost to force this max child to "keep"
+                    min_delta = min(min_delta, keep - best);
+                }
+            }
+            dp1[cur] = base + min_delta;
+        } else {
+            // Diameter through cur is possible.
+            long long threshold = D - depth[cur];
+
+            // Reduce all dangerous children (contrib >= threshold), others free.
+            long long base = 0;
+            for (auto &ch : children) {
+                long long contrib = get<0>(ch);
+                long long w = get<1>(ch);
+                int p = get<2>(ch);
+                int child = get<3>(ch);
+
+                long long reduce = cost_reduce(w, p, child);
+                long long keep = cost_keep(child);
+
+                if (contrib >= threshold) base += reduce;
+                else base += min(reduce, keep);
+            }
+
+            // Also must keep one max child to preserve depth[cur].
+            long long min_delta = INF;
+            for (auto &ch : children) {
+                long long contrib = get<0>(ch);
+                long long w = get<1>(ch);
+                int p = get<2>(ch);
+                int child = get<3>(ch);
+
+                if (contrib == depth[cur]) {
+                    long long reduce = cost_reduce(w, p, child);
+                    long long keep = cost_keep(child);
+                    // in base, max children are dangerous => were reduced
+                    min_delta = min(min_delta, keep - reduce);
+                }
+            }
+            dp1[cur] = base + min_delta;
+        }
+    };
+
+    dfs(1, -1);
+
+    long long ans = min(dp0[1], dp1[1]);
+    int rootState = (dp0[1] <= dp1[1]) ? 0 : 1;
+
+    // Reconstruction: collect replaced edges
+    vector<int> replaced;
+
+    function<void(int,int,int)> recon = [&](int cur, int par, int state) {
+        vector<tuple<long long,long long,int,int,int>> children;
+        for (auto [nb, w, ei] : adj[cur]) {
+            if (nb == par) continue;
+            children.push_back({depth[nb] + w, w, price[ei], nb, ei});
+        }
+        if (children.empty()) return;
+
+        long long first = 0, second = 0;
+        for (auto &ch : children) {
+            long long contrib = get<0>(ch);
+            if (contrib > first) { second = first; first = contrib; }
+            else if (contrib > second) { second = contrib; }
+        }
+
+        auto cost_reduce = [&](long long w, int p, int child) -> long long {
+            return min(dp0[child], (long long)p + min(dp0[child], dp1[child]));
+        };
+
+        // Execute a "reduce" choice on a child:
+        // either reduce internally (state=0), or replace edge and choose cheaper state.
+        auto do_reduce = [&](long long w, int p, int child, int ei) {
+            long long opt1 = dp0[child];
+            long long opt2 = (long long)p + min(dp0[child], dp1[child]);
+            if (opt1 <= opt2) {
+                recon(child, cur, 0);
+            } else {
+                replaced.push_back(ei);
+                recon(child, cur, (dp0[child] <= dp1[child]) ? 0 : 1);
+            }
+        };
+
+        // Choose min(reduce, keep) and recurse accordingly
+        auto do_best = [&](long long contrib, long long w, int p, int child, int ei) {
+            long long reduce = cost_reduce(w, p, child);
+            long long keep = dp1[child];
+            if (keep <= reduce) recon(child, cur, 1);
+            else do_reduce(w, p, child, ei);
+        };
+
+        if (state == 0) {
+            // Must reduce all children achieving depth[cur]
+            for (auto &ch : children) {
+                long long contrib = get<0>(ch);
+                long long w = get<1>(ch);
+                int p = get<2>(ch);
+                int child = get<3>(ch);
+                int ei = get<4>(ch);
+
+                if (contrib == depth[cur]) do_reduce(w, p, child, ei);
+                else do_best(contrib, w, p, child, ei);
+            }
+        } else {
+            if (first + second < D) {
+                // Need to keep one max child with minimum extra cost
+                int keepChild = -1;
+                long long bestDelta = INF;
+
+                for (auto &ch : children) {
+                    long long contrib = get<0>(ch);
+                    long long w = get<1>(ch);
+                    int p = get<2>(ch);
+                    int child = get<3>(ch);
+
+                    if (contrib == depth[cur]) {
+                        long long reduce = cost_reduce(w, p, child);
+                        long long keep = dp1[child];
+                        long long best = min(reduce, keep);
+                        long long delta = keep - best;
+                        if (delta < bestDelta) {
+                            bestDelta = delta;
+                            keepChild = child;
+                        }
+                    }
+                }
+
+                for (auto &ch : children) {
+                    long long contrib = get<0>(ch);
+                    long long w = get<1>(ch);
+                    int p = get<2>(ch);
+                    int child = get<3>(ch);
+                    int ei = get<4>(ch);
+
+                    if (child == keepChild) recon(child, cur, 1);
+                    else do_best(contrib, w, p, child, ei);
+                }
+            } else {
+                // Dangerous case
+                long long threshold = D - depth[cur];
+
+                // Choose which max child to keep (max children are dangerous)
+                int keepChild = -1;
+                long long bestDelta = INF;
+
+                for (auto &ch : children) {
+                    long long contrib = get<0>(ch);
+                    long long w = get<1>(ch);
+                    int p = get<2>(ch);
+                    int child = get<3>(ch);
+
+                    if (contrib == depth[cur]) {
+                        long long reduce = cost_reduce(w, p, child);
+                        long long keep = dp1[child];
+                        long long delta = keep - reduce;
+                        if (delta < bestDelta) {
+                            bestDelta = delta;
+                            keepChild = child;
+                        }
+                    }
+                }
+
+                for (auto &ch : children) {
+                    long long contrib = get<0>(ch);
+                    long long w = get<1>(ch);
+                    int p = get<2>(ch);
+                    int child = get<3>(ch);
+                    int ei = get<4>(ch);
+
+                    if (child == keepChild) {
+                        recon(child, cur, 1);
+                    } else if (contrib >= threshold) {
+                        do_reduce(w, p, child, ei); // must reduce
+                    } else {
+                        do_best(contrib, w, p, child, ei);
+                    }
+                }
+            }
+        }
+    };
+
+    recon(1, -1, rootState);
+
+    cout << ans << "\n";
+    cout << replaced.size() << "\n";
+    for (int i = 0; i < (int)replaced.size(); i++) {
+        if (i) cout << ' ';
+        cout << replaced[i] + 1; // to 1-based
+    }
+    cout << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(300000)
+
+INF = 10**30
+
+def solve():
+    input = sys.stdin.readline
+    n = int(input())
+
+    # adj[u] = list of (v, time, edge_index)
+    adj = [[] for _ in range(n + 1)]
+    price = [0] * (n - 1)
+
+    for i in range(n - 1):
+        a, b, t, p = map(int, input().split())
+        adj[a].append((b, t, i))
+        adj[b].append((a, t, i))
+        price[i] = p
+
+    # n==2: must replace the only edge
+    if n == 2:
+        print(price[0])
+        print(1)
+        print(1)
+        return
+
+    from collections import deque
+
+    # Distances in a tree: simple BFS/queue works because each node is discovered once.
+    def dist_from(start: int):
+        dist = [-1] * (n + 1)
+        q = deque([start])
+        dist[start] = 0
+        while q:
+            u = q.popleft()
+            for v, w, ei in adj[u]:
+                if dist[v] == -1:
+                    dist[v] = dist[u] + w
+                    q.append(v)
+        return dist
+
+    # Diameter
+    d1 = dist_from(1)
+    u = max(range(1, n + 1), key=lambda i: d1[i])
+    du = dist_from(u)
+    v = max(range(1, n + 1), key=lambda i: du[i])
+    D = du[v]
+
+    # Root at 1, compute depth[u]
+    depth = [0] * (n + 1)
+
+    def calc_depth(u: int, p: int):
+        best = 0
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            calc_depth(v, u)
+            best = max(best, depth[v] + w)
+        depth[u] = best
+
+    calc_depth(1, -1)
+
+    dp0 = [INF] * (n + 1)
+    dp1 = [INF] * (n + 1)
+
+    def dfs(u: int, p: int):
+        children = []  # (contrib, w, p_edge, child, edge_index)
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            dfs(v, u)
+            children.append((depth[v] + w, w, price[ei], v, ei))
+
+        # Leaf
+        if not children:
+            dp0[u] = INF
+            dp1[u] = 0
+            return
+
+        # top two contributions
+        first = second = 0
+        for contrib, w, pc, v, ei in children:
+            if contrib > first:
+                second = first
+                first = contrib
+            elif contrib > second:
+                second = contrib
+
+        def cost_reduce(w, pc, v):
+            # reduce inside subtree or replace edge
+            return min(dp0[v], pc + min(dp0[v], dp1[v]))
+
+        # dp0[u]
+        total = 0
+        for contrib, w, pc, v, ei in children:
+            reduce = cost_reduce(w, pc, v)
+            keep = dp1[v]
+            if contrib == depth[u]:
+                total += reduce
+            else:
+                total += min(reduce, keep)
+        dp0[u] = total
+
+        # dp1[u]
+        if depth[u] == D:
+            dp1[u] = INF
+        elif first + second < D:
+            base = 0
+            min_delta = INF
+            for contrib, w, pc, v, ei in children:
+                reduce = cost_reduce(w, pc, v)
+                keep = dp1[v]
+                best = min(reduce, keep)
+                base += best
+                if contrib == depth[u]:
+                    min_delta = min(min_delta, keep - best)
+            dp1[u] = base + min_delta
+        else:
+            threshold = D - depth[u]
+            base = 0
+            for contrib, w, pc, v, ei in children:
+                reduce = cost_reduce(w, pc, v)
+                keep = dp1[v]
+                if contrib >= threshold:
+                    base += reduce
+                else:
+                    base += min(reduce, keep)
+
+            min_delta = INF
+            for contrib, w, pc, v, ei in children:
+                if contrib == depth[u]:
+                    reduce = cost_reduce(w, pc, v)
+                    keep = dp1[v]
+                    min_delta = min(min_delta, keep - reduce)
+
+            dp1[u] = base + min_delta
+
+    dfs(1, -1)
+
+    ans = min(dp0[1], dp1[1])
+    root_state = 0 if dp0[1] <= dp1[1] else 1
+
+    replaced = []
+
+    def recon(u: int, p: int, state: int):
+        children = []
+        for v, w, ei in adj[u]:
+            if v == p:
+                continue
+            children.append((depth[v] + w, w, price[ei], v, ei))
+        if not children:
+            return
+
+        first = second = 0
+        for contrib, w, pc, v, ei in children:
+            if contrib > first:
+                second = first
+                first = contrib
+            elif contrib > second:
+                second = contrib
+
+        def cost_reduce(w, pc, v):
+            return min(dp0[v], pc + min(dp0[v], dp1[v]))
+
+        def do_reduce(w, pc, v, ei):
+            opt1 = dp0[v]
+            opt2 = pc + min(dp0[v], dp1[v])
+            if opt1 <= opt2:
+                recon(v, u, 0)
+            else:
+                replaced.append(ei)
+                recon(v, u, 0 if dp0[v] <= dp1[v] else 1)
+
+        def do_best(contrib, w, pc, v, ei):
+            reduce = cost_reduce(w, pc, v)
+            keep = dp1[v]
+            if keep <= reduce:
+                recon(v, u, 1)
+            else:
+                do_reduce(w, pc, v, ei)
+
+        if state == 0:
+            for contrib, w, pc, v, ei in children:
+                if contrib == depth[u]:
+                    do_reduce(w, pc, v, ei)
+                else:
+                    do_best(contrib, w, pc, v, ei)
+        else:
+            if first + second < D:
+                keep_child = -1
+                best_delta = INF
+                for contrib, w, pc, v, ei in children:
+                    if contrib == depth[u]:
+                        reduce = cost_reduce(w, pc, v)
+                        keep = dp1[v]
+                        best = min(reduce, keep)
+                        delta = keep - best
+                        if delta < best_delta:
+                            best_delta = delta
+                            keep_child = v
+
+                for contrib, w, pc, v, ei in children:
+                    if v == keep_child:
+                        recon(v, u, 1)
+                    else:
+                        do_best(contrib, w, pc, v, ei)
+            else:
+                threshold = D - depth[u]
+                keep_child = -1
+                best_delta = INF
+                for contrib, w, pc, v, ei in children:
+                    if contrib == depth[u]:
+                        reduce = cost_reduce(w, pc, v)
+                        keep = dp1[v]
+                        delta = keep - reduce
+                        if delta < best_delta:
+                            best_delta = delta
+                            keep_child = v
+
+                for contrib, w, pc, v, ei in children:
+                    if v == keep_child:
+                        recon(v, u, 1)
+                    elif contrib >= threshold:
+                        do_reduce(w, pc, v, ei)
+                    else:
+                        do_best(contrib, w, pc, v, ei)
+
+    recon(1, -1, root_state)
+
+    print(ans)
+    print(len(replaced))
+    if replaced:
+        print(" ".join(str(ei + 1) for ei in replaced))
+    else:
+        print()
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also provide a shorter “contest style” version of both implementations (same logic, fewer comments) or walk through one sample by hand to show how the DP decisions arise.
