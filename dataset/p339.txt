@@ -1,0 +1,433 @@
+## 1) Abridged problem statement
+
+Maintain a multiset of segments \([L, R]\) on the number line under a stream of queries:
+
+- `+ L R`: add segment \([L, R]\) and **print** how many currently active segments \([l, r]\) satisfy \(L \le l\) and \(r \le R\) (i.e., are inside the new segment, endpoints allowed).
+- `- L R`: remove **one** occurrence of segment \([L, R]\) if it exists; otherwise ignore.
+
+Constraints: up to \(250{,}000\) queries, coordinates in \([-10^9,10^9]\), and **at most 1000 segments are active at any time**.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation
+Although there can be many queries, the number of **active** segments at any moment is small: \(\le 1000\).  
+So for each `+` query, we can simply scan all currently active segments and count those contained in the new one.
+
+That yields:
+
+- `+`: \(O(A)\) where \(A \le 1000\)
+- `-`: remove one matching segment from the active set; can also be \(O(A)\)
+
+Total worst-case operations: \(250{,}000 \times 1000 = 250\) million checks, which is feasible in optimized C++ (and this solution further accelerates scanning using AVX2 SIMD).
+
+### What must be counted
+For a new segment \([L, R]\), an active segment \([l, r]\) is inside iff:
+\[
+l \ge L \quad \text{and} \quad r \le R
+\]
+Non-strict containment includes equality.
+
+### Handling deletions with duplicates
+There can be multiple identical segments. Deletion `- L R` removes only **one** copy.  
+We therefore store active segments as parallel arrays (or a vector of pairs) and, when deleting, remove just one matching element.
+
+Efficient “remove by swap with last” technique:
+- Find an index `i` where segment equals \((L,R)\)
+- Replace it with the last segment
+- Pop back
+This makes deletion \(O(A)\) for search, but \(O(1)\) for actual removal without shifting.
+
+### Why coordinate compression appears in the code
+The provided code compresses all endpoints from all processed queries to small integers \([1..M]\). This is **not required** for correctness for the brute-force method (comparisons on original ints are fine), but it:
+- keeps values in 32-bit range comfortably
+- is convenient for SIMD comparisons (using 32-bit lanes)
+- avoids any chance of overflow when doing small offset tricks like comparing with `ql-1` and `qr+1`
+
+Compression steps:
+1. Read all queries.
+2. Collect all `L` and `R` values that appear.
+3. Sort unique coordinates.
+4. Replace each endpoint by its rank (1-indexed).
+
+Since compression preserves order, comparisons like \(l \ge L\) and \(r \le R\) remain valid.
+
+### SIMD acceleration (AVX2) in the scan
+To count contained segments fast, the code processes 8 segments at a time using 256-bit registers:
+
+For each batch of 8:
+- Load 8 `l` values and 8 `r` values
+- Compare `l >= L` and `r <= R` via vector comparisons
+- Combine masks, count how many lanes matched
+
+This reduces the constant factor substantially.
+
+### Complexity
+Let \(A\) be the maximum active segments (≤ 1000), \(Q\) queries (≤ 250k).
+
+- Each `+`: \(O(A)\) checks (vectorized, effectively faster)
+- Each `-`: \(O(A)\) search, then \(O(1)\) swap-pop
+
+Total: \(O(Q \cdot A)\) worst-case, but with small \(A\), passes.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>      // Includes almost all standard C++ headers
+#include <immintrin.h>        // AVX/AVX2 SIMD intrinsics
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input: "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input (assumes size is already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// All queries stored as (is_add, l, r).
+// is_add == true  -> '+'
+// is_add == false -> '-'
+vector<tuple<bool, int, int>> queries;
+
+// Reads all queries until EOF, also compresses coordinates into [1..M].
+void read() {
+    char type;
+    int l, r;
+
+    // Used ONLY while reading to ignore invalid deletions.
+    // Keeps track of which segments "exist" in the input stream so far.
+    multiset<pair<int, int>> segments;
+
+    // Collect all endpoints for coordinate compression.
+    vector<int> all_coords;
+
+    // Read until EOF: each line is "type l r"
+    while(cin >> type >> l >> r) {
+
+        if(type == '+') {
+            // Record this segment as present (multiset supports duplicates)
+            segments.insert({l, r});
+
+            // Store query as addition
+            queries.push_back({true, l, r});
+        } else {
+            // For deletion: remove only if such segment exists
+            auto it = segments.find({l, r});
+            if(it == segments.end()) {
+                // Ignore invalid deletion queries entirely
+                continue;
+            }
+            segments.erase(it);
+            queries.push_back({false, l, r});
+        }
+
+        // Collect endpoints for compression
+        all_coords.push_back(l);
+        all_coords.push_back(r);
+    }
+
+    // Sort and unique coordinates
+    sort(all_coords.begin(), all_coords.end());
+    all_coords.erase(unique(all_coords.begin(), all_coords.end()), all_coords.end());
+
+    // Replace each query's (l,r) with their compressed ranks (1-indexed)
+    for(auto& [add, l, r]: queries) {
+        l = (int)(lower_bound(all_coords.begin(), all_coords.end(), l) -
+                  all_coords.begin() + 1);
+        r = (int)(lower_bound(all_coords.begin(), all_coords.end(), r) -
+                  all_coords.begin() + 1);
+    }
+}
+
+// Ask GCC to optimize heavily; unroll loops.
+#pragma GCC optimize("O3,unroll-loops")
+// Compile assuming AVX2 support.
+#pragma GCC target("avx2")
+
+// Stores currently active segments and supports:
+// - add(l,r)
+// - remove(l,r) for one occurrence
+// - count_contained(ql,qr): count segments with l>=ql and r<=qr
+class ActiveSegments {
+  private:
+    // Parallel arrays holding left and right endpoints of active segments
+    vector<int> Ls;
+    vector<int> Rs;
+
+  public:
+    ActiveSegments() {
+        // Reserve some space to reduce reallocations
+        Ls.reserve(1024);
+        Rs.reserve(1024);
+    }
+
+    // Add a segment endpoints to the arrays
+    void add(int l, int r) {
+        Ls.push_back(l);
+        Rs.push_back(r);
+    }
+
+    // Remove one occurrence of (ql, qr) if present; return true if removed.
+    bool remove(int ql, int qr) {
+        size_t n = Ls.size(); // current active count
+        size_t i = 0;
+
+        // Broadcast ql and qr into all 8 lanes of AVX2 vectors
+        __m256i qlv = _mm256_set1_epi32(ql);
+        __m256i qrv = _mm256_set1_epi32(qr);
+
+        // Process 8 segments per iteration
+        for(; i + 7 < n; i += 8) {
+            // Load 8 left endpoints and 8 right endpoints (unaligned load ok)
+            __m256i lv = _mm256_loadu_si256((const __m256i*)(Ls.data() + i));
+            __m256i rv = _mm256_loadu_si256((const __m256i*)(Rs.data() + i));
+
+            // Compare equality lane-wise: lv == ql, rv == qr
+            __m256i matchL = _mm256_cmpeq_epi32(lv, qlv);
+            __m256i matchR = _mm256_cmpeq_epi32(rv, qrv);
+
+            // both lanes match only if both endpoints match
+            __m256i both = _mm256_and_si256(matchL, matchR);
+
+            // Convert comparison result into a bitmask
+            // movemask_epi8 returns 32-bit mask (one bit per byte)
+            int mask = _mm256_movemask_epi8(both);
+
+            if(mask != 0) {
+                // Find first set bit (lowest byte that matched)
+                int bit = __builtin_ctz(mask);
+
+                // Each int32 lane corresponds to 4 bytes -> divide by 4
+                size_t lane = bit >> 2;
+                size_t pos = i + lane;
+
+                // Remove by swapping with last and popping (O(1) removal)
+                Ls[pos] = Ls.back();
+                Ls.pop_back();
+                Rs[pos] = Rs.back();
+                Rs.pop_back();
+                return true;
+            }
+        }
+
+        // Handle remaining (<8) segments with scalar code
+        for(; i < n; ++i) {
+            if(Ls[i] == ql && Rs[i] == qr) {
+                // Same swap-with-last removal technique
+                Ls[i] = Ls.back();
+                Ls.pop_back();
+                Rs[i] = Rs.back();
+                Rs.pop_back();
+                return true;
+            }
+        }
+        return false; // not found
+    }
+
+    // Count how many active segments are contained in [ql, qr]:
+    // L >= ql and R <= qr.
+    int count_contained(int ql, int qr) const {
+        int cnt = 0;
+        size_t n = Ls.size();
+        size_t i = 0;
+
+        // Trick: AVX2 has signed ">" comparison, no direct ">=".
+        // L >= ql  <=>  L > (ql-1)
+        // R <= qr  <=>  (qr+1) > R
+        __m256i qlv = _mm256_set1_epi32(ql - 1);
+        __m256i qrv = _mm256_set1_epi32(qr + 1);
+
+        for(; i + 7 < n; i += 8) {
+            // Load 8 Ls and 8 Rs
+            __m256i lv = _mm256_loadu_si256((const __m256i*)&Ls[i]);
+            __m256i rv = _mm256_loadu_si256((const __m256i*)&Rs[i]);
+
+            // ge = (lv > ql-1)  which is equivalent to lv >= ql
+            __m256i ge = _mm256_cmpgt_epi32(lv, qlv);
+
+            // le = (qr+1 > rv)  which is equivalent to rv <= qr
+            __m256i le = _mm256_cmpgt_epi32(qrv, rv);
+
+            // both conditions must hold
+            __m256i both = _mm256_and_si256(ge, le);
+
+            // Build a byte mask for all lanes
+            int mask = _mm256_movemask_epi8(both);
+
+            // If one lane matches, it sets 4 bytes => 4 bits in the mask.
+            // So popcount(mask) counts bits; divide by 4 gives matched lanes.
+            cnt += __builtin_popcount(mask) >> 2;
+        }
+
+        // Remainder scalar loop
+        for(; i < n; ++i) {
+            if(Ls[i] >= ql && Rs[i] <= qr) {
+                ++cnt;
+            }
+        }
+
+        return cnt;
+    }
+};
+
+void solve() {
+    // Instead of heavy data structures (2D BIT / segment tree of ordered sets),
+    // leverage the constraint that <= 1000 segments are active at once.
+    // Brute force scanning is sufficient; AVX2 accelerates it.
+
+    ActiveSegments active;
+
+    // Process stored queries in order
+    for(auto [is_add, l, r]: queries) {
+        if(is_add) {
+            // Count how many existing segments are contained in the new one
+            int cnt = active.count_contained(l, r);
+            cout << cnt << '\n';
+
+            // Then insert the new segment
+            active.add(l, r);
+        } else {
+            // Remove one occurrence if present (otherwise no effect)
+            active.remove(l, r);
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // fast I/O
+    cin.tie(nullptr);
+
+    int T = 1; // single test
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) {
+        read();   // read all queries + coordinate compress
+        solve();  // process and output answers
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same idea, detailed comments)
+
+```python
+import sys
+
+def solve() -> None:
+    # Read all lines (queries until EOF)
+    lines = sys.stdin.buffer.read().splitlines()
+
+    queries = []          # list of (is_add: bool, L: int, R: int)
+    coords = []           # endpoints for coordinate compression
+
+    # To ignore invalid deletions, we need to know what segments are present
+    # while reading. In Python, we can use a dict counting occurrences.
+    present = {}  # (L,R) -> count
+
+    for line in lines:
+        if not line:
+            continue
+        t, ls, rs = line.split()
+        L = int(ls)
+        R = int(rs)
+
+        if t == b'+':
+            present[(L, R)] = present.get((L, R), 0) + 1
+            queries.append((True, L, R))
+            coords.append(L); coords.append(R)
+        else:
+            # Deletion: only keep this query if segment exists
+            c = present.get((L, R), 0)
+            if c == 0:
+                continue
+            if c == 1:
+                del present[(L, R)]
+            else:
+                present[(L, R)] = c - 1
+
+            queries.append((False, L, R))
+            coords.append(L); coords.append(R)
+
+    # Coordinate compression (optional for Python correctness, but matches C++)
+    coords = sorted(set(coords))
+    def comp(x: int) -> int:
+        # 1-indexed compressed coordinate
+        # Using binary search from bisect
+        import bisect
+        return bisect.bisect_left(coords, x) + 1
+
+    queries = [(is_add, comp(L), comp(R)) for (is_add, L, R) in queries]
+
+    # Active segments stored in two parallel lists.
+    # We'll remove by swapping with last.
+    Ls = []
+    Rs = []
+
+    out_lines = []
+
+    for is_add, L, R in queries:
+        if is_add:
+            # Count how many active segments are contained in [L, R]
+            cnt = 0
+            # A <= 1000, so linear scan is fine
+            for l, r in zip(Ls, Rs):
+                if l >= L and r <= R:
+                    cnt += 1
+            out_lines.append(str(cnt))
+
+            # Add the new segment
+            Ls.append(L)
+            Rs.append(R)
+        else:
+            # Remove one occurrence of (L, R) if present
+            # Linear search, then swap with last for O(1) removal.
+            n = len(Ls)
+            for i in range(n):
+                if Ls[i] == L and Rs[i] == R:
+                    # swap-with-last
+                    Ls[i] = Ls[-1]
+                    Rs[i] = Rs[-1]
+                    Ls.pop()
+                    Rs.pop()
+                    break
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Since at most 1000 segments are active at any time, we can process `+ L R` by scanning all active segments and counting those with `l >= L && r <= R`, then insert the new segment. For `- L R`, remove one matching occurrence if present, using “swap with last + pop” for O(1) deletion after an O(A) search. Total time is \(O(Q \cdot A)\) with \(A \le 1000\), which fits easily; the C++ code additionally vectorizes scans with AVX2 to speed up constant factors.

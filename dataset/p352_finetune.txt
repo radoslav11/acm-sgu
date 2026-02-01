@@ -1,0 +1,544 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+352. Beerland Attacks
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+In this task Berland again needs your help. Berland consists of N cities. Some pairs of the cities are connected by bidirectional roads. Each road is characterized by its length. The cities are numbered from 1 to N, the capital has number 1. From time to time the President of Beerland takes a tour around the country visiting all the cities. The tour is a sequence of trips. The goal of each trip is to visit one of the cities and return to the capital. During the trip the President chooses one of the shortest ways from the capital to the desired city.
+
+Long time ago, when Dijkstra algorithm seemed to be difficult, the royal security service created a secret set of roads T. Security officers created the T set in such a manner that it is possible to get by the shortest way from the capital to any city using only roads from the set T. Moreover, there is only one way from the capital to each city along the roads from the T set. The smartest citizens called this set "tree of the shortest paths".
+
+The President uses only roads from the T set during his trips. With years passing the set lost much of its secrecy. Moreover, recently Beerland extremists have come into possesion of the secret set.
+
+Now the royal security service has the new task. For each city except the capital it is required to find out vi (2≤ i≤ N), where vi is the length of the shortest path to the i-th city if the last road on the way to this city is attacked and the President can't use it any more.
+
+Input
+The first line of the input contains two integer numbers N and M (; ), where N is a number of the cities in the country and m is a number of the roads. The following M lines contain the description of the roads, one per line. Each road description is given as the four integer numbers aj, bj, lj, tj, where aj, bj are numbers of the cities connected by the road (1 ≤ aj,bj ≤ n; aj <> bj), lj — length of the road (1 ≤ lj ≤ 105), tj is equal to 1 if the road belongs to the shortest paths tree T and to 0 otherwise.
+
+The given set T satisfies the requirements listed in the problem statement. There can be more than one road between a pair of cities. All roads are bidirectional.
+
+Output
+Write to the output N-1 numbers separated by spaces. i-th number should be equal to the length of the shortest way from the capital to the city i+1 or -1 if the way doesn't exist.
+
+Example(s)
+sample input
+sample output
+5 9
+3 1 3 1
+1 4 2 1
+2 1 6 0
+2 3 4 0
+5 2 3 0
+3 2 2 1
+5 3 1 1
+3 5 2 0
+4 5 4 0
+6 7 8 5
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given an undirected weighted graph with \(N\) cities and \(M\) roads. City 1 is the capital.  
+Some roads are marked \(t=1\); these roads form a **shortest-path tree** \(T\) rooted at city 1: for every city \(v\), the unique path from 1 to \(v\) using only edges of \(T\) is a shortest path in the full graph.
+
+For every city \(v \neq 1\), let \((parent[v], v)\) be the **last tree edge** on the tree path from 1 to \(v\). This edge is “attacked” (removed). Output the length of the shortest path from 1 to \(v\) in the modified graph, or `-1` if unreachable.
+
+---
+
+## 2) Key observations
+
+1. **Tree distances are true shortest distances.**  
+   Let \(dist[u]\) be the distance from 1 to \(u\) along the tree \(T\). By definition of \(T\), this equals the shortest distance in the original graph.
+
+2. **Removing \((parent[u],u)\) cuts off the subtree.**  
+   Removing that edge disconnects the tree into:
+   - subtree \(S_u\): all nodes whose tree path to root goes through \(u\)
+   - the rest containing the root
+
+3. **Any reroute must enter the subtree via a non-tree edge.**  
+   After the cut, the only remaining way to reach any node in \(S_u\) from the root is to cross from outside \(S_u\) to inside \(S_u\) using at least one **non-tree** edge (\(t=0\)).
+
+4. **An optimal reroute uses at most one non-tree edge.**  
+   Take any path from 1 to \(u\) in the modified graph. Consider the **last time** it enters \(S_u\). From that point onward it stays inside \(S_u\), and the best way to reach \(u\) is along tree edges (since tree paths are shortest inside the tree). So we only need one “crossing” non-tree edge.
+
+5. **Reformulate the answer using a value per non-tree edge.**  
+   For a non-tree edge \((a,b,w)\), define:
+   \[
+   val(a,b)=dist[a]+dist[b]+w
+   \]
+   For node \(u\), the best reroute after cutting \((parent[u],u)\) is:
+   \[
+   answer[u] = \min_{\text{non-tree }(x,y)\text{ crosses cut of }S_u} val(x,y) - dist[u]
+   \]
+   If no non-tree edge crosses the cut, answer is `-1`.
+
+6. **Which subtrees does a non-tree edge “cross”? Use LCA + subtree aggregation.**  
+   For edge endpoints \(a,b\) with \(c=LCA(a,b)\) in tree \(T\):
+   - add \(val\) to node \(a\)
+   - add \(val\) to node \(b\)
+   - remove \(val\) twice at node \(c\)
+
+   Then, if you aggregate these multisets bottom-up, the multiset stored at node \(u\) contains exactly the \(val\)’s of non-tree edges with **exactly one endpoint in \(S_u\)** (i.e., crossing the cut).
+
+7. **Efficient aggregation via DSU-on-tree (small-to-large).**  
+   Each node maintains a multiset of candidate \(val\)’s from its subtree. Merge children’s multisets into the parent, always merging smaller into larger.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Build the tree and compute `parent[]`, `dist[]`
+- Read all edges; split into:
+  - `tree` edges (t=1) to build adjacency of \(T\)
+  - `nontree` edges (t=0) stored separately
+- DFS/BFS on the tree from root 1:
+  - `parent[v]` = parent in rooted tree
+  - `dist[v]` = distance from root along tree
+
+### Step B: Prepare LCA on the tree
+We need fast \(LCA(u,v)\) for every non-tree edge. Use:
+- Euler tour of tree + RMQ (sparse table) to answer LCA in \(O(1)\)
+- Preprocessing \(O(N\log N)\)
+
+### Step C: Create “events” for each non-tree edge
+For each undirected non-tree edge \((a,b,w)\):
+- \(val = dist[a]+dist[b]+w\)
+- \(c=LCA(a,b)\)
+- `addv[a].push(val)`, `addv[b].push(val)`
+- `remv[c].push(val)` twice
+
+### Step D: DSU-on-tree to compute answer for every node
+Postorder DFS on the tree:
+- Each node returns a pointer/reference to a multiset representing all active `val` candidates for its subtree.
+- Merge children into current (small-to-large).
+- Insert all `addv[u]`, erase all `remv[u]` (erase one occurrence each time).
+- For \(u \neq 1\):
+  - if multiset empty ⇒ `ans[u] = -1`
+  - else `ans[u] = minVal - dist[u]`
+
+### Complexity
+- LCA preprocessing: \(O(N\log N)\)
+- Processing non-tree edges: \(O(M)\) LCAs
+- DSU-on-tree merges + multiset ops: about \(O((N+M)\log (N+M))\)
+Fits typical constraints for this classical problem.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Beerland Attacks (p352) solution:
+
+  - Tree edges (t=1) form a shortest path tree from node 1.
+  - For each node u != 1, remove (parent[u], u) and find shortest distance to u.
+  - Key trick:
+      For each non-tree edge (a,b,w), define val = dist[a] + dist[b] + w.
+      For each subtree S_u, best alternative is min(val crossing cut) - dist[u].
+    We compute "crossing cut" candidates using:
+      add val at a and b, remove val twice at lca(a,b).
+    Then aggregate multisets bottom-up with DSU-on-tree.
+*/
+
+template<class T, T (*merge_fn)(T, T)>
+struct SparseTable {
+    int n = 0;
+    vector<int> lg;
+    vector<vector<T>> st;
+
+    void init(const vector<T>& a) {
+        n = (int)a.size();
+        lg.assign(n + 1, 0);
+        for (int i = 2; i <= n; i++) lg[i] = lg[i / 2] + 1;
+
+        st.assign(lg[n] + 1, vector<T>(n));
+        st[0] = a;
+
+        for (int j = 1; (1 << j) <= n; j++) {
+            for (int i = 0; i + (1 << j) <= n; i++) {
+                st[j][i] = merge_fn(st[j-1][i], st[j-1][i + (1 << (j-1))]);
+            }
+        }
+    }
+
+    // query on [l, r] inclusive
+    T query(int l, int r) const {
+        int j = lg[r - l + 1];
+        return merge_fn(st[j][l], st[j][r - (1 << j) + 1]);
+    }
+};
+
+struct LCA_RMQ {
+    int n = 0;
+    vector<vector<int>> adj;         // tree adjacency (unweighted)
+    vector<int> first, depth;
+    vector<pair<int,int>> euler;     // (depth, node)
+
+    static pair<int,int> mn(pair<int,int> a, pair<int,int> b) { return min(a,b); }
+    SparseTable<pair<int,int>, mn> rmq;
+
+    LCA_RMQ() {}
+    LCA_RMQ(int n): n(n), adj(n) {}
+
+    void init(int _n) { n = _n; adj.assign(n, {}); }
+    void add_edge(int u, int v) { adj[u].push_back(v); adj[v].push_back(u); }
+
+    void dfs(int u, int p, int d) {
+        first[u] = (int)euler.size();
+        depth[u] = d;
+        euler.push_back({d, u});
+        for (int v : adj[u]) if (v != p) {
+            dfs(v, u, d+1);
+            euler.push_back({d, u});
+        }
+    }
+
+    void prepare(int root = 0) {
+        first.assign(n, -1);
+        depth.assign(n, 0);
+        euler.clear();
+        dfs(root, -1, 0);
+        rmq.init(euler);
+    }
+
+    int lca(int u, int v) const {
+        int a = first[u], b = first[v];
+        if (a > b) swap(a, b);
+        return rmq.query(a, b).second;
+    }
+};
+
+int n, m;
+vector<vector<pair<int,int>>> treeAdj;     // (to, w) for t=1 edges
+vector<vector<pair<int,int>>> nonTreeAdj;  // (to, w) for t=0 edges
+
+vector<int> parent;
+vector<long long> distRoot;
+
+vector<vector<long long>> addv, remv; // events
+vector<long long> ans;
+
+LCA_RMQ lcaTool;
+
+void dfs_build(int u, int p) {
+    for (auto [v, w] : treeAdj[u]) {
+        if (v == p) continue;
+        parent[v] = u;
+        distRoot[v] = distRoot[u] + w;
+        dfs_build(v, u);
+    }
+}
+
+// DSU-on-tree via small-to-large merging of multisets.
+// Returns a heap-allocated multiset pointer representing active vals in subtree u.
+multiset<long long>* dfs_dsu(int u) {
+    auto* cur = new multiset<long long>();
+
+    for (auto [v, w] : treeAdj[u]) {
+        if (v == parent[u]) continue;
+        multiset<long long>* child = dfs_dsu(v);
+
+        // small-to-large: keep cur as the larger container
+        if (child->size() > cur->size()) swap(cur, child);
+
+        cur->insert(child->begin(), child->end());
+        delete child;
+    }
+
+    // apply + events at u
+    for (long long x : addv[u]) cur->insert(x);
+
+    // apply - events at u (erase one occurrence each time)
+    for (long long x : remv[u]) {
+        auto it = cur->find(x);
+        if (it != cur->end()) cur->erase(it);
+    }
+
+    // compute answer for non-root
+    if (u != 0) {
+        if (cur->empty()) ans[u] = -1;
+        else ans[u] = *cur->begin() - distRoot[u];
+    }
+    return cur;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n >> m;
+    treeAdj.assign(n, {});
+    nonTreeAdj.assign(n, {});
+    addv.assign(n, {});
+    remv.assign(n, {});
+    parent.assign(n, -1);
+    distRoot.assign(n, 0);
+    ans.assign(n, -1);
+
+    lcaTool.init(n);
+
+    for (int i = 0; i < m; i++) {
+        int a, b, w, t;
+        cin >> a >> b >> w >> t;
+        --a; --b;
+        if (t == 1) {
+            treeAdj[a].push_back({b, w});
+            treeAdj[b].push_back({a, w});
+            lcaTool.add_edge(a, b);
+        } else {
+            nonTreeAdj[a].push_back({b, w});
+            nonTreeAdj[b].push_back({a, w});
+        }
+    }
+
+    // compute parent/dist on the shortest-path tree
+    dfs_build(0, -1);
+
+    // prepare LCA
+    lcaTool.prepare(0);
+
+    // create events from non-tree edges; process each undirected edge once (u < v)
+    for (int u = 0; u < n; u++) {
+        for (auto [v, w] : nonTreeAdj[u]) {
+            if (u < v) {
+                long long val = distRoot[u] + distRoot[v] + w;
+                int c = lcaTool.lca(u, v);
+                addv[u].push_back(val);
+                addv[v].push_back(val);
+                remv[c].push_back(val);
+                remv[c].push_back(val);
+            }
+        }
+    }
+
+    // DSU-on-tree traversal to compute all answers
+    multiset<long long>* rootSet = dfs_dsu(0);
+    delete rootSet;
+
+    // output answers for cities 2..N
+    for (int i = 1; i < n; i++) {
+        cout << ans[i] << (i + 1 < n ? ' ' : '\n');
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Python needs care: we need a “multiset with get-min” and efficient small-to-large merging.  
+Below uses `Counter + heap` with lazy deletions, and merges counters small-to-large.
+
+```python
+import sys
+sys.setrecursionlimit(1_000_000)
+
+import heapq
+from collections import Counter
+
+# -------- LCA via Euler tour + Sparse Table (RMQ) --------
+
+class LCA_RMQ:
+    def __init__(self, n):
+        self.n = n
+        self.adj = [[] for _ in range(n)]
+        self.euler = []
+        self.first = [-1] * n
+        self.depth = [0] * n
+        self.log = []
+        self.st = []
+
+    def add_edge(self, u, v):
+        self.adj[u].append(v)
+        self.adj[v].append(u)
+
+    def _dfs(self, u, p, d):
+        self.first[u] = len(self.euler)
+        self.depth[u] = d
+        self.euler.append((d, u))
+        for v in self.adj[u]:
+            if v == p:
+                continue
+            self._dfs(v, u, d + 1)
+            self.euler.append((d, u))
+
+    def prepare(self, root=0):
+        self.euler = []
+        self._dfs(root, -1, 0)
+        m = len(self.euler)
+
+        self.log = [0] * (m + 1)
+        for i in range(2, m + 1):
+            self.log[i] = self.log[i // 2] + 1
+
+        kmax = self.log[m]
+        self.st = [self.euler[:]]
+        j = 1
+        while (1 << j) <= m:
+            prev = self.st[j - 1]
+            half = 1 << (j - 1)
+            curr = []
+            # RMQ for minimum (depth, node)
+            for i in range(0, m - (1 << j) + 1):
+                a = prev[i]
+                b = prev[i + half]
+                curr.append(a if a < b else b)
+            self.st.append(curr)
+            j += 1
+
+    def lca(self, u, v):
+        a, b = self.first[u], self.first[v]
+        if a > b:
+            a, b = b, a
+        length = b - a + 1
+        k = self.log[length]
+        left = self.st[k][a]
+        right = self.st[k][b - (1 << k) + 1]
+        return left[1] if left < right else right[1]
+
+# -------- Multiset with min + merge (small-to-large) --------
+
+class MultiSetMin:
+    """
+    Multiset supporting:
+      - add(x)
+      - discard_one(x) (if exists)
+      - get_min() (returns minimum element or None)
+      - merge_from(other): merges other's counts into self
+    Implementation: Counter + min-heap (lazy deletion).
+    """
+    __slots__ = ("cnt", "heap", "size")
+
+    def __init__(self):
+        self.cnt = Counter()
+        self.heap = []
+        self.size = 0
+
+    def add(self, x):
+        self.cnt[x] += 1
+        heapq.heappush(self.heap, x)
+        self.size += 1
+
+    def discard_one(self, x):
+        if self.cnt[x] > 0:
+            self.cnt[x] -= 1
+            self.size -= 1
+
+    def get_min(self):
+        while self.heap and self.cnt[self.heap[0]] == 0:
+            heapq.heappop(self.heap)
+        return self.heap[0] if self.heap else None
+
+    def merge_from(self, other):
+        # merge other's counter into self (assume self is bigger)
+        for x, c in other.cnt.items():
+            if c:
+                self.cnt[x] += c
+                self.size += c
+                # push once; heap + counter will still work
+                heapq.heappush(self.heap, x)
+
+# -------- Main solve --------
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    tree = [[] for _ in range(n)]      # t=1 edges: (v, w)
+    nontree = [[] for _ in range(n)]   # t=0 edges: (v, w)
+    lca = LCA_RMQ(n)
+
+    for _ in range(m):
+        a = int(next(it)) - 1
+        b = int(next(it)) - 1
+        w = int(next(it))
+        t = int(next(it))
+        if t == 1:
+            tree[a].append((b, w))
+            tree[b].append((a, w))
+            lca.add_edge(a, b)
+        else:
+            nontree[a].append((b, w))
+            nontree[b].append((a, w))
+
+    # parent/dist on the tree
+    parent = [-1] * n
+    dist = [0] * n
+    stack = [(0, -1)]
+    order = []
+    while stack:
+        u, p = stack.pop()
+        parent[u] = p
+        order.append(u)
+        for v, w in tree[u]:
+            if v == p:
+                continue
+            dist[v] = dist[u] + w
+            stack.append((v, u))
+
+    lca.prepare(0)
+
+    addv = [[] for _ in range(n)]
+    remv = [[] for _ in range(n)]
+
+    # process each undirected non-tree edge once (u < v)
+    for u in range(n):
+        for v, w in nontree[u]:
+            if u < v:
+                val = dist[u] + dist[v] + w
+                c = lca.lca(u, v)
+                addv[u].append(val)
+                addv[v].append(val)
+                remv[c].append(val)
+                remv[c].append(val)
+
+    ans = [-1] * n
+
+    sys.setrecursionlimit(1_000_000)
+
+    def dfs(u):
+        cur = MultiSetMin()
+
+        # merge children
+        for v, _w in tree[u]:
+            if v == parent[u]:
+                continue
+            child = dfs(v)
+            if child.size > cur.size:
+                cur, child = child, cur
+            cur.merge_from(child)
+
+        # apply events
+        for x in addv[u]:
+            cur.add(x)
+        for x in remv[u]:
+            cur.discard_one(x)
+
+        if u != 0:
+            mn = cur.get_min()
+            ans[u] = -1 if mn is None else (mn - dist[u])
+        return cur
+
+    dfs(0)
+
+    # output for nodes 2..N
+    sys.stdout.write(" ".join(str(ans[i]) for i in range(1, n)) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+This Python version matches the C++ logic; performance depends on input size and judge speed, but the algorithmic structure is the same (LCA + DSU-on-tree with min-multiset).

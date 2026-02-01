@@ -1,0 +1,405 @@
+## 1) Concise abridged problem statement
+
+A round table has 13 sectors (1..13). Initially each sector has an envelope. Envelopes in sectors 1..12 contain fixed questions; sector 13 is “Internet” (empty envelope) meaning the question is randomly chosen from \(N\) Internet questions.
+
+Each round:
+1. The arrow lands uniformly on one of 13 sectors.
+2. If that sector’s envelope is already removed, rotate counter-clockwise until the first sector that still has an envelope; that envelope is chosen.
+3. Remove it. The club team answers: with probability \(p_s\) if sector \(s \in [1,12]\), or with probability equal to the average Internet success probability if sector 13.
+4. If answered correctly, club gets a point; otherwise viewers get a point.
+
+Game ends when either team reaches 6 points. Output probabilities (at least 3 decimals) of final scores:
+`6:0, 6:1, ..., 6:5, 5:6, 4:6, ..., 0:6` (12 values).
+
+Constraints: \(N \le 1000\). Time limit is tight.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observations
+
+1. **Which envelope is chosen depends only on which envelopes remain**, not on past answers. So we can treat the “envelope removal process” as a stochastic process driven by the arrow and the “next available counter-clockwise” rule.
+
+2. **Each of the 12 normal envelopes can be removed at most once**, and the Internet envelope (sector 13) can also be removed at most once (it is an envelope too). Therefore the set of removed envelopes can be represented by a bitmask of size 13.
+
+3. **The score only matters up to 6.** Game stops as soon as club score or viewers score reaches 6. So we only need score states \((c,v)\) with \(0 \le c,v \le 5\) in the DP; reaching 6 is an absorbing “finish” that contributes directly to the final answer distribution.
+
+4. **Internet question probability**: when sector 13 is chosen, a random Internet question is selected uniformly among the \(N\) given probabilities. Thus the probability the club answers correctly is simply the average:
+\[
+p_{internet} = \frac{1}{N}\sum_{i=1}^N p_i
+\]
+No other detail about the Internet questions matters.
+
+### State definition
+
+Let:
+
+- `mask` (0..8191) represent which envelopes are already removed among sectors 1..12 and sector 13:
+  - bit \(0..11\): sectors 1..12
+  - bit 12: sector 13
+- `dp[mask][c][v]` = probability that we are in a situation where:
+  - exactly those envelopes in `mask` are already removed,
+  - club has `c` points,
+  - viewers have `v` points,
+  - and **no one has reached 6 yet** (so `c,v` are in 0..5).
+
+Initial state: `dp[0][0][0] = 1`.
+
+We maintain an answer array `ans[12]` for the probabilities of terminal scores in the required order:
+- indices 0..5 correspond to `6:0..6:5` (club wins)
+- indices 6..11 correspond to `5:6..0:6` (viewers win)
+
+### Transition: which sector is effectively chosen?
+
+A round begins by landing uniformly on a sector \(t \in \{1..13\}\). If \(t\) is already removed, we move counter-clockwise until we find the first remaining envelope; call that final chosen sector \(f(t)\). Then we remove \(f(t)\).
+
+So for a fixed `mask`, the mapping \(t \mapsto f(t)\) is deterministic. We need the probability that the chosen envelope is sector `s`:
+\[
+P(\text{chosen}=s) = \frac{\#\{t: f(t)=s\}}{13}
+\]
+
+Naively computing \(f(t)\) for each \(t\) by scanning forward could be \(O(13^2)\) per DP state, which is wasteful but still small; however the time limit is very tight, and DP has up to ~1.8M states, so even constant factors matter.
+
+The provided solution computes these counts efficiently in **one pass**:
+
+- First find `wrap_target`: the first available sector when scanning 1..13; this is the sector we would land on if we start at 13 and rotate CCW past the end (wrap-around).
+- Then scan `s` from 13 down to 1, maintaining `target` = closest available sector at or after `s` (counter-clockwise direction in the problem’s numbering). If sector `s` is available, update `target = s`. For each `s`, increment `freq[target]`.
+- Result: `freq[x]` equals how many initial landings lead to choosing sector `x`.
+
+This works because “rotate CCW to first available” means:
+- if you land on a removed sector `s`, the chosen sector is the first available sector encountered when moving `s, s+1, ...` with wrap.
+
+### Score update
+
+For each possible chosen sector `s` with `freq[s] > 0`:
+
+- `land = dp[mask][c][v] * (freq[s] / 13.0)`
+- Success probability:
+  - if `s` in 1..12: `p = sector_prob[s-1]`
+  - if `s` is 13: `p = avg_internet`
+- New mask: mark this envelope removed.
+
+Then:
+- With probability `p`, club gains a point:
+  - if `c+1 == 6`, game ends with score `6:v` → add to `ans[v]`
+  - else add to `dp[new_mask][c+1][v]`
+- With probability `1-p`, viewers gain a point:
+  - if `v+1 == 6`, game ends with score `c:6` → map to output index `6 + (5 - c)` (because we output `5:6,4:6,...,0:6`)
+  - else add to `dp[new_mask][c][v+1]`
+
+### Complexity
+
+- Masks: \(2^{13} = 8192\)
+- Score states: \(6 \times 6 = 36\)
+- For each state, process up to 13 sectors.
+
+Total operations ~ \(8192 \cdot 36 \cdot 13 \approx 3.8\) million lightweight steps, fine in C++.
+
+Memory: `8192 * 6 * 6` doubles ~ 8192*36*8 ≈ 2.36 MB.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Pulls in almost all standard headers (fast for contests)
+using namespace std;
+
+// Helper: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper: read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper: read a vector by reading each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {             // iterate by reference so we can assign into the vector
+        in >> x;
+    }
+    return in;
+};
+
+// Helper: print a vector with spaces (not used in final output, but handy)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;                             // number of Internet questions
+vector<double> sector_prob;        // size 12: probabilities for sectors 1..12
+vector<double> internet_prob;      // size n: probabilities for each Internet question
+
+void read() {
+    cin >> n;                      // read N
+    sector_prob.resize(12);        // allocate 12 sector probabilities
+    cin >> sector_prob;            // read them
+    internet_prob.resize(n);       // allocate N internet probabilities
+    cin >> internet_prob;          // read them
+}
+
+void solve() {
+    // Compute average probability of answering an Internet question correctly.
+    // Since the question is picked uniformly at random from N, only the average matters.
+    double avg_internet = 0;
+    for(auto x: internet_prob) {
+        avg_internet += x;
+    }
+    avg_internet /= n;
+
+    // dp[mask][cs][vs] = probability of being in state:
+    // mask: which envelopes are removed (bits 0..11 => sectors 1..12, bit 12 => sector 13)
+    // cs: club score (0..5, because if it reaches 6 we terminate)
+    // vs: viewers score (0..5)
+    //
+    // 8192 = 2^13 possible masks.
+    vector<vector<vector<double>>> dp(
+        8192, vector<vector<double>>(6, vector<double>(6, 0.0))
+    );
+    dp[0][0][0] = 1.0;             // start: no envelopes removed, score 0:0
+
+    // ans[0..11] correspond to:
+    // 0..5:  6:0..6:5
+    // 6..11: 5:6..0:6
+    vector<double> ans(12, 0.0);
+
+    // Iterate over all masks and score states and push probability forward.
+    for(int mask = 0; mask < 8192; mask++) {
+        for(int cs = 0; cs < 6; cs++) {
+            for(int vs = 0; vs < 6; vs++) {
+                double cur = dp[mask][cs][vs]; // probability mass in this state
+                if(cur < 1e-18) {             // tiny -> skip to save time
+                    continue;
+                }
+
+                // Lambda: check whether sector s still has an envelope.
+                // s==13 is stored in bit 12; sector k (1..12) in bit (k-1).
+                auto is_avail = [&](int s) {
+                    return (s == 13) ? !(mask & (1 << 12))
+                                     : !(mask & (1 << (s - 1)));
+                };
+
+                // Find the first available sector when scanning 1..13.
+                // This is the sector we wrap to if we start searching after 13.
+                int wrap_target = -1;
+                for(int s = 1; s <= 13; s++) {
+                    if(is_avail(s)) {
+                        wrap_target = s;
+                        break;
+                    }
+                }
+                if(wrap_target < 0) {
+                    // No available envelopes -> shouldn't really happen before game ends,
+                    // but safe to ignore.
+                    continue;
+                }
+
+                // freq[x] = how many initial arrow landings (out of 13) lead to choosing x
+                int freq[14] = {};            // indices 1..13 used
+                int target = wrap_target;     // current "next available" while scanning backwards
+
+                // Scan starting positions s = 13..1, maintaining:
+                // target = closest available sector encountered so far in [s..13] with wrap.
+                for(int s = 13; s >= 1; s--) {
+                    if(is_avail(s)) {         // if sector s itself is available, it becomes the target
+                        target = s;
+                    }
+                    freq[target]++;           // landing at s ultimately chooses 'target'
+                }
+
+                // Now process each possible chosen sector s with nonzero frequency.
+                for(int s = 1; s <= 13; s++) {
+                    if(!freq[s]) {            // no landing maps to this chosen sector
+                        continue;
+                    }
+
+                    // Probability we are in this state AND this round chooses sector s:
+                    double land = cur * freq[s] / 13.0;
+
+                    // Probability club answers correctly depending on chosen sector.
+                    double p = (s <= 12) ? sector_prob[s - 1] : avg_internet;
+
+                    // Update mask: remove the chosen envelope (sector 13 stored in bit 12).
+                    int new_mask = mask | (1 << (s <= 12 ? s - 1 : 12));
+
+                    // Case 1: club answers correctly -> club score increases
+                    if(cs + 1 == 6) {
+                        // Game ends with score 6:vs
+                        ans[vs] += land * p;
+                    } else {
+                        // Continue game
+                        dp[new_mask][cs + 1][vs] += land * p;
+                    }
+
+                    // Case 2: club answers incorrectly -> viewers score increases
+                    if(vs + 1 == 6) {
+                        // Game ends with score cs:6.
+                        // Output ordering for viewer wins is 5:6,4:6,...,0:6
+                        // So index = 6 + (5 - cs)
+                        ans[6 + 5 - cs] += land * (1.0 - p);
+                    } else {
+                        // Continue game
+                        dp[new_mask][cs][vs + 1] += land * (1.0 - p);
+                    }
+                }
+            }
+        }
+    }
+
+    // Print answers with 3 digits after decimal (or more, but fixed to 3 here).
+    cout << fixed << setprecision(3);
+    for(int i = 0; i < 12; i++) {
+        cout << ans[i] << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // speed up I/O
+    cin.tie(nullptr);                 // untie cin/cout
+
+    int T = 1;                        // single test case in this problem
+    // cin >> T;                      // (unused)
+    for(int test = 1; test <= T; test++) {
+        read();                       // read input
+        // cout << "Case #" << test << ": "; // (unused)
+        solve();                      // run DP and print
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    n = int(next(it))
+
+    # Read 12 sector probabilities for sectors 1..12
+    sector = [float(next(it)) for _ in range(12)]
+
+    # Read N Internet probabilities and compute their average
+    internet_probs = [float(next(it)) for _ in range(n)]
+    avg_internet = sum(internet_probs) / n
+
+    # dp[mask][c][v]:
+    # mask in [0, 2^13), c,v in [0..5]
+    # Using a flat list is faster in Python than deep nested lists of lists,
+    # but 3D list is still OK at this size; we’ll use a flattened array for speed.
+    #
+    # index = (mask * 36) + (c * 6) + v
+    M = 1 << 13
+    dp = [0.0] * (M * 36)
+    dp[0] = 1.0  # mask=0, c=0, v=0
+
+    ans = [0.0] * 12  # required final score probabilities
+
+    def idx(mask: int, c: int, v: int) -> int:
+        return mask * 36 + c * 6 + v
+
+    for mask in range(M):
+        # Precompute availability of each sector 1..13 for this mask
+        # bit 0..11 => sectors 1..12, bit 12 => sector 13
+        avail = [False] * 14
+        for s in range(1, 13):
+            avail[s] = (mask & (1 << (s - 1))) == 0
+        avail[13] = (mask & (1 << 12)) == 0
+
+        # Find wrap_target: first available sector in 1..13
+        wrap_target = -1
+        for s in range(1, 14):
+            if avail[s]:
+                wrap_target = s
+                break
+
+        # If none available, nothing to do
+        if wrap_target == -1:
+            continue
+
+        # Compute freq[s]: number of initial landings mapping to chosen sector s
+        freq = [0] * 14
+        target = wrap_target
+        for s in range(13, 0, -1):
+            if avail[s]:
+                target = s
+            freq[target] += 1
+
+        for c in range(6):
+            base_c = mask * 36 + c * 6
+            for v in range(6):
+                cur = dp[base_c + v]
+                if cur < 1e-18:
+                    continue
+
+                # Try each possible chosen sector s
+                for s in range(1, 14):
+                    f = freq[s]
+                    if f == 0:
+                        continue
+
+                    # Probability that this round chooses sector s
+                    land = cur * (f / 13.0)
+
+                    # Probability club answers correctly
+                    p = sector[s - 1] if s <= 12 else avg_internet
+
+                    # Update mask by removing this sector's envelope
+                    if s <= 12:
+                        new_mask = mask | (1 << (s - 1))
+                    else:
+                        new_mask = mask | (1 << 12)
+
+                    # Club correct answer
+                    if c + 1 == 6:
+                        # final score 6:v
+                        ans[v] += land * p
+                    else:
+                        dp[idx(new_mask, c + 1, v)] += land * p
+
+                    # Club wrong answer (viewers gain point)
+                    if v + 1 == 6:
+                        # final score c:6; output order is 5:6..0:6
+                        ans[6 + (5 - c)] += land * (1.0 - p)
+                    else:
+                        dp[idx(new_mask, c, v + 1)] += land * (1.0 - p)
+
+    out = "\n".join(f"{x:.3f}" for x in ans)
+    sys.stdout.write(out)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Compute \(p_{internet} = \text{average of the } N\text{ Internet probabilities}\).
+- DP over states `(mask, c, v)` where `mask` (13 bits) marks removed envelopes (1..12 and 13), and `c,v` are scores 0..5. Start `dp[0][0][0]=1`.
+- For a fixed `mask`, determine how many of the 13 initial arrow landings lead to each finally chosen sector `s` after the “rotate CCW to next available” rule. Compute counts `freq[s]` in O(13) by scanning sectors 13..1 while tracking the nearest available target (with wrap using the first available sector).
+- Transition: for each `s` with `freq[s]>0`,
+  - `land = dp * freq[s]/13`
+  - success prob `p = sector_prob[s]` for 1..12 else `p_internet`
+  - remove `s` in `new_mask`
+  - add `land*p` to `(new_mask, c+1, v)` or to answer `6:v` if `c+1==6`
+  - add `land*(1-p)` to `(new_mask, c, v+1)` or to answer `c:6` if `v+1==6`
+- Output answer probabilities in order: `6:0..6:5, 5:6..0:6`.

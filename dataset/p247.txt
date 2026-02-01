@@ -1,0 +1,582 @@
+## 1) Abridged problem statement
+
+For each test case, given an odd prime \(P\) (\(1<P<1000\)), consider the set \(\{1,2,\dots,2P\}\). Count how many ways to choose **exactly \(P\) distinct numbers** such that their sum is divisible by \(P\). Output the count for each test.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation
+We are counting \(P\)-element subsets \(S \subset \{1,\dots,2P\}\) such that
+\[
+\sum_{x\in S} x \equiv 0 \pmod P.
+\]
+The total number of \(P\)-subsets is \(\binom{2P}{P}\), which is huge, so we need a number-theoretic counting argument rather than DP.
+
+### Two “special” valid subsets
+Split the numbers into two blocks:
+- Small block: \(A=\{1,2,\dots,P\}\)
+- Large block: \(B=\{P+1,P+2,\dots,2P\}\)
+
+Both are size \(P\). Their sums are:
+- \(\sum_{i=1}^P i = \frac{P(P+1)}{2}\), divisible by \(P\).
+- \(\sum_{i=P+1}^{2P} i = \sum_{i=1}^{2P} i - \sum_{i=1}^P i\) is also divisible by \(P\).
+
+So at least **2** subsets are good: \(A\) and \(B\).
+
+### Grouping the remaining subsets into blocks of size \(P\)
+Now take any other \(P\)-subset \(S\) (so \(S\neq A\) and \(S\neq B\)). Let:
+- \(k = |S \cap A|\), the count of chosen numbers from \(\{1,\dots,P\}\).
+
+Because \(S\) is not all-small and not all-large, we have:
+\[
+1 \le k \le P-1.
+\]
+
+#### Define a “shift” operation on the small elements
+For each \(i \in \{0,1,\dots,P-1\}\), create a new subset \(S_i\) from \(S\) by:
+- Keeping all chosen numbers in \(B\) unchanged.
+- Replacing each chosen number \(x \in S\cap A\) with
+  \[
+  x' = ((x-1+i)\bmod P)+1,
+  \]
+  i.e., shift within \(\{1,\dots,P\}\) cyclically.
+
+This produces \(P\) subsets \(S_0,S_1,\dots,S_{P-1}\), all of size \(P\).
+
+#### These \(P\) subsets are all distinct
+Shifting by different \(i\) yields different sets of small elements (cyclic shift on residues mod \(P\)), and the large elements are fixed, so \(S_i\) differ.
+
+So we have a group (“orbit”) of exactly \(P\) distinct subsets.
+
+### How the sum modulo \(P\) changes
+When we shift the \(k\) small elements by \(i\), each small element increases by \(i\) modulo \(P\), so the total sum increases by:
+\[
+k\cdot i \pmod P.
+\]
+Therefore,
+\[
+\sum(S_i) \equiv \sum(S_0) + k i \pmod P.
+\]
+
+### Why exactly one subset per group is good
+Since \(P\) is prime and \(1\le k \le P-1\), we have \(\gcd(k,P)=1\). Thus multiplication by \(k\) permutes residues modulo \(P\). As \(i\) runs from \(0\) to \(P-1\), the values \(k i \bmod P\) hit every residue exactly once. Hence the \(P\) sums \(\sum(S_i) \bmod P\) are all different and cover all residues, so **exactly one** of them is congruent to \(0\).
+
+So: among these \(P\) subsets, exactly **1** is good.
+
+### Counting
+- Total subsets: \(\binom{2P}{P}\)
+- Special ones: 2 good subsets (\(A\), \(B\))
+- Remaining subsets: \(\binom{2P}{P}-2\), partitioned into groups of size \(P\)
+- Each group contributes exactly 1 good subset
+
+So the total number of good subsets is:
+\[
+2 + \frac{\binom{2P}{P}-2}{P}.
+\]
+
+### Big integer need
+For \(P\) up to 999, \(\binom{2P}{P}\) is enormous, so we must use big integers. The provided C++ code includes a full big integer implementation and computes:
+1. \(C=\binom{2P}{P}\) via multiplicative formula
+2. Answer \(= 2 + \frac{C-2}{P}\)
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+// Big integer internal base: each "digit" stores 9 decimal digits.
+const int base = 1000000000;
+const int base_digits = 9;
+
+// Big integer class supporting +, -, *, /, %, comparisons, etc.
+struct bigint {
+    vector<int> z;  // digits in base 'base', least-significant first
+    int sign;       // +1 or -1
+
+    bigint() : sign(1) {}
+    bigint(long long v) { *this = v; }
+    bigint(const string& s) { read(s); }
+
+    // Copy assignment
+    void operator=(const bigint& v) {
+        sign = v.sign;
+        z = v.z;
+    }
+
+    // Assign from 64-bit integer
+    void operator=(long long v) {
+        sign = 1;
+        if (v < 0) { sign = -1; v = -v; }
+        z.clear();
+        // Store absolute value in base chunks
+        for (; v > 0; v /= base) z.push_back(v % base);
+    }
+
+    // Addition
+    bigint operator+(const bigint& v) const {
+        // If same sign, add magnitudes
+        if (sign == v.sign) {
+            bigint res = v; // start from v, then add this
+            for (int i = 0, carry = 0;
+                 i < (int)max(z.size(), v.z.size()) || carry; ++i) {
+                if (i == (int)res.z.size()) res.z.push_back(0);
+                res.z[i] += carry + (i < (int)z.size() ? z[i] : 0);
+                carry = (res.z[i] >= base);
+                if (carry) res.z[i] -= base;
+            }
+            return res;
+        }
+        // Different signs => subtraction
+        return *this - (-v);
+    }
+
+    // Subtraction
+    bigint operator-(const bigint& v) const {
+        if (sign == v.sign) {
+            // If |this| >= |v|, subtract directly
+            if (abs() >= v.abs()) {
+                bigint res = *this;
+                for (int i = 0, carry = 0; i < (int)v.z.size() || carry; ++i) {
+                    res.z[i] -= carry + (i < (int)v.z.size() ? v.z[i] : 0);
+                    carry = (res.z[i] < 0);
+                    if (carry) res.z[i] += base;
+                }
+                res.trim(); // remove leading zeros
+                return res;
+            }
+            // Otherwise result is negative of (v - this)
+            return -(v - *this);
+        }
+        // Different signs => addition
+        return *this + (-v);
+    }
+
+    // Multiply by int
+    void operator*=(int v) {
+        if (v < 0) { sign = -sign; v = -v; }
+        for (int i = 0, carry = 0; i < (int)z.size() || carry; ++i) {
+            if (i == (int)z.size()) z.push_back(0);
+            long long cur = z[i] * (long long)v + carry;
+            carry = (int)(cur / base);
+            z[i] = (int)(cur % base);
+        }
+        trim();
+    }
+
+    // Multiply by int (returns new bigint)
+    bigint operator*(int v) const {
+        bigint res = *this;
+        res *= v;
+        return res;
+    }
+
+    // Long division: returns (quotient, remainder)
+    friend pair<bigint, bigint> divmod(const bigint& a1, const bigint& b1) {
+        // Normalize to make division stable:
+        // pick norm so that leading digit of b is "large"
+        int norm = base / (b1.z.back() + 1);
+        bigint a = a1.abs() * norm;
+        bigint b = b1.abs() * norm;
+        bigint q, r;
+        q.z.resize(a.z.size());
+
+        // Division from most significant digit to least
+        for (int i = (int)a.z.size() - 1; i >= 0; i--) {
+            r *= base;      // shift remainder by base
+            r += a.z[i];    // bring next digit down
+
+            // Estimate quotient digit using top digits
+            int s1 = (b.z.size() < r.z.size() ? r.z[b.z.size()] : 0);
+            int s2 = (b.z.size() - 1 < r.z.size() ? r.z[b.z.size() - 1] : 0);
+            int d = ((long long)s1 * base + s2) / b.z.back();
+
+            // Correct estimation if too large
+            r -= b * d;
+            while (r < 0) { r += b; --d; }
+
+            q.z[i] = d;
+        }
+
+        // Fix signs
+        q.sign = a1.sign * b1.sign;
+        r.sign = a1.sign;
+        q.trim();
+        r.trim();
+
+        // Undo normalization for remainder
+        return make_pair(q, r / norm);
+    }
+
+    // Integer square root (not used in this problem)
+    friend bigint sqrt(const bigint& a1) {
+        bigint a = a1;
+        while (a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        int n = (int)a.z.size();
+        int firstDigit = (int)std::sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int norm = base / (firstDigit + 1);
+        a *= norm;
+        a *= norm;
+        while (a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        bigint r = (long long)a.z[n - 1] * base + a.z[n - 2];
+        firstDigit = (int)std::sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int q = firstDigit;
+        bigint res;
+
+        for (int j = n / 2 - 1; j >= 0; j--) {
+            for (;; --q) {
+                bigint r1 =
+                    (r - (res * 2 * base + q) * q) * base * base +
+                    (j > 0 ? (long long)a.z[2 * j - 1] * base + a.z[2 * j - 2] : 0);
+                if (r1 >= 0) { r = r1; break; }
+            }
+            res *= base;
+            res += q;
+
+            if (j > 0) {
+                int d1 = (res.z.size() + 2 < r.z.size() ? r.z[res.z.size() + 2] : 0);
+                int d2 = (res.z.size() + 1 < r.z.size() ? r.z[res.z.size() + 1] : 0);
+                int d3 = (res.z.size() < r.z.size() ? r.z[res.z.size()] : 0);
+                q = ((long long)d1 * base * base + (long long)d2 * base + d3) /
+                    (firstDigit * 2);
+            }
+        }
+
+        res.trim();
+        return res / norm;
+    }
+
+    // Division / modulo by bigint
+    bigint operator/(const bigint& v) const { return divmod(*this, v).first; }
+    bigint operator%(const bigint& v) const { return divmod(*this, v).second; }
+
+    // Divide by int in-place
+    void operator/=(int v) {
+        if (v < 0) { sign = -sign; v = -v; }
+        for (int i = (int)z.size() - 1, rem = 0; i >= 0; --i) {
+            long long cur = z[i] + rem * (long long)base;
+            z[i] = (int)(cur / v);
+            rem = (int)(cur % v);
+        }
+        trim();
+    }
+
+    // Divide by int (returns new bigint)
+    bigint operator/(int v) const {
+        bigint res = *this;
+        res /= v;
+        return res;
+    }
+
+    // Modulo by int
+    int operator%(int v) const {
+        if (v < 0) v = -v;
+        int m = 0;
+        for (int i = (int)z.size() - 1; i >= 0; --i)
+            m = (z[i] + m * (long long)base) % v;
+        return m * sign;
+    }
+
+    // Compound operators
+    void operator+=(const bigint& v) { *this = *this + v; }
+    void operator-=(const bigint& v) { *this = *this - v; }
+    void operator*=(const bigint& v) { *this = *this * v; }
+    void operator/=(const bigint& v) { *this = *this / v; }
+
+    // Comparisons
+    bool operator<(const bigint& v) const {
+        if (sign != v.sign) return sign < v.sign;
+        if (z.size() != v.z.size()) return z.size() * sign < v.z.size() * v.sign;
+        for (int i = (int)z.size() - 1; i >= 0; i--)
+            if (z[i] != v.z[i]) return z[i] * sign < v.z[i] * sign;
+        return false;
+    }
+    bool operator>(const bigint& v) const { return v < *this; }
+    bool operator<=(const bigint& v) const { return !(v < *this); }
+    bool operator>=(const bigint& v) const { return !(*this < v); }
+    bool operator==(const bigint& v) const { return !(*this < v) && !(v < *this); }
+    bool operator!=(const bigint& v) const { return *this < v || v < *this; }
+
+    // Remove leading zeros and normalize sign for zero
+    void trim() {
+        while (!z.empty() && z.back() == 0) z.pop_back();
+        if (z.empty()) sign = 1;
+    }
+
+    bool isZero() const { return z.empty() || (z.size() == 1 && !z[0]); }
+
+    // Unary minus
+    bigint operator-() const {
+        bigint res = *this;
+        res.sign = -sign;
+        return res;
+    }
+
+    // Absolute value
+    bigint abs() const {
+        bigint res = *this;
+        res.sign *= res.sign; // (-1)*(-1)=1, (1)*(1)=1
+        return res;
+    }
+
+    // Convert to long long (unsafe for big values; not used here)
+    long long longValue() const {
+        long long res = 0;
+        for (int i = (int)z.size() - 1; i >= 0; i--) res = res * base + z[i];
+        return res * sign;
+    }
+
+    // gcd/lcm (not used here)
+    friend bigint gcd(const bigint& a, const bigint& b) { return b.isZero() ? a : gcd(b, a % b); }
+    friend bigint lcm(const bigint& a, const bigint& b) { return a / gcd(a, b) * b; }
+
+    // Parse decimal string
+    void read(const string& s) {
+        sign = 1;
+        z.clear();
+        int pos = 0;
+        // Handle optional leading sign(s)
+        while (pos < (int)s.size() && (s[pos] == '-' || s[pos] == '+')) {
+            if (s[pos] == '-') sign = -sign;
+            ++pos;
+        }
+        // Read in chunks of base_digits from the end
+        for (int i = (int)s.size() - 1; i >= pos; i -= base_digits) {
+            int x = 0;
+            for (int j = max(pos, i - base_digits + 1); j <= i; j++)
+                x = x * 10 + (s[j] - '0');
+            z.push_back(x);
+        }
+        trim();
+    }
+
+    // Stream input
+    friend istream& operator>>(istream& stream, bigint& v) {
+        string s; stream >> s;
+        v.read(s);
+        return stream;
+    }
+
+    // Stream output (print most significant chunk normally, others padded)
+    friend ostream& operator<<(ostream& stream, const bigint& v) {
+        if (v.sign == -1) stream << '-';
+        stream << (v.z.empty() ? 0 : v.z.back());
+        for (int i = (int)v.z.size() - 2; i >= 0; --i)
+            stream << setw(base_digits) << setfill('0') << v.z[i];
+        return stream;
+    }
+
+    // Convert representation between digit sizes (used for multiplication speed)
+    static vector<int> convert_base(const vector<int>& a, int old_digits, int new_digits) {
+        vector<long long> p(max(old_digits, new_digits) + 1);
+        p[0] = 1;
+        for (int i = 1; i < (int)p.size(); i++) p[i] = p[i - 1] * 10;
+
+        vector<int> res;
+        long long cur = 0;
+        int cur_digits = 0;
+        for (int i = 0; i < (int)a.size(); i++) {
+            cur += a[i] * p[cur_digits];
+            cur_digits += old_digits;
+            while (cur_digits >= new_digits) {
+                res.push_back(int(cur % p[new_digits]));
+                cur /= p[new_digits];
+                cur_digits -= new_digits;
+            }
+        }
+        res.push_back((int)cur);
+        while (!res.empty() && res.back() == 0) res.pop_back();
+        return res;
+    }
+
+    typedef vector<long long> vll;
+
+    // Karatsuba multiplication for speed on large numbers
+    static vll karatsubaMultiply(const vll& a, const vll& b) {
+        int n = (int)a.size();
+        vll res(n + n);
+        // Base case: naive O(n^2)
+        if (n <= 32) {
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                    res[i + j] += a[i] * b[j];
+            return res;
+        }
+
+        int k = n >> 1;
+        vll a1(a.begin(), a.begin() + k);
+        vll a2(a.begin() + k, a.end());
+        vll b1(b.begin(), b.begin() + k);
+        vll b2(b.begin() + k, b.end());
+
+        vll a1b1 = karatsubaMultiply(a1, b1);
+        vll a2b2 = karatsubaMultiply(a2, b2);
+
+        // (a1+a2)*(b1+b2)
+        for (int i = 0; i < k; i++) a2[i] += a1[i];
+        for (int i = 0; i < k; i++) b2[i] += b1[i];
+
+        vll r = karatsubaMultiply(a2, b2);
+        // r = (a1+a2)(b1+b2) - a1b1 - a2b2 = a1b2 + a2b1
+        for (int i = 0; i < (int)a1b1.size(); i++) r[i] -= a1b1[i];
+        for (int i = 0; i < (int)a2b2.size(); i++) r[i] -= a2b2[i];
+
+        // Assemble result
+        for (int i = 0; i < (int)r.size(); i++) res[i + k] += r[i];
+        for (int i = 0; i < (int)a1b1.size(); i++) res[i] += a1b1[i];
+        for (int i = 0; i < (int)a2b2.size(); i++) res[i + n] += a2b2[i];
+        return res;
+    }
+
+    // Bigint * bigint using Karatsuba and base conversions
+    bigint operator*(const bigint& v) const {
+        // Convert from base 1e9 digits to base 1e6 digits for safer multiplication
+        vector<int> a6 = convert_base(this->z, base_digits, 6);
+        vector<int> b6 = convert_base(v.z, base_digits, 6);
+        vll a(a6.begin(), a6.end());
+        vll b(b6.begin(), b6.end());
+
+        // Pad to same size
+        while (a.size() < b.size()) a.push_back(0);
+        while (b.size() < a.size()) b.push_back(0);
+        // Pad to power of two for Karatsuba
+        while (a.size() & (a.size() - 1)) { a.push_back(0); b.push_back(0); }
+
+        // Multiply
+        vll c = karatsubaMultiply(a, b);
+
+        // Carry handling in base 1e6
+        bigint res;
+        res.sign = sign * v.sign;
+        for (int i = 0, carry = 0; i < (int)c.size(); i++) {
+            long long cur = c[i] + carry;
+            res.z.push_back((int)(cur % 1000000));
+            carry = (int)(cur / 1000000);
+        }
+
+        // Convert back to base 1e9
+        res.z = convert_base(res.z, 6, base_digits);
+        res.trim();
+        return res;
+    }
+};
+
+int p; // current test's prime
+
+void read() { cin >> p; }
+
+void solve() {
+    // Use the proven formula:
+    // answer = 2 + (C(2p, p) - 2) / p
+    // Need big integers because C(2p,p) is huge.
+
+    // Compute C(2p, p) multiplicatively:
+    // res = Π_{i=0..p-1} (2p - i) / (i+1)
+    bigint res = 1;
+    for (int i = 0; i < p; ++i) {
+        res *= (2 * p - i); // multiply by next numerator term
+        res /= (i + 1);     // divide by next denominator term (exact division)
+    }
+
+    // Apply formula
+    res -= 2;   // C(2p,p) - 2
+    res /= p;   // (C(2p,p) - 2) / p
+    res += 2;   // add the two special subsets back
+
+    cout << res << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    cin >> T;
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same logic) with detailed comments
+
+```python
+import sys
+import math
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    t = int(data[0])
+    out = []
+    idx = 1
+
+    for _ in range(t):
+        p = int(data[idx]); idx += 1
+
+        # Compute C(2p, p) as an exact integer.
+        # Python ints are arbitrary precision, so no custom bigint needed.
+        #
+        # Multiplicative formula:
+        # C(2p, p) = Π_{i=1..p} (p+i)/i = Π_{i=0..p-1} (2p-i)/(i+1)
+        c = 1
+        for i in range(p):
+            c *= (2 * p - i)
+            c //= (i + 1)   # exact division at every step
+
+        # Apply derived counting formula:
+        # answer = 2 + (C(2p,p) - 2) / p
+        ans = 2 + (c - 2) // p
+        out.append(str(ans))
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Let \(P\) be an odd prime. Two \(P\)-subsets \(\{1,\dots,P\}\) and \(\{P+1,\dots,2P\}\) have sums divisible by \(P\). Any other \(P\)-subset has \(k\in[1,P-1]\) elements from \(\{1,\dots,P\}\). Cyclically shifting those \(k\) small elements by \(i\in\{0,\dots,P-1\}\) forms an orbit of exactly \(P\) distinct subsets; their sums change by \(k i \pmod P\). Since \(\gcd(k,P)=1\), \(k i\) runs through all residues mod \(P\), so exactly one subset in each orbit has sum \(\equiv 0\pmod P\). Thus good subsets:
+\[
+2 + \frac{\binom{2P}{P}-2}{P}.
+\]
+Compute \(\binom{2P}{P}\) with big integers and output the formula.

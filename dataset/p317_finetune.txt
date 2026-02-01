@@ -1,0 +1,543 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+317. Fast Ride
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Is there a Russian who does not like a fast ride?! Royal messenger should get from point A to point B as quickly as possible. Point A has coordinate 0 on the Ox axis. Point B has positive coordinate B on the Ox axis. Of course, the messenger will use horses to get to the destination point. The messenger is not allowed to travel by foot because of an importance of his mission and security reasons.
+
+There are N stables on the straight line from A to B. The i-th stable has Mi horses inside. Each horse is characterized by its speed vj and maximum distance it can gallop dj (after that it falls exhausted). The messenger can change the horse reaching or passing a stable to any horse from that stable without losing time.
+
+Your task is to find the minimum time the messenger needs to get to the point B.
+
+Input
+The first line of the input contains two integer numbers B and N (1 ≤ B ≤ 108; 1 ≤ N ≤ 5000), where N is the number of stables. Descriptions of the stables follow. The first line of each description contains two integer numbers Xi, Mi (0 ≤ Xi ≤ 108; 0 < Mi) — the position of the stable and the number of horses in this stable respectively. The following Mi lines contain the description of the horses. Each description of a horse is a pair of integer numbers vj, dj (1 ≤ vj ≤ 108; 1 ≤ dj ≤ 108). The total number of horses in all stables is no more than 105. It is possible that two or more stables have the same position.
+
+Output
+Write the minimum time which will take the messenger to get to the point B to the output. The answer should be written with no less than 3 digits after the decimal point. If the solution does not exist, write -1 to the output.
+
+Example(s)
+sample input
+sample output
+10 3
+5 2
+1 100
+10 3
+0 1
+1 50
+8 1
+2 3
+6.30000000
+
+<|response|>
+## 1) Abridged problem statement
+
+You need to travel along the x-axis from **A = 0** to **B > 0** as fast as possible.
+
+There are **N stables** at positions \(X_i\) (some positions may repeat). In stable \(i\) there are \(M_i\) horses; each horse has:
+
+- speed \(v\)
+- maximum running distance \(d\)
+
+You may **instantly** change horses whenever you **reach or pass** a stable. You cannot walk.
+
+Output the **minimum possible time** to reach \(B\), with at least 3 digits after the decimal point, or **-1** if impossible.
+
+Constraints: \(N \le 5000\), total horses \(\le 10^5\), \(B \le 10^8\). Time limit is very small.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Sort stables by coordinate**  
+   Travel is only forward along the line, so we should process stables from left to right.
+
+2. **DP formulation**  
+   Let `dp[i]` be the minimum time to reach stable `i` at position \(x_i\).  
+   From stable `i`, using a horse \((v, d)\), you can reach any point up to \(x_i + d\), including any stable `j` with:
+   \[
+   x_j \le x_i + d
+   \]
+   Transition:
+   \[
+   dp[j] \le dp[i] + \frac{x_j - x_i}{v}
+   \]
+
+3. **Each horse induces a linear function in \(x_j\)**  
+   Rewrite:
+   \[
+   dp[i] + \frac{x_j - x_i}{v}
+   = \left(\frac{1}{v}\right) x_j + \left(dp[i] - \frac{x_i}{v}\right)
+   \]
+   For fixed \((i, v)\), this is a **line** \(y = kx + m\) where:
+   - \(k = 1/v\)
+   - \(m = dp[i] - x_i/v\)
+
+4. **But each line is valid only on an index range**  
+   The horse can only be used until distance \(d\), so it can update only stables with \(x \le x_i + d\).  
+   If `r` is the last index reachable, the line applies to indices:
+   \[
+   [i+1, r]
+   \]
+
+5. **We need: range-add line + point query min**  
+   - Add a line to a range of indices.
+   - Query the minimum value at a single index `i` for \(x = x_i\).
+
+6. **Segment tree of CHT containers**  
+   Classic technique:
+   - Build a segment tree over stable indices.
+   - Each segment tree node stores a convex hull trick (CHT) structure supporting:
+     - `addLine(k, m)`
+     - `query(x)` → minimum \(kx+m\)
+   - Range add: decompose interval into \(O(\log N)\) nodes and add line to each.
+   - Point query: traverse root-to-leaf, query all hulls on the path, take minimum.
+
+This makes the solution fast enough for the tight limits.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Preprocessing
+1. Read \(B, N\) and all stables with their horses.
+2. Sort stables by position \(x\).
+3. Remove stables with \(x > B\) (they cannot help).
+4. If after sorting, **the first stable is not at position 0**, you cannot start (no walking) → print `-1`.
+
+### Step B: DP + segment tree
+Maintain:
+- `dp[i]` = min time to reach stable `i` (initialize INF)
+- `ans` = min time to reach \(B\) directly (initialize INF)
+- Segment tree of CHTs for “lines active for index ranges”.
+
+Process stables in increasing order `i = 0..N-1`:
+1. If \(x_i = 0\), then `dp[i] = 0` (you start there).
+2. Otherwise, compute:
+   - `dp[i] = min(dp[i], segTree.pointQuery(i, x_i))`
+3. If `dp[i]` is still INF → skip (unreachable).
+4. For every horse \((v, d)\) in stable `i`:
+   - Let `reach = x_i + d`.
+   - If `reach >= B`: update
+     \[
+     ans = \min(ans,\ dp[i] + (B-x_i)/v)
+     \]
+   - Find `r` = last stable index such that \(x_r \le reach\) (binary search).
+   - If `r > i`, add the line:
+     - \(k = 1/v\)
+     - \(m = dp[i] - x_i/v\)
+     to the segment tree over index interval `[i+1, r]`.
+
+At the end:
+- if `ans` is INF → print `-1`
+- else print `ans` with fixed precision (e.g. 8 decimals).
+
+### Complexity
+Let total horses be \(H \le 10^5\).
+- Each horse: one range update → \(O(\log N)\) segment nodes, each does CHT insertion.
+- Each stable: one point query → \(O(\log N)\) segment nodes, each does CHT query.
+
+Works in C++ with optimized structures.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Dynamic Convex Hull Trick (LineContainer / KACTL style), adapted for MIN queries.
+  Stores lines y = kx + m and supports:
+    - add(k, m) in amortized O(log n)
+    - query(x) for minimum in O(log n)
+  This version uses doubles (slope and intercept), which is fine here.
+*/
+template<class T, bool maximum = true>
+class ConvexHullTrick {
+public:
+    static constexpr T inf = is_integral_v<T> ? numeric_limits<T>::max()
+                                              : numeric_limits<T>::infinity();
+
+    // For doubles, normal division is fine.
+    T div(T a, T b) { return a / b; }
+
+    struct Line {
+        mutable T k, m, p; // p = x-coordinate from which this line is best
+        bool operator<(const Line& o) const { return k < o.k; } // sort by slope
+        bool operator<(T x) const { return p < x; }             // sort by p
+    };
+
+    multiset<Line, less<>> hull;
+    using Iter = typename multiset<Line, less<>>::iterator;
+
+    // Updates intersection point p of x with y; returns whether y is unnecessary.
+    bool intersect(Iter x, Iter y) {
+        if (y == hull.end()) { x->p = inf; return false; }
+        if (x->k == y->k) {
+            // Parallel lines: keep smaller intercept for min hull.
+            x->p = (x->m > y->m) ? inf : -inf;
+        } else {
+            x->p = div(y->m - x->m, x->k - y->k);
+        }
+        return x->p >= y->p;
+    }
+
+    // Add a line. If we want minimum queries, we store negated lines and do max.
+    void add(T k, T m) {
+        if constexpr (!maximum) { k = -k; m = -m; }
+
+        auto z = hull.insert({k, m, 0});
+        auto y = z++;
+        auto x = y;
+
+        // Remove any next lines made obsolete by y.
+        while (intersect(y, z)) z = hull.erase(z);
+
+        // If previous line makes y obsolete, erase y.
+        if (x != hull.begin() && intersect(--x, y)) {
+            intersect(x, y = hull.erase(y));
+        }
+
+        // Fix intersection points going backwards.
+        while ((y = x) != hull.begin() && (--x)->p >= y->p) {
+            intersect(x, hull.erase(y));
+        }
+    }
+
+    // Query best value at x.
+    T query(T x) {
+        // Must not be empty.
+        auto l = *hull.lower_bound(x);
+        T res = l.k * x + l.m;
+        if constexpr (!maximum) res = -res;
+        return res;
+    }
+};
+
+struct Stable {
+    long long x;
+    // store horses as (distance d, speed v)
+    vector<pair<long long,long long>> horses;
+};
+
+/*
+  Segment tree over stable indices.
+  Each node stores a min-CHT of lines that apply to the entire node segment.
+  - update(l, r, line) adds a line to all indices in [l, r]
+  - query(pos, x) returns min over lines covering pos evaluated at coordinate x
+*/
+struct SegTree {
+    int n;
+    vector<ConvexHullTrick<double, false>> tree; // false => MIN
+
+    SegTree(int n = 0): n(n), tree(4*n) {}
+
+    void update(int ql, int qr, double k, double m, int idx, int lo, int hi) {
+        if (qr < lo || hi < ql) return; // no overlap
+        if (ql <= lo && hi <= qr) {
+            tree[idx].add(k, m);
+            return;
+        }
+        int mid = (lo + hi) / 2;
+        update(ql, qr, k, m, idx*2, lo, mid);
+        update(ql, qr, k, m, idx*2+1, mid+1, hi);
+    }
+
+    double query(int pos, double x, int idx, int lo, int hi) {
+        double best = 1e18;
+        if (!tree[idx].hull.empty()) best = tree[idx].query(x);
+        if (lo == hi) return best;
+        int mid = (lo + hi) / 2;
+        if (pos <= mid) return min(best, query(pos, x, idx*2, lo, mid));
+        else            return min(best, query(pos, x, idx*2+1, mid+1, hi));
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    long long B;
+    int N;
+    cin >> B >> N;
+
+    vector<Stable> stables(N);
+    for (int i = 0; i < N; i++) {
+        int m;
+        cin >> stables[i].x >> m;
+        stables[i].horses.resize(m);
+        for (int j = 0; j < m; j++) {
+            long long v, d;
+            cin >> v >> d;
+            stables[i].horses[j] = {d, v}; // (distance, speed)
+        }
+    }
+
+    // Sort stables by position
+    sort(stables.begin(), stables.end(),
+         [](const Stable& a, const Stable& b){ return a.x < b.x; });
+
+    // Remove stables beyond destination
+    while (!stables.empty() && stables.back().x > B) stables.pop_back();
+    N = (int)stables.size();
+
+    // Must have a stable at x=0 to start (cannot walk)
+    if (N == 0 || stables[0].x != 0) {
+        cout << -1 << "\n";
+        return 0;
+    }
+
+    SegTree seg(N);
+    vector<double> dp(N, 1e18);
+    double ans = 1e18;
+
+    for (int i = 0; i < N; i++) {
+        long long xi = stables[i].x;
+
+        // Starting position: any stable at x=0 is reachable at time 0
+        if (xi == 0) dp[i] = 0.0;
+
+        // Otherwise compute dp[i] from previous inserted lines
+        if (i > 0) {
+            dp[i] = min(dp[i], seg.query(i, (double)xi, 1, 0, N-1));
+        }
+
+        if (dp[i] >= 1e18) continue; // unreachable
+
+        // Use horses from this stable to create range-valid lines
+        for (auto [d, v] : stables[i].horses) {
+            long long reach = xi + d;
+
+            // Can this horse reach B directly?
+            if (reach >= B) {
+                ans = min(ans, dp[i] + (double)(B - xi) / (double)v);
+            }
+
+            // Find last reachable stable index r (x_r <= reach)
+            int r = (int)(upper_bound(stables.begin(), stables.end(), reach,
+                        [](long long val, const Stable& s){ return val < s.x; })
+                    - stables.begin()) - 1;
+
+            // If it can reach at least one later stable, add line on [i+1, r]
+            if (r > i) {
+                double k = 1.0 / (double)v;
+                double m = dp[i] - (double)xi / (double)v;
+                seg.update(i+1, r, k, m, 1, 0, N-1);
+            }
+        }
+    }
+
+    if (ans >= 1e18) cout << -1 << "\n";
+    else cout << fixed << setprecision(8) << ans << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+Python is much slower under a 0.25s limit, but here is a clean educational version of the same idea using:
+
+- segment tree over indices
+- each node stores a **Li Chao tree** for minimum of lines
+
+This mirrors “range add line / point query”.
+
+```python
+import sys
+import bisect
+from math import inf
+
+# Li Chao Tree for MIN over lines y = kx + m on a discrete x-domain (stable positions).
+class LiChaoMin:
+    __slots__ = ("xs", "k", "m", "left", "right")
+
+    def __init__(self, xs):
+        self.xs = xs
+        self.k = None
+        self.m = None
+        self.left = None
+        self.right = None
+
+    @staticmethod
+    def f(k, m, x):
+        return k * x + m
+
+    def add_line(self, k, m, l=0, r=None):
+        if r is None:
+            r = len(self.xs) - 1
+
+        # If node empty, store directly
+        if self.k is None:
+            self.k, self.m = k, m
+            return
+
+        mid = (l + r) // 2
+        xl, xm, xr = self.xs[l], self.xs[mid], self.xs[r]
+
+        curk, curm = self.k, self.m
+
+        # Ensure current line is better at midpoint
+        if self.f(k, m, xm) < self.f(curk, curm, xm):
+            self.k, self.m, k, m = k, m, curk, curm
+            curk, curm = self.k, self.m
+
+        if l == r:
+            return
+
+        # The "worse at mid" line may still win on left or right side
+        if self.f(k, m, xl) < self.f(curk, curm, xl):
+            if self.left is None:
+                self.left = LiChaoMin(self.xs)
+            self.left.add_line(k, m, l, mid)
+        elif self.f(k, m, xr) < self.f(curk, curm, xr):
+            if self.right is None:
+                self.right = LiChaoMin(self.xs)
+            self.right.add_line(k, m, mid + 1, r)
+
+    def query(self, x, l=0, r=None):
+        if r is None:
+            r = len(self.xs) - 1
+
+        res = inf
+        if self.k is not None:
+            res = self.f(self.k, self.m, x)
+
+        if l == r:
+            return res
+
+        mid = (l + r) // 2
+        if x <= self.xs[mid]:
+            return res if self.left is None else min(res, self.left.query(x, l, mid))
+        else:
+            return res if self.right is None else min(res, self.right.query(x, mid + 1, r))
+
+
+# Segment tree over indices; each node stores Li Chao.
+class SegTree:
+    def __init__(self, xs):
+        self.n = len(xs)
+        self.xs = xs
+        self.tree = [None] * (4 * self.n)
+
+    def _ensure(self, idx):
+        if self.tree[idx] is None:
+            self.tree[idx] = LiChaoMin(self.xs)
+
+    # range add line
+    def update(self, ql, qr, k, m, idx=1, lo=0, hi=None):
+        if hi is None:
+            hi = self.n - 1
+        if qr < lo or hi < ql:
+            return
+        if ql <= lo and hi <= qr:
+            self._ensure(idx)
+            self.tree[idx].add_line(k, m)
+            return
+        mid = (lo + hi) // 2
+        self.update(ql, qr, k, m, idx * 2, lo, mid)
+        self.update(ql, qr, k, m, idx * 2 + 1, mid + 1, hi)
+
+    # point query at index pos for x-coordinate x
+    def query(self, pos, x, idx=1, lo=0, hi=None):
+        if hi is None:
+            hi = self.n - 1
+
+        best = inf
+        if self.tree[idx] is not None:
+            best = self.tree[idx].query(x)
+
+        if lo == hi:
+            return best
+
+        mid = (lo + hi) // 2
+        if pos <= mid:
+            return min(best, self.query(pos, x, idx * 2, lo, mid))
+        else:
+            return min(best, self.query(pos, x, idx * 2 + 1, mid + 1, hi))
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+
+    B = int(next(it))
+    N = int(next(it))
+
+    stables = []
+    for _ in range(N):
+        x = int(next(it))
+        m = int(next(it))
+        horses = []
+        for __ in range(m):
+            v = int(next(it))
+            d = int(next(it))
+            horses.append((d, v))  # (distance, speed)
+        stables.append((x, horses))
+
+    # Sort and discard stables beyond B
+    stables.sort(key=lambda t: t[0])
+    while stables and stables[-1][0] > B:
+        stables.pop()
+
+    if not stables or stables[0][0] != 0:
+        print(-1)
+        return
+
+    xs = [x for x, _ in stables]
+    n = len(stables)
+
+    seg = SegTree(xs)
+    dp = [inf] * n
+    ans = inf
+
+    for i, (xi, horses) in enumerate(stables):
+        # starting stables at x=0 are reachable at time 0
+        if xi == 0:
+            dp[i] = 0.0
+
+        # compute dp from previously added lines
+        if i > 0:
+            dp[i] = min(dp[i], seg.query(i, float(xi)))
+
+        if dp[i] == inf:
+            continue
+
+        for d, v in horses:
+            reach = xi + d
+
+            # direct finish to B
+            if reach >= B:
+                ans = min(ans, dp[i] + (B - xi) / v)
+
+            # last reachable stable index r
+            r = bisect.bisect_right(xs, reach) - 1
+            if r > i:
+                k = 1.0 / v
+                m = dp[i] - xi / v
+                seg.update(i + 1, r, k, m)
+
+    if ans == inf:
+        print(-1)
+    else:
+        print(f"{ans:.8f}")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want, I can also provide:
+- a version that merges stables with the same \(x\) (sometimes reduces work),
+- floating-point robustness notes,
+- or a faster Python variant (still unlikely to pass 0.25s, but improved).
