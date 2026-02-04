@@ -1,0 +1,444 @@
+## 1) Abridged problem statement
+
+You are given up to **N** (≤ 100) quoted strings (length 1…100) consisting only of **Latin letters**, **spaces**, and **'-'**. A *word* is a maximal sequence of letters.
+
+You may **add/remove spaces** to produce a formatted version that obeys the ancient rules:
+
+- Between two words with **no '-'** between them → exactly **one space**.
+- A single `-` is a **hyphen** and must have a **word on both sides**: `word-word` (no spaces around it).
+- A **short dash** is **two hyphens** with **spaces around**: `" -- "`.
+- A **long dash** is **three hyphens** with **spaces around**: `" --- "`.
+
+The output must contain **no other spaces** than those required by these rules.  
+If formatting is impossible, output `error` (without quotes). Otherwise print any valid formatted text **in quotes**.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation
+The only meaningful information in the input is:
+
+- the sequence of **words** (letter-runs),
+- and, between consecutive words (and also before the first / after the last), the **count of consecutive hyphens** `k` that appear (ignoring spaces).
+
+Spaces in the input are irrelevant because we are allowed to add/remove them; hyphens are not removable, but may be regrouped into:
+- hyphen between words (`k = 1` only allowed *between* two words),
+- dash groups at boundaries or between words (`k ≥ 2`),
+- or just normal word separation (`k = 0`).
+
+So we parse the line into:
+- `words = [w0, w1, ... w(n-1)]`
+- `dashes = [d0, d1, ... dn]`
+where:
+- `d0` = number of `-` before `w0`
+- `dj` (1 ≤ j ≤ n-1) = number of `-` between `w(j-1)` and `wj`
+- `dn` = number of `-` after the last word
+
+(Spaces are skipped while parsing.)
+
+### Validity rules
+1. Any character other than letter/space/`-` => impossible → `error`.
+2. A single `-` (hyphen) must have a word on both sides.  
+   Therefore, `d0 != 1` and `dn != 1`. If either is 1 → `error`.
+3. If there are **no words at all**:
+   - If total hyphens is 1 → cannot be a hyphen (needs words) → `error`
+   - If 0 → output empty string `""`
+   - If ≥ 2 → it must be formatted purely as dashes with spaces according to dash rules.
+
+### Constructing a formatted output
+We now need to *print* the hyphen/dash groups using only valid patterns:
+
+- `k = 0` between words → print `" "` (single space)
+- `k = 1` between words → print `"-"`
+- `k ≥ 2` → represent as a sequence of **short dashes** (`" -- "`) and at most one **long dash** (`" --- "`) at the front if needed, such that total hyphens sum to `k`.
+
+This is always possible for `k ≥ 2`:
+- if `k` is even: use only short dashes (2 hyphens each),
+- if `k` is odd: use one long dash (3 hyphens) + remaining even part as short dashes.
+
+Example: `k=7` → `" --- " + "-- " + "-- "` with correct spaces; the provided code builds a canonical form.
+
+Finally:
+- If `d0 > 0`, print its dash representation first,
+- Then `w0`,
+- For each next word `wj`: print separator based on `dj` then `wj`,
+- If `dn > 0`, print its dash representation at the end.
+
+All outputs are wrapped in quotes.
+
+### Complexity
+Each line is length ≤ 100, parsing and reconstruction are linear: **O(L)** time and O(L) memory, easily within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input (space-separated)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces after each element
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+string text;  // current line content WITHOUT surrounding quotes
+
+// Check whether a character is a Latin letter (upper or lower case)
+bool is_letter(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+// Read one quoted line and store its inside into global `text`
+void read() {
+    string line;
+    getline(cin, line);
+
+    // Trim possible Windows line endings (defensive)
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+        line.pop_back();
+    }
+
+    // Input lines must be quoted. If they are, strip the quotes.
+    if (line.size() >= 2 && line.front() == '"' && line.back() == '"') {
+        text = line.substr(1, line.size() - 2);
+    } else {
+        // Fallback marker: make parsing fail later (invalid character 0x01)
+        text = "\x01";
+    }
+}
+
+// Convert k consecutive '-' into a valid dash representation.
+// k=0: empty
+// k=1: "-" (only used when there are words on both sides)
+// k>=2: combination of " -- " (2 hyphens) and possibly one " --- " (3 hyphens)
+// The function builds a canonical string with appropriate spaces.
+string dash_string(int k) {
+    if (k == 0) {
+        return "";
+    }
+    if (k == 1) {
+        return "-";
+    }
+
+    string result;
+
+    // If k is odd (>=3), start with one long dash (3 hyphens).
+    // Otherwise start with one short dash (2 hyphens).
+    if (k % 2 == 1) {
+        result = " --- ";
+        k -= 3;
+    } else {
+        result = " -- ";
+        k -= 2;
+    }
+
+    // The remaining k is even; append short dashes.
+    // Notice the slightly different spacing pattern: it appends "-- " repeatedly.
+    while (k > 0) {
+        result += "-- ";
+        k -= 2;
+    }
+    return result;
+}
+
+void solve() {
+    // Parse the input into:
+    // - words: sequences of letters
+    // - dashes: counts of '-' before first word, between words, and after last word
+    //
+    // Then validate and reconstruct a formatted text.
+
+    vector<string> words; // extracted words in order
+    vector<int> dashes;   // dash counts around/between words
+
+    int dash_count = 0;   // number of '-' seen since last word
+    int i = 0;
+
+    // Scan the whole line `text` character by character
+    while (i < (int)text.size()) {
+        char c = text[i];
+
+        if (c == ' ') {
+            // Spaces are ignored during parsing (we'll reformat later)
+            i++;
+        } else if (c == '-') {
+            // Count consecutive '-' occurrences, ignoring spaces in between
+            dash_count++;
+            i++;
+        } else if (is_letter(c)) {
+            // When a word starts, store dash_count as the separator BEFORE this word
+            dashes.push_back(dash_count);
+            dash_count = 0;
+
+            // Extract the whole word (maximal run of letters)
+            string word;
+            while (i < (int)text.size() && is_letter(text[i])) {
+                word += text[i];
+                i++;
+            }
+            words.push_back(word);
+        } else {
+            // Any other character is invalid
+            cout << "error\n";
+            return;
+        }
+    }
+
+    // After scanning, whatever dash_count remains is after the last word
+    dashes.push_back(dash_count);
+
+    // Special case: there are no words at all
+    if (words.empty()) {
+        // If there's exactly one '-', it would have to be a hyphen, but needs words.
+        if (dash_count == 1) {
+            cout << "error\n";
+        } else if (dash_count > 1) {
+            // Pure dashes can be formatted as short/long dashes
+            cout << "\"" << dash_string(dash_count) << "\"\n";
+        } else {
+            // Empty content
+            cout << "\"\"\n";
+        }
+        return;
+    }
+
+    int n = (int)words.size();
+
+    // A single '-' cannot appear at the very beginning or end (no word on one side)
+    if (dashes[0] == 1 || dashes[n] == 1) {
+        cout << "error\n";
+        return;
+    }
+
+    ostringstream oss;
+
+    // Emit leading dashes (if any)
+    if (dashes[0] > 0) {
+        oss << dash_string(dashes[0]);
+    }
+
+    // Emit the first word
+    oss << words[0];
+
+    // Emit each next word with the correct separator based on dash count
+    for (int j = 1; j < n; j++) {
+        int k = dashes[j];
+
+        if (k == 0) {
+            // No '-' between these two words: single space
+            oss << " ";
+        } else if (k == 1) {
+            // Hyphen between words: no spaces
+            oss << "-";
+        } else {
+            // k>=2: must be some dashes with spaces around
+            oss << dash_string(k);
+        }
+
+        // Emit the word after the separator
+        oss << words[j];
+    }
+
+    // Emit trailing dashes (if any)
+    if (dashes[n] > 0) {
+        oss << dash_string(dashes[n]);
+    }
+
+    // Print final result in quotes
+    cout << "\"" << oss.str() << "\"\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T;
+    cin >> T;
+
+    // Consume the rest of the line after reading T
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+    // Process each quoted input line independently
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same logic) with detailed comments
+
+```python
+import sys
+
+def is_letter(c: str) -> bool:
+    """Return True if c is an ASCII Latin letter."""
+    return ('a' <= c <= 'z') or ('A' <= c <= 'Z')
+
+def dash_string(k: int) -> str:
+    """
+    Convert k consecutive '-' into a valid dash representation.
+
+    k=0 -> ""
+    k=1 -> "-" (hyphen; only valid between two words)
+    k>=2 -> combination of short dash " -- " (2 hyphens) and optionally one long dash " --- " (3 hyphens)
+    """
+    if k == 0:
+        return ""
+    if k == 1:
+        return "-"
+
+    # Build a canonical representation.
+    # If k is odd, use one long dash first; else use one short dash first.
+    if k % 2 == 1:
+        res = " --- "
+        k -= 3
+    else:
+        res = " -- "
+        k -= 2
+
+    # Remaining k is even; each short dash contributes 2 hyphens.
+    while k > 0:
+        res += "-- "
+        k -= 2
+
+    return res
+
+def solve_one(line: str) -> str:
+    """
+    Solve for one quoted input line.
+    Return either 'error' or a quoted formatted string.
+    """
+    line = line.rstrip("\r\n")
+
+    # Validate and strip surrounding quotes
+    if len(line) >= 2 and line[0] == '"' and line[-1] == '"':
+        text = line[1:-1]
+    else:
+        # Invalid input format per statement; treat as impossible
+        return "error"
+
+    words = []   # extracted words
+    dashes = []  # dash counts before/between/after words
+
+    dash_count = 0
+    i = 0
+
+    # Parse into words and dash counts, ignoring spaces
+    while i < len(text):
+        c = text[i]
+        if c == ' ':
+            i += 1
+        elif c == '-':
+            dash_count += 1
+            i += 1
+        elif is_letter(c):
+            # store dash count before this word
+            dashes.append(dash_count)
+            dash_count = 0
+
+            # read the full word
+            j = i
+            while j < len(text) and is_letter(text[j]):
+                j += 1
+            words.append(text[i:j])
+            i = j
+        else:
+            # any other character is invalid
+            return "error"
+
+    # dash count after last word
+    dashes.append(dash_count)
+
+    # If there are no words, the whole string is only spaces and hyphens
+    if not words:
+        if dash_count == 1:
+            return "error"              # single hyphen cannot stand alone
+        elif dash_count == 0:
+            return '""'                 # empty after formatting
+        else:
+            return '"' + dash_string(dash_count) + '"'
+
+    n = len(words)
+
+    # Single hyphen cannot be at start or end (needs words on both sides)
+    if dashes[0] == 1 or dashes[n] == 1:
+        return "error"
+
+    out_parts = []
+
+    # leading dashes
+    if dashes[0] > 0:
+        out_parts.append(dash_string(dashes[0]))
+
+    # first word
+    out_parts.append(words[0])
+
+    # between words
+    for j in range(1, n):
+        k = dashes[j]
+        if k == 0:
+            out_parts.append(" ")
+        elif k == 1:
+            out_parts.append("-")
+        else:
+            out_parts.append(dash_string(k))
+        out_parts.append(words[j])
+
+    # trailing dashes
+    if dashes[n] > 0:
+        out_parts.append(dash_string(dashes[n]))
+
+    return '"' + "".join(out_parts) + '"'
+
+def main():
+    data = sys.stdin.read().splitlines()
+    if not data:
+        return
+    t = int(data[0].strip())
+    ans = []
+    # Next t lines are the quoted texts (may be empty inside quotes, but line exists)
+    for idx in range(1, 1 + t):
+        ans.append(solve_one(data[idx] if idx < len(data) else ""))
+    sys.stdout.write("\n".join(ans))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Parse each line (inside quotes), ignoring spaces, into a list of words and counts of consecutive `-` before/between/after words. Any non-letter/space/`-` → `error`. A single `-` is a hyphen and is only allowed between two words, so if the leading or trailing dash count is 1 → `error`; also if there are no words and total dashes is 1 → `error`. Rebuild output: for each gap with dash count `k`: print `" "` if `k=0`, `"-"` if `k=1`, else represent `k` as one `" --- "` if odd plus short dashes `" -- "` for the remainder (even). Wrap result in quotes. Linear time per line.

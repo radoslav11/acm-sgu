@@ -1,0 +1,131 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, k;
+
+void read() { cin >> n >> k; }
+
+vector<int> rec(int n, int k) {
+    if(k == 0) {
+        return {0};
+    } else {
+        vector<int> a = rec(n - 1, min(k, n - 1));
+        vector<int> b = rec(n - 1, k - 1);
+
+        for(auto x = b.rbegin(); x != b.rend(); x++) {
+            a.push_back(*x | (1 << (n - 1)));
+        }
+
+        return a;
+    }
+}
+
+void solve() {
+    // This problem looks somewhat similar to gray's code, but it isn't quite
+    // that due to the constraint that we are only looking at submasks of size
+    // <= K, and we have additional edges where we switch a dancer. However, the
+    // similarity to Gray's code should lead us to think in that direction.
+    //
+    // What if we generate the Gray code, but always maintain the number of bits
+    // set and terminate when we hit K? Normally, we generate Gray as:
+    //
+    //     (rec(n - 1) + top_bit_0) || reverse(rec(n - 1) + top_bit_1)
+    //
+    // The idea is simple, because rec(n - 1) is the same in the two branches
+    // and because of the reverse the border at the concatenation only has the
+    // top bit different. This can be generalized to our problem too.
+    // Let's try the simple idea by maintaining rec(n, k) instead and try:
+    //
+    //     (rec(n - 1, k) + top_bit_0) || reverse(rec(n - 1, k - 1) + top_bit_1)
+    //
+    // By construction the two parts are valid, so we only want to make sure the
+    // border corresponds to a valid change in the scene. Here it's not
+    // immediately clear that would be the case as we call the recursion with
+    // different values of k. However, we can notice that rec(n - 1, k) +
+    // top_bit_0 will always end with a subset of the form 010...0, while the
+    // rec(n - 1, k - 1) + top_bit_1 will always end with a subset of 110...0.
+    // This can be seen by looking at the recursive calls:
+    //
+    //     last(rec(n - 1, k)) = first(rec(n - 2, k - 1)) + top_bit_1
+    //                         = first(rec(n - 3, k - 1)) + top_bit_01
+    //                         = ... (until n and k being 0)
+    //
+    //     last(rec(n - 1, k - 1)) = first(rec(n - 2, k - 2)) + top_bit_1
+    //                             = first(rec(n - 3, k - 2)) + top_bit_01
+    //                             = ... (until n and k being 0)
+    //
+    // This means that the difference in these will always be two bits at
+    // distance one, which satisfies the constraints in this problem.
+    //
+    // On minor observation is that the problem requires the final stage to
+    // also end with an empty stage, which is trivial to satisfy due to the
+    // construction having gray[0] = 0 and gray[-1] = (1 << (n-1)): we
+    // simply duplicate the 0 state in the end.
+
+    vector<int> gray = rec(n, k);
+    gray.push_back(0);
+
+    for(int j = 1; j < (int)gray.size(); j++) {
+        vector<int> pos;
+        for(int i = 0; i < n; i++) {
+            if(((gray[j] >> i) & 1) != ((gray[j - 1] >> i) & 1)) {
+                pos.push_back(i);
+            }
+        }
+
+        if(pos.size() == 1) {
+            if(gray[j] & (1 << pos[0])) {
+                cout << "+" << pos[0] + 1;
+            } else {
+                cout << "-" << pos[0] + 1;
+            }
+        } else {
+            if(gray[j] & (1 << pos[0])) {
+                cout << "--" << pos[0] + 2;
+            } else {
+                cout << "++" << pos[0] + 1;
+            }
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}

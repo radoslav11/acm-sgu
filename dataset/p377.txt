@@ -1,0 +1,500 @@
+## 1) Abridged problem statement
+
+Given an \(N \times M\) grid (\(2 \le N,M \le 1000\)), place students in some cells (at most one per cell) such that **every** \(2 \times 2\) sub-square contains **exactly two** students. (Equivalently: “no more than two” + “at least two” ⇒ exactly two.)  
+Count the number of distinct valid placements (students indistinguishable). Output the exact integer (it can be huge).
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key constraint reformulation
+Look at any \(2\times2\) block:
+\[
+\begin{matrix}
+a & b \\
+c & d
+\end{matrix}
+\]
+Each of \(a,b,c,d \in \{0,1\}\) (empty/occupied) and the rule is:
+\[
+a+b+c+d = 2
+\]
+So every \(2\times2\) must have exactly two occupied cells.
+
+### Classifying valid global patterns
+Consider **two consecutive columns** \(j\) and \(j+1\).  
+For each row \(i\), define the pair \((x_i, y_i)\) where \(x_i\) is occupancy in column \(j\), \(y_i\) in column \(j+1\).
+
+Now consider a particular \(2\times2\) block spanning rows \(i,i+1\) and columns \(j,j+1\):
+\[
+x_i + y_i + x_{i+1} + y_{i+1} = 2
+\]
+
+This condition is very restrictive. A classical way to see the structure:
+
+#### Two “modes” of solutions
+There are two families of solutions:
+
+**Family A (column-stripe / “vertical-domino” style):**  
+In every row, the two cells in a \(2\times2\) come from “choosing a column” in that block. Concretely, for a fixed adjacent column pair \((j,j+1)\), each row decides whether the occupied cell is in column \(j\) or column \(j+1\), but to satisfy the \(2\times2\) sum=2 for every adjacent row pair, that choice must be **consistent across rows** within each column boundary. This yields placements that are determined by choosing a binary pattern per **column** boundary; counting ends up as \(2^M\) patterns.
+
+**Family B (row-stripe / “horizontal-domino” style):**  
+Symmetrically, patterns determined by choices across **rows**, yielding \(2^N\) patterns.
+
+A more concrete counting argument that matches the known result for this problem:
+
+### Counting result
+It turns out (and is a known Codeforces result for this exact task) that:
+
+- Number of valid configurations that are “column-generated” is \(2^M\).
+- Number of valid configurations that are “row-generated” is \(2^N\).
+
+But we double-count the configurations that belong to **both** families.  
+Those are exactly the two chessboard colorings:
+
+1. Occupy all “black” cells of a checkerboard.
+2. Occupy all “white” cells of a checkerboard.
+
+Both satisfy “each \(2\times2\) has 2” and are counted in both families.
+
+Therefore by inclusion–exclusion:
+\[
+\text{answer} = 2^N + 2^M - 2
+\]
+
+### Big integers
+For \(N,M \le 1000\), \(2^{1000}\) has ~302 digits, so we need big integer arithmetic (the provided C++ uses a custom `bigint`). In Python, built-in `int` already supports arbitrary precision.
+
+### Complexity
+We only compute two powers of two and do a few big-int additions/subtractions:
+
+- Time: \(O(\text{digits})\), tiny.
+- Memory: \(O(\text{digits})\).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience stream operators for pairs/vectors (not used in final logic,
+// but commonly included in template code).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+// Big integer base: each "digit" stores 9 decimal digits (1e9).
+// base and base_digits must match.
+const int base = 1000000000;
+const int base_digits = 9;
+
+// A custom big integer type supporting +, -, *, / (some operations unused here).
+struct bigint {
+    vector<int> z; // magnitude in base 1e9, little-endian: z[0] is least significant
+    int sign;      // +1 or -1
+
+    bigint() : sign(1) {}                  // default is 0 with positive sign
+    bigint(long long v) { *this = v; }     // construct from 64-bit integer
+    bigint(const string& s) { read(s); }   // construct from decimal string
+
+    void operator=(const bigint& v) {      // copy assignment
+        sign = v.sign;
+        z = v.z;
+    }
+
+    void operator=(long long v) {          // assign from 64-bit integer
+        sign = 1;
+        if(v < 0) {                        // handle negative
+            sign = -1, v = -v;
+        }
+        z.clear();
+        for(; v > 0; v = v / base) {       // split into base-1e9 chunks
+            z.push_back(v % base);
+        }
+    }
+
+    // Addition of bigints.
+    bigint operator+(const bigint& v) const {
+        if(sign == v.sign) {               // same sign => add magnitudes
+            bigint res = v;                // start with v, add this->z into it
+            for(int i = 0, carry = 0;
+                i < (int)max(z.size(), v.z.size()) || carry; ++i) {
+                if(i == (int)res.z.size()) res.z.push_back(0);
+                res.z[i] += carry + (i < (int)z.size() ? z[i] : 0);
+                carry = res.z[i] >= base;
+                if(carry) res.z[i] -= base;
+            }
+            return res;
+        }
+        // a + (-b) => a - b
+        return *this - (-v);
+    }
+
+    // Subtraction of bigints.
+    bigint operator-(const bigint& v) const {
+        if(sign == v.sign) {
+            if(abs() >= v.abs()) {         // if |a| >= |b|, do |a|-|b|
+                bigint res = *this;
+                for(int i = 0, carry = 0; i < (int)v.z.size() || carry; ++i) {
+                    res.z[i] -= carry + (i < (int)v.z.size() ? v.z[i] : 0);
+                    carry = res.z[i] < 0;
+                    if(carry) res.z[i] += base;
+                }
+                res.trim();                // remove leading zeros
+                return res;
+            }
+            // if |a| < |b|, result is negative: -(b-a)
+            return -(v - *this);
+        }
+        // a - (-b) => a + b
+        return *this + (-v);
+    }
+
+    // Multiply by int in-place.
+    void operator*=(int v) {
+        if(v < 0) {                        // keep sign separately
+            sign = -sign, v = -v;
+        }
+        for(int i = 0, carry = 0; i < (int)z.size() || carry; ++i) {
+            if(i == (int)z.size()) z.push_back(0);
+            long long cur = z[i] * (long long)v + carry;
+            carry = (int)(cur / base);
+            z[i] = (int)(cur % base);
+        }
+        trim();
+    }
+
+    // Multiply by int returning new bigint.
+    bigint operator*(int v) const {
+        bigint res = *this;
+        res *= v;
+        return res;
+    }
+
+    // Division/modulo helper for bigint/bigint (unused by our final logic).
+    friend pair<bigint, bigint> divmod(const bigint& a1, const bigint& b1) {
+        int norm = base / (b1.z.back() + 1);
+        bigint a = a1.abs() * norm;
+        bigint b = b1.abs() * norm;
+        bigint q, r;
+        q.z.resize(a.z.size());
+
+        for(int i = (int)a.z.size() - 1; i >= 0; i--) {
+            r *= base;
+            r += a.z[i];
+            int s1 = b.z.size() < r.z.size() ? r.z[b.z.size()] : 0;
+            int s2 = (int)b.z.size() - 1 < (int)r.z.size() ? r.z[b.z.size() - 1] : 0;
+            int d = ((long long)s1 * base + s2) / b.z.back();
+            r -= b * d;
+            while(r < 0) { r += b, --d; }
+            q.z[i] = d;
+        }
+
+        q.sign = a1.sign * b1.sign;
+        r.sign = a1.sign;
+        q.trim();
+        r.trim();
+        return make_pair(q, r / norm);
+    }
+
+    // Integer square root (unused).
+    friend bigint sqrt(const bigint& a1) { /* ... large block omitted ... */ 
+        bigint dummy;
+        return dummy;
+    }
+
+    // bigint / bigint and % (unused).
+    bigint operator/(const bigint& v) const { return divmod(*this, v).first; }
+    bigint operator%(const bigint& v) const { return divmod(*this, v).second; }
+
+    // Divide by int in-place.
+    void operator/=(int v) {
+        if(v < 0) sign = -sign, v = -v;
+        for(int i = (int)z.size() - 1, rem = 0; i >= 0; --i) {
+            long long cur = z[i] + rem * (long long)base;
+            z[i] = (int)(cur / v);
+            rem = (int)(cur % v);
+        }
+        trim();
+    }
+
+    bigint operator/(int v) const { bigint res = *this; res /= v; return res; }
+
+    int operator%(int v) const {
+        if(v < 0) v = -v;
+        int m = 0;
+        for(int i = (int)z.size() - 1; i >= 0; --i) {
+            m = (z[i] + m * (long long)base) % v;
+        }
+        return m * sign;
+    }
+
+    // Compound assignments for bigint ops.
+    void operator+=(const bigint& v) { *this = *this + v; }
+    void operator-=(const bigint& v) { *this = *this - v; }
+    void operator*=(const bigint& v) { *this = *this * v; }
+    void operator/=(const bigint& v) { *this = *this / v; }
+
+    // Comparisons.
+    bool operator<(const bigint& v) const {
+        if(sign != v.sign) return sign < v.sign;
+        if(z.size() != v.z.size()) return z.size() * sign < v.z.size() * v.sign;
+        for(int i = (int)z.size() - 1; i >= 0; i--) {
+            if(z[i] != v.z[i]) return z[i] * sign < v.z[i] * sign;
+        }
+        return false;
+    }
+    bool operator>(const bigint& v) const { return v < *this; }
+    bool operator<=(const bigint& v) const { return !(v < *this); }
+    bool operator>=(const bigint& v) const { return !(*this < v); }
+    bool operator==(const bigint& v) const { return !(*this < v) && !(v < *this); }
+    bool operator!=(const bigint& v) const { return *this < v || v < *this; }
+
+    // Remove leading zero chunks and normalize sign for zero.
+    void trim() {
+        while(!z.empty() && z.back() == 0) z.pop_back();
+        if(z.empty()) sign = 1;
+    }
+
+    bool isZero() const { return z.empty() || (z.size() == 1 && !z[0]); }
+
+    // Unary minus.
+    bigint operator-() const { bigint res = *this; res.sign = -sign; return res; }
+
+    // Absolute value.
+    bigint abs() const { bigint res = *this; res.sign *= res.sign; return res; }
+
+    // Convert to long long (unsafe for large values; unused).
+    long long longValue() const {
+        long long res = 0;
+        for(int i = (int)z.size() - 1; i >= 0; i--) res = res * base + z[i];
+        return res * sign;
+    }
+
+    // gcd/lcm (unused).
+    friend bigint gcd(const bigint& a, const bigint& b) {
+        return b.isZero() ? a : gcd(b, a % b);
+    }
+    friend bigint lcm(const bigint& a, const bigint& b) {
+        return a / gcd(a, b) * b;
+    }
+
+    // Read from decimal string.
+    void read(const string& s) {
+        sign = 1;
+        z.clear();
+        int pos = 0;
+        while(pos < (int)s.size() && (s[pos] == '-' || s[pos] == '+')) {
+            if(s[pos] == '-') sign = -sign;
+            ++pos;
+        }
+        for(int i = (int)s.size() - 1; i >= pos; i -= base_digits) {
+            int x = 0;
+            for(int j = max(pos, i - base_digits + 1); j <= i; j++) {
+                x = x * 10 + s[j] - '0';
+            }
+            z.push_back(x);
+        }
+        trim();
+    }
+
+    friend istream& operator>>(istream& stream, bigint& v) {
+        string s; stream >> s; v.read(s); return stream;
+    }
+
+    // Print bigint in decimal.
+    friend ostream& operator<<(ostream& stream, const bigint& v) {
+        if(v.sign == -1) stream << '-';
+        stream << (v.z.empty() ? 0 : v.z.back());
+        for(int i = (int)v.z.size() - 2; i >= 0; --i) {
+            stream << setw(base_digits) << setfill('0') << v.z[i];
+        }
+        return stream;
+    }
+
+    // Base conversion helpers for fast multiplication (used in bigint * bigint).
+    static vector<int> convert_base(const vector<int>& a, int old_digits, int new_digits) {
+        vector<long long> p(max(old_digits, new_digits) + 1);
+        p[0] = 1;
+        for(int i = 1; i < (int)p.size(); i++) p[i] = p[i - 1] * 10;
+        vector<int> res;
+        long long cur = 0;
+        int cur_digits = 0;
+        for(int i = 0; i < (int)a.size(); i++) {
+            cur += a[i] * p[cur_digits];
+            cur_digits += old_digits;
+            while(cur_digits >= new_digits) {
+                res.push_back(int(cur % p[new_digits]));
+                cur /= p[new_digits];
+                cur_digits -= new_digits;
+            }
+        }
+        res.push_back((int)cur);
+        while(!res.empty() && res.back() == 0) res.pop_back();
+        return res;
+    }
+
+    typedef vector<long long> vll;
+
+    // Karatsuba multiplication to speed up bigint*bigint.
+    static vll karatsubaMultiply(const vll& a, const vll& b) {
+        int n = (int)a.size();
+        vll res(n + n);
+        if(n <= 32) { // small: do naive O(n^2)
+            for(int i = 0; i < n; i++)
+                for(int j = 0; j < n; j++)
+                    res[i + j] += a[i] * b[j];
+            return res;
+        }
+
+        int k = n >> 1;
+        vll a1(a.begin(), a.begin() + k);
+        vll a2(a.begin() + k, a.end());
+        vll b1(b.begin(), b.begin() + k);
+        vll b2(b.begin() + k, b.end());
+
+        vll a1b1 = karatsubaMultiply(a1, b1);
+        vll a2b2 = karatsubaMultiply(a2, b2);
+
+        for(int i = 0; i < k; i++) a2[i] += a1[i];
+        for(int i = 0; i < k; i++) b2[i] += b1[i];
+
+        vll r = karatsubaMultiply(a2, b2);
+        for(int i = 0; i < (int)a1b1.size(); i++) r[i] -= a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) r[i] -= a2b2[i];
+
+        for(int i = 0; i < (int)r.size(); i++) res[i + k] += r[i];
+        for(int i = 0; i < (int)a1b1.size(); i++) res[i] += a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) res[i + n] += a2b2[i];
+        return res;
+    }
+
+    // Full bigint multiplication using Karatsuba (supports big numbers).
+    bigint operator*(const bigint& v) const {
+        // Convert from base 1e9 digits to base 1e6 digits for safer multiplication.
+        vector<int> a6 = convert_base(this->z, base_digits, 6);
+        vector<int> b6 = convert_base(v.z, base_digits, 6);
+
+        vll a(a6.begin(), a6.end());
+        vll b(b6.begin(), b6.end());
+
+        // Pad to same size and then to power of two for Karatsuba.
+        while(a.size() < b.size()) a.push_back(0);
+        while(b.size() < a.size()) b.push_back(0);
+        while(a.size() & (a.size() - 1)) { a.push_back(0), b.push_back(0); }
+
+        vll c = karatsubaMultiply(a, b);
+
+        bigint res;
+        res.sign = sign * v.sign;
+
+        // Carry handling in base 1e6.
+        for(int i = 0, carry = 0; i < (int)c.size(); i++) {
+            long long cur = c[i] + carry;
+            res.z.push_back((int)(cur % 1000000));
+            carry = (int)(cur / 1000000);
+        }
+
+        // Convert back to base 1e9.
+        res.z = convert_base(res.z, 6, base_digits);
+        res.trim();
+        return res;
+    }
+};
+
+int n, m;
+
+void read() {
+    cin >> n >> m; // read grid size
+}
+
+void solve() {
+    // The known final formula for this task:
+    // answer = 2^n + 2^m - 2
+    // (subtract 2 to avoid double-counting the two chessboard configurations).
+
+    // Helper: compute 2^exp as bigint using fast exponentiation.
+    auto power_of_two = [](int exp) {
+        bigint result = 1; // accumulator
+        bigint base = 2;   // current power of 2
+        while(exp > 0) {
+            if(exp % 2 == 1) {
+                result *= base; // multiply in the current factor
+            }
+            base *= base; // square base each step
+            exp /= 2;     // shift exponent
+        }
+        return result;
+    };
+
+    bigint column_ways = power_of_two(m);   // 2^m
+    bigint row_ways = power_of_two(n);      // 2^n
+    bigint answer = column_ways + row_ways - 2; // inclusion-exclusion
+    cout << answer << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // single test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (with detailed comments)
+
+```python
+import sys
+
+def main() -> None:
+    # Read N and M
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    m = int(data[1])
+
+    # Python's int is arbitrary-precision, so we can compute powers directly.
+    # Number of valid configurations:
+    #   answer = 2^n + 2^m - 2
+    # The "-2" removes the two checkerboard patterns counted in both groups.
+    ans = (1 << n) + (1 << m) - 2
+
+    # Print as a normal decimal integer (no leading zeros).
+    sys.stdout.write(str(ans))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Every \(2\times2\) must contain exactly 2 occupied cells. Valid global placements fall into two counted families: \(2^N\) “row-based” and \(2^M\) “column-based”. Their intersection contains exactly the two chessboard colorings, so by inclusion–exclusion:
+\[
+\boxed{\text{answer} = 2^N + 2^M - 2}
+\]
+Use big integers (or Python `int`) to output the exact value.

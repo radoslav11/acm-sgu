@@ -1,0 +1,325 @@
+## 1) Abridged problem statement
+
+Given `n` dancers (1..n) where dancer `i` is similar only to `i-1` and `i+1` (when they exist). The stage starts empty, must end empty, and must never be empty during the dance except at start/end. Each minute you may:
+
+- `+i`: bring dancer `i` onto the stage (if not already there)
+- `-i`: remove dancer `i` from the stage (if currently there)
+- `++i`: replace dancer `i` by dancer `i+1` (simultaneous leave+enter; they are similar)
+- `--i`: replace dancer `i` by dancer `i-1`
+
+At any time, at most `k` dancers may be on stage.
+
+Construct a sequence of such moves so that **every subset of dancers of size ≤ k** appears on stage **exactly once** (including the empty set at start/end). Output any valid sequence, or `0` if impossible.
+
+Constraints: `1 ≤ n ≤ 20`.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Model as visiting subsets
+Represent the set of dancers currently on stage as a bitmask of length `n`:
+- bit `i` (0-based) is 1 iff dancer `i+1` is present.
+
+We must list **all masks with popcount ≤ k** exactly once, starting from `0` (empty) and finally returning to `0`. Between consecutive masks we must perform one allowed “minute change”.
+
+### What transitions are allowed in terms of bitmasks?
+A single minute can do:
+
+1) `+i` or `-i`: toggle one bit  
+   ⇒ Hamming distance between masks is 1.
+
+2) `++i` or `--i`: replace `i` with adjacent dancer  
+   Example `++i`: remove `i` and add `i+1`  
+   ⇒ toggle two bits, but specifically **adjacent positions**: bits `i` and `i+1` differ, others equal.
+
+So between consecutive masks, the XOR must have either:
+- exactly one bit set, or
+- exactly two bits set and they must be adjacent.
+
+Also we must never exceed `k` bits set in any visited mask.
+
+### Goal becomes: an order of all masks with ≤ k ones with these adjacency rules
+This resembles Gray code (which orders all `2^n` masks with Hamming distance 1). But we only need masks of weight ≤ k, and we allow an extra kind of move (adjacent 2-bit toggle) to “bridge” parts.
+
+### Recursive construction (modified Gray-code recursion)
+
+Define `rec(n, k)` to output a list of masks over `n` bits that enumerates **all masks with ≤ k ones**, each exactly once, in an order satisfying the allowed transitions.
+
+Base:
+- If `k == 0`, the only allowed mask is `0`. Return `[0]`.
+
+Recursive step (`k > 0`):
+Split masks into:
+- those with top bit (bit `n-1`) = 0: exactly the masks from `rec(n-1, min(k, n-1))`
+- those with top bit = 1: then the remaining `n-1` bits must have ≤ `k-1` ones ⇒ masks from `rec(n-1, k-1)` with top bit added.
+
+To make a “Gray-like” concatenation, we output:
+1) `A = rec(n-1, min(k, n-1))` with top bit 0 (unchanged)
+2) `B = rec(n-1, k-1)` but **in reverse order**, and with the top bit set (OR with `1<<(n-1)`)
+
+So:
+```
+rec(n,k) = A  +  reverse(B with top bit set)
+```
+
+#### Why does this satisfy the move constraints at the concatenation boundary?
+Inside `A` and inside `reverse(B)` the recursive property ensures every step is valid.
+
+The only non-trivial part is the boundary:
+- last element of `A` (top bit 0)
+- first element of reversed `B` (top bit 1)
+
+Because `B` is reversed, the first element of `reverse(B)` is the **last** of `B` (with top bit set). With this specific recursion, one can show:
+- `last(rec(m, t))` has a special form where the 1s become a suffix-like pattern in higher bits.
+- Consequently, the last mask in `A` and the last mask in `B` differ in **exactly two adjacent bits** (one being the top bit), which corresponds to an allowed `++i/--i` move.
+
+Intuitively: the reversal trick makes the two halves “meet” with a small, structured difference—just like classic Gray code meets with one-bit difference, but here the different `k` values cause the boundary to become a 2-adjacent-bit change, still allowed by the problem.
+
+### Ensuring we end at empty stage
+The constructed list `rec(n,k)` starts with `0` (empty), but generally does **not** end with `0`. The problem requires the dance ends empty; we can simply append `0` at the end.
+
+We must also ensure the stage is not empty “during the dance”. That’s fine: the sequence is processed as moves between successive masks; the only time we are at `0` is the start and the appended final state (and we never have repeated subsets because `0` is duplicated only at the very end, as allowed by the statement’s “starts and ends empty”).
+
+### Converting consecutive masks to the required output operations
+For each consecutive pair `(prev, cur)`:
+- find positions where bits differ.
+- If exactly 1 position `p` differs:
+  - if cur has bit `p` = 1 ⇒ `+ (p+1)`
+  - else ⇒ `- (p+1)`
+- If exactly 2 positions differ, they must be adjacent: `p` and `p+1`.
+  - If the lower bit turned on and upper turned off, it’s a shift left/right.
+  The provided code chooses a fixed encoding based on whether bit `pos[0]` is 1 in `cur`:
+  - if `cur` has `pos[0]` = 1 ⇒ output `"--" << (pos[0] + 2)`
+  - else ⇒ output `"++" << (pos[0] + 1)`
+This matches the statement’s definition of `++i` (i→i+1) and `--i` (i→i-1) for the adjacent swap.
+
+### Complexity
+Number of visited subsets is:
+\[
+\sum_{i=0}^{k} {n \choose i}
+\]
+Each step compares up to `n` bits, so total time is `O(n * number_of_subsets)`, feasible for `n ≤ 20`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (GNU extension)
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input: "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                 // Iterate by reference to fill elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces (not used in final solution)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, k;                             // n dancers, max k on stage
+
+void read() { cin >> n >> k; }        // Read input
+
+// Recursive function that generates the required "restricted Gray order":
+// all bitmasks of length n with popcount <= k, each exactly once, in a valid order.
+vector<int> rec(int n, int k) {
+    if(k == 0) {
+        // Only subset allowed is empty: mask 0
+        return {0};
+    } else {
+        // First half: masks with top bit (n-1) = 0
+        // Note: if k > n-1, we can cap it to n-1 because you can't pick more than n-1 bits
+        vector<int> a = rec(n - 1, min(k, n - 1));
+
+        // Second half: masks with top bit = 1, so remaining bits have <= k-1 ones
+        vector<int> b = rec(n - 1, k - 1);
+
+        // Append the second half in reverse order (Gray-code trick)
+        // and set the top bit (n-1) in every mask.
+        for(auto x = b.rbegin(); x != b.rend(); x++) {
+            a.push_back(*x | (1 << (n - 1)));  // set bit (n-1)
+        }
+
+        return a;                       // Return concatenated sequence
+    }
+}
+
+void solve() {
+    // Generate the sequence of stage subsets (bitmasks)
+    vector<int> gray = rec(n, k);
+
+    // Append empty stage at the end to satisfy "ends with an empty stage"
+    gray.push_back(0);
+
+    // Convert consecutive masks into the required operation string
+    for(int j = 1; j < (int)gray.size(); j++) {
+        vector<int> pos;               // indices of bits that changed between steps
+
+        // Find all bit positions where previous and current mask differ
+        for(int i = 0; i < n; i++) {
+            if(((gray[j] >> i) & 1) != ((gray[j - 1] >> i) & 1)) {
+                pos.push_back(i);
+            }
+        }
+
+        if(pos.size() == 1) {
+            // Exactly one bit changed: simple add/remove
+            if(gray[j] & (1 << pos[0])) {
+                // Bit turned on => dancer appears
+                cout << "+" << pos[0] + 1;    // dancers are 1-based in output
+            } else {
+                // Bit turned off => dancer leaves
+                cout << "-" << pos[0] + 1;
+            }
+        } else {
+            // Two bits changed (must be adjacent): this is a "switch to similar" move.
+            // The code decides whether this was a shift left/right based on which bit is on now.
+            if(gray[j] & (1 << pos[0])) {
+                // Lower index bit is ON in current state.
+                // This corresponds to "--(pos[0]+2)" meaning dancer (pos[0]+2) left,
+                // dancer (pos[0]+1) appeared (i.e., shift from i to i-1).
+                cout << "--" << pos[0] + 2;
+            } else {
+                // Lower index bit is OFF in current state.
+                // This corresponds to "++(pos[0]+1)" meaning dancer (pos[0]+1) left,
+                // dancer (pos[0]+2) appeared (i.e., shift from i to i+1).
+                cout << "++" << pos[0] + 1;
+            }
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);  // Fast I/O
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;                       // Problem has a single test; multi-test disabled
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+
+def rec(n: int, k: int) -> list[int]:
+    """
+    Return a list of bitmasks of length n enumerating all subsets
+    with popcount <= k exactly once, in an order where consecutive
+    masks differ by either:
+      - 1 bit, or
+      - 2 adjacent bits (allowed swap of similar dancers).
+    """
+    if k == 0:
+        return [0]
+
+    # First half: top bit is 0, so we just enumerate on n-1 bits with <= k ones.
+    a = rec(n - 1, min(k, n - 1))
+
+    # Second half: top bit is 1, so remaining n-1 bits have <= k-1 ones.
+    b = rec(n - 1, k - 1)
+
+    top = 1 << (n - 1)
+
+    # Append reversed b with the top bit set (Gray-code style reflection).
+    # Reversal is crucial to make the boundary transition valid.
+    for x in reversed(b):
+        a.append(x | top)
+
+    return a
+
+def solve(n: int, k: int) -> str:
+    gray = rec(n, k)
+
+    # End with empty stage
+    gray.append(0)
+
+    out = []
+
+    # For each transition prev -> cur, output the appropriate operation
+    for j in range(1, len(gray)):
+        prev = gray[j - 1]
+        cur = gray[j]
+
+        # Collect differing bit positions
+        pos = []
+        diff = prev ^ cur
+        for i in range(n):
+            if (diff >> i) & 1:
+                pos.append(i)
+
+        if len(pos) == 1:
+            p = pos[0]
+            if (cur >> p) & 1:
+                out.append(f"+{p+1}")   # dancer appears
+            else:
+                out.append(f"-{p+1}")   # dancer leaves
+        else:
+            # Two-bit adjacent toggle => swap with neighbor.
+            # The construction guarantees len(pos)==2 and adjacent.
+            p = pos[0]  # lower index (since we scan increasing i)
+            if (cur >> p) & 1:
+                # Now lower bit is 1: interpret as "--(p+2)"
+                out.append(f"--{p+2}")
+            else:
+                # Now lower bit is 0: interpret as "++(p+1)"
+                out.append(f"++{p+1}")
+
+    return "".join(out)
+
+def main():
+    data = sys.stdin.read().strip().split()
+    n = int(data[0]); k = int(data[1])
+    sys.stdout.write(solve(n, k))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Enumerate all subsets of `{1..n}` of size ≤ `k` as bitmasks. Need an order starting at `0` and ending at `0` where consecutive masks differ by either one bit (add/remove a dancer) or two **adjacent** bits (swap dancer `i` with `i±1`).
+
+Use a Gray-code-like recursion:
+
+- `rec(n,0) = [0]`
+- For `k>0`:
+  - `A = rec(n-1, min(k,n-1))` (top bit 0)
+  - `B = rec(n-1, k-1)` (top bit 1)
+  - `rec(n,k) = A + reverse(B with top bit set)`
+
+This lists each subset (≤k ones) exactly once. Reversal ensures the boundary between the halves differs by two adjacent bits, matching allowed swaps. Append `0` at the end to finish empty. Convert each pair of consecutive masks into `+i/-i/++i/--i` by checking which bits changed.
