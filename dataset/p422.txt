@@ -1,0 +1,287 @@
+## 1) Concise abridged problem statement
+
+You must type a string of length `n`. Typing any key (including backspace) costs `1` time unit. Looking at the screen costs `t` time units.  
+When you look at the screen, if there is at least one typo, you delete (via backspaces) from the end back to **and including** the first wrong character, leaving only the correct prefix, then continue typing from there.  
+Character `i` is mistyped independently with probability `a[i]`.
+
+Choose when to look at the screen to minimize the **expected** total time to finish typing correctly and finally verify (a last screen check that finds no typos). Output the minimum expected time.
+
+Constraints: `n ≤ 3000`.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation: decisions only matter at “known-correct prefix” moments
+After you look at the screen and delete back to the first mistake, you end up with some prefix of length `k` that is guaranteed correct. From that state, the future depends only on `k`, not on how you got there.
+
+So define:
+
+- `dp[k]` = minimal expected remaining time to finish the whole text **given** that the first `k` characters are correct.
+- Answer is `dp[0]`.
+- Base: `dp[n] = 0` (nothing left to type, but note: the final verification must be included by the strategy; in our transitions we always include a screen check after typing a block, including the final one).
+
+### Transition: type a block then look
+From state `k`, choose to type the next `p` characters (so you type positions `k+1 ... k+p`, where `1 ≤ p ≤ n-k`), then look at the screen.
+
+Immediate deterministic cost:
+- typing `p` keys: `p`
+- looking at screen: `t`
+Total so far: `p + t`
+
+Now outcomes after the screen check:
+
+Let `q_j = P(first j typed characters are all correct)` for this block.
+- `q_0 = 1`
+- `q_j = ∏_{i=1..j} (1 - a[k+i])`
+
+If there is a mistake, you backspace to the first mistake (inclusive).  
+If the first mistake is at relative position `j` (1-based in this block), then after the screen check you will:
+- backspace exactly `p - (j-1)` characters (you remove from end down to `k+j`)
+- and you return to state `k + (j-1)` (because first `k + (j-1)` are correct)
+
+Probability that first mistake is exactly at `j`:
+- `P = q_{j-1} * a[k+j]`
+
+If there is no mistake in the block (`j = p+1` case), probability `q_p`, you move to state `k+p` with no backspaces.
+
+So the expectation for choosing block size `p` is:
+
+\[
+E(k,p) = p + t \;+\; \sum_{j=1}^{p} \left(q_{j-1} a_{k+j}\right)\left((p-j+1) + dp[k+j-1]\right) \;+\; q_p \, dp[k+p].
+\]
+
+Then:
+\[
+dp[k] = \min_{p=1..n-k} E(k,p).
+\]
+
+### Making it efficient (O(n²), not O(n³))
+Directly computing `E(k,p)` from scratch for each `p` would be too slow.
+
+We iterate `p` from 1 upward and maintain cumulative sums:
+
+Let `q` be current `q_p = ∏_{i=1..p} (1 - a[k+i])`.
+
+For `j = 1..p-1` we need terms of the form:
+- `q_{j-1} a[k+j]` (probability first mistake at j)
+- multiplied by `(p-j+1)` and by `dp[k+j-1]`
+
+Notice when `p` increases by 1, `(p-j+1)` increases by 1 for all previous `j`, so we can maintain:
+- `c1 = Σ (q_{j-1} a[k+j])`
+- `c2 = Σ (q_{j-1} a[k+j] * j)` or (as in code) `* p`-shifted variants
+- `b  = Σ (q_{j-1} a[k+j] * dp[k+j-1])`
+
+The provided solution uses a slightly re-indexed form (to avoid recomputing and to keep formulas clean), but the idea is the same: maintain running weighted sums of “first error at position j” probabilities and their contributions.
+
+### Handling the cyclic-looking term
+When you expand the expectation, there can appear a term involving `dp[k]` on both sides (because if the first typed char is wrong, you return to the same `k`). The trick is: that dependence is linear and can be moved to the left:
+
+\[
+dp[k] = X + a[k+1]\cdot dp[k] \Rightarrow dp[k] = \frac{X}{1-a[k+1]}.
+\]
+
+In the code, indexing is shifted (0-based), and it ends up dividing by `(1 - a[k])` due to how terms are arranged; the algebra is equivalent under their chosen reparameterization.
+
+### Complexity
+For each `k` (there are `n`), we scan `p = 1..n-k` and update O(1) accumulators. Total:
+
+- Time: `O(n^2)` ≈ 9e6 operations for n=3000 (fits in 0.25s in optimized C++).
+- Memory: `O(n)`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+}
+
+int n;            // length of the text
+double t;         // time cost to look at the screen
+vector<double> a; // a[i] = probability to mistype character i (0-based)
+
+void read() {
+    cin >> n >> t;     // read n and t
+    a.resize(n);       // allocate probabilities
+    cin >> a;          // read a[0..n-1]
+}
+
+void solve() {
+    // dp[k] = minimal expected remaining time given first k characters are correct.
+    // We compute dp from back to front (k = n-1 down to 0).
+    vector<double> dp(n + 1, 0.0);
+
+    // dp[n] is already 0: no characters left to type from a fully correct text.
+
+    for (int k = n - 1; k >= 0; k--) {
+        dp[k] = 1e18;          // initialize with +infinity (we minimize)
+
+        double q = 1.0;        // q will hold product of (1 - a[...]) for the current p
+        double c1 = 0.0;       // accumulator for sum of probability-weight terms
+        double c2 = 0.0;       // accumulator for sum of probability-weight * position
+        double b_val = 0.0;    // accumulator for sum of probability-weight * dp[...]
+
+        // Try all choices of p = number of characters to type before looking.
+        // We can type at most (n - k) characters to reach the end.
+        for (int p = 1; p <= n - k; p++) {
+            // Update q to be probability that first p typed characters are all correct:
+            // multiply by (1 - a[k + p - 1]) (0-based index of p-th char of the block)
+            q *= (1.0 - a[k + p - 1]);
+
+            // Compute candidate expected cost for choosing this p.
+            //
+            // The expression below is an optimized algebraic form of:
+            //   typing cost + screen cost + expected backspaces + expected dp[next_state]
+            // with the "dp[k] on both sides" term moved to the left, hence division by (1-a[k]).
+            //
+            // g represents the numerator of that rearranged equation.
+            double g =
+                p * (1.0 + a[k] + c1)  // typing p plus expected extra backspace-related linear term
+                - c2                   // subtract positional weighted sum
+                + t                    // screen check cost
+                + b_val                // expected dp contribution from earlier-failure cases
+                + q * dp[k + p];       // if all p are correct, go to state k+p
+
+            // Because of the possibility that the process returns to dp[k],
+            // the final expectation becomes g / (1 - a[k]) after rearrangement.
+            dp[k] = min(dp[k], g / (1.0 - a[k]));
+
+            // Prepare accumulators for next p.
+            // For p < n-k, we can add the possibility that the first error occurs
+            // at the next character (relative position p+1 in the block).
+            if (p < n - k) {
+                // Probability that first p are correct and next one is wrong:
+                // q (prob all p correct) * a[k+p] (prob next is wrong)
+                double term = q * a[k + p];
+
+                // Update sum of such probabilities (c1)
+                c1 += term;
+
+                // Update sum of probability * position (c2); here position is p
+                // (this matches the algebra used in g).
+                c2 += term * p;
+
+                // Update expected dp contribution if we fail at that next character.
+                // State after deleting back is k+p (i.e., first k+p correct).
+                b_val += term * dp[k + p];
+            }
+        }
+    }
+
+    // Output dp[0] with high precision.
+    cout << fixed << setprecision(15) << dp[0] << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // only one test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+import math
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    t = float(next(it))
+    a = [float(next(it)) for _ in range(n)]
+
+    # dp[k] = minimal expected remaining time given first k characters are correct
+    dp = [0.0] * (n + 1)   # dp[n] = 0 base case
+
+    # Compute backwards
+    for k in range(n - 1, -1, -1):
+        best = 1e100
+
+        q = 1.0       # probability all typed-so-far in current block are correct
+        c1 = 0.0      # accumulator (see C++ code / editorial)
+        c2 = 0.0      # accumulator
+        b_val = 0.0   # accumulator of dp contributions
+
+        # try p = 1..(n-k) characters typed before looking
+        for p in range(1, n - k + 1):
+            # update q = Π_{i=0..p-1} (1 - a[k+i])
+            q *= (1.0 - a[k + p - 1])
+
+            # same rearranged expectation numerator as in the C++ solution
+            g = (
+                p * (1.0 + a[k] + c1)
+                - c2
+                + t
+                + b_val
+                + q * dp[k + p]
+            )
+
+            # rearranged division to remove the dp[k] term on RHS
+            cand = g / (1.0 - a[k])
+            if cand < best:
+                best = cand
+
+            # update accumulators for the next p (if there is a next char)
+            if p < n - k:
+                term = q * a[k + p]     # prob first p correct and next wrong
+                c1 += term
+                c2 += term * p
+                b_val += term * dp[k + p]
+
+        dp[k] = best
+
+    # print with enough precision
+    sys.stdout.write("{:.15f}\n".format(dp[0]))
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes:
+- This Python version is `O(n^2)` like the C++ one, but Python may be slower for `n=3000` under a very tight 0.25s limit. It is algorithmically correct; performance depends on the judge.
+
+---
+
+## 5) Compressed editorial
+
+Let `dp[k]` be the minimum expected remaining time given the first `k` characters are surely correct (`dp[n]=0`). From state `k`, choose `p` characters to type, then pay `p+t` and look. The first mistake in that block occurs at some position with probability `q_{j-1} a[k+j]` (where `q` is the product of success probabilities), causing `p-j+1` backspaces and переход to `dp[k+j-1]`; if no mistakes, go to `dp[k+p]` with probability `q_p`. This yields a linear expectation that includes a term returning to `dp[k]`; move it to the left to get `dp[k]=g/(1-a[...])`. Evaluate all `p` and take the min. Maintain running sums of `q*a*1`, `q*a*pos`, and `q*a*dp[...]` so each `p` updates in O(1). Total time `O(n^2)`, memory `O(n)`.

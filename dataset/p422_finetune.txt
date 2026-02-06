@@ -1,0 +1,265 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+422. Fast Typing
+Time limit per test: 0.25 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Vasya has little experience in typing, thus he has to look at the keyboard to locate the necessary keys, and still makes typos while doing so. For simplicity sake, we'll assume that the only type of typo he makes is replacing a character by another one. To correct those, he employs the following strategy: from time to time, he looks at the screen, and if there is any typo in the text, he removes all the characters from the end of the text to the first typo he made inclusive (i.e., he leaves only the correct part of the text intact) by pressing 'backspace' key several times, and continues typing from that position again.
+
+Pressing any key (including 'backspace') takes 1 unit of time, and looking at the screen takes t units of time. Given the probabilities of making an error for each character in the text, compute the minimal possible expected time to type the entire text correctly (including verifying that by looking at the screen in the end and noticing no typos).
+
+The text is n characters long, and the probability of mistyping i-th character is equal to ai.
+
+Input
+The input file contains two integer numbers n and t (1 ≤ n ≤ 3000, 1 ≤ t ≤ 106), followed by n real numbers ai ().
+
+Output
+Output one real number — the minimal possible expected time. Your answer will be considered correct if it is within 10-6 relative error of the exact answer.
+
+Example(s)
+sample input
+sample output
+3 1
+0.00001 0.5 0.00001
+8.000080000800008
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You must type a text of length `n`. Typing any key costs `1` time unit; looking at the screen costs `t`.  
+Each character `i` is mistyped independently with probability `a[i]`.
+
+You may choose moments to “look at the screen”. When you look:
+- if the typed text contains any typo, you delete (via backspace) from the end back to **the first wrong character inclusive**, leaving only the correct prefix;
+- then you continue typing from there.
+
+Compute the **minimum expected total time** to finish typing the whole text correctly, including a final screen look that confirms there are no typos.
+
+Constraints: `n ≤ 3000`.
+
+---
+
+## 2) Key observations
+
+1. **After each screen check you know a correct prefix length.**  
+   After looking and deleting up to the first mistake, the remaining text is guaranteed correct. So the process state can be described by a single integer `k`: how many first characters are correct.
+
+2. **Optimal strategy depends only on `k` (Markov property).**  
+   From state `k`, the only meaningful decision is: “how many next characters `p` do I type before the next screen check?”
+
+3. **Dynamic programming over prefix length.**  
+   Let `dp[k]` be the minimal expected remaining time to finish the text given that the first `k` characters are correct. Then the answer is `dp[0]`, and `dp[n] = 0`.
+
+4. **Transition = type a block of size `p`, then look.**  
+   If any typo occurred in that block, you backspace to the first typo (inclusive), which returns you to some earlier state. The expected value is a sum over where the first typo happens.
+
+5. **Avoid O(n³): maintain running probability-weighted sums.**  
+   While trying all block sizes `p` from a fixed `k`, you can update:
+   - probability that the first `p` are correct,
+   - cumulative contributions of “first error at next position” events,
+   in **O(1)** per `p`, giving **O(n²)** overall.
+
+---
+
+## 3) Full solution approach
+
+### DP definition
+- `dp[k]`: minimal expected remaining time when the first `k` characters are surely correct.
+- Base: `dp[n] = 0`.
+- Compute `dp[k]` for `k = n-1 ... 0`.
+
+### What happens if from `k` you type `p` characters then look?
+You type positions `[k, k+p-1]` (0-based). Cost so far: `p` (typing) + `t` (look).
+
+Let
+- `q_p = Π_{i=0..p-1} (1 - a[k+i])` = probability all `p` typed characters are correct.
+
+If the first mistake happens right after `p` correct characters (i.e., at position `k+p`), that event has probability:
+- `term = q_p * a[k+p]` (when `k+p < n`).
+
+The code uses an algebraically optimized form where the expectation can be written as:
+\[
+dp[k] = \min_{p \in [1..n-k]}\frac{g(k,p)}{1-a[k]}
+\]
+where `g(k,p)` can be maintained incrementally using three accumulators:
+- `c1`: sum of probabilities of “first p correct then next wrong” over earlier p’s
+- `c2`: same but weighted by position
+- `b`: same but weighted by `dp[next_state]`
+
+Concretely, for fixed `k`, we iterate `p = 1..n-k` and maintain:
+- `q *= (1 - a[k+p-1])`
+- candidate numerator:
+  \[
+  g = p(1+a[k]+c1) - c2 + t + b + q \cdot dp[k+p]
+  \]
+- update `dp[k] = min(dp[k], g / (1-a[k]))`
+- if `p < n-k`, add the event “first `p` are correct, next is wrong”:
+  - `term = q * a[k+p]`
+  - `c1 += term`
+  - `c2 += term * p`
+  - `b  += term * dp[k+p]`
+
+This is exactly the O(n²) optimization used in the provided reference code.
+
+### Complexity
+- Time: For each `k`, loop `p=1..n-k` → total `O(n²)` ≈ 4.5 million iterations for `n=3000`.
+- Memory: `O(n)` for `dp`.
+
+---
+
+## 4) C++ implementation (with detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Solution overview:
+  dp[k] = minimal expected remaining time if first k characters are correct.
+
+  For each k from n-1 down to 0, try all block lengths p = 1..(n-k):
+    - type p characters
+    - look at the screen (cost t)
+    - if there is an error, delete back to the first error (inclusive) and continue
+
+  The naive expectation computation is O(n) per (k,p), leading to O(n^3).
+  We maintain running accumulators so each p is O(1), giving O(n^2).
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    double t;
+    cin >> n >> t;
+    vector<double> a(n);
+    for (int i = 0; i < n; i++) cin >> a[i];
+
+    // dp[n] = 0 (nothing left to type if all n chars are known correct)
+    vector<double> dp(n + 1, 0.0);
+
+    // Compute dp from back to front
+    for (int k = n - 1; k >= 0; k--) {
+        double best = 1e100;
+
+        // q = probability that all currently typed characters in the chosen block are correct
+        double q = 1.0;
+
+        /*
+          Accumulators over events of the form:
+            "first p characters of the block are correct, and the next one is wrong"
+          for previously considered p values.
+
+          term_p = (prob first p are correct) * (prob next is wrong)
+                 = q_p * a[k+p]
+
+          c1 accumulates sum(term_p)
+          c2 accumulates sum(term_p * p)
+          b  accumulates sum(term_p * dp[k+p])
+        */
+        double c1 = 0.0, c2 = 0.0, b = 0.0;
+
+        // Try typing p characters then looking
+        for (int p = 1; p <= n - k; p++) {
+            // Update q to be probability that positions k..k+p-1 are all correct
+            q *= (1.0 - a[k + p - 1]);
+
+            /*
+              Optimized numerator g for expected time from state k with this p.
+              The final expected value becomes g / (1 - a[k]) after rearranging
+              the equation to remove the "return to dp[k]" cyclic term.
+            */
+            double g = p * (1.0 + a[k] + c1) - c2 + t + b + q * dp[k + p];
+
+            // Candidate expected time for this p
+            double cand = g / (1.0 - a[k]);
+            if (cand < best) best = cand;
+
+            // If there is a next character beyond the p just typed, update accumulators
+            if (p < n - k) {
+                // Probability that first p are correct and next (k+p) is wrong
+                double term = q * a[k + p];
+
+                c1 += term;
+                c2 += term * p;
+                b  += term * dp[k + p];
+            }
+        }
+
+        dp[k] = best;
+    }
+
+    cout << fixed << setprecision(15) << dp[0] << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (with detailed comments)
+
+Note: This is the same `O(n²)` algorithm, but Python may be too slow under a **0.25s** time limit on some judges. It is provided for clarity/learning.
+
+```python
+import sys
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    t = float(next(it))
+    a = [float(next(it)) for _ in range(n)]
+
+    # dp[k] = minimal expected remaining time when first k chars are certainly correct
+    dp = [0.0] * (n + 1)  # dp[n] = 0
+
+    # Compute backwards
+    for k in range(n - 1, -1, -1):
+        best = 1e100
+
+        q = 1.0   # probability all typed so far in the current block are correct
+        c1 = 0.0  # sum of term = q_p * a[k+p] over earlier p
+        c2 = 0.0  # sum of term * p
+        b  = 0.0  # sum of term * dp[k+p]
+
+        for p in range(1, n - k + 1):
+            # Update q to include correctness of character (k+p-1)
+            q *= (1.0 - a[k + p - 1])
+
+            # Optimized numerator for expected time
+            g = (
+                p * (1.0 + a[k] + c1)
+                - c2
+                + t
+                + b
+                + q * dp[k + p]
+            )
+
+            cand = g / (1.0 - a[k])
+            if cand < best:
+                best = cand
+
+            # Update accumulators for next p (event: first p correct, next wrong)
+            if p < n - k:
+                term = q * a[k + p]
+                c1 += term
+                c2 += term * p
+                b  += term * dp[k + p]
+
+        dp[k] = best
+
+    sys.stdout.write("{:.15f}\n".format(dp[0]))
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want, I can also provide a short derivation explaining exactly how the optimized `g/(1-a[k])` form arises from the raw expectation equation.
