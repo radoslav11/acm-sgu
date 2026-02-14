@@ -1,0 +1,341 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+414. Orthogonal Circles
+Time limit per test: 0.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Two circles are orthogonal, if they intersect and for any point of intersection their tangent lines at that point are perpendicular.
+
+Consider a set of n circles on the plane. You are to find a circle orthogonal to all of them.
+
+Input
+The input file contains an integer n (1 ≤ n ≤ 105), followed by n triples of integers: xi, yi, ri, denoting the center coordinates and the radii of the circles (-106 ≤ xi, yi ≤ 106, 1 ≤ ri ≤ 106).
+
+The circles may coincide.
+
+Output
+If there exists exactly one circle orthogonal to all the given ones, output its center coordinates and radius as real numbers separated with single spaces. The numbers will be considered correct if they are within 10-6 relative or absolute error of the exact answers.
+
+In case there's no such circle, output -1. In case there are many, output -2.
+
+Example(s)
+sample input
+sample output
+3
+0 0 5
+7 16 10
+10 0 5
+5.0 5.0 5.0
+
+
+
+The example is illustrated by the following picture:
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given **n** circles \((x_i, y_i, r_i)\) on the plane \((1 \le n \le 10^5)\).  
+Find a circle \((x, y, r)\) that is **orthogonal** to every given circle.
+
+Output:
+- the unique such circle’s center and radius if it exists;
+- `-1` if no such circle exists;
+- `-2` if there are infinitely many.
+
+Numbers are accepted within \(10^{-6}\) absolute/relative error.
+
+---
+
+## 2) Key observations
+
+### Observation A: Orthogonality turns into a simple equation
+Two circles with centers \(C=(x,y)\) and \(C_i=(x_i,y_i)\) and radii \(r\), \(r_i\) are orthogonal iff:
+\[
+|C - C_i|^2 = r^2 + r_i^2
+\]
+i.e.
+\[
+(x-x_i)^2 + (y-y_i)^2 = r^2 + r_i^2
+\]
+
+### Observation B: Linearize using a substitution
+Expand:
+\[
+x^2 - 2xx_i + x_i^2 + y^2 - 2yy_i + y_i^2 = r^2 + r_i^2
+\]
+Rearrange:
+\[
+(-2x_i)x + (-2y_i)y + (x^2+y^2-r^2) = -(x_i^2+y_i^2-r_i^2)
+\]
+
+Let:
+\[
+z = x^2 + y^2 - r^2
+\]
+Then each given circle yields a **linear** equation in \((x,y,z)\):
+\[
+(-2x_i)x + (-2y_i)y + 1\cdot z = -(x_i^2+y_i^2-r_i^2)
+\]
+
+So we get a linear system with **3 variables** and up to **\(10^5\)** equations.
+
+### Observation C: The system outcome directly maps to the required output
+After solving the linear system:
+- **Inconsistent** ⇒ no such circle ⇒ `-1`
+- **Rank < 3** ⇒ infinitely many \((x,y,z)\) ⇒ infinitely many orthogonal circles ⇒ `-2`
+- **Unique \((x,y,z)\)** ⇒ compute:
+  \[
+  r^2 = x^2 + y^2 - z
+  \]
+  If \(r^2 \le 0\) ⇒ no valid real circle radius ⇒ `-1`, else output \((x,y,\sqrt{r^2})\).
+
+---
+
+## 3) Full solution approach
+
+1. **Read input** circles \((x_i,y_i,r_i)\).
+2. For each circle, create one linear equation in \((x,y,z)\):
+   - \(a=-2x_i\)
+   - \(b=-2y_i\)
+   - \(c=1\)
+   - \(d=-(x_i^2 + y_i^2 - r_i^2)\)
+   giving \(a x + b y + c z = d\).
+3. Solve the overdetermined system using **Gauss–Jordan elimination** on an augmented matrix of size \(n \times 4\), but only **3 variable columns**, so runtime is essentially \(O(n)\) with a small constant.
+   - Use partial pivoting for stability.
+   - Use an epsilon (e.g. \(10^{-8}\)) to treat tiny values as zero.
+4. After elimination:
+   - If a row becomes \(0=nonzero\) ⇒ print `-1`.
+   - If the rank (number of pivots) is < 3 ⇒ print `-2`.
+   - Otherwise extract unique \((x,y,z)\), compute \(r^2=x^2+y^2-z\).
+     - If \(r^2 \le \varepsilon\) ⇒ print `-1`
+     - Else print \(x, y, \sqrt{r^2}\).
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+We solve:
+  For each given circle i, orthogonality with unknown circle (x,y,r) implies:
+    (x - xi)^2 + (y - yi)^2 = r^2 + ri^2
+
+Expanding and rearranging:
+    (-2*xi)*x + (-2*yi)*y + (x^2 + y^2 - r^2) = -(xi^2 + yi^2 - ri^2)
+
+Let z = x^2 + y^2 - r^2.
+Then each circle gives a linear equation in (x, y, z):
+    a*x + b*y + c*z = d
+where:
+    a = -2*xi, b = -2*yi, c = 1,
+    d = -(xi^2 + yi^2 - ri^2)
+
+So we solve a linear system with 3 unknowns and n equations.
+*/
+
+static const long double EPS = 1e-8L;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+
+    // Augmented matrix rows: [a, b, c, d] representing a*x + b*y + c*z = d.
+    vector<array<long double, 4>> mat;
+    mat.reserve(n);
+
+    for (int i = 0; i < n; i++) {
+        long long xi, yi, ri;
+        cin >> xi >> yi >> ri;
+
+        long double a = -2.0L * xi;
+        long double b = -2.0L * yi;
+        long double c =  1.0L;
+        long double d = -( (long double)xi*xi + (long double)yi*yi - (long double)ri*ri );
+
+        mat.push_back({a, b, c, d});
+    }
+
+    const int rows = n;
+    const int cols = 3; // variables: x, y, z
+    int pivot_row = 0;
+
+    // Gauss-Jordan elimination with partial pivoting.
+    for (int col = 0; col < cols; col++) {
+        int best = -1;
+        for (int r = pivot_row; r < rows; r++) {
+            if (fabsl(mat[r][col]) > EPS) {
+                if (best == -1 || fabsl(mat[r][col]) > fabsl(mat[best][col]))
+                    best = r;
+            }
+        }
+
+        // No pivot in this column => variable is free (may lead to infinite solutions)
+        if (best == -1) continue;
+
+        // Move the pivot row into position.
+        swap(mat[pivot_row], mat[best]);
+
+        // Normalize pivot row so pivot coefficient becomes 1.
+        long double div = mat[pivot_row][col];
+        for (int c = 0; c <= cols; c++) mat[pivot_row][c] /= div;
+
+        // Eliminate this column from all other rows.
+        for (int r = 0; r < rows; r++) {
+            if (r == pivot_row) continue;
+            long double factor = mat[r][col];
+            if (fabsl(factor) <= EPS) continue;
+            for (int c = 0; c <= cols; c++) {
+                mat[r][c] -= factor * mat[pivot_row][c];
+            }
+        }
+
+        pivot_row++;
+    }
+
+    // Check inconsistency: rows that have all-zero coefficients but non-zero RHS.
+    for (int r = pivot_row; r < rows; r++) {
+        // After elimination, if 0*x + 0*y + 0*z = d and d != 0 => impossible.
+        if (fabsl(mat[r][3]) > EPS) {
+            cout << -1 << "\n";
+            return 0;
+        }
+    }
+
+    // If rank < 3 => infinitely many (x,y,z) => infinitely many circles.
+    if (pivot_row < 3) {
+        cout << -2 << "\n";
+        return 0;
+    }
+
+    // Unique solution: in reduced form, first 3 pivot rows correspond to x,y,z.
+    long double x = mat[0][3];
+    long double y = mat[1][3];
+    long double z = mat[2][3];
+
+    // Recover radius: z = x^2 + y^2 - r^2 => r^2 = x^2 + y^2 - z
+    long double r2 = x*x + y*y - z;
+    if (r2 <= EPS) { // must be positive for a real circle with r > 0
+        cout << -1 << "\n";
+        return 0;
+    }
+
+    long double r = sqrtl(r2);
+
+    cout << fixed << setprecision(10) << x << " " << y << " " << r << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+import math
+
+"""
+Same idea as C++:
+
+Orthogonality with circle i:
+  (x-xi)^2 + (y-yi)^2 = r^2 + ri^2
+
+Linearize with z = x^2 + y^2 - r^2:
+  (-2*xi)*x + (-2*yi)*y + 1*z = -(xi^2 + yi^2 - ri^2)
+
+Solve linear system in (x,y,z) using Gauss-Jordan.
+"""
+
+EPS = 1e-8
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+
+    # Augmented matrix rows: [a, b, c, d] for equation a*x + b*y + c*z = d
+    mat = []
+    for _ in range(n):
+        xi = int(next(it)); yi = int(next(it)); ri = int(next(it))
+        a = -2.0 * xi
+        b = -2.0 * yi
+        c = 1.0
+        d = -(xi * xi + yi * yi - ri * ri)
+        mat.append([a, b, c, float(d)])
+
+    rows = n
+    cols = 3
+    pivot_row = 0
+
+    # Gauss-Jordan elimination with partial pivoting
+    for col in range(cols):
+        best = -1
+        best_abs = 0.0
+        for r in range(pivot_row, rows):
+            v = abs(mat[r][col])
+            if v > EPS and v > best_abs:
+                best_abs = v
+                best = r
+
+        if best == -1:
+            continue  # free variable, no pivot in this column
+
+        mat[pivot_row], mat[best] = mat[best], mat[pivot_row]
+
+        div = mat[pivot_row][col]
+        for c in range(cols + 1):
+            mat[pivot_row][c] /= div
+
+        for r in range(rows):
+            if r == pivot_row:
+                continue
+            factor = mat[r][col]
+            if abs(factor) <= EPS:
+                continue
+            for c in range(cols + 1):
+                mat[r][c] -= factor * mat[pivot_row][c]
+
+        pivot_row += 1
+
+    # Inconsistency check: 0 = d (d must be ~0)
+    for r in range(pivot_row, rows):
+        if abs(mat[r][3]) > EPS:
+            sys.stdout.write("-1\n")
+            return
+
+    # Rank < 3 => infinitely many solutions
+    if pivot_row < 3:
+        sys.stdout.write("-2\n")
+        return
+
+    # Unique solution (x,y,z)
+    x = mat[0][3]
+    y = mat[1][3]
+    z = mat[2][3]
+
+    r2 = x * x + y * y - z
+    if r2 <= EPS:
+        sys.stdout.write("-1\n")
+        return
+
+    r = math.sqrt(r2)
+    sys.stdout.write(f"{x:.10f} {y:.10f} {r:.10f}\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+

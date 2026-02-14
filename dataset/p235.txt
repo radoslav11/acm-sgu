@@ -1,0 +1,378 @@
+## 1) Concise abridged problem statement
+
+Given an \(N \times N\) board (\(2 \le N \le 300\)) with cells containing:
+- `Q` = the only white queen (the only piece that can move),
+- `W` = other white pieces (immovable blockers),
+- `B` = black pieces (can be captured),
+- `.` = empty,
+
+the queen moves like a chess queen (any number of squares in 8 directions). It **cannot pass through** any piece. It may **land on** a black piece square (capture), but then cannot move beyond it in the same move.
+
+Compute how many distinct cells the queen can occupy **after exactly \(M\) moves** (\(0 \le M \le 50\)).
+
+---
+
+## 2) Detailed editorial (explaining the given solution)
+
+### Key observations
+
+1. **Movement graph**
+   Each board cell is a node. From a cell \((x,y)\), the queen can move in each of 8 directions until it hits:
+   - board boundary (stop),
+   - a white piece `W` (blocked, cannot enter, stop),
+   - a black piece `B` (can enter/capture, but stop after entering).
+
+2. **Exactly \(M\) moves vs. “at most \(M\)”**
+   We need positions reachable in *exactly* \(M\) queen moves.
+
+   A typical trick: if we can “waste” moves in cycles, then once a cell is reachable, it might also be reachable in more moves with the same parity.
+
+3. **Parity matters (distance modulo 2)**
+   The solution relies on this idea:
+   - If a cell is reachable in \(d\) moves, often it is also reachable in \(d+2\) moves by doing a 2-move “bounce” (move somewhere and come back or equivalent).
+   - Therefore, for each cell we track the **minimum number of moves to reach it with even parity** and **with odd parity**.
+
+   We then answer:
+   \[
+   \#\{(i,j) \mid \text{minDist}[i][j][M\%2] \neq -1 \text{ and } \text{minDist}[i][j][M\%2] \le M\}.
+   \]
+
+4. **Why do we also propagate “+2” edges? (bounce behind / wall bounce)**
+   When moving along a ray, a 2-move waste is possible if the queen can “bounce”:
+   - If behind the queen (opposite direction) is either outside the board or blocked by a **non-white** cell, the bounce might not be possible immediately.
+   - The code carefully models whether a “bounce” is possible by checking the square behind the start, and then after moving at least one step, bounce becomes possible (`can_bounce = true`), because you can always go back to the previous square (unless blocked by `W`, which would have stopped you already).
+
+   The implementation adds two kinds of relaxations while scanning each ray:
+   - Reach \((xx,yy)\) in **\(d+1\)** moves (normal move).
+   - Reach \((xx,yy)\) in **\(d+2\)** moves **with same parity as \(d\)**, if bounce is possible.
+
+5. **BFS by move count using buckets**
+   Since \(M \le 50\), we can do BFS layered by exact distance with an array of vectors:
+   - `bucket[d]` holds all states first discovered at distance `d`.
+   - Relaxations only go to `d+1` and `d+2`, so this is easy.
+
+6. **Early stopping along a ray (performance)**
+   Scanning can be expensive (\(O(N)\) per direction per visited cell), so the code includes pruning:
+   - If we find a cell already reachable with same parity at a distance \(\le d-1\), then pushing further `d+1` updates along that ray won’t improve anything (“try1 = false”).
+   - Similarly for the `d+2` parity case.
+
+   Overall complexity is roughly \(O(M \cdot N^3)\) worst-case, but with small \(M\) and pruning it is intended to pass.
+
+7. **Special case when no move is possible**
+   If \(M>0\) and the queen cannot reach any other cell in any parity (only the start is reachable), then the answer should be 0 (you cannot “wait” in place; every move must change the position).
+   The code computes:
+   - `cnt` = number of cells reachable with either parity,
+   - if `cnt == 1` (only the starting cell) and `M>0`, print 0.
+
+---
+
+## 3) Provided C++ solution with detailed comments (line-by-line)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper to print a pair (not used in final output, but handy for debugging)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper to read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper to read a vector of anything that supports >>
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+};
+
+// Helper to print a vector (debug)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+};
+
+// 8 queen directions: diagonals + orthogonals
+constexpr pair<int, int> DIRS[] = {
+    {-1, -1}, {-1, 0}, {-1, 1},
+    { 0, -1},          { 0, 1},
+    { 1, -1}, { 1, 0}, { 1, 1}
+};
+
+constexpr int INF = 1e9;
+
+int n, m;
+vector<string> tbl;
+
+void read() {
+    cin >> n >> m;          // board size and required number of moves
+    tbl.resize(n);
+    cin >> tbl;             // read n strings of length n
+}
+
+void solve() {
+    // dist[x][y][p] = minimum distance (moves) to reach cell (x,y)
+    // with parity p (0 = even, 1 = odd). -1 means unreachable.
+    vector<vector<array<int, 2>>> dist(n, vector<array<int, 2>>(n, {-1, -1}));
+
+    // bucket[d] contains cells discovered at exact distance d.
+    // We only care up to m, because answer is for exactly m moves.
+    vector<vector<pair<int, int>>> bucket(m + 1);
+
+    // Find queen start and replace 'Q' by '.' (queen vacates it to move normally)
+    int start_x = 0, start_y = 0;
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            if(tbl[i][j] == 'Q') {
+                start_x = i;
+                start_y = j;
+                tbl[i][j] = '.'; // treat the start square as empty for movement
+            }
+        }
+    }
+
+    // Start at distance 0 with even parity
+    dist[start_x][start_y][0] = 0;
+    bucket[0].push_back({start_x, start_y});
+
+    // Process BFS layers from distance 0 to m-1
+    for(int d = 0; d < m; d++) {
+        int p1 = (d + 1) & 1; // parity after one more move
+        int p2 = d & 1;       // parity after two more moves (same as d)
+
+        for(auto [x, y]: bucket[d]) {
+            // This cell might have been pushed multiple times; ignore stale entries
+            if(dist[x][y][d & 1] != d) continue;
+
+            // Try moving along each of the 8 directions
+            for(auto [dx, dy]: DIRS) {
+                // Check the square "behind" the queen relative to direction (dx,dy).
+                // This is used to decide whether a 2-move "bounce" is immediately
+                // possible at the start of scanning this ray.
+                int bx = x - dx, by = y - dy;
+
+                // can_bounce is true if the behind square exists and is not a white
+                // blocker. If behind is outside board, can_bounce=false initially.
+                bool can_bounce =
+                    (bx >= 0 && by >= 0 && bx < n && by < n && tbl[bx][by] != 'W');
+
+                // try1 controls whether we still attempt to relax (d+1) along this ray
+                // try2 controls whether we still attempt to relax (d+2) along this ray
+                bool try1 = true;
+                bool try2 = (d + 2 <= m);
+
+                // Walk along the ray: (x+dx, y+dy), (x+2dx, y+2dy), ...
+                for(int xx = x + dx, yy = y + dy;
+                    (try1 || try2) && xx >= 0 && yy >= 0 && xx < n && yy < n;
+                    xx += dx, yy += dy) {
+
+                    char cell = tbl[xx][yy];
+
+                    // White piece blocks completely: cannot land and cannot pass
+                    if(cell == 'W') break;
+
+                    // Relax distance d+1 (one queen move) to this square
+                    if(try1) {
+                        if(dist[xx][yy][p1] == -1) {
+                            dist[xx][yy][p1] = d + 1;
+                            bucket[d + 1].push_back({xx, yy});
+                        } else if(dist[xx][yy][p1] <= d - 1) {
+                            // If already reachable with same parity at <= d-1,
+                            // then reaching further squares at d+1 won't improve
+                            // (monotonic along ray for this BFS scheme), so stop try1.
+                            try1 = false;
+                        }
+                    }
+
+                    // Relax distance d+2 if "bounce" is possible, keeping same parity
+                    if(try2 && can_bounce) {
+                        if(dist[xx][yy][p2] == -1) {
+                            dist[xx][yy][p2] = d + 2;
+                            bucket[d + 2].push_back({xx, yy});
+                        } else if(dist[xx][yy][p2] <= d) {
+                            // Already reachable with same parity at <= d,
+                            // so d+2 along this ray won't help further squares.
+                            try2 = false;
+                        }
+                    }
+
+                    // Once we moved at least one step, we can always bounce by going
+                    // back to the previous cell (not blocked by 'W' because we'd have
+                    // broken already). So after first step, allow bounce.
+                    can_bounce = true;
+
+                    // Black piece can be captured (land here), but cannot pass through
+                    if(cell == 'B') break;
+                }
+            }
+        }
+    }
+
+    // Count answers for exactly M moves:
+    // any cell with min distance of parity M%2 is reachable in exactly M
+    // (because we can waste moves in +2 increments, as modeled).
+    int cnt = 0; // number of cells reachable in any parity (used for special case)
+    int ans = 0; // number of cells reachable in parity m%2
+    int mp = m & 1;
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            if(dist[i][j][mp] != -1) {
+                ans++;
+                cnt++;
+            } else if(dist[i][j][mp ^ 1] != -1) {
+                cnt++;
+            }
+        }
+    }
+
+    // If M>0 and only the starting cell is reachable at all, then we cannot make
+    // a move; so exactly M>0 moves is impossible -> 0.
+    if(m > 0 && cnt == 1) {
+        cout << 0 << '\n';
+    } else {
+        cout << ans << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+
+DIRS = [(-1, -1), (-1, 0), (-1, 1),
+        ( 0, -1),          ( 0, 1),
+        ( 1, -1), ( 1, 0), ( 1, 1)]
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+    board = [list(next(it)) for _ in range(n)]
+
+    # Locate the queen and treat its start as empty for movement purposes.
+    sx = sy = 0
+    for i in range(n):
+        for j in range(n):
+            if board[i][j] == 'Q':
+                sx, sy = i, j
+                board[i][j] = '.'
+
+    # dist[x][y][p] = minimum moves to reach (x,y) with parity p, else -1.
+    dist = [[[-1, -1] for _ in range(n)] for __ in range(n)]
+
+    # Buckets for BFS layers by exact move count (0..m).
+    buckets = [[] for _ in range(m + 1)]
+
+    dist[sx][sy][0] = 0
+    buckets[0].append((sx, sy))
+
+    # Process distances 0..m-1 and relax to d+1 and d+2 where possible.
+    for d in range(m):
+        p1 = (d + 1) & 1  # parity after 1 move
+        p2 = d & 1        # parity after 2 moves (same parity)
+
+        for x, y in buckets[d]:
+            # Skip stale entries (if later we found a shorter distance of same parity).
+            if dist[x][y][d & 1] != d:
+                continue
+
+            for dx, dy in DIRS:
+                # Check if an immediate bounce is possible from the starting square
+                # along this direction (requires the behind cell to exist and not be 'W').
+                bx, by = x - dx, y - dy
+                can_bounce = (0 <= bx < n and 0 <= by < n and board[bx][by] != 'W')
+
+                try1 = True
+                try2 = (d + 2 <= m)
+
+                xx, yy = x + dx, y + dy
+                # Scan along the ray while within bounds and at least one relaxation is active.
+                while (try1 or try2) and 0 <= xx < n and 0 <= yy < n:
+                    cell = board[xx][yy]
+
+                    # White piece blocks completely.
+                    if cell == 'W':
+                        break
+
+                    # Relax distance d+1
+                    if try1:
+                        if dist[xx][yy][p1] == -1:
+                            dist[xx][yy][p1] = d + 1
+                            buckets[d + 1].append((xx, yy))
+                        elif dist[xx][yy][p1] <= d - 1:
+                            # Prune: further squares won't benefit for d+1 relaxations.
+                            try1 = False
+
+                    # Relax distance d+2 if bounce is possible
+                    if try2 and can_bounce:
+                        if dist[xx][yy][p2] == -1:
+                            dist[xx][yy][p2] = d + 2
+                            buckets[d + 2].append((xx, yy))
+                        elif dist[xx][yy][p2] <= d:
+                            # Prune for d+2 relaxations.
+                            try2 = False
+
+                    # After moving at least one step, we can bounce by returning
+                    # to the previous square (since we didn't pass through a 'W').
+                    can_bounce = True
+
+                    # Black piece can be landed on, but blocks further scanning.
+                    if cell == 'B':
+                        break
+
+                    xx += dx
+                    yy += dy
+
+    mp = m & 1
+    ans = 0
+    cnt_any = 0
+
+    for i in range(n):
+        for j in range(n):
+            if dist[i][j][mp] != -1:
+                ans += 1
+                cnt_any += 1
+            elif dist[i][j][mp ^ 1] != -1:
+                cnt_any += 1
+
+    # If m>0 and only starting cell reachable at all, then no legal move exists.
+    if m > 0 and cnt_any == 1:
+        print(0)
+    else:
+        print(ans)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model queen moves as transitions along 8 rays, stopping at `W` (cannot enter) and stopping after landing on `B` (capture). We need cells reachable in exactly \(M\) moves. Track for each cell the minimum number of moves to reach it with each parity (even/odd), since extra 2-move “wastes” can often be inserted. Run a BFS-like process by distance using buckets `bucket[d]`, relaxing to distance `d+1` for normal queen moves and also to `d+2` (same parity) when a 2-move bounce is feasible. Prune scanning along a ray when existing distances already dominate. Finally count cells with `dist[cell][M%2] != -1`. Special case: if \(M>0\) and no move exists (only start reachable at all), answer is 0.

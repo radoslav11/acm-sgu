@@ -1,0 +1,369 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+309. Real Fun
+Time limit per test: 0.75 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Yesterday it was real fun.
+
+Today you wake up and notice that something is just not right. Not just headache, but something else is constantly annoying you. But you just can't get what exactly. You walk around your room, enjoying the sunlight coming through the open window, through the holes in the roof... Stop. There were no holes in the roof until today. Definitely.
+
+Suppressing the urge to call your friends and find out something about the origin of the holes, you decide to fix the roof first. In a modern way.
+
+You've decided to nail 3 equal square boards with sides parrallel to the sides of the (of course, square) roof to close all the holes, and were just wondering what is the minimal required size for these boards.
+
+Formally speaking, you are given n different points on a Cartesian plane and need to find minimal d such that three possibly overlapping d x d squares with sides parallel to coordinate axes can cover all the points (possibly just by the border).
+
+Input
+The first line of the input file contains n (4 ≤ n ≤ 20000).
+
+The next n lines contain two integer numbers each, x and y — the coordinates of the holes (-109 ≤ x, y ≤ 109). No two points coincide.
+
+Output
+Output the minimal possible d.
+
+Example(s)
+sample input
+sample output
+4
+0 1
+0 -1
+1 0
+-1 0
+1
+
+sample input
+sample output
+12
+0 1
+0 -1
+1 0
+-1 0
+10 1
+10 -1
+11 0
+9 0
+20 1
+20 -1
+21 0
+19 0
+2
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+Given **n** distinct points \((x_i, y_i)\) on the plane \((4 \le n \le 20000)\), find the **minimum integer \(d\)** such that all points can be covered (border allowed, squares may overlap) by **three axis-aligned squares**, each of size \(d \times d\).
+
+---
+
+## 2) Key observations
+
+1. **Monotonicity ⇒ binary search**  
+   If points can be covered by 3 squares of side \(d\), then they can also be covered by side \(d' \ge d\).  
+   So we can binary search the minimum \(d\).
+
+2. **Bounding box is crucial**  
+   For a set \(S\) of points, let its bounding box be:
+   \[
+   [\min_x, \max_x] \times [\min_y, \max_y]
+   \]
+   Any valid placement must cover the extreme points, so checking corner-anchored placements often suffices.
+
+3. **Covering with 2 squares: only 2 “diagonal corner” patterns are needed**  
+   If a set can be covered by **two** \(d \times d\) axis-aligned squares, then there exists a solution where the two squares occupy **opposite corners** of the bounding box, in one of the two diagonals:
+   - (bottom-left + top-right), or
+   - (bottom-right + top-left).  
+   Therefore, to check “2 squares possible”, it’s enough to test these two patterns.
+
+4. **Covering with 3 squares: try peeling off one corner square**  
+   In an optimal 3-square cover, we can assume at least one square can be shifted to touch the bounding box on both axes (i.e., be placed at one of the four corners of the bounding box, adjusted by \(d\)).  
+   So we:
+   - Try placing the first square at each of the **4 corners** of the bounding box,
+   - Remove points covered by it,
+   - Check the remainder with the **2-square checker**.
+
+This yields an \(O(n)\) feasibility test for a fixed \(d\), and overall \(O(n \log R)\) with binary search.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Binary search on \(d\)
+Search \(d\) in \([0, 2\cdot 10^9]\) (or a slightly larger safe bound).  
+For each mid, run `check_k3(mid)`:
+- if feasible: try smaller (`hi = mid - 1`)
+- else: need larger (`lo = mid + 1`)
+
+### Step B: `check_k2(indices, d)` — can a subset be covered by 2 squares?
+1. Compute bounding box \(\min_x, \max_x, \min_y, \max_y\) over the subset.
+2. Test diagonal pattern 1 (BL + TR):
+   - BL square: \([ \min_x, \min_x+d ] \times [ \min_y, \min_y+d ]\)
+   - TR square: \([ \max_x-d, \max_x ] \times [ \max_y-d, \max_y ]\)
+   Every point must be in at least one.
+3. If failed, test diagonal pattern 2 (BR + TL):
+   - BR square: \([ \max_x-d, \max_x ] \times [ \min_y, \min_y+d ]\)
+   - TL square: \([ \min_x, \min_x+d ] \times [ \max_y-d, \max_y ]\)
+
+If either works, return true.
+
+### Step C: `check_k3(indices, d)` — can a subset be covered by 3 squares?
+1. Compute the subset’s bounding box.
+2. Try placing the first square with its bottom-left corner at each of:
+   - \((\min_x, \min_y)\)
+   - \((\max_x-d, \min_y)\)
+   - \((\min_x, \max_y-d)\)
+   - \((\max_x-d, \max_y-d)\)
+3. For each placement:
+   - Filter remaining points not inside this square.
+   - Run `check_k2(remaining, d)`.
+4. If any corner works, return true.
+
+### Complexity
+- `check_k2`: \(O(n)\)
+- `check_k3`: up to 4 filters + 4 calls to `check_k2` ⇒ still \(O(n)\) with a small constant
+- Binary search: ~31 iterations  
+Total: **\(O(n \log R)\)**, fast enough for \(n=20000\).
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int n;
+vector<pair<int,int>> pts;
+
+/*
+  Check whether a subset of points (given by indices) can be covered by TWO
+  axis-aligned squares of side d.
+
+  Key fact: It is enough to test only two configurations:
+    1) bottom-left + top-right corners of the bounding box
+    2) bottom-right + top-left corners of the bounding box
+*/
+static bool check_k2(const vector<int>& idx, long long d) {
+    if (idx.empty()) return true;
+
+    long long min_x = (long long)4e18, max_x = (long long)-4e18;
+    long long min_y = (long long)4e18, max_y = (long long)-4e18;
+
+    for (int i : idx) {
+        min_x = min(min_x, (long long)pts[i].first);
+        max_x = max(max_x, (long long)pts[i].first);
+        min_y = min(min_y, (long long)pts[i].second);
+        max_y = max(max_y, (long long)pts[i].second);
+    }
+
+    // Diagonal 1: bottom-left (min_x,min_y) and top-right (max_x-d, max_y-d)
+    {
+        bool ok = true;
+        for (int i : idx) {
+            long long x = pts[i].first, y = pts[i].second;
+            bool in_bl = (x >= min_x && x <= min_x + d &&
+                          y >= min_y && y <= min_y + d);
+            bool in_tr = (x >= max_x - d && x <= max_x &&
+                          y >= max_y - d && y <= max_y);
+            if (!in_bl && !in_tr) { ok = false; break; }
+        }
+        if (ok) return true;
+    }
+
+    // Diagonal 2: bottom-right (max_x-d,min_y) and top-left (min_x,max_y-d)
+    {
+        bool ok = true;
+        for (int i : idx) {
+            long long x = pts[i].first, y = pts[i].second;
+            bool in_br = (x >= max_x - d && x <= max_x &&
+                          y >= min_y && y <= min_y + d);
+            bool in_tl = (x >= min_x && x <= min_x + d &&
+                          y >= max_y - d && y <= max_y);
+            if (!in_br && !in_tl) { ok = false; break; }
+        }
+        return ok;
+    }
+}
+
+/*
+  Check whether a subset of points (indices) can be covered by THREE squares.
+
+  Strategy:
+    - Compute bounding box of the subset.
+    - Try placing one square at each of the 4 bbox corners (adjusted by d),
+      remove covered points, and check remainder with check_k2.
+*/
+static bool check_k3(const vector<int>& idx, long long d) {
+    if (idx.empty()) return true;
+
+    long long min_x = (long long)4e18, max_x = (long long)-4e18;
+    long long min_y = (long long)4e18, max_y = (long long)-4e18;
+
+    for (int i : idx) {
+        min_x = min(min_x, (long long)pts[i].first);
+        max_x = max(max_x, (long long)pts[i].first);
+        min_y = min(min_y, (long long)pts[i].second);
+        max_y = max(max_y, (long long)pts[i].second);
+    }
+
+    auto try_corner = [&](long long cx, long long cy) -> bool {
+        // Square is [cx, cx+d] x [cy, cy+d]
+        vector<int> rem;
+        rem.reserve(idx.size());
+        for (int i : idx) {
+            long long x = pts[i].first, y = pts[i].second;
+            if (x < cx || x > cx + d || y < cy || y > cy + d)
+                rem.push_back(i);
+        }
+        return check_k2(rem, d);
+    };
+
+    return try_corner(min_x,     min_y)     ||
+           try_corner(max_x - d, min_y)     ||
+           try_corner(min_x,     max_y - d) ||
+           try_corner(max_x - d, max_y - d);
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n;
+    pts.resize(n);
+    for (int i = 0; i < n; i++) cin >> pts[i].first >> pts[i].second;
+
+    vector<int> all(n);
+    iota(all.begin(), all.end(), 0);
+
+    // Binary search for minimal d
+    long long lo = 0, hi = 2000000042LL; // safe upper bound
+    long long ans = hi;
+
+    while (lo <= hi) {
+        long long mid = (lo + hi) / 2;
+        if (check_k3(all, mid)) {
+            ans = mid;
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    cout << ans << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from typing import List, Tuple
+
+def check_k2(points: List[Tuple[int, int]], idxs: List[int], d: int) -> bool:
+    """
+    Can points in idxs be covered by TWO d x d axis-aligned squares?
+
+    It is enough to test only two diagonal corner placements w.r.t. the
+    bounding box of the set.
+    """
+    if not idxs:
+        return True
+
+    min_x = min(points[i][0] for i in idxs)
+    max_x = max(points[i][0] for i in idxs)
+    min_y = min(points[i][1] for i in idxs)
+    max_y = max(points[i][1] for i in idxs)
+
+    # Diagonal 1: bottom-left + top-right
+    ok = True
+    for i in idxs:
+        x, y = points[i]
+        in_bl = (min_x <= x <= min_x + d and min_y <= y <= min_y + d)
+        in_tr = (max_x - d <= x <= max_x and max_y - d <= y <= max_y)
+        if not (in_bl or in_tr):
+            ok = False
+            break
+    if ok:
+        return True
+
+    # Diagonal 2: bottom-right + top-left
+    ok = True
+    for i in idxs:
+        x, y = points[i]
+        in_br = (max_x - d <= x <= max_x and min_y <= y <= min_y + d)
+        in_tl = (min_x <= x <= min_x + d and max_y - d <= y <= max_y)
+        if not (in_br or in_tl):
+            ok = False
+            break
+    return ok
+
+
+def check_k3(points: List[Tuple[int, int]], idxs: List[int], d: int) -> bool:
+    """
+    Can points in idxs be covered by THREE d x d squares?
+
+    Try placing one square at each corner of the bounding box, remove covered
+    points, then solve the remainder with check_k2.
+    """
+    if not idxs:
+        return True
+
+    min_x = min(points[i][0] for i in idxs)
+    max_x = max(points[i][0] for i in idxs)
+    min_y = min(points[i][1] for i in idxs)
+    max_y = max(points[i][1] for i in idxs)
+
+    def try_corner(cx: int, cy: int) -> bool:
+        # First square covers [cx, cx+d] x [cy, cy+d]
+        rem = []
+        for i in idxs:
+            x, y = points[i]
+            if x < cx or x > cx + d or y < cy or y > cy + d:
+                rem.append(i)
+        return check_k2(points, rem, d)
+
+    return (
+        try_corner(min_x, min_y) or
+        try_corner(max_x - d, min_y) or
+        try_corner(min_x, max_y - d) or
+        try_corner(max_x - d, max_y - d)
+    )
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    n = int(data[0])
+
+    points: List[Tuple[int, int]] = []
+    it = iter(data[1:])
+    for xs, ys in zip(it, it):
+        points.append((int(xs), int(ys)))
+
+    idxs = list(range(n))
+
+    # Binary search for minimal d
+    lo, hi = 0, 2_000_000_042
+    ans = hi
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if check_k3(points, idxs, mid):
+            ans = mid
+            hi = mid - 1
+        else:
+            lo = mid + 1
+
+    sys.stdout.write(str(ans) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+

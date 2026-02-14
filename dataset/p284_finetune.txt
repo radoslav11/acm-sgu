@@ -1,0 +1,323 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+284. Grammar
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Consider an alphabet consisting of terminal characters 'a' and 'b' and non-terminal characters 1,2,...,N. Each non-terminal character K has a description, which is a string of terminal and non-terminal characters; the non-terminal characters in the description are less than K. The description may be empty.
+
+You take the string containing single non-terminal character N and replace all non-terminal characters in it by their definitions until we obtain a string containing only terminal characters, which is called the final string.
+
+The task is: given a nonempty string S of terminal characters, determine the number of its occurences in the final string.
+
+Input
+The first line of the input contains single integer N (1≤ N≤ 30). The second line contains string S containing at most 100 characters. The rest of the input contains the non-terminal characters' descriptions. The K+2-nd line (1≤ K≤ N) contains the description of K-th character. It starts with a non-negative integer LK, followed by LK characters of the alphabet separated by spaces. The sum of all LK does not exceed 500.
+
+Output
+The only line of the output must contain the answer without leading zeroes.
+
+Example(s)
+sample input
+sample output
+2
+abb
+2 a b 
+3 a 1 b
+1
+
+
+
+Novosibirsk SU Contest #2, by Novosibirsk Team #1
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+We have terminals `{a, b}` and nonterminals `1..N` (`N ≤ 30`).  
+Each nonterminal `K` is defined as a sequence of terminals and/or nonterminals, and every referenced nonterminal is `< K` (so the dependency graph is a DAG). Starting from the string `"N"`, repeatedly replace nonterminals by their definitions until only terminals remain; this yields the (possibly enormous) **final string**.
+
+Given a non-empty terminal pattern `S` (`|S| ≤ 100`), compute how many times `S` occurs (overlaps allowed) in the final string. The answer can be extremely large, so print it as a decimal integer.
+
+---
+
+## 2) Key observations
+
+1. **We cannot build the final string**: expansions may grow exponentially.
+2. We need to count occurrences of a pattern in a huge implicit string ⇒ use **streaming pattern matching**.
+3. With KMP, we can represent the scanning process by a small **automaton state**:
+   - state = length of matched prefix of `S` (0..m), where `m = |S|`.
+   - reading `'a'` or `'b'` updates the state via precomputed transitions.
+   - whenever we reach state `m`, we found an occurrence ending at this position.
+4. Since each nonterminal `K` only references `< K`, we can compute DP **in increasing order of K**.
+5. For each nonterminal expansion, what matters for pattern counting is:
+   - how many matches occur inside it
+   - what KMP state we end in, given the starting KMP state
+
+This suggests a composable DP.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Build KMP automaton for pattern `S`
+
+Let `S` have length `m`. Compute the prefix-function `pi[]`.  
+Then build automaton transitions:
+
+`go[state][c]` for `state ∈ [0..m]` and `c ∈ {0,1}` corresponding to `'a'` / `'b'`.
+
+This allows scanning any terminal stream without backtracking:
+- `state = go[state][c]`
+- if `state == m`, count one occurrence (overlaps naturally handled by KMP).
+
+### Step B: DP over nonterminals and KMP start state
+
+Encode each definition token:
+- terminal `'a'` as `-1`, terminal `'b'` as `-2`
+- nonterminal `t` as integer index `t-1` (0-based)
+
+Define DP:
+
+For each nonterminal `k` (0-based) and each KMP start state `i` (0..m):
+- `dpCount[k][i]` = number of occurrences found while scanning expansion of `k` starting from state `i`
+- `dpState[k][i]` = resulting KMP state after scanning expansion of `k` starting from state `i`
+
+To compute `(dpCount[k][i], dpState[k][i])`:
+- initialize `curState = i`, `cnt = 0`
+- scan tokens in `defs[k]` left-to-right:
+  - if terminal:
+    - `curState = go[curState][a/b]`
+    - if `curState == m`, `cnt++`
+  - if nonterminal `t`:
+    - `cnt += dpCount[t][curState]`
+    - `curState = dpState[t][curState]`
+
+Because all referenced nonterminals are `< k`, their DP is already computed.
+
+### Step C: Output
+
+The final process starts at nonterminal `N` (index `N-1`) with KMP state `0`.
+
+Answer = `dpCount[N-1][0]`.
+
+### Big integers
+The count can be huge.  
+- In **Python**, `int` is arbitrary precision.
+- In **C++**, use `boost::multiprecision::cpp_int` (much simpler than writing a bigint).
+
+### Complexity
+Let total tokens across all definitions be `T ≤ 500`, and `m ≤ 100`.
+We do `O((m+1) * T)` transitions per nonterminal set overall (effectively `O((m+1)*T)` because we scan each rule for each state), well within limits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+#include <boost/multiprecision/cpp_int.hpp>
+
+using namespace std;
+using boost::multiprecision::cpp_int;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    cin >> N;
+
+    string S;
+    cin >> S;
+    int m = (int)S.size();
+
+    // Read definitions.
+    // Encode tokens:
+    //  -1 => 'a', -2 => 'b', >=0 => nonterminal index (0-based)
+    vector<vector<int>> defs(N);
+    for (int k = 0; k < N; k++) {
+        int L;
+        cin >> L;
+        defs[k].resize(L);
+        for (int i = 0; i < L; i++) {
+            string tok;
+            cin >> tok;
+            if (tok == "a") defs[k][i] = -1;
+            else if (tok == "b") defs[k][i] = -2;
+            else defs[k][i] = stoi(tok) - 1; // 1-based -> 0-based
+        }
+    }
+
+    // ---- Build KMP prefix function ----
+    vector<int> pi(m, 0);
+    for (int i = 1; i < m; i++) {
+        int j = pi[i - 1];
+        while (j > 0 && S[j] != S[i]) j = pi[j - 1];
+        if (S[j] == S[i]) j++;
+        pi[i] = j;
+    }
+
+    // ---- Build automaton transitions go[state][c] for c in {0:'a', 1:'b'} ----
+    // state ranges from 0..m (m means "we have matched full pattern length",
+    // but we still allow transitions from it for convenience).
+    vector<array<int, 2>> go(m + 1);
+    for (int state = 0; state <= m; state++) {
+        for (int c = 0; c < 2; c++) {
+            char ch = (c == 0 ? 'a' : 'b');
+            if (state < m && S[state] == ch) {
+                go[state][c] = state + 1;            // extend match
+            } else if (state == 0) {
+                go[state][c] = 0;                    // cannot fallback
+            } else {
+                go[state][c] = go[pi[state - 1]][c]; // fallback via pi
+            }
+        }
+    }
+
+    // ---- DP arrays ----
+    // dpCount[k][i] = how many matches occur when expanding nonterminal k,
+    // starting KMP state i.
+    // dpState[k][i] = ending KMP state after expanding nonterminal k,
+    // starting KMP state i.
+    vector<vector<cpp_int>> dpCount(N, vector<cpp_int>(m + 1, 0));
+    vector<vector<int>> dpState(N, vector<int>(m + 1, 0));
+
+    // Process nonterminals in increasing order (DAG order guaranteed by input).
+    for (int k = 0; k < N; k++) {
+        for (int start = 0; start <= m; start++) {
+            int curState = start;
+            cpp_int cnt = 0;
+
+            // Scan the definition tokens left-to-right and compose effects.
+            for (int token : defs[k]) {
+                if (token < 0) {
+                    // Terminal
+                    int c = (token == -1 ? 0 : 1);
+                    curState = go[curState][c];
+                    if (curState == m) {
+                        // A full occurrence ends here
+                        cnt += 1;
+                    }
+                } else {
+                    // Nonterminal reference: add its internal matches
+                    // and jump state accordingly.
+                    cnt += dpCount[token][curState];
+                    curState = dpState[token][curState];
+                }
+            }
+
+            dpCount[k][start] = cnt;
+            dpState[k][start] = curState;
+        }
+    }
+
+    // Start from nonterminal N (index N-1) with KMP state 0.
+    cout << dpCount[N - 1][0] << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+def build_kmp_automaton(pattern: str):
+    """
+    Build KMP prefix function and automaton transitions for alphabet {a,b}.
+    Returns go where go[state][c] gives next state,
+    state in [0..m], c in {0,1} representing 'a','b'.
+    """
+    m = len(pattern)
+
+    # Prefix function pi[i] = length of longest proper prefix of pattern
+    # that is also a suffix of pattern[:i+1].
+    pi = [0] * m
+    for i in range(1, m):
+        j = pi[i - 1]
+        while j > 0 and pattern[j] != pattern[i]:
+            j = pi[j - 1]
+        if pattern[j] == pattern[i]:
+            j += 1
+        pi[i] = j
+
+    # Automaton transitions
+    go = [[0, 0] for _ in range(m + 1)]
+    for state in range(m + 1):
+        for c in range(2):
+            ch = 'a' if c == 0 else 'b'
+            if state < m and pattern[state] == ch:
+                go[state][c] = state + 1
+            elif state == 0:
+                go[state][c] = 0
+            else:
+                go[state][c] = go[pi[state - 1]][c]
+    return go
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+
+    N = int(next(it))
+    S = next(it)
+    m = len(S)
+
+    # Read definitions and encode tokens:
+    # -1 = 'a', -2 = 'b', >=0 = nonterminal index (0-based)
+    defs = []
+    for _ in range(N):
+        L = int(next(it))
+        cur = []
+        for _ in range(L):
+            tok = next(it)
+            if tok == 'a':
+                cur.append(-1)
+            elif tok == 'b':
+                cur.append(-2)
+            else:
+                cur.append(int(tok) - 1)
+        defs.append(cur)
+
+    # KMP automaton transitions
+    go = build_kmp_automaton(S)
+
+    # DP tables
+    # Python ints are arbitrary precision, perfect for this problem.
+    dpCount = [[0] * (m + 1) for _ in range(N)]
+    dpState = [[0] * (m + 1) for _ in range(N)]
+
+    # Compute dp in increasing nonterminal order
+    for k in range(N):
+        for start in range(m + 1):
+            cur_state = start
+            cnt = 0
+
+            for token in defs[k]:
+                if token < 0:
+                    # Terminal
+                    c = 0 if token == -1 else 1
+                    cur_state = go[cur_state][c]
+                    if cur_state == m:
+                        cnt += 1
+                else:
+                    # Nonterminal reference: compose results
+                    cnt += dpCount[token][cur_state]
+                    cur_state = dpState[token][cur_state]
+
+            dpCount[k][start] = cnt
+            dpState[k][start] = cur_state
+
+    # Answer: expand N starting with KMP state 0
+    print(dpCount[N - 1][0])
+
+if __name__ == "__main__":
+    solve()
+```
+
+Both implementations follow the same idea: treat expansions as streams, use the KMP automaton state as the only “context”, and do DP composition along the grammar DAG.

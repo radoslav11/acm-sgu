@@ -1,0 +1,496 @@
+p451.ans5
+======================
+2 0
+
+=================
+p451.ans2
+======================
+5 1
+
+=================
+p451.ans3
+======================
+2 2 
+
+=================
+p451.ans4
+======================
+6 0
+
+=================
+p451.in1
+======================
+C is A's father's brother's son's aunt
+
+=================
+p451.in6
+======================
+C is A's son's son's mother
+
+=================
+p451.cpp
+======================
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using Step = pair<string, int>;
+
+vector<vector<Step>> expand_relation(const string& rel) {
+    vector<vector<Step>> result;
+
+    if(rel == "father" || rel == "mother" || rel == "son" ||
+       rel == "daughter" || rel == "husband" || rel == "wife") {
+        result.push_back({{rel, 0}});
+    } else if(rel == "brother") {
+        result.push_back({{"father", 1}, {"son", 2}});
+        result.push_back({{"mother", 1}, {"son", 2}});
+    } else if(rel == "sister") {
+        result.push_back({{"father", 1}, {"daughter", 2}});
+        result.push_back({{"mother", 1}, {"daughter", 2}});
+    } else if(rel == "grandfather") {
+        result.push_back({{"father", 0}, {"father", 0}});
+        result.push_back({{"mother", 0}, {"father", 0}});
+    } else if(rel == "grandmother") {
+        result.push_back({{"father", 0}, {"mother", 0}});
+        result.push_back({{"mother", 0}, {"mother", 0}});
+    } else if(rel == "grandson") {
+        result.push_back({{"son", 0}, {"son", 0}});
+        result.push_back({{"daughter", 0}, {"son", 0}});
+    } else if(rel == "granddaughter") {
+        result.push_back({{"son", 0}, {"daughter", 0}});
+        result.push_back({{"daughter", 0}, {"daughter", 0}});
+    } else if(rel == "uncle") {
+        result.push_back({{"father", 0}, {"father", 1}, {"son", 2}});
+        result.push_back({{"father", 0}, {"mother", 1}, {"son", 2}});
+        result.push_back({{"mother", 0}, {"father", 1}, {"son", 2}});
+        result.push_back({{"mother", 0}, {"mother", 1}, {"son", 2}});
+    } else if(rel == "aunt") {
+        result.push_back({{"father", 0}, {"father", 1}, {"daughter", 2}});
+        result.push_back({{"father", 0}, {"mother", 1}, {"daughter", 2}});
+        result.push_back({{"mother", 0}, {"father", 1}, {"daughter", 2}});
+        result.push_back({{"mother", 0}, {"mother", 1}, {"daughter", 2}});
+    } else if(rel == "nephew") {
+        result.push_back({{"father", 1}, {"son", 2}, {"son", 0}});
+        result.push_back({{"mother", 1}, {"son", 2}, {"son", 0}});
+        result.push_back({{"father", 1}, {"daughter", 2}, {"son", 0}});
+        result.push_back({{"mother", 1}, {"daughter", 2}, {"son", 0}});
+    } else if(rel == "niece") {
+        result.push_back({{"father", 1}, {"son", 2}, {"daughter", 0}});
+        result.push_back({{"mother", 1}, {"son", 2}, {"daughter", 0}});
+        result.push_back({{"father", 1}, {"daughter", 2}, {"daughter", 0}});
+        result.push_back({{"mother", 1}, {"daughter", 2}, {"daughter", 0}});
+    }
+
+    return result;
+}
+
+string line;
+
+void read() { getline(cin, line); }
+
+void solve() {
+    // Each compound relation (brother, uncle, etc.) can be decomposed into
+    // basic ones (father, mother, son, daughter, husband, wife). Some have
+    // multiple decompositions, say "brother" means father's son OR
+    // mother's son (but not self). With up to 10 relations and up to 4
+    // decompositions each, naively trying all 4^10 combinations and verifying
+    // the "score" for the graph is too slow.
+    //
+    // One way to speed this up is to notice that we don't need separate family
+    // trees per combination. Instead, we build one shared family tree lazily
+    // and track a set of "current positions" (which people C could be). For
+    // each input relation, we try all its decompositions on the current
+    // position set and union the results. This is O(relations * expansions *
+    // |positions|) per step.
+    //
+    // For "brother"/"sister", we need exclusion: X's brother != X. We track
+    // this as (person, excluded_person) pairs in the state set, using flags
+    // on steps: flag=1 saves the current person, flag=2 skips if target
+    // matches the saved person.
+    //
+    // For son/daughter, we allow reusing existing children (which can
+    // collapse paths and reduce distance) and also create one fresh child
+    // per gender (which extends the tree for longer paths).
+    //
+    // Finally, kinship distance uses weight 1 for parent/child edges and
+    // weight 0 for spouse edges, so we run 0-1 BFS from A to find shortest
+    // distances to all reachable nodes, then take min/max over endpoints.
+
+    vector<string> relations;
+
+    size_t pos = line.find(" is A");
+    if(pos == string::npos) {
+        return;
+    }
+
+    line = line.substr(pos + 5);
+
+    if(line.empty() || line == " is A") {
+        cout << "0 0\n";
+        return;
+    }
+
+    stringstream ss(line);
+    string word;
+    while(ss >> word) {
+        if(word.size() >= 2 && word.substr(word.size() - 2) == "'s") {
+            word = word.substr(0, word.size() - 2);
+        }
+        if(!word.empty() && word != "'" && word != "s") {
+            relations.push_back(word);
+        }
+    }
+
+    int lo = INT_MAX, hi = INT_MIN;
+
+    map<int, int> fa, mo, sp;
+    map<int, set<int>> ch;
+    map<int, int> gender;
+    map<int, set<int>> extra_children;
+    int nid = 1;
+
+    set<pair<int, int>> cur = {{0, -1}};
+
+    auto apply_step = [&](const set<pair<int, int>>& cur_set, const string& rel,
+                          int flag) {
+        set<pair<int, int>> nxt;
+        for(const auto& pe: cur_set) {
+            int p = pe.first, excl = pe.second;
+            auto emit = [&](int target) {
+                if(flag == 2 && target == excl) {
+                    return;
+                }
+                int new_excl = (flag == 2) ? -1 : excl;
+                if(flag == 1) {
+                    new_excl = p;
+                }
+                nxt.insert({target, new_excl});
+            };
+
+            if(rel == "father") {
+                if(!fa.count(p)) {
+                    if(mo.count(p) && sp.count(mo[p])) {
+                        fa[p] = sp[mo[p]];
+                        ch[fa[p]].insert(p);
+                    } else {
+                        int id = nid++;
+                        fa[p] = id;
+                        gender[id] = 1;
+                        ch[id].insert(p);
+                        if(mo.count(p)) {
+                            sp[id] = mo[p];
+                            sp[mo[p]] = id;
+                        }
+                    }
+                }
+                emit(fa[p]);
+            } else if(rel == "mother") {
+                if(!mo.count(p)) {
+                    if(fa.count(p) && sp.count(fa[p])) {
+                        mo[p] = sp[fa[p]];
+                        ch[mo[p]].insert(p);
+                    } else {
+                        int id = nid++;
+                        mo[p] = id;
+                        gender[id] = 2;
+                        ch[id].insert(p);
+                        if(fa.count(p)) {
+                            sp[id] = fa[p];
+                            sp[fa[p]] = id;
+                        }
+                    }
+                }
+                emit(mo[p]);
+            } else if(rel == "son" || rel == "daughter") {
+                int want = (rel == "son") ? 1 : 2;
+                for(int c: ch[p]) {
+                    if(gender[c] == want || gender[c] == 0) {
+                        emit(c);
+                    }
+                }
+                if(!extra_children[p].count(want)) {
+                    int id = nid++;
+                    gender[id] = want;
+                    ch[p].insert(id);
+                    if(gender[p] == 2) {
+                        mo[id] = p;
+                        if(!sp.count(p)) {
+                            int sid = nid++;
+                            sp[p] = sid;
+                            sp[sid] = p;
+                            gender[sid] = 1;
+                            fa[id] = sid;
+                            ch[sid].insert(id);
+                        } else {
+                            fa[id] = sp[p];
+                            ch[sp[p]].insert(id);
+                        }
+                    } else {
+                        fa[id] = p;
+                        if(gender[p] == 0) {
+                            gender[p] = 1;
+                        }
+                        if(!sp.count(p)) {
+                            int sid = nid++;
+                            sp[p] = sid;
+                            sp[sid] = p;
+                            gender[sid] = 2;
+                            mo[id] = sid;
+                            ch[sid].insert(id);
+                        } else {
+                            mo[id] = sp[p];
+                            ch[sp[p]].insert(id);
+                        }
+                    }
+                    extra_children[p].insert(want);
+                    emit(id);
+                }
+            } else if(rel == "husband") {
+                if(!sp.count(p)) {
+                    int id = nid++;
+                    sp[p] = id;
+                    sp[id] = p;
+                    gender[id] = 1;
+                    gender[p] = 2;
+                }
+                emit(sp[p]);
+            } else if(rel == "wife") {
+                if(!sp.count(p)) {
+                    int id = nid++;
+                    sp[p] = id;
+                    sp[id] = p;
+                    gender[id] = 2;
+                    gender[p] = 1;
+                }
+                emit(sp[p]);
+            }
+        }
+        return nxt;
+    };
+
+    for(const string& rel: relations) {
+        auto expansions = expand_relation(rel);
+        set<pair<int, int>> all_results;
+        for(const auto& exp: expansions) {
+            auto tmp = cur;
+            for(const auto& step: exp) {
+                tmp = apply_step(tmp, step.first, step.second);
+            }
+            for(auto& x: tmp) {
+                all_results.insert(x);
+            }
+        }
+        cur = all_results;
+    }
+
+    map<int, vector<pair<int, int>>> adj;
+    auto add = [&](int u, int v, int w) {
+        adj[u].push_back({v, w});
+        adj[v].push_back({u, w});
+    };
+    for(auto& [c, f]: fa) {
+        add(c, f, 1);
+    }
+    for(auto& [c, m]: mo) {
+        add(c, m, 1);
+    }
+    set<pair<int, int>> seen;
+    for(auto& [a, b]: sp) {
+        auto e = make_pair(min(a, b), max(a, b));
+        if(!seen.count(e)) {
+            add(a, b, 0);
+            seen.insert(e);
+        }
+    }
+
+    map<int, int> dist;
+    deque<int> q;
+    dist[0] = 0;
+    q.push_back(0);
+    while(!q.empty()) {
+        int u = q.front();
+        q.pop_front();
+        for(auto [v, w]: adj[u]) {
+            int d = dist[u] + w;
+            if(!dist.count(v) || d < dist[v]) {
+                dist[v] = d;
+                if(w == 0) {
+                    q.push_front(v);
+                } else {
+                    q.push_back(v);
+                }
+            }
+        }
+    }
+
+    for(const auto& pe: cur) {
+        int p = pe.first;
+        if(dist.count(p)) {
+            lo = min(lo, dist[p]);
+            hi = max(hi, dist[p]);
+        }
+    }
+
+    if(lo == INT_MAX) {
+        cout << "0 0\n";
+    } else {
+        cout << hi << " " << lo << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+p451.ans1
+======================
+5 3
+
+=================
+p451.ans6
+======================
+1 1
+
+=================
+p451.in5
+======================
+C is A's father's son's brother
+
+=================
+p451.in2
+======================
+C is A's mother's brother's son's aunt
+
+=================
+p451.in3
+======================
+C is A's son's mother's mother's son
+
+=================
+p451.in4
+======================
+C is A's aunt's niece's aunt's niece
+
+=================
+statement.txt
+======================
+451. Cousin's Aunt
+Time limit per test: 1 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Sarah is a girl who likes reading books.
+
+One day, she wondered about the relationship of a family in a mystery novel. The story said,
+B is A's father's brother's son, and
+C is B's aunt.
+Then she asked herself, "So how many degrees of kinship are there between A and C?"
+
+There are two possible relationships between B and C, that is, C is either B's father's sister or B's mother's sister in the story. If C is B's father's sister, C is in the third degree of kinship to A (A's father's sister). On the other hand, if C is B's mother's sister, C is in the fifth degree of kinship to A (A's father's brother's wife's sister).
+
+You are a friend of Sarah's and good at programming. You can help her by writing a general program to calculate the maximum and minimum degrees of kinship between A and C under given relationship.
+
+The relationship of A and C is represented by a sequence of the following basic relations: father, mother, son, daughter, husband, wife, brother, sister, grandfather, grandmother, grandson, granddaughter, uncle, aunt, nephew, and niece. Here are some descriptions about these relations:
+X's brother is equivalent to X's father's or mother's son not identical to X.
+X's grandfather is equivalent to X's father's or mother's father.
+X's grandson is equivalent to X's son's or daughter's son.
+X's uncle is equivalent to X's father's or mother's brother.
+X's nephew is equivalent to X's brother's or sister's son.
+Similar rules apply to sister, grandmother, granddaughter, aunt and niece.
+
+
+In this problem, you can assume there are none of the following relations in the family: adoptions, marriages between relatives (i.e.\ the family tree has no cycles), divorces, remarriages, bigamous marriages and same-sex marriages.
+
+The degree of kinship is defined as follows:
+The distance from X to X's father, X's mother, X's son or X's daughter is one.
+The distance from X to X's husband or X's wife is zero.
+The degree of kinship between X and Y is equal to the shortest distance from X to Y deduced from the above rules.
+
+Input
+The input is given by one line in the following format:
+
+C is A('s relation)*
+
+Here, relation is one of the following: father, mother, son, daughter, husband, wife, brother, sister, grandfather, grandmother, grandson, granddaughter, uncle, aunt, nephew, niece. An asterisk denotes zero or more occurance of portion surrounded by the parentheses. The number of relations is at most ten.
+
+Output
+Print a line containing the maximum and minimum degrees of kinship separated by space.
+
+Example(s)
+sample input
+sample output
+C is A's father's brother's son's aunt
+5 3
+
+sample input
+sample output
+C is A's mother's brother's son's aunt
+5 1
+
+sample input
+sample output
+C is A's son's mother's mother's son
+2 2
+
+sample input
+sample output
+C is A's aunt's niece's aunt's niece
+6 0
+
+sample input
+sample output
+C is A's father's son's brother
+2 0
+
+sample input
+sample output
+C is A's son's son's mother
+1 1
+
+sample input
+sample output
+C is A
+0 0
+
+=================

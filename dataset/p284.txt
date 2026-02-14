@@ -1,0 +1,724 @@
+## 1) Concise, abridged problem statement
+
+We have a grammar over terminals `{a, b}` and nonterminals `1..N` (`N ≤ 30`).  
+Each nonterminal `K` is defined as a sequence of terminals and/or nonterminals, where any referenced nonterminal is **< K** (so definitions form a DAG). Starting from the string consisting of just nonterminal `N`, repeatedly expand nonterminals by their definitions until only terminals remain; this is the **final string** (potentially extremely long).
+
+Given a non-empty terminal string `S` (|S| ≤ 100), output the number of (possibly overlapping) occurrences of `S` in the final string, as a decimal integer (may be very large).
+
+---
+
+## 2) Detailed editorial (explaining the solution)
+
+### Key difficulties
+1. The expanded string of nonterminal `N` can be astronomically long, so we cannot build it.
+2. We need to count occurrences of a pattern `S` in that implicit string, including overlaps.
+3. The count can be huge ⇒ need big integers.
+
+### KMP automaton for streaming pattern matching
+We want to scan the final string left-to-right and count how many times pattern `S` ends at some position. This is classic for KMP:
+
+- Compute prefix-function `pi` for `S` (length `m`).
+- Build transition function `go[state][c]` where:
+  - `state` = current matched prefix length (0..m)
+  - `c` is terminal `a` or `b`
+  - `go` returns the next matched prefix length after reading `c`.
+
+This allows “streaming” matching: start at state 0; for every terminal char update state = go[state][c]; whenever state reaches `m`, we have matched an occurrence (ending here). (This implementation counts the occurrence when `state == m` after transition.)
+
+### DP over nonterminals + KMP state
+Each nonterminal expands into a sequence of elements, where each element is either:
+- terminal `'a'` or `'b'`, or
+- another nonterminal `< K`.
+
+We need to know, for any nonterminal `K` and any starting KMP state `i`, what happens after scanning the expansion of `K`:
+
+Define DP:
+- `dp[K][i] = (count, state)`
+  - `count` = number of occurrences of `S` found while scanning expansion of `K`, starting from KMP state `i`
+  - `state` = final KMP state after scanning expansion of `K` starting from `i`
+
+Why this works:
+- Concatenation is composable: if a definition is `X Y`, then scanning `X` yields some count and end-state; scanning `Y` starting from that end-state yields additional count and final end-state. Counts add.
+
+So to compute `dp[K][i]`, we simulate scanning K’s definition token-by-token:
+- Maintain `cur_state` (starts at `i`) and `cnt` (big integer, starts 0).
+- For each token:
+  - If terminal:
+    - `cur_state = go[cur_state][terminal]`
+    - If `cur_state == m`, increment `cnt` by 1.
+  - If nonterminal `t`:
+    - Add `dp[t][cur_state].count` to `cnt`
+    - Set `cur_state = dp[t][cur_state].state`
+
+Because all referenced nonterminals are `< K`, we can compute `dp[0], dp[1], ..., dp[N-1]` in order (0-based in code).
+
+Finally, the whole process starts from nonterminal `N` with KMP state 0:
+- Answer is `dp[N][0].count`.
+
+### Big integers
+The occurrence count can be enormous (final string length can blow up exponentially with nesting), so the solution uses a `bigint` implementation:
+- Base 1e9 storage, with addition and multiplication (Karatsuba) etc.
+- Here we mainly rely on addition by 1 and adding other bigints.
+
+### Complexity
+Let:
+- `N ≤ 30`
+- `m = |S| ≤ 100`
+- total number of tokens across definitions `≤ 500`
+
+We compute `dp[K][i]` for each `K` and `i`:
+- For each state `i` we iterate over all tokens in `K`’s definition.
+- Total work: `O(m * total_tokens)` per nonterminal? More precisely:
+  \[
+  O\left((m+1)\cdot \sum_K L_K \right) \le O(101 \cdot 500) \approx 50k
+  \]
+plus big-int additions. This is easily within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector: reads into each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+};
+
+// Big integer base (each "digit" stores 0..1e9-1)
+const int base = 1000000000;
+const int base_digits = 9;
+
+// Big integer structure supporting +, -, *, /, %, comparisons, etc.
+struct bigint {
+    vector<int> z; // digits in little-endian (z[0] is least significant)
+    int sign;      // +1 or -1
+
+    bigint() : sign(1) {}
+    bigint(long long v) { *this = v; }
+    bigint(const string& s) { read(s); }
+
+    // Copy assignment
+    void operator=(const bigint& v) {
+        sign = v.sign;
+        z = v.z;
+    }
+
+    // Assign from 64-bit integer
+    void operator=(long long v) {
+        sign = 1;
+        if(v < 0) sign = -1, v = -v;
+        z.clear();
+        // Decompose v in base 1e9
+        for(; v > 0; v /= base) z.push_back(v % base);
+    }
+
+    // Addition
+    bigint operator+(const bigint& v) const {
+        // If same sign, just add absolute values
+        if(sign == v.sign) {
+            bigint res = v; // start from v and add this->z into it
+            for(int i = 0, carry = 0;
+                i < (int)max(z.size(), v.z.size()) || carry; ++i) {
+                if(i == (int)res.z.size()) res.z.push_back(0);
+                res.z[i] += carry + (i < (int)z.size() ? z[i] : 0);
+                carry = res.z[i] >= base;
+                if(carry) res.z[i] -= base;
+            }
+            return res;
+        }
+        // Different signs: a + (-b) = a - b
+        return *this - (-v);
+    }
+
+    // Subtraction
+    bigint operator-(const bigint& v) const {
+        if(sign == v.sign) {
+            // If |this| >= |v|, do normal subtraction
+            if(abs() >= v.abs()) {
+                bigint res = *this;
+                for(int i = 0, carry = 0; i < (int)v.z.size() || carry; ++i) {
+                    res.z[i] -= carry + (i < (int)v.z.size() ? v.z[i] : 0);
+                    carry = res.z[i] < 0;
+                    if(carry) res.z[i] += base;
+                }
+                res.trim(); // remove leading zeros
+                return res;
+            }
+            // Otherwise result is negative: a - b = -(b - a)
+            return -(v - *this);
+        }
+        // a - (-b) = a + b
+        return *this + (-v);
+    }
+
+    // Multiply by int in-place
+    void operator*=(int v) {
+        if(v < 0) sign = -sign, v = -v;
+        for(int i = 0, carry = 0; i < (int)z.size() || carry; ++i) {
+            if(i == (int)z.size()) z.push_back(0);
+            long long cur = z[i] * (long long)v + carry;
+            carry = (int)(cur / base);
+            z[i] = (int)(cur % base);
+        }
+        trim();
+    }
+
+    // Multiply by int (returns new bigint)
+    bigint operator*(int v) const {
+        bigint res = *this;
+        res *= v;
+        return res;
+    }
+
+    // Division with remainder of two bigints: returns {quotient, remainder}
+    friend pair<bigint, bigint> divmod(const bigint& a1, const bigint& b1) {
+        // Normalize so that highest digit of b is large, improving quotient estimate
+        int norm = base / (b1.z.back() + 1);
+        bigint a = a1.abs() * norm;
+        bigint b = b1.abs() * norm;
+        bigint q, r;
+        q.z.resize(a.z.size());
+
+        // Long division from most significant digit to least
+        for(int i = (int)a.z.size() - 1; i >= 0; i--) {
+            r *= base;      // shift remainder by one base digit
+            r += a.z[i];    // bring down next digit
+
+            // Estimate quotient digit using top digits
+            int s1 = b.z.size() < r.z.size() ? r.z[b.z.size()] : 0;
+            int s2 = b.z.size() - 1 < r.z.size() ? r.z[b.z.size() - 1] : 0;
+            int d = (int)(((long long)s1 * base + s2) / b.z.back());
+
+            r -= b * d;     // subtract estimate * divisor
+            while(r < 0) {  // if we overestimated, fix it
+                r += b;
+                --d;
+            }
+            q.z[i] = d;
+        }
+
+        q.sign = a1.sign * b1.sign;
+        r.sign = a1.sign;
+        q.trim();
+        r.trim();
+        return make_pair(q, r / norm); // undo normalization on remainder
+    }
+
+    // Integer square root (not used in this problem)
+    friend bigint sqrt(const bigint& a1) {
+        bigint a = a1;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        int n = (int)a.z.size();
+        int firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int norm = base / (firstDigit + 1);
+        a *= norm;
+        a *= norm;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        bigint r = (long long)a.z[n - 1] * base + a.z[n - 2];
+        firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int q = firstDigit;
+        bigint res;
+
+        for(int j = n / 2 - 1; j >= 0; j--) {
+            for(;; --q) {
+                bigint r1 =
+                    (r - (res * 2 * base + q) * q) * base * base +
+                    (j > 0 ? (long long)a.z[2 * j - 1] * base + a.z[2 * j - 2]
+                           : 0);
+                if(r1 >= 0) { r = r1; break; }
+            }
+            res *= base;
+            res += q;
+
+            if(j > 0) {
+                int d1 = res.z.size() + 2 < r.z.size() ? r.z[res.z.size() + 2] : 0;
+                int d2 = res.z.size() + 1 < r.z.size() ? r.z[res.z.size() + 1] : 0;
+                int d3 = res.z.size() < r.z.size() ? r.z[res.z.size()] : 0;
+                q = (int)(((long long)d1 * base * base + (long long)d2 * base + d3) /
+                    (firstDigit * 2));
+            }
+        }
+
+        res.trim();
+        return res / norm;
+    }
+
+    bigint operator/(const bigint& v) const { return divmod(*this, v).first; }
+    bigint operator%(const bigint& v) const { return divmod(*this, v).second; }
+
+    // Divide by int in-place
+    void operator/=(int v) {
+        if(v < 0) sign = -sign, v = -v;
+        for(int i = (int)z.size() - 1, rem = 0; i >= 0; --i) {
+            long long cur = z[i] + rem * (long long)base;
+            z[i] = (int)(cur / v);
+            rem = (int)(cur % v);
+        }
+        trim();
+    }
+
+    // Divide by int (returns new bigint)
+    bigint operator/(int v) const {
+        bigint res = *this;
+        res /= v;
+        return res;
+    }
+
+    // Mod by int
+    int operator%(int v) const {
+        if(v < 0) v = -v;
+        int m = 0;
+        for(int i = (int)z.size() - 1; i >= 0; --i)
+            m = (z[i] + m * (long long)base) % v;
+        return m * sign;
+    }
+
+    // Compound ops
+    void operator+=(const bigint& v) { *this = *this + v; }
+    void operator-=(const bigint& v) { *this = *this - v; }
+    void operator*=(const bigint& v) { *this = *this * v; }
+    void operator/=(const bigint& v) { *this = *this / v; }
+
+    // Comparisons
+    bool operator<(const bigint& v) const {
+        if(sign != v.sign) return sign < v.sign;
+        if(z.size() != v.z.size())
+            return (int)z.size() * sign < (int)v.z.size() * v.sign;
+        for(int i = (int)z.size() - 1; i >= 0; i--)
+            if(z[i] != v.z[i]) return z[i] * sign < v.z[i] * sign;
+        return false;
+    }
+    bool operator>(const bigint& v) const { return v < *this; }
+    bool operator<=(const bigint& v) const { return !(v < *this); }
+    bool operator>=(const bigint& v) const { return !(*this < v); }
+    bool operator==(const bigint& v) const { return !(*this < v) && !(v < *this); }
+    bool operator!=(const bigint& v) const { return *this < v || v < *this; }
+
+    // Remove leading zero digits and normalize sign
+    void trim() {
+        while(!z.empty() && z.back() == 0) z.pop_back();
+        if(z.empty()) sign = 1;
+    }
+
+    bool isZero() const { return z.empty() || (z.size() == 1 && !z[0]); }
+
+    // Unary minus
+    bigint operator-() const {
+        bigint res = *this;
+        res.sign = -sign;
+        return res;
+    }
+
+    // Absolute value
+    bigint abs() const {
+        bigint res = *this;
+        res.sign *= res.sign; // +1
+        return res;
+    }
+
+    // Convert to long long (unsafe if too big; not used here)
+    long long longValue() const {
+        long long res = 0;
+        for(int i = (int)z.size() - 1; i >= 0; i--) res = res * base + z[i];
+        return res * sign;
+    }
+
+    // gcd/lcm (not used here)
+    friend bigint gcd(const bigint& a, const bigint& b) {
+        return b.isZero() ? a : gcd(b, a % b);
+    }
+    friend bigint lcm(const bigint& a, const bigint& b) {
+        return a / gcd(a, b) * b;
+    }
+
+    // Read from string
+    void read(const string& s) {
+        sign = 1;
+        z.clear();
+        int pos = 0;
+        // parse optional +/- signs
+        while(pos < (int)s.size() && (s[pos] == '-' || s[pos] == '+')) {
+            if(s[pos] == '-') sign = -sign;
+            ++pos;
+        }
+        // parse digits in chunks of base_digits
+        for(int i = (int)s.size() - 1; i >= pos; i -= base_digits) {
+            int x = 0;
+            for(int j = max(pos, i - base_digits + 1); j <= i; j++)
+                x = x * 10 + s[j] - '0';
+            z.push_back(x);
+        }
+        trim();
+    }
+
+    friend istream& operator>>(istream& stream, bigint& v) {
+        string s;
+        stream >> s;
+        v.read(s);
+        return stream;
+    }
+
+    friend ostream& operator<<(ostream& stream, const bigint& v) {
+        if(v.sign == -1) stream << '-';
+        stream << (v.z.empty() ? 0 : v.z.back());
+        for(int i = (int)v.z.size() - 2; i >= 0; --i)
+            stream << setw(base_digits) << setfill('0') << v.z[i];
+        return stream;
+    }
+
+    // Convert digit vector between decimal chunk sizes (used for multiplication)
+    static vector<int> convert_base(
+        const vector<int>& a, int old_digits, int new_digits
+    ) {
+        vector<long long> p(max(old_digits, new_digits) + 1);
+        p[0] = 1;
+        for(int i = 1; i < (int)p.size(); i++) p[i] = p[i - 1] * 10;
+
+        vector<int> res;
+        long long cur = 0;
+        int cur_digits = 0;
+        for(int i = 0; i < (int)a.size(); i++) {
+            cur += a[i] * p[cur_digits];
+            cur_digits += old_digits;
+            while(cur_digits >= new_digits) {
+                res.push_back((int)(cur % p[new_digits]));
+                cur /= p[new_digits];
+                cur_digits -= new_digits;
+            }
+        }
+        res.push_back((int)cur);
+        while(!res.empty() && res.back() == 0) res.pop_back();
+        return res;
+    }
+
+    typedef vector<long long> vll;
+
+    // Karatsuba multiplication on vectors (base 10^6 chunks)
+    static vll karatsubaMultiply(const vll& a, const vll& b) {
+        int n = (int)a.size();
+        vll res(n + n);
+
+        // Small n: do O(n^2) multiplication
+        if(n <= 32) {
+            for(int i = 0; i < n; i++)
+                for(int j = 0; j < n; j++)
+                    res[i + j] += a[i] * b[j];
+            return res;
+        }
+
+        int k = n >> 1;
+        vll a1(a.begin(), a.begin() + k);
+        vll a2(a.begin() + k, a.end());
+        vll b1(b.begin(), b.begin() + k);
+        vll b2(b.begin() + k, b.end());
+
+        vll a1b1 = karatsubaMultiply(a1, b1);
+        vll a2b2 = karatsubaMultiply(a2, b2);
+
+        // (a1+a2)*(b1+b2)
+        for(int i = 0; i < k; i++) a2[i] += a1[i];
+        for(int i = 0; i < k; i++) b2[i] += b1[i];
+
+        vll r = karatsubaMultiply(a2, b2);
+        // r = (a1+a2)(b1+b2) - a1b1 - a2b2 = a1b2 + a2b1
+        for(int i = 0; i < (int)a1b1.size(); i++) r[i] -= a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) r[i] -= a2b2[i];
+
+        // Assemble result
+        for(int i = 0; i < (int)r.size(); i++) res[i + k] += r[i];
+        for(int i = 0; i < (int)a1b1.size(); i++) res[i] += a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) res[i + n] += a2b2[i];
+        return res;
+    }
+
+    // Bigint * bigint using Karatsuba (overkill for this task, but fine)
+    bigint operator*(const bigint& v) const {
+        // Convert from base 1e9 digits to base 1e6 digits for safe multiplication
+        vector<int> a6 = convert_base(this->z, base_digits, 6);
+        vector<int> b6 = convert_base(v.z, base_digits, 6);
+        vll a(a6.begin(), a6.end());
+        vll b(b6.begin(), b6.end());
+
+        // Pad to equal length
+        while(a.size() < b.size()) a.push_back(0);
+        while(b.size() < a.size()) b.push_back(0);
+
+        // Pad length to power of two (required by this Karatsuba implementation)
+        while(a.size() & (a.size() - 1)) {
+            a.push_back(0);
+            b.push_back(0);
+        }
+
+        // Multiply coefficient vectors
+        vll c = karatsubaMultiply(a, b);
+
+        bigint res;
+        res.sign = sign * v.sign;
+
+        // Carry handling in base 1e6
+        for(int i = 0, carry = 0; i < (int)c.size(); i++) {
+            long long cur = c[i] + carry;
+            res.z.push_back((int)(cur % 1000000));
+            carry = (int)(cur / 1000000);
+        }
+
+        // Convert back to base 1e9
+        res.z = convert_base(res.z, 6, base_digits);
+        res.trim();
+        return res;
+    }
+};
+
+// Problem input data
+int n;
+string s;
+vector<vector<int>> defs; // defs[k] is definition of nonterminal k (0-based):
+                          // terminals encoded as -1 ('a') and -2 ('b'),
+                          // nonterminals stored as index (0..k-1).
+
+// Read input and build defs
+void read() {
+    cin >> n;     // number of nonterminals
+    cin >> s;     // pattern string S
+    defs.assign(n, {});
+    for(auto& def: defs) {
+        int sz;
+        cin >> sz;        // length of definition
+        def.resize(sz);
+        for(int j = 0; j < sz; j++) {
+            string tok;
+            cin >> tok;
+            if(tok == "a") {
+                def[j] = -1;
+            } else if(tok == "b") {
+                def[j] = -2;
+            } else {
+                def[j] = stoi(tok) - 1; // convert 1-based nonterminal to 0-based
+            }
+        }
+    }
+}
+
+void solve() {
+    int m = (int)s.size(); // pattern length
+
+    // Compute KMP prefix function pi for pattern s
+    vector<int> pi(m, 0);
+    for(int i = 1; i < m; i++) {
+        int j = pi[i - 1];
+        while(j > 0 && s[j] != s[i]) j = pi[j - 1];
+        if(s[j] == s[i]) j++;
+        pi[i] = j;
+    }
+
+    // Build automaton transitions go[state][c] for c in {0:'a', 1:'b'}
+    // state ranges 0..m (inclusive); m means full match just happened.
+    vector<array<int, 2>> go(m + 1);
+    for(int i = 0; i <= m; i++) {
+        for(int c = 0; c < 2; c++) {
+            char ch = "ab"[c];
+            if(i < m && s[i] == ch) {
+                // Next character extends current matched prefix
+                go[i][c] = i + 1;
+            } else if(i == 0) {
+                // From state 0, mismatch stays in 0
+                go[i][c] = 0;
+            } else {
+                // Fallback using prefix function
+                go[i][c] = go[pi[i - 1]][c];
+            }
+        }
+    }
+
+    // dp[k][i] = {count_occurrences, ending_kmp_state}
+    // for expansion of nonterminal k starting from KMP state i.
+    vector<vector<pair<bigint, int>>> dp(n, vector<pair<bigint, int>>(m + 1));
+
+    // Process nonterminals in increasing order (DAG topological order)
+    for(int k = 0; k < n; k++) {
+        // For every possible starting KMP state
+        for(int i = 0; i <= m; i++) {
+            int cur = i;     // current KMP state while scanning expansion
+            bigint cnt = 0;  // total matches found so far
+
+            // Scan the definition sequence left-to-right
+            for(int elem: defs[k]) {
+                if(elem < 0) {
+                    // Terminal character
+                    int c = (elem == -1) ? 0 : 1; // -1 -> 'a', -2 -> 'b'
+                    cur = go[cur][c];             // advance KMP automaton
+                    if(cur == m) {
+                        // Full match found ending here
+                        cnt += 1;
+                    }
+                } else {
+                    // Nonterminal reference: compose precomputed result
+                    cnt += dp[elem][cur].first;   // add matches inside elem expansion
+                    cur = dp[elem][cur].second;   // update state after elem expansion
+                }
+            }
+
+            dp[k][i] = {cnt, cur}; // store result for this start state
+        }
+    }
+
+    // Start from nonterminal N (index n-1) with empty prefix matched (state 0)
+    cout << dp[n - 1][0].first << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // only one test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def build_kmp_automaton(pattern: str):
+    """
+    Build KMP prefix-function and automaton transitions for alphabet {a,b}.
+    Returns: go, where go[state][c] gives next state
+             state in [0..m], c in {0,1} for 'a','b'
+    """
+    m = len(pattern)
+
+    # Prefix-function pi[i] = length of longest proper prefix of pattern
+    # which is also a suffix of pattern[:i+1]
+    pi = [0] * m
+    for i in range(1, m):
+        j = pi[i - 1]
+        while j > 0 and pattern[j] != pattern[i]:
+            j = pi[j - 1]
+        if pattern[j] == pattern[i]:
+            j += 1
+        pi[i] = j
+
+    # Automaton transitions
+    go = [[0, 0] for _ in range(m + 1)]
+    for state in range(m + 1):
+        for c in range(2):
+            ch = 'a' if c == 0 else 'b'
+            if state < m and pattern[state] == ch:
+                # Successful extension
+                go[state][c] = state + 1
+            elif state == 0:
+                # Can't fallback further
+                go[state][c] = 0
+            else:
+                # Fallback and reuse transition
+                go[state][c] = go[pi[state - 1]][c]
+
+    return go
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+
+    n = int(next(it))        # number of nonterminals
+    s = next(it)             # pattern S
+    m = len(s)
+
+    # Read grammar definitions.
+    # We store each definition as a list of tokens:
+    #   -1 = 'a', -2 = 'b', >=0 = referenced nonterminal index
+    defs = []
+    for _ in range(n):
+        L = int(next(it))
+        cur = []
+        for _ in range(L):
+            tok = next(it)
+            if tok == 'a':
+                cur.append(-1)
+            elif tok == 'b':
+                cur.append(-2)
+            else:
+                cur.append(int(tok) - 1)  # convert 1-based to 0-based
+        defs.append(cur)
+
+    # KMP automaton
+    go = build_kmp_automaton(s)
+
+    # dp[k][state] = (count, end_state)
+    # In Python, big integers are built-in, so count is just int.
+    dp_count = [[0] * (m + 1) for _ in range(n)]
+    dp_state = [[0] * (m + 1) for _ in range(n)]
+
+    # Compute DP in increasing order of nonterminal index (DAG order)
+    for k in range(n):
+        for start_state in range(m + 1):
+            cur_state = start_state
+            cnt = 0
+
+            # Stream through definition tokens, composing results
+            for elem in defs[k]:
+                if elem < 0:
+                    # Terminal
+                    c = 0 if elem == -1 else 1
+                    cur_state = go[cur_state][c]
+                    if cur_state == m:
+                        cnt += 1
+                else:
+                    # Nonterminal: add its internal matches and jump end state
+                    cnt += dp_count[elem][cur_state]
+                    cur_state = dp_state[elem][cur_state]
+
+            dp_count[k][start_state] = cnt
+            dp_state[k][start_state] = cur_state
+
+    # Answer: start from nonterminal N with KMP state 0
+    print(dp_count[n - 1][0])
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Build KMP prefix-function for pattern `S` and automaton `go[state][a/b]` for states `0..m`.
+- DP over nonterminals in increasing order (since each `K` only uses `<K`):
+  - `dp[K][i] = (cnt, st)` where scanning expansion of `K` starting from KMP state `i` produces `cnt` matches and ends in state `st`.
+  - Compute by simulating the definition tokens:
+    - For terminal: `st = go[st][c]`, if `st==m` then `cnt++`.
+    - For nonterminal `t`: `cnt += dp[t][st].cnt`, `st = dp[t][st].st`.
+- Output `dp[N][0].cnt`. Use big integers (C++ bigint; Python int).

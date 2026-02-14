@@ -1,0 +1,476 @@
+## 1) Concise abridged problem statement
+
+Two **distinct** positive integers are called **similar** if they have the **same number of digits** and one can be obtained from the other by **reordering (permuting) its digits**.
+
+Given integers \(l, r\) \((1 \le l \le r \le 10^{15})\), count how many integers \(x \in [l,r]\) have **exactly one** other similar number **also inside** \([l,r]\).
+
+---
+
+## 2) Detailed editorial (explaining the idea used by the provided solution)
+
+### Key definitions
+For a number \(x\), consider all distinct digit permutations of its decimal representation (with **no leading zeros**, since that would reduce the digit length). Among those permutations, we only care about those that land in \([l,r]\).
+
+We want numbers \(x\) such that:
+- \(x \in [l,r]\)
+- exactly **one** other permutation of \(x\) (call it \(y\neq x\)) also lies in \([l,r]\)
+
+Equivalently: among all valid permutations, \([l,r]\) contains exactly **two** of them: \(x\) and one more.
+
+### A crucial local test using neighboring permutations
+If you sort all valid permutations of \(x\) numerically, they form an ordered list. Then:
+- `next_perm(x)` = the next larger permutation (or none)
+- `prev_perm(x)` = the next smaller permutation (or none)
+
+If \([l,r]\) contains exactly two permutations from this set, then for each of those two numbers:
+- it has **exactly one neighbor inside the interval** and no second neighbor.
+
+So we can test a candidate \(x\) by checking at most 4 neighbors:
+- \(p_1 = \text{prev}(x)\), \(p_2 = \text{prev}(p_1)\)
+- \(n_1 = \text{next}(x)\), \(n_2 = \text{next}(n_1)\)
+
+Then \(x\) has exactly one similar in \([l,r]\) iff:
+- Either \(p_1\) is inside and \(p_2\) is outside and \(n_1\) is outside  
+  (meaning the only inside permutation is the previous one)
+- Or \(p_1\) is outside and \(n_1\) is inside and \(n_2\) is outside  
+  (meaning the only inside permutation is the next one)
+
+This is exactly what `has_one_similar` implements.
+
+### The hard part: we cannot check all numbers in \([l,r]\)
+The interval can be huge (up to \(10^{15}\)). So we must generate a *small set of candidates* that might satisfy the condition, and test only them.
+
+### Why only “near-boundary” permutations matter
+Intuition: if a number’s permutations spread “densely” around, then if one permutation is inside a large interval, many others will also be inside—so it wouldn’t have exactly one similar.
+
+The solution leverages the fact that for numbers with **at least 4 digits**, digit permutations tend to create many different values unless the number has a very constrained digit structure (like many repeated digits). Therefore, numbers that have *exactly one* similar inside \([l,r]\) typically occur when the interval boundary cuts through a permutation block, i.e., the two inside permutations are “close” to either \(l\) or \(r\) in a structured way.
+
+### Candidate generation strategy used
+The code constructs candidates based on:
+- starting from `base` = \(l\) and \(r\)
+- using an `offset` in \([0,999]\) (i.e., varying the last 3 digits)
+- extending by appending repeated digits beyond that (up to 15 digits total)
+
+Concretely, for each `delta` from 0 to 999:
+1. call `create_candidates(l, delta)`
+2. call `create_candidates(r, delta)`
+
+Inside `create_candidates(base, offset)`:
+- If `base` is within \([l,r]\), add:
+  - `base`
+  - `next_perm(base)` (if exists)
+  - `prev_perm(base)` (if exists)
+- Then for each digit `d` from 0..9:
+  - build suffixes of the form: `offset` followed by many `d`’s  
+    (e.g., offset=123, d=7: 1237, 12377, 123777, …)
+  - combine with a prefix taken from `base`:
+    - `pref = base - base % pow10` means keep the higher digits of `base`
+    - `extended = pref + suffix` means replace the last `len` digits with this suffix
+  - add `extended`, and its immediate prev/next permutations
+
+This produces a relatively small list (thousands to tens of thousands), feasible to check.
+
+### Final algorithm
+1. Generate candidates from both endpoints for all offsets 0..999.
+2. Sort and unique candidates.
+3. For each candidate \(x\), run `has_one_similar(x)` and count those returning true.
+
+Complexity is dominated by candidate count × permutation operations on up to 15-digit strings, which is fine under the constraints.
+
+---
+
+## 3) The provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector from input
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Interval boundaries
+int64_t l_val, r_val;
+
+// Final count
+int64_t answer;
+
+// All potential candidates to test
+vector<int64_t> candidates;
+
+// Return the next larger permutation of digits of x (same length).
+// If none exists, return a very large sentinel (1e18).
+int64_t next_perm(int64_t x) {
+    string s = to_string(x);                    // convert number to string
+    if(next_permutation(s.begin(), s.end())) {  // STL next permutation (lexicographic)
+        return stoll(s);                        // convert back to integer
+    }
+    return 1e18;                                // sentinel = "does not exist"
+}
+
+// Return the previous smaller permutation of digits of x (same length).
+// If none exists, return 0.
+// Also reject permutations with leading zero (would shorten length).
+int64_t prev_perm(int64_t x) {
+    string s = to_string(x);
+    if(prev_permutation(s.begin(), s.end())) {  // previous lexicographic permutation
+        if(s[0] == '0') {                       // leading zero => invalid (shorter length)
+            return 0;
+        }
+        return stoll(s);
+    }
+    return 0;
+}
+
+// Check if x is inside [l_val, r_val]
+bool is_inside(int64_t x) { return x >= l_val && x <= r_val; }
+
+// Check if x has exactly ONE other similar number in [l_val, r_val].
+// This is done by checking neighbors among permutations: prev/next and their next steps.
+bool has_one_similar(int64_t x) {
+    if(!is_inside(x)) {                 // candidate must itself be inside
+        return false;
+    }
+
+    // Two next permutations (n1 and n2)
+    int64_t next1 = next_perm(x);
+    int64_t next2 = next_perm(next1);
+
+    // Two previous permutations (p1 and p2)
+    int64_t prev1 = prev_perm(x);
+    int64_t prev2 = prev_perm(prev1);
+
+    // Are these neighbors inside the interval?
+    bool has_prev1 = is_inside(prev1);
+    bool has_prev2 = is_inside(prev2);
+    bool has_next1 = is_inside(next1);
+    bool has_next2 = is_inside(next2);
+
+    // Case 1: previous neighbor is inside.
+    // Then x has exactly one similar inside iff:
+    //   prev1 is inside, but prev2 is not (so no second similar below),
+    //   and next1 is not (so no similar above).
+    if(has_prev1) {
+        return !has_prev2 && !has_next1;
+    }
+
+    // Case 2: no previous inside, but next neighbor is inside.
+    // Then x has exactly one similar inside iff next2 is not inside.
+    if(has_next1) {
+        return !has_next2;
+    }
+
+    // Otherwise x has no similar inside.
+    return false;
+}
+
+// Generate candidate numbers derived from 'base' (either l or r) and 'offset' (0..999),
+// plus close-by permutations, plus numbers formed by taking base's prefix and
+// attaching a suffix built from offset followed by repeated digits.
+void create_candidates(int64_t base, int64_t offset) {
+    // Only useful if base is itself in range (otherwise its derived prefix logic
+    // is not used by this implementation).
+    if(base < l_val || base > r_val) {
+        return;
+    }
+
+    // Add base itself
+    candidates.push_back(base);
+
+    // Add immediate neighboring permutations of base
+    int64_t next = next_perm(base);
+    if(next < 1e18) {                   // if exists
+        candidates.push_back(next);
+    }
+
+    int64_t prev = prev_perm(base);
+    if(prev > 0) {                      // if exists
+        candidates.push_back(prev);
+    }
+
+    // Try all possible repeated digit fillings for suffix
+    for(int digit = 0; digit < 10; digit++) {
+        int64_t suff = offset;          // start suffix from offset (<= 999)
+        int64_t pow10 = 1000;           // tracks the place value (starts at 10^3)
+
+        // Extend suffix length up to 15 digits total (safe upper bound for 10^15)
+        for(int len = 0; len < 15; len++) {
+            // Append one digit to the suffix: suff = suff*10 + digit
+            suff = suff * 10 + digit;
+
+            // The suffix now has one more digit, so pow10 *= 10
+            pow10 *= 10;
+
+            // If suffix already exceeds r, any further extension will only increase it
+            if(suff > r_val) {
+                break;
+            }
+
+            // Take base's prefix: zero out last log10(pow10) digits
+            // Example: base=1234567, pow10=100000 => pref=1200000
+            int64_t pref = base - (base % pow10);
+
+            // Combine prefix and suffix => a number "near" base but with controlled suffix
+            int64_t extended = suff + pref;
+
+            // Add the extended number and its immediate permutation neighbors
+            candidates.push_back(extended);
+
+            int64_t next_ext = next_perm(extended);
+            if(next_ext < 1e18) {
+                candidates.push_back(next_ext);
+            }
+
+            int64_t prev_ext = prev_perm(extended);
+            if(prev_ext > 0) {
+                candidates.push_back(prev_ext);
+            }
+        }
+    }
+}
+
+// Read l and r
+void read() { cin >> l_val >> r_val; }
+
+void solve() {
+    answer = 0;
+    candidates.clear();
+
+    // Enumerate all possible last-3-digit offsets (0..999),
+    // and generate candidates derived from l and from r.
+    for(int64_t delta = 0; delta < 1000; delta++) {
+        create_candidates(l_val, delta);
+        create_candidates(r_val, delta);
+    }
+
+    // Remove duplicates so we don't re-check the same number many times
+    sort(candidates.begin(), candidates.end());
+    candidates.erase(
+        unique(candidates.begin(), candidates.end()), candidates.end()
+    );
+
+    // Count candidates that have exactly one similar number in [l, r]
+    for(int64_t x: candidates) {
+        if(has_one_similar(x)) {
+            answer++;
+        }
+    }
+
+    cout << answer << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import itertools
+
+# Read input
+l_val, r_val = map(int, input().split())
+
+SENTINEL_NEXT = 10**18  # "no next permutation" marker
+
+
+def is_inside(x: int) -> bool:
+    """Check if x is inside [l_val, r_val]."""
+    return l_val <= x <= r_val
+
+
+def next_perm(x: int) -> int:
+    """
+    Return the next larger permutation of digits of x (same length),
+    or SENTINEL_NEXT if none exists.
+    """
+    s = list(str(x))
+    # Find next permutation in-place (classic algorithm).
+    i = len(s) - 2
+    while i >= 0 and s[i] >= s[i + 1]:
+        i -= 1
+    if i < 0:
+        return SENTINEL_NEXT  # already the largest permutation
+
+    j = len(s) - 1
+    while s[j] <= s[i]:
+        j -= 1
+
+    s[i], s[j] = s[j], s[i]
+    s[i + 1:] = reversed(s[i + 1:])
+    return int("".join(s))
+
+
+def prev_perm(x: int) -> int:
+    """
+    Return the previous smaller permutation of digits of x (same length),
+    rejecting leading zero permutations. If none exists, return 0.
+    """
+    s = list(str(x))
+    # Previous permutation algorithm.
+    i = len(s) - 2
+    while i >= 0 and s[i] <= s[i + 1]:
+        i -= 1
+    if i < 0:
+        return 0  # already the smallest permutation
+
+    j = len(s) - 1
+    while s[j] >= s[i]:
+        j -= 1
+
+    s[i], s[j] = s[j], s[i]
+    s[i + 1:] = reversed(s[i + 1:])
+
+    if s[0] == '0':
+        return 0  # invalid (would reduce number of digits)
+
+    return int("".join(s))
+
+
+def has_one_similar(x: int) -> bool:
+    """
+    Check whether x has exactly one other similar number in [l_val, r_val],
+    using only prev/next permutation neighbors.
+    """
+    if not is_inside(x):
+        return False
+
+    n1 = next_perm(x)
+    n2 = next_perm(n1) if n1 != SENTINEL_NEXT else SENTINEL_NEXT
+
+    p1 = prev_perm(x)
+    p2 = prev_perm(p1) if p1 != 0 else 0
+
+    has_p1 = is_inside(p1)
+    has_p2 = is_inside(p2)
+    has_n1 = is_inside(n1)
+    has_n2 = is_inside(n2)
+
+    if has_p1:
+        # Only prev1 is inside; no second below and none above.
+        return (not has_p2) and (not has_n1)
+    if has_n1:
+        # Only next1 is inside; ensure next2 is outside.
+        return not has_n2
+    return False
+
+
+def create_candidates(base: int, offset: int, out: list[int]) -> None:
+    """
+    Replicate the C++ candidate generation:
+    from base and an offset (0..999), generate base, its neighbors,
+    and numbers formed by taking base's prefix and attaching a suffix
+    built from offset followed by repeated digits.
+    """
+    if base < l_val or base > r_val:
+        return
+
+    # base itself and its permutation neighbors
+    out.append(base)
+
+    nb = next_perm(base)
+    if nb != SENTINEL_NEXT:
+        out.append(nb)
+
+    pb = prev_perm(base)
+    if pb != 0:
+        out.append(pb)
+
+    for digit in range(10):
+        suff = offset
+        pow10 = 1000  # starts at 10^3
+
+        for _len in range(15):
+            # append digit to suffix
+            suff = suff * 10 + digit
+            pow10 *= 10
+
+            if suff > r_val:
+                break
+
+            # keep the prefix of base, remove last digits corresponding to pow10
+            pref = base - (base % pow10)
+            extended = pref + suff
+
+            out.append(extended)
+
+            ne = next_perm(extended)
+            if ne != SENTINEL_NEXT:
+                out.append(ne)
+
+            pe = prev_perm(extended)
+            if pe != 0:
+                out.append(pe)
+
+
+# Generate candidates
+candidates = []
+for delta in range(1000):
+    create_candidates(l_val, delta, candidates)
+    create_candidates(r_val, delta, candidates)
+
+# Unique candidates
+candidates = sorted(set(candidates))
+
+# Count those with exactly one similar in [l, r]
+ans = 0
+for x in candidates:
+    if has_one_similar(x):
+        ans += 1
+
+print(ans)
+```
+
+---
+
+## 5) Compressed editorial
+
+- Similar = same length, digits are a permutation (no leading zeros).
+- For a number \(x\), sort all its valid permutations; \(x\) has exactly one similar in \([l,r]\) iff among its permutation neighbors only one lies in \([l,r]\).
+- So for each candidate \(x\) we check only: `prev(x)`, `prev(prev(x))`, `next(x)`, `next(next(x))` and verify exactly one neighbor inside.
+- Since \([l,r]\) is huge, generate a small candidate set near boundaries:
+  - For each `delta` in 0..999 and for `base` in {l, r}:
+    - add `base`, `prev(base)`, `next(base)`
+    - form numbers by taking `base`’s prefix and appending a suffix `delta` followed by repeated digit \(d\) (for all \(d\)), also adding their prev/next permutations.
+- Deduplicate candidates and count those passing the neighbor test.
+
+This runs fast because candidates are limited (thousands–tens of thousands) and permutation operations are on ≤ 15 digits.

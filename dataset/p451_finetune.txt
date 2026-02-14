@@ -1,0 +1,795 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+451. Cousin's Aunt
+Time limit per test: 1 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Sarah is a girl who likes reading books.
+
+One day, she wondered about the relationship of a family in a mystery novel. The story said,
+B is A's father's brother's son, and
+C is B's aunt.
+Then she asked herself, "So how many degrees of kinship are there between A and C?"
+
+There are two possible relationships between B and C, that is, C is either B's father's sister or B's mother's sister in the story. If C is B's father's sister, C is in the third degree of kinship to A (A's father's sister). On the other hand, if C is B's mother's sister, C is in the fifth degree of kinship to A (A's father's brother's wife's sister).
+
+You are a friend of Sarah's and good at programming. You can help her by writing a general program to calculate the maximum and minimum degrees of kinship between A and C under given relationship.
+
+The relationship of A and C is represented by a sequence of the following basic relations: father, mother, son, daughter, husband, wife, brother, sister, grandfather, grandmother, grandson, granddaughter, uncle, aunt, nephew, and niece. Here are some descriptions about these relations:
+X's brother is equivalent to X's father's or mother's son not identical to X.
+X's grandfather is equivalent to X's father's or mother's father.
+X's grandson is equivalent to X's son's or daughter's son.
+X's uncle is equivalent to X's father's or mother's brother.
+X's nephew is equivalent to X's brother's or sister's son.
+Similar rules apply to sister, grandmother, granddaughter, aunt and niece.
+
+
+In this problem, you can assume there are none of the following relations in the family: adoptions, marriages between relatives (i.e.\ the family tree has no cycles), divorces, remarriages, bigamous marriages and same-sex marriages.
+
+The degree of kinship is defined as follows:
+The distance from X to X's father, X's mother, X's son or X's daughter is one.
+The distance from X to X's husband or X's wife is zero.
+The degree of kinship between X and Y is equal to the shortest distance from X to Y deduced from the above rules.
+
+Input
+The input is given by one line in the following format:
+
+C is A('s relation)*
+
+Here, relation is one of the following: father, mother, son, daughter, husband, wife, brother, sister, grandfather, grandmother, grandson, granddaughter, uncle, aunt, nephew, niece. An asterisk denotes zero or more occurance of portion surrounded by the parentheses. The number of relations is at most ten.
+
+Output
+Print a line containing the maximum and minimum degrees of kinship separated by space.
+
+Example(s)
+sample input
+sample output
+C is A's father's brother's son's aunt
+5 3
+
+sample input
+sample output
+C is A's mother's brother's son's aunt
+5 1
+
+sample input
+sample output
+C is A's son's mother's mother's son
+2 2
+
+sample input
+sample output
+C is A's aunt's niece's aunt's niece
+6 0
+
+sample input
+sample output
+C is A's father's son's brother
+2 0
+
+sample input
+sample output
+C is A's son's son's mother
+1 1
+
+sample input
+sample output
+C is A
+0 0
+
+<|response|>
+## 1) Abridged problem statement
+
+You are given one sentence:
+
+`C is A('s relation)*`
+
+where each `relation` is one of:
+
+`father, mother, son, daughter, husband, wife, brother, sister, grandfather, grandmother, grandson, granddaughter, uncle, aunt, nephew, niece`
+
+Some relations are **ambiguous** (e.g., “brother” could be father’s son or mother’s son, but not the same person). Under standard family constraints (no cycles, no remarriage, no same-sex marriage, etc.), the **degree of kinship** between two people is the **shortest path cost** where:
+
+- parent/child edge cost = **1**
+- spouse edge cost = **0**
+
+Considering **all valid interpretations** of ambiguous relations, output:
+
+`maximum_degree minimum_degree`
+
+between **A** and **C**.
+
+The relation chain length ≤ 10.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Ambiguous relations expand into multiple basic-step sequences**  
+   Reduce everything into steps among only:
+   `father, mother, son, daughter, husband, wife`.
+
+   Examples:
+   - `brother` = (`father`→`son`) or (`mother`→`son`), but **not self**
+   - `uncle` = (parent’s brother) → 4 expansions due to parent choice × brother’s expansion.
+
+2. **Naively trying all expansions can blow up**  
+   Each relation can expand to up to 4 choices, so worst-case is \(4^{10}\) interpretations.
+
+3. **We can do DP over “possible current persons” instead of enumerating interpretations**  
+   Keep a set of possible states after each relation. For each relation, apply all expansions and union results.
+
+4. **We must enforce “brother/sister ≠ self”**  
+   Use an “exclusion” trick: carry a second component in the state to remember whom we must not return to.
+
+5. **Build one shared family graph lazily**  
+   When a step needs a parent/spouse/child that doesn’t exist yet, create it in a consistent way. This avoids separate trees per interpretation.
+
+6. **Compute kinship degrees with 0–1 BFS**  
+   The final graph has edges weight 0 (spouse) or 1 (parent/child), so shortest paths from A can be computed efficiently by 0–1 BFS.
+
+---
+
+## 3) Full solution approach
+
+### A. Parse the input into a list of relations
+From `"C is A ..."` extract the sequence of relation words in order.
+If the line is exactly `"C is A"`, answer is `0 0`.
+
+### B. Expand each relation into sequences of basic steps
+Define `expand(rel)` returning a list of expansions; each expansion is a list of **steps**:
+
+- Basic relations: `[("father",0)]`, `[("wife",0)]`, etc.
+- Compound relations:
+  - `brother`: `[("father",1),("son",2)]` and `[("mother",1),("son",2)]`
+  - similarly for `sister`, `uncle`, `aunt`, `nephew`, `niece`, etc.
+
+#### Exclusion flags
+Each step is `(basic_relation, flag)`:
+
+- `flag = 0`: normal step
+- `flag = 1`: “save current person as excluded”
+- `flag = 2`: “when moving, forbid target == excluded; then clear excluded”
+
+This ensures “X’s brother/sister is not X”.
+
+### C. DP over possible states while lazily building the family
+Maintain a set `cur` of states `(person_id, excluded_id)` starting from `{(A=0, -1)}`.
+
+For each input relation:
+1. Get all expansions.
+2. For each expansion, apply its steps to all states in `cur`, producing a set of next states.
+3. Union across expansions to get the new `cur`.
+
+#### Lazy family construction
+We maintain these structures:
+- `fa[child]`, `mo[child]` (optional)
+- `sp[p]` spouse (optional, symmetric)
+- `ch[parent]` set of children
+- `gender[p]` in `{0 unknown, 1 male, 2 female}`
+
+When a step requests:
+- `father/mother`: create if missing; if the other parent exists and has a spouse, reuse that spouse.
+- `husband/wife`: create spouse if missing, set genders consistently.
+- `son/daughter`: can use existing children, and also allow creating **one new child per parent per gender** (one fresh son, one fresh daughter) to ensure we can extend paths without infinite branching.
+
+### D. Compute shortest distances from A using 0–1 BFS
+Build an adjacency list with:
+- edges between parent and child with weight 1
+- edges between spouses with weight 0
+
+Run 0–1 BFS from node 0 to get `dist[u]` = minimum degree from A to u.
+
+### E. Answer
+Among all endpoints `p` in `cur`, compute:
+- `min_degree = min(dist[p])`
+- `max_degree = max(dist[p])`
+
+Print: `max_degree min_degree`.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+We model people as integer ids.
+We lazily construct a consistent family graph while interpreting relations.
+
+Distance definition:
+- parent/child: weight 1
+- spouse: weight 0
+The kinship degree is shortest path cost => 0-1 BFS.
+*/
+
+// One "basic step" is (relation, flag) where relation is among:
+// father, mother, son, daughter, husband, wife
+// flag: 0 normal, 1 save excluded, 2 forbid target==excluded then clear excluded
+using Step = pair<string,int>;
+
+/*
+Expand a possibly compound relation into a list of expansions.
+Each expansion is a list<Step>.
+*/
+static vector<vector<Step>> expand_relation(const string& rel) {
+    vector<vector<Step>> res;
+
+    if(rel=="father"||rel=="mother"||rel=="son"||rel=="daughter"||rel=="husband"||rel=="wife") {
+        res.push_back({{rel,0}});
+    } else if(rel=="brother") {
+        // brother = father's son OR mother's son, but not self
+        res.push_back({{"father",1},{"son",2}});
+        res.push_back({{"mother",1},{"son",2}});
+    } else if(rel=="sister") {
+        res.push_back({{"father",1},{"daughter",2}});
+        res.push_back({{"mother",1},{"daughter",2}});
+    } else if(rel=="grandfather") {
+        // (father|mother)'s father
+        res.push_back({{"father",0},{"father",0}});
+        res.push_back({{"mother",0},{"father",0}});
+    } else if(rel=="grandmother") {
+        res.push_back({{"father",0},{"mother",0}});
+        res.push_back({{"mother",0},{"mother",0}});
+    } else if(rel=="grandson") {
+        res.push_back({{"son",0},{"son",0}});
+        res.push_back({{"daughter",0},{"son",0}});
+    } else if(rel=="granddaughter") {
+        res.push_back({{"son",0},{"daughter",0}});
+        res.push_back({{"daughter",0},{"daughter",0}});
+    } else if(rel=="uncle") {
+        // uncle = (father|mother)'s brother, and brother expands into 2 ways
+        res.push_back({{"father",0},{"father",1},{"son",2}});
+        res.push_back({{"father",0},{"mother",1},{"son",2}});
+        res.push_back({{"mother",0},{"father",1},{"son",2}});
+        res.push_back({{"mother",0},{"mother",1},{"son",2}});
+    } else if(rel=="aunt") {
+        res.push_back({{"father",0},{"father",1},{"daughter",2}});
+        res.push_back({{"father",0},{"mother",1},{"daughter",2}});
+        res.push_back({{"mother",0},{"father",1},{"daughter",2}});
+        res.push_back({{"mother",0},{"mother",1},{"daughter",2}});
+    } else if(rel=="nephew") {
+        // nephew = (brother|sister)'s son
+        res.push_back({{"father",1},{"son",2},{"son",0}});
+        res.push_back({{"mother",1},{"son",2},{"son",0}});
+        res.push_back({{"father",1},{"daughter",2},{"son",0}});
+        res.push_back({{"mother",1},{"daughter",2},{"son",0}});
+    } else if(rel=="niece") {
+        res.push_back({{"father",1},{"son",2},{"daughter",0}});
+        res.push_back({{"mother",1},{"son",2},{"daughter",0}});
+        res.push_back({{"father",1},{"daughter",2},{"daughter",0}});
+        res.push_back({{"mother",1},{"daughter",2},{"daughter",0}});
+    }
+
+    return res;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    string line;
+    getline(cin, line);
+
+    // Extract the part after "C is A"
+    size_t pos = line.find(" is A");
+    if(pos == string::npos) return 0;
+    string tail = line.substr(pos + 5); // after " is A"
+
+    // If exactly "C is A"
+    if(tail.empty() || tail == " is A") {
+        cout << "0 0\n";
+        return 0;
+    }
+
+    // Parse relation words, stripping trailing "'s"
+    vector<string> relations;
+    {
+        stringstream ss(tail);
+        string w;
+        while(ss >> w) {
+            if(w.size() >= 2 && w.substr(w.size()-2) == "'s") {
+                w = w.substr(0, w.size()-2);
+            }
+            if(!w.empty() && w != "'" && w != "s") relations.push_back(w);
+        }
+    }
+
+    // Family representation (built lazily)
+    map<int,int> fa, mo, sp;           // child->father, child->mother, person->spouse
+    map<int,set<int>> ch;              // parent->children
+    map<int,int> gender;               // 0 unknown, 1 male, 2 female
+    map<int,set<int>> extra_children;  // for each parent, which genders we already created as "fresh"
+    int nid = 1;                       // next new id; A is 0
+
+    // DP state: (current_person, excluded_person_for_brother/sister)
+    set<pair<int,int>> cur;
+    cur.insert({0,-1});
+
+    /*
+    Apply one basic step to a whole set of states.
+    This function also creates missing family members consistently.
+    */
+    auto apply_step = [&](const set<pair<int,int>>& cur_set, const string& rel, int flag) {
+        set<pair<int,int>> nxt;
+
+        for(auto [p, excl] : cur_set) {
+
+            // Emit a target state, enforcing exclusion if needed
+            auto emit = [&](int target) {
+                if(flag == 2 && target == excl) return;   // brother/sister cannot be self
+                int new_excl = excl;
+                if(flag == 1) new_excl = p;              // remember original person
+                if(flag == 2) new_excl = -1;             // clear after applying exclusion
+                nxt.insert({target, new_excl});
+            };
+
+            if(rel == "father") {
+                if(!fa.count(p)) {
+                    // If mother exists and her spouse exists, reuse that spouse as father
+                    if(mo.count(p) && sp.count(mo[p])) {
+                        fa[p] = sp[mo[p]];
+                        ch[fa[p]].insert(p);
+                    } else {
+                        int f = nid++;
+                        fa[p] = f;
+                        gender[f] = 1;
+                        ch[f].insert(p);
+                        // If mother exists, make them spouses
+                        if(mo.count(p)) {
+                            sp[f] = mo[p];
+                            sp[mo[p]] = f;
+                        }
+                    }
+                }
+                emit(fa[p]);
+
+            } else if(rel == "mother") {
+                if(!mo.count(p)) {
+                    // If father exists and his spouse exists, reuse that spouse as mother
+                    if(fa.count(p) && sp.count(fa[p])) {
+                        mo[p] = sp[fa[p]];
+                        ch[mo[p]].insert(p);
+                    } else {
+                        int m = nid++;
+                        mo[p] = m;
+                        gender[m] = 2;
+                        ch[m].insert(p);
+                        // If father exists, make them spouses
+                        if(fa.count(p)) {
+                            sp[m] = fa[p];
+                            sp[fa[p]] = m;
+                        }
+                    }
+                }
+                emit(mo[p]);
+
+            } else if(rel == "son" || rel == "daughter") {
+                int want = (rel == "son") ? 1 : 2;
+
+                // Existing children that match (or unknown gender)
+                for(int c : ch[p]) {
+                    if(gender[c] == want || gender[c] == 0) emit(c);
+                }
+
+                // Create at most one new child of this gender for this parent
+                if(!extra_children[p].count(want)) {
+                    int c = nid++;
+                    gender[c] = want;
+                    ch[p].insert(c);
+
+                    // Ensure child has both parents and they are spouses (no divorce/remarriage model)
+                    if(gender[p] == 2) {
+                        // p is female => p is mother
+                        mo[c] = p;
+                        if(!sp.count(p)) {
+                            int f = nid++;
+                            sp[p] = f; sp[f] = p;
+                            gender[f] = 1;
+                            fa[c] = f;
+                            ch[f].insert(c);
+                        } else {
+                            fa[c] = sp[p];
+                            ch[sp[p]].insert(c);
+                        }
+                    } else {
+                        // p is male or unknown => treat as father; if unknown, decide male
+                        fa[c] = p;
+                        if(gender[p] == 0) gender[p] = 1;
+
+                        if(!sp.count(p)) {
+                            int m = nid++;
+                            sp[p] = m; sp[m] = p;
+                            gender[m] = 2;
+                            mo[c] = m;
+                            ch[m].insert(c);
+                        } else {
+                            mo[c] = sp[p];
+                            ch[sp[p]].insert(c);
+                        }
+                    }
+
+                    extra_children[p].insert(want);
+                    emit(c);
+                }
+
+            } else if(rel == "husband") {
+                // spouse edge cost is 0
+                if(!sp.count(p)) {
+                    int h = nid++;
+                    sp[p] = h; sp[h] = p;
+                    gender[h] = 1;
+                    gender[p] = 2;
+                }
+                emit(sp[p]);
+
+            } else if(rel == "wife") {
+                if(!sp.count(p)) {
+                    int w = nid++;
+                    sp[p] = w; sp[w] = p;
+                    gender[w] = 2;
+                    gender[p] = 1;
+                }
+                emit(sp[p]);
+            }
+        }
+
+        return nxt;
+    };
+
+    // DP over the chain
+    for(const string& rel : relations) {
+        auto exps = expand_relation(rel);
+        set<pair<int,int>> all;
+
+        for(const auto& exp : exps) {
+            auto tmp = cur;
+            for(const auto& [r, fl] : exp) {
+                tmp = apply_step(tmp, r, fl);
+            }
+            all.insert(tmp.begin(), tmp.end());
+        }
+        cur.swap(all);
+    }
+
+    // Build weighted graph
+    map<int, vector<pair<int,int>>> adj; // u -> list of (v, w)
+    auto add_edge = [&](int u, int v, int w) {
+        adj[u].push_back({v,w});
+        adj[v].push_back({u,w});
+    };
+
+    for(auto &[c,f] : fa) add_edge(c, f, 1);
+    for(auto &[c,m] : mo) add_edge(c, m, 1);
+
+    // Spouse edges (avoid double insertion)
+    set<pair<int,int>> seen;
+    for(auto &[a,b] : sp) {
+        auto e = make_pair(min(a,b), max(a,b));
+        if(seen.insert(e).second) add_edge(a, b, 0);
+    }
+
+    // 0-1 BFS from A(0)
+    map<int,int> dist;
+    deque<int> dq;
+    dist[0] = 0;
+    dq.push_back(0);
+
+    while(!dq.empty()) {
+        int u = dq.front();
+        dq.pop_front();
+        int du = dist[u];
+
+        for(auto [v,w] : adj[u]) {
+            int nd = du + w;
+            if(!dist.count(v) || nd < dist[v]) {
+                dist[v] = nd;
+                if(w == 0) dq.push_front(v);
+                else dq.push_back(v);
+            }
+        }
+    }
+
+    // Extract min/max among possible C endpoints
+    int mn = INT_MAX, mx = INT_MIN;
+    for(auto [p, _ex] : cur) {
+        if(dist.count(p)) {
+            mn = min(mn, dist[p]);
+            mx = max(mx, dist[p]);
+        }
+    }
+
+    if(mn == INT_MAX) cout << "0 0\n";
+    else cout << mx << " " << mn << "\n";
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+from collections import defaultdict, deque
+
+# Step flag meanings:
+# 0: normal
+# 1: save current person as "excluded"
+# 2: when emitting target, forbid target == excluded, then clear excluded
+
+def expand_relation(rel: str):
+    """Return list of expansions; each expansion is list of (basic_rel, flag)."""
+    if rel in ("father", "mother", "son", "daughter", "husband", "wife"):
+        return [[(rel, 0)]]
+
+    if rel == "brother":
+        return [[("father", 1), ("son", 2)],
+                [("mother", 1), ("son", 2)]]
+
+    if rel == "sister":
+        return [[("father", 1), ("daughter", 2)],
+                [("mother", 1), ("daughter", 2)]]
+
+    if rel == "grandfather":
+        return [[("father", 0), ("father", 0)],
+                [("mother", 0), ("father", 0)]]
+
+    if rel == "grandmother":
+        return [[("father", 0), ("mother", 0)],
+                [("mother", 0), ("mother", 0)]]
+
+    if rel == "grandson":
+        return [[("son", 0), ("son", 0)],
+                [("daughter", 0), ("son", 0)]]
+
+    if rel == "granddaughter":
+        return [[("son", 0), ("daughter", 0)],
+                [("daughter", 0), ("daughter", 0)]]
+
+    if rel == "uncle":
+        return [[("father", 0), ("father", 1), ("son", 2)],
+                [("father", 0), ("mother", 1), ("son", 2)],
+                [("mother", 0), ("father", 1), ("son", 2)],
+                [("mother", 0), ("mother", 1), ("son", 2)]]
+
+    if rel == "aunt":
+        return [[("father", 0), ("father", 1), ("daughter", 2)],
+                [("father", 0), ("mother", 1), ("daughter", 2)],
+                [("mother", 0), ("father", 1), ("daughter", 2)],
+                [("mother", 0), ("mother", 1), ("daughter", 2)]]
+
+    if rel == "nephew":
+        return [[("father", 1), ("son", 2), ("son", 0)],
+                [("mother", 1), ("son", 2), ("son", 0)],
+                [("father", 1), ("daughter", 2), ("son", 0)],
+                [("mother", 1), ("daughter", 2), ("son", 0)]]
+
+    if rel == "niece":
+        return [[("father", 1), ("son", 2), ("daughter", 0)],
+                [("mother", 1), ("son", 2), ("daughter", 0)],
+                [("father", 1), ("daughter", 2), ("daughter", 0)],
+                [("mother", 1), ("daughter", 2), ("daughter", 0)]]
+
+    return []
+
+
+def solve(line: str) -> str:
+    # Extract substring starting at " is A"
+    pos = line.find(" is A")
+    if pos == -1:
+        return ""
+
+    tail = line[pos + 5:]  # after " is A"
+    if tail == "" or tail == " is A":
+        return "0 0"
+
+    # Parse relation tokens and strip trailing "'s"
+    relations = []
+    for w in tail.split():
+        if w.endswith("'s"):
+            w = w[:-2]
+        if w and w not in ("'", "s"):
+            relations.append(w)
+
+    # Lazy family structures
+    fa = {}                     # child -> father
+    mo = {}                     # child -> mother
+    sp = {}                     # person -> spouse (symmetric)
+    ch = defaultdict(set)       # parent -> set(children)
+    gender = defaultdict(int)   # 0 unknown, 1 male, 2 female
+
+    # for each parent, record if we already created a fresh son (1) / daughter (2)
+    extra_children = defaultdict(set)
+
+    nid = 1  # next id; A is 0
+
+    # DP states: (person_id, excluded_id)
+    cur = {(0, -1)}
+
+    def apply_step(cur_set, rel, flag):
+        """Apply one basic relation step to all states; create missing persons as needed."""
+        nonlocal nid
+        nxt = set()
+
+        for p, excl in cur_set:
+
+            def emit(target):
+                # Exclusion check for brother/sister "not self"
+                if flag == 2 and target == excl:
+                    return
+                new_excl = excl
+                if flag == 1:
+                    new_excl = p
+                if flag == 2:
+                    new_excl = -1
+                nxt.add((target, new_excl))
+
+            if rel == "father":
+                if p not in fa:
+                    if p in mo and mo[p] in sp:
+                        fa[p] = sp[mo[p]]
+                        ch[fa[p]].add(p)
+                    else:
+                        f = nid; nid += 1
+                        fa[p] = f
+                        gender[f] = 1
+                        ch[f].add(p)
+                        if p in mo:
+                            sp[f] = mo[p]
+                            sp[mo[p]] = f
+                emit(fa[p])
+
+            elif rel == "mother":
+                if p not in mo:
+                    if p in fa and fa[p] in sp:
+                        mo[p] = sp[fa[p]]
+                        ch[mo[p]].add(p)
+                    else:
+                        m = nid; nid += 1
+                        mo[p] = m
+                        gender[m] = 2
+                        ch[m].add(p)
+                        if p in fa:
+                            sp[m] = fa[p]
+                            sp[fa[p]] = m
+                emit(mo[p])
+
+            elif rel in ("son", "daughter"):
+                want = 1 if rel == "son" else 2
+
+                # Existing children
+                for c in ch[p]:
+                    if gender[c] in (0, want):
+                        emit(c)
+
+                # Create at most one fresh child of this gender
+                if want not in extra_children[p]:
+                    c = nid; nid += 1
+                    gender[c] = want
+                    ch[p].add(c)
+
+                    # Ensure two parents as spouses
+                    if gender[p] == 2:
+                        # p is mother
+                        mo[c] = p
+                        if p not in sp:
+                            f = nid; nid += 1
+                            sp[p] = f; sp[f] = p
+                            gender[f] = 1
+                            fa[c] = f
+                            ch[f].add(c)
+                        else:
+                            fa[c] = sp[p]
+                            ch[sp[p]].add(c)
+                    else:
+                        # p is father (if unknown, decide male)
+                        fa[c] = p
+                        if gender[p] == 0:
+                            gender[p] = 1
+                        if p not in sp:
+                            m = nid; nid += 1
+                            sp[p] = m; sp[m] = p
+                            gender[m] = 2
+                            mo[c] = m
+                            ch[m].add(c)
+                        else:
+                            mo[c] = sp[p]
+                            ch[sp[p]].add(c)
+
+                    extra_children[p].add(want)
+                    emit(c)
+
+            elif rel == "husband":
+                if p not in sp:
+                    h = nid; nid += 1
+                    sp[p] = h; sp[h] = p
+                    gender[h] = 1
+                    gender[p] = 2
+                emit(sp[p])
+
+            elif rel == "wife":
+                if p not in sp:
+                    w = nid; nid += 1
+                    sp[p] = w; sp[w] = p
+                    gender[w] = 2
+                    gender[p] = 1
+                emit(sp[p])
+
+        return nxt
+
+    # DP over relations
+    for rel in relations:
+        all_states = set()
+        for exp in expand_relation(rel):
+            tmp = cur
+            for basic_rel, flag in exp:
+                tmp = apply_step(tmp, basic_rel, flag)
+            all_states |= tmp
+        cur = all_states
+
+    # Build weighted graph (0/1 weights)
+    adj = defaultdict(list)
+
+    def add(u, v, w):
+        adj[u].append((v, w))
+        adj[v].append((u, w))
+
+    for child, f in fa.items():
+        add(child, f, 1)
+    for child, m in mo.items():
+        add(child, m, 1)
+
+    seen = set()
+    for a, b in sp.items():
+        e = (a, b) if a < b else (b, a)
+        if e in seen:
+            continue
+        seen.add(e)
+        add(a, b, 0)
+
+    # 0-1 BFS from A=0
+    dist = {0: 0}
+    dq = deque([0])
+
+    while dq:
+        u = dq.popleft()
+        du = dist[u]
+        for v, w in adj[u]:
+            nd = du + w
+            if v not in dist or nd < dist[v]:
+                dist[v] = nd
+                if w == 0:
+                    dq.appendleft(v)
+                else:
+                    dq.append(v)
+
+    # Collect min/max among possible C endpoints
+    lo = 10**18
+    hi = -1
+    for p, _ in cur:
+        if p in dist:
+            lo = min(lo, dist[p])
+            hi = max(hi, dist[p])
+
+    if lo == 10**18:
+        return "0 0"
+    return f"{hi} {lo}"
+
+
+if __name__ == "__main__":
+    import sys
+    line = sys.stdin.readline().rstrip("\n")
+    print(solve(line))
+```
+
+--- 
+
+If you want an extra clarification: the reason “create at most one fresh son and one fresh daughter per person” is enough is that the relation chain length ≤ 10, and additional distinct children of the same gender do not create new *shortest-path costs* beyond what one representative new child already enables.
