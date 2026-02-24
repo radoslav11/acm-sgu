@@ -1,0 +1,468 @@
+## 1) A concise, abridged problem statement
+
+You are given **N** pizza huts at integer coordinates \((x_i, y_i)\). Hut \(i\) can deliver within Manhattan distance \(w_i\), i.e. it covers all points \((x,y)\) with
+\[
+|x-x_i| + |y-y_i| \le w_i.
+\]
+A hut \(A\) **can be closed** if **at least K other huts** can reach \(A\) within their own \(w\) (within 10 minutes).
+
+Output how many huts can be closed and their 1-based indices in increasing order.
+
+Constraints: \(2 \le N \le 10^5\), \(1 \le K \le N-1\), coordinates and \(w\) up to \(10^9\).
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key geometry transformation (diamond → axis-aligned rectangle)
+
+The set of points within Manhattan distance \(w\) from \((x,y)\) is a **diamond**:
+\[
+|X-x| + |Y-y| \le w.
+\]
+
+Use the classic 45° transform:
+\[
+u = x + y,\quad v = x - y.
+\]
+
+For any point \((X,Y)\), define \((U,V)\) similarly. Then:
+\[
+|X-x| + |Y-y| \le w \iff
+\begin{cases}
+|U-u| \le w\\
+|V-v| \le w
+\end{cases}
+\]
+So in \((u,v)\)-space, each diamond becomes an **axis-aligned rectangle**:
+\[
+u \in [u-w,\, u+w],\quad v \in [v-w,\, v+w].
+\]
+
+Now the problem becomes:
+
+For each hut center point \((u_i, v_i)\), count how many rectangles (from all huts \(j\)) contain that point. Hut \(i\) is closable iff:
+\[
+(\text{count containing } (u_i,v_i)) - 1 \ge K
+\]
+(the “-1” excludes its own rectangle, which always contains its center).
+
+---
+
+### Sweep line over \(u\) + Fenwick (BIT) over \(v\)
+
+We need point-in-rectangle counts for up to \(10^5\) rectangles and \(10^5\) query points.
+
+Standard method:
+- Sweep increasing \(u\).
+- Maintain which rectangles are currently active (whose \(u\)-interval covers current sweep position).
+- For active rectangles, we need to count how many cover a given \(v\).
+
+For a rectangle:
+- It becomes active at \(u = u_{\min} = u_i - w_i\)
+- It becomes inactive just after \(u_{\max} = u_i + w_i\)
+
+To handle inclusivity cleanly with integers, we use “end at \(u_{\max}+1\)”:
+- add event at \(u_i - w_i\): +1 (activate)
+- add event at \(u_i + w_i + 1\): -1 (deactivate)
+
+When active, it covers \(v \in [v_i - w_i,\, v_i + w_i]\).
+
+---
+
+### Range add + point query on \(v\)
+
+While sweeping, we need to support:
+- Add \(\Delta\) to all \(v\) in an interval \([L, R]\) (for activation/deactivation)
+- Query the value at a single \(v_i\)
+
+This can be done with a Fenwick tree using the difference-array trick:
+- To add \(\Delta\) to range \([L,R]\):  
+  `diff[L] += Δ`, `diff[R+1] -= Δ`
+- Point value at \(p\) is prefix sum up to \(p\).
+
+So for each active rectangle, we do:
+- update at index(L): +Δ
+- update at index(R+1): -Δ
+
+Then for each query point \(v_i\), answer is `prefix_sum(index(v_i))`.
+
+---
+
+### Coordinate compression on \(v\)
+
+\(v\) values can be up to \(10^9\) and negative, so we compress all \(v\)-coordinates we’ll ever address in Fenwick updates/queries:
+We need coordinates for:
+- \(v_i - w_i\) (range start)
+- \(v_i + w_i + 1\) (range end+1 point for diff trick)
+- \(v_i\) (query point)
+
+Collect all these \(3N\) values, sort unique, map to 1..M.
+
+---
+
+### Event ordering correctness
+
+We create 3 events per hut \(i\):
+1. At \(u_i - w_i\): rectangle update with \(\Delta = +1\)
+2. At \(u_i + w_i + 1\): rectangle update with \(\Delta = -1\)
+3. At \(u_i\): query for point \((u_i, v_i)\)
+
+When multiple events share the same \(u\):
+- We must process **updates before queries** so rectangles that start at \(u\) are counted.
+- With the “+1 end” construction, rectangles ending at \(u_{\max}+1\) should be removed **before** queries at that \(u\), which is fine since they no longer cover that \(u\).
+
+Thus sorting by `(u, type)` where `type=0` for update and `type=1` for query works.
+
+Complexity:
+- Building events: \(O(N)\)
+- Sorting events: \(O(N \log N)\)
+- Each event does \(O(\log N)\) Fenwick ops → total \(O(N \log N)\)
+- Memory: \(O(N)\)
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/data_structures/fenwick.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector (assumes it is already sized)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces (trailing space included)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Fenwick Tree (Binary Indexed Tree) supporting point updates + prefix sums.
+// Also includes find_kth (not used in this problem).
+template<class T>
+class Fenwick {
+  private:
+    int sz, log_size;      // sz is internal size; log_size for find_kth
+    vector<T> tr;          // fenwick internal array (1-indexed)
+
+  public:
+    // Initialize tree for n elements (1..n)
+    void init(int n) {
+        sz = n + 1;                    // internal limit (a bit oversized)
+        log_size = 31 - __builtin_clz(sz); // floor(log2(sz))
+        tr.assign(sz + 1, 0);          // allocate and fill with 0
+    }
+
+    // Add val to index idx (idx must be >= 1)
+    void update(int idx, T val) {
+        if(idx <= 0) {                 // defensive check
+            assert(false);
+            return;
+        }
+        // Standard Fenwick update loop
+        for(; idx <= sz; idx += (idx & -idx)) {
+            tr[idx] += val;
+        }
+    }
+
+    // Prefix sum query: sum of [1..idx]
+    T query(int idx) {
+        T ans = 0;
+        // Standard Fenwick prefix sum loop
+        for(; idx >= 1; idx -= (idx & -idx)) {
+            ans += tr[idx];
+        }
+        return ans;
+    }
+
+    // Range sum query [l..r] (not used in this solution)
+    T query(int l, int r) { return query(r) - query(l - 1); }
+
+    // Find smallest idx such that prefix_sum(idx) >= k (not used here)
+    int find_kth(T k) {
+        int idx = 0;
+        for(int i = log_size; i >= 0; i--) {
+            if(idx + (1 << i) < sz && tr[idx + (1 << i)] < k) {
+                k -= tr[idx + (1 << i)];
+                idx += (1 << i);
+            }
+        }
+        return idx + 1;
+    }
+};
+
+int n, k;                 // number of huts and threshold K
+vector<int64_t> x, y, w;   // input arrays
+
+// Read input
+void read() {
+    cin >> n >> k;
+    x.resize(n);
+    y.resize(n);
+    w.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> x[i] >> y[i] >> w[i];
+    }
+}
+
+void solve() {
+    // Transform coordinates:
+    // u = x + y, v = x - y
+    // Each Manhattan ball becomes rectangle:
+    // u in [u-w, u+w], v in [v-w, v+w]
+    vector<int64_t> tx(n), ty(n);  // tx = u, ty = v
+    for(int i = 0; i < n; i++) {
+        tx[i] = x[i] + y[i];
+        ty[i] = x[i] - y[i];
+    }
+
+    // Coordinate compression for all v-values we will touch in Fenwick:
+    //   v-w, v+w+1 (for diff trick), and v itself (query point).
+    vector<int64_t> all_ys;
+    for(int i = 0; i < n; i++) {
+        all_ys.push_back(ty[i] - w[i]);      // interval start
+        all_ys.push_back(ty[i] + w[i] + 1);  // interval end+1 (diff array)
+        all_ys.push_back(ty[i]);             // query point
+    }
+    sort(all_ys.begin(), all_ys.end());
+    all_ys.erase(unique(all_ys.begin(), all_ys.end()), all_ys.end());
+
+    // Lambda that maps a coordinate value to compressed index in [1..M]
+    auto compress = [&](int64_t v) -> int {
+        return lower_bound(all_ys.begin(), all_ys.end(), v) - all_ys.begin() + 1;
+    };
+
+    // Event structure:
+    // x_coord: sweep coordinate u
+    // type: 0 = rectangle update event, 1 = query event
+    // idx: hut index
+    // delta: +1 for activate, -1 for deactivate (only for update events)
+    struct Event {
+        int64_t x_coord;
+        int type;
+        int idx;
+        int delta;
+    };
+
+    vector<Event> events;
+    events.reserve(3 * n);
+
+    // For each hut i (rectangle):
+    // activate at u-w, deactivate at u+w+1, query at u
+    for(int i = 0; i < n; i++) {
+        events.push_back({tx[i] - w[i], 0, i, 1});       // start rectangle
+        events.push_back({tx[i] + w[i] + 1, 0, i, -1});  // end rectangle (exclusive)
+        events.push_back({tx[i], 1, i, 0});              // query its center
+    }
+
+    // Sort by u, and for ties process updates (type=0) before queries (type=1)
+    sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
+        if(a.x_coord != b.x_coord) {
+            return a.x_coord < b.x_coord;
+        }
+        return a.type < b.type;
+    });
+
+    // Fenwick over compressed v-coordinates.
+    // We store a "difference array" in Fenwick so that:
+    // range add [L,R] by Δ => add Δ at L, add -Δ at (R+1).
+    Fenwick<int> fw;
+    fw.init((int)all_ys.size());
+
+    vector<int> cnt(n); // cnt[i] = number of rectangles covering point (u_i,v_i)
+
+    // Sweep through events in increasing u
+    for(auto& e: events) {
+        if(e.type == 0) {
+            // Rectangle update event for hut e.idx with delta e.delta
+            // It affects v in [v-w, v+w], implemented as diff:
+            // diff[lo] += delta; diff[hi] -= delta, where hi is (v+w+1).
+            int lo = compress(ty[e.idx] - w[e.idx]);
+            int hi = compress(ty[e.idx] + w[e.idx] + 1);
+            fw.update(lo, e.delta);
+            fw.update(hi, -e.delta);
+        } else {
+            // Query event: how many active rectangles cover v_i?
+            // That's the prefix sum at coordinate v_i.
+            cnt[e.idx] = fw.query(compress(ty[e.idx]));
+        }
+    }
+
+    // Determine which huts can be closed:
+    // cnt[i] includes its own rectangle, so subtract 1.
+    vector<int> result;
+    for(int i = 0; i < n; i++) {
+        if(cnt[i] - 1 >= k) {
+            result.push_back(i + 1); // convert to 1-based index
+        }
+    }
+
+    // Output count and indices (already increasing because i increases)
+    cout << result.size() << "\n";
+    for(int i = 0; i < (int)result.size(); i++) {
+        if(i) {
+            cout << " ";
+        }
+        cout << result[i];
+    }
+    cout << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // only one test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from bisect import bisect_left
+
+# Fenwick Tree (Binary Indexed Tree) for prefix sums.
+class Fenwick:
+    def __init__(self, n: int):
+        # Use 1-based indexing, size = n
+        self.n = n
+        self.bit = [0] * (n + 1)
+
+    def add(self, i: int, delta: int) -> None:
+        # Adds delta to index i
+        while i <= self.n:
+            self.bit[i] += delta
+            i += i & -i
+
+    def sum(self, i: int) -> int:
+        # Returns prefix sum [1..i]
+        s = 0
+        while i > 0:
+            s += self.bit[i]
+            i -= i & -i
+        return s
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+    n = int(next(it))
+    k = int(next(it))
+
+    x = [0] * n
+    y = [0] * n
+    w = [0] * n
+    for i in range(n):
+        x[i] = int(next(it))
+        y[i] = int(next(it))
+        w[i] = int(next(it))
+
+    # Transform to (u, v) coordinates
+    u = [0] * n
+    v = [0] * n
+    for i in range(n):
+        u[i] = x[i] + y[i]
+        v[i] = x[i] - y[i]
+
+    # Collect all v-coordinates needed for compression:
+    # v-w (range start), v+w+1 (end+1 for diff), v (query)
+    coords = []
+    for i in range(n):
+        coords.append(v[i] - w[i])
+        coords.append(v[i] + w[i] + 1)
+        coords.append(v[i])
+    coords = sorted(set(coords))
+
+    # Compression function: value -> 1-based index
+    def comp(val: int) -> int:
+        return bisect_left(coords, val) + 1
+
+    # Build events:
+    # type 0 = update, type 1 = query (updates must come before queries at same u)
+    events = []
+    for i in range(n):
+        events.append((u[i] - w[i], 0, i, 1))        # activate rectangle
+        events.append((u[i] + w[i] + 1, 0, i, -1))   # deactivate (exclusive end)
+        events.append((u[i], 1, i, 0))               # query point
+
+    # Sort by u, then type (0 before 1)
+    events.sort()
+
+    fw = Fenwick(len(coords))
+    cnt = [0] * n  # number of rectangles covering each point
+
+    # Sweep line over u
+    for ux, typ, idx, delta in events:
+        if typ == 0:
+            # Range add on v in [v-w, v+w] using diff:
+            # add delta at L, add -delta at (R+1) which is (v+w+1)
+            lo = comp(v[idx] - w[idx])
+            hi = comp(v[idx] + w[idx] + 1)
+            fw.add(lo, delta)
+            fw.add(hi, -delta)
+        else:
+            # Point query at v[idx]
+            cnt[idx] = fw.sum(comp(v[idx]))
+
+    # Hut i is closable if at least K OTHER huts cover it => cnt[i]-1 >= K
+    res = [str(i + 1) for i in range(n) if cnt[i] - 1 >= k]
+
+    # Output
+    out = []
+    out.append(str(len(res)))
+    out.append(" ".join(res))
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Transform each hut \((x,y)\) to \((u,v)=(x+y, x-y)\). The Manhattan ball \(|X-x|+|Y-y|\le w\) becomes rectangle \(u\in[u-w,u+w]\), \(v\in[v-w,v+w]\). For each hut center \((u_i,v_i)\), we need how many rectangles contain it; closable iff count−1 ≥ K.
+
+Do an \(u\)-sweep with events:
+- at \(u_i-w_i\): activate rectangle (+1)
+- at \(u_i+w_i+1\): deactivate rectangle (−1)
+- at \(u_i\): query point
+
+Maintain coverage along \(v\) using a Fenwick tree on compressed \(v\)-coordinates with range-add/point-query via difference trick:
+add Δ at \(L=v-w\), add −Δ at \(R+1=v+w+1\); query is prefix sum at \(v_i\).
+
+Sort events by \(u\), updates before queries. Total \(O(N\log N)\), memory \(O(N)\).

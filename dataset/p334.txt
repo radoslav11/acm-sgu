@@ -1,0 +1,451 @@
+## 1) Concise abridged problem statement
+
+You are given an \(H \times W\) grid containing exactly 9 cells marked `X`, forming one 4-neighbor connected shape. You want to cut this shape into the minimum number \(K\) of **connected parts** (4-neighbor connectivity), then **shift** each part (translation only; no rotation/flip) so that the union becomes a **full 3×3 square**.
+
+Output:
+1) The minimum \(K\).
+2) The original grid, but each `X` replaced by a letter `A..` indicating which part it belongs to.
+3) A blank line.
+4) A 3×3 grid showing the parts shifted to form the 3×3 square, using the same letters.
+
+Any optimal solution is acceptable.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: only 9 squares
+There are exactly 9 occupied cells. The target 3×3 square also has exactly 9 cells. So the final arrangement is a **bijection** between the 9 input `X` cells and the 9 positions of the 3×3 square.
+
+That suggests brute force over mappings:
+- Number the 9 input cells \(0..8\).
+- Number the 9 target positions \(0..8\) (where index \(p\) corresponds to target row \(p/3\), col \(p\%3\)).
+- Consider a permutation `perm` of `0..8` where `perm[i]` is the target position assigned to input cell `i`.
+
+There are \(9! = 362{,}880\) permutations, which is feasible.
+
+### What makes cells belong to the same “part”?
+A “part” is a connected set of input cells that will be shifted together by one translation vector \((\Delta r, \Delta c)\).
+
+For a fixed permutation:
+- Input cell \(i\) at \((r_i, c_i)\) is mapped to target \((R_i, C_i)\).
+- The translation required for cell \(i\) is:
+  \[
+  \Delta r_i = R_i - r_i,\quad \Delta c_i = C_i - c_i
+  \]
+If two cells are in the **same part**, they must share the **same** translation vector (because the whole part is shifted rigidly with no rotation).
+
+So a necessary condition for cells \(i\) and \(j\) to be in the same part is:
+\[
+(\Delta r_i, \Delta c_i) = (\Delta r_j, \Delta c_j)
+\]
+
+Additionally, each part must be connected **in the original logo**, using side-adjacency. So within the set of cells that share the same \((\Delta r, \Delta c)\), the number of connected components (considering adjacency in the original grid) equals the number of parts of that translation.
+
+### Computing number of parts for a permutation
+1. Precompute adjacency between the 9 cells in the **original** shape:
+   - `adj[i]` contains `j` if cells \(i\) and \(j\) are 4-neighbor adjacent.
+
+2. For a permutation:
+   - Compute all \(\Delta r_i, \Delta c_i\).
+   - Build a DSU (disjoint set union) on 9 nodes.
+   - For each adjacent pair \((i, j)\) in the original shape:
+     - If they also have the same \((\Delta r, \Delta c)\), then they can be in the same part → union them.
+
+3. After processing all edges, each DSU component corresponds to **one connected part**.
+   - Count DSU roots → number of parts for this permutation.
+
+Take the minimum over all permutations.
+
+### Constructing the output labeling
+Once the best permutation is found:
+- Rebuild the DSU.
+- Assign letters `A, B, C, ...` to DSU components.
+- Print:
+  1) The original grid, replacing each `X` cell by its component letter.
+  2) The 3×3 target grid, placing each original cell’s letter at its assigned target position.
+
+### Complexity
+- \(9!\) permutations.
+- For each permutation, work is \(O(9 + E)\) where \(E \le 12\) (edges among 9 grid cells are small).
+- Total operations: a few million → fine.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/dsu.hpp>
+
+using namespace std;
+
+// Stream output for pair: prints "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Stream input for pair: reads two values into first and second
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Stream input for vector: reads all elements sequentially
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Stream output for vector: prints all elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Disjoint Set Union (Union-Find) structure
+class DSU {
+  public:
+    int n;              // number of elements
+    vector<int> par;    // parent array
+    vector<int> sz;     // size array (union by size)
+
+    DSU(int _n = 0) { init(_n); }
+
+    // Initialize DSU for elements 0..n (note: this code allocates n+1)
+    void init(int _n) {
+        n = _n;
+        par.assign(n + 1, 0);
+        sz.assign(n + 1, 0);
+        for(int i = 0; i <= n; i++) {
+            par[i] = i;     // each element is its own parent initially
+            sz[i] = 1;      // each component has size 1
+        }
+    }
+
+    // Find with path compression
+    int root(int u) { return par[u] = ((u == par[u]) ? u : root(par[u])); }
+
+    // Check if two nodes are in the same component
+    bool connected(int x, int y) { return root(x) == root(y); }
+
+    // Union by size; returns the new root
+    int unite(int x, int y) {
+        x = root(x), y = root(y);
+        if(x == y) {
+            return x; // already in same component
+        }
+        // Ensure x is the smaller component
+        if(sz[x] > sz[y]) {
+            swap(x, y);
+        }
+        par[x] = y;        // attach x under y
+        sz[y] += sz[x];    // update size
+        return y;
+    }
+
+    // (Unused in this solution) Build explicit list of components
+    vector<vector<int>> components() {
+        vector<vector<int>> comp(n + 1);
+        for(int i = 0; i <= n; i++) {
+            comp[root(i)].push_back(i);
+        }
+        return comp;
+    }
+};
+
+int n, m;              // grid dimensions (H, W)
+vector<string> tbl;    // input grid
+
+// Read input
+void read() {
+    cin >> n >> m;
+    tbl.resize(n);
+    cin >> tbl;        // uses vector<string> operator>> overload
+}
+
+void solve() {
+    // Collect coordinates of the 9 X-cells
+    vector<pair<int, int>> cells;
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            if(tbl[i][j] == 'X') {
+                cells.push_back({i, j});
+            }
+        }
+    }
+
+    // Build adjacency among the 9 cells based on 4-neighbor distance = 1
+    vector<vector<int>> adj(9);
+    for(int i = 0; i < 9; i++) {
+        for(int j = i + 1; j < 9; j++) {
+            // Manhattan distance 1 => side-adjacent
+            if(abs(cells[i].first - cells[j].first) +
+                   abs(cells[i].second - cells[j].second) ==
+               1) {
+                adj[i].push_back(j);
+                adj[j].push_back(i);
+            }
+        }
+    }
+
+    // Given a permutation p of 0..8 (mapping each input cell i to target pos p[i]),
+    // build a DSU where we union adjacent input cells if they share the same
+    // translation vector (dr, dc).
+    auto build_dsu = [&](const vector<int>& p) {
+        DSU dsu(9);              // DSU for nodes 0..9 (0..8 used)
+        vector<int> dr(9), dc(9);
+
+        // Compute required translation for each cell i
+        for(int i = 0; i < 9; i++) {
+            // target row = p[i]/3, target col = p[i]%3
+            // translation = target - original
+            dr[i] = p[i] / 3 - cells[i].first;
+            dc[i] = p[i] % 3 - cells[i].second;
+        }
+
+        // For each adjacency edge in original shape:
+        // if both endpoints share same (dr, dc), they can be in same shifted part
+        for(int i = 0; i < 9; i++) {
+            for(int j: adj[i]) {
+                // j > i avoids processing each undirected edge twice
+                if(j > i && dr[i] == dr[j] && dc[i] == dc[j]) {
+                    dsu.unite(i, j);
+                }
+            }
+        }
+        return dsu; // return DSU describing parts for this permutation
+    };
+
+    // Start with identity permutation 0..8
+    vector<int> perm(9);
+    iota(perm.begin(), perm.end(), 0);
+
+    int best_parts = 10;     // more than maximum possible (<=9)
+    vector<int> best_perm;   // permutation achieving best_parts
+
+    // Try all 9! permutations
+    do {
+        auto dsu = build_dsu(perm);
+
+        // Count number of DSU components (roots among 0..8)
+        int cnt = 0;
+        for(int i = 0; i < 9; i++) {
+            if(dsu.root(i) == i) {
+                cnt++;
+            }
+        }
+
+        // Keep best (minimum parts)
+        if(cnt < best_parts) {
+            best_parts = cnt;
+            best_perm = perm;
+            // Can't do better than 1 part, so early exit
+            if(best_parts == 1) {
+                break;
+            }
+        }
+    } while(next_permutation(perm.begin(), perm.end()));
+
+    // Rebuild DSU for the best permutation
+    auto dsu = build_dsu(best_perm);
+
+    // Assign compact labels 0..K-1 to DSU components
+    vector<int> label(9, -1); // label[root] = component index
+    int cur = 0;
+    for(int i = 0; i < 9; i++) {
+        int r = dsu.root(i);
+        if(label[r] == -1) {
+            label[r] = cur++; // new component found
+        }
+    }
+
+    // Output K
+    cout << best_parts << "\n";
+
+    // Print original grid with X replaced by letters A.. for each part
+    auto grid = tbl; // copy original
+    for(int i = 0; i < 9; i++) {
+        grid[cells[i].first][cells[i].second] = 'A' + label[dsu.root(i)];
+    }
+    for(auto& row: grid) {
+        cout << row << "\n";
+    }
+    cout << "\n"; // required empty line
+
+    // Build and print the 3x3 target arrangement
+    vector<string> small(3, string(3, '.'));
+    for(int i = 0; i < 9; i++) {
+        // Place the part letter into the assigned target cell
+        small[best_perm[i] / 3][best_perm[i] % 3] = 'A' + label[dsu.root(i)];
+    }
+    for(auto& row: small) {
+        cout << row << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+from itertools import permutations
+
+# ---------- DSU (Union-Find) ----------
+class DSU:
+    def __init__(self, n: int):
+        # We will use indices 0..n-1
+        self.par = list(range(n))
+        self.sz = [1] * n
+
+    def root(self, x: int) -> int:
+        # Path compression
+        while self.par[x] != x:
+            self.par[x] = self.par[self.par[x]]
+            x = self.par[x]
+        return x
+
+    def unite(self, a: int, b: int) -> None:
+        a, b = self.root(a), self.root(b)
+        if a == b:
+            return
+        # Union by size: attach smaller to larger
+        if self.sz[a] > self.sz[b]:
+            a, b = b, a
+        self.par[a] = b
+        self.sz[b] += self.sz[a]
+
+
+def solve() -> None:
+    data = sys.stdin.read().strip().splitlines()
+    h, w = map(int, data[0].split())
+    grid = data[1:1+h]
+
+    # Collect the 9 occupied cells
+    cells = []
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == 'X':
+                cells.append((r, c))
+
+    # Build adjacency list among the 9 cells in the original figure
+    adj = [[] for _ in range(9)]
+    for i in range(9):
+        r1, c1 = cells[i]
+        for j in range(i + 1, 9):
+            r2, c2 = cells[j]
+            if abs(r1 - r2) + abs(c1 - c2) == 1:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    # Build DSU for a given mapping p[i] = target position (0..8) for input cell i
+    def build_dsu(p):
+        dsu = DSU(9)
+
+        # Translation vectors needed for each cell i
+        dr = [0] * 9
+        dc = [0] * 9
+        for i in range(9):
+            tr, tc = divmod(p[i], 3)   # target row/col in 3x3
+            r, c = cells[i]            # original position
+            dr[i] = tr - r
+            dc[i] = tc - c
+
+        # Union adjacent original cells if they share the same translation
+        for i in range(9):
+            for j in adj[i]:
+                if j > i and dr[i] == dr[j] and dc[i] == dc[j]:
+                    dsu.unite(i, j)
+        return dsu
+
+    best_parts = 10
+    best_perm = None
+
+    # Try all 9! bijections from input cells to 3x3 target positions
+    for p in permutations(range(9)):
+        dsu = build_dsu(p)
+
+        # Count components (roots)
+        roots = set(dsu.root(i) for i in range(9))
+        parts = len(roots)
+
+        if parts < best_parts:
+            best_parts = parts
+            best_perm = p
+            if best_parts == 1:
+                break
+
+    # Rebuild DSU for best permutation and assign letters to components
+    dsu = build_dsu(best_perm)
+
+    # Map DSU root -> label index 0..K-1
+    root_to_label = {}
+    next_label = 0
+    for i in range(9):
+        r = dsu.root(i)
+        if r not in root_to_label:
+            root_to_label[r] = next_label
+            next_label += 1
+
+    # Output K
+    out = []
+    out.append(str(best_parts))
+
+    # Print original grid with X replaced by letters
+    grid2 = [list(row) for row in grid]
+    for i in range(9):
+        r, c = cells[i]
+        lab = root_to_label[dsu.root(i)]
+        grid2[r][c] = chr(ord('A') + lab)
+    out.extend("".join(row) for row in grid2)
+
+    # Blank line
+    out.append("")
+
+    # Print 3x3 target arrangement
+    small = [["."] * 3 for _ in range(3)]
+    for i in range(9):
+        tr, tc = divmod(best_perm[i], 3)
+        lab = root_to_label[dsu.root(i)]
+        small[tr][tc] = chr(ord('A') + lab)
+    out.extend("".join(row) for row in small)
+
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- There are exactly 9 `X` cells, and the goal is a filled 3×3 (also 9 cells).  
+- Try all \(9!\) bijections from the 9 input cells to the 9 target positions.
+- For a mapping, each cell gets a translation \((\Delta r,\Delta c)\) from original to target. Cells can be in the same part iff they share the same translation, and the part must be connected in the original grid.
+- Build adjacency among the 9 input cells (4-neighbor). For each mapping, DSU-union adjacent cells that also share the same translation. The number of DSU components is the number of parts for that mapping.
+- Take the mapping with minimum components; label components with `A..`, print labeled original grid and the labeled 3×3 result.

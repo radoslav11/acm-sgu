@@ -1,0 +1,421 @@
+## 1) Abridged problem statement
+
+You’re given a syntactically correct boolean expression over variables `a..j` with operators:
+
+- unary: `!` (NOT)
+- binary: `&` (AND), `||` (OR), `<=>` (equivalence), `=>` (implication), `#` (XOR)
+
+Operator precedence: `!` highest, `&` middle, all others lowest. Parentheses can appear.
+
+Output an **equivalent** expression (same truth table for all assignments of `a..j`) that contains **no parentheses**, and whose length is ≤ 32768.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observations
+1. There are only **10 variables** (`a..j`), so there are at most `2^10 = 1024` different assignments of truth values.
+2. If we can evaluate the given expression for every assignment, we know exactly which assignments make it `true`.
+3. From those satisfying assignments we can build a **DNF** (Disjunctive Normal Form):
+   - For each assignment that makes the expression true, create a conjunction (AND-chain) describing that assignment:
+     - variable is `x` if it’s true
+     - variable is `!x` if it’s false
+   - OR (`||`) together all such conjunctions.
+4. Such a DNF needs **no parentheses** because `&` has higher precedence than `||`, so
+   ```
+   a&b||a&c
+   ```
+   is parsed as `(a&b) || (a&c)` automatically.
+
+### Parsing / evaluating the original expression
+We must correctly respect precedence and parentheses. A standard recursive-descent parser works well:
+
+- `parse_low` handles the *lowest-precedence* binary operators: `||`, `<=>`, `=>`, `#`
+- `parse_mid` handles `&`
+- `parse_high` handles unary `!`
+- `parse_atom` handles variables `a..j` and parenthesized subexpressions `( ... )`
+
+Each parser function consumes characters from the global string using an index `pos` and returns a boolean value for a given assignment `mask` (10-bit mask).
+
+### Building the DNF
+1. Detect which variables actually appear in the expression (at most 10, often fewer). Let there be `k` used variables.
+2. For each full 10-variable mask `0..1023`:
+   - evaluate the expression
+   - if it is true, compress the assignment down to only the `k` used vars (so output clauses don’t mention unused variables)
+3. If there are **no** satisfying assignments, output a contradiction like `a&!a`.
+4. Otherwise, output all satisfying minterms:
+   ```
+   (lit1 & lit2 & ... & litk) || ( ... ) || ...
+   ```
+   without parentheses; join literals in a clause with `&` and clauses with `||`.
+
+### Correctness sketch
+- The parser evaluates the expression exactly according to the problem’s grammar and precedence rules.
+- The produced DNF is true on exactly the same assignments as the original formula (by construction, it ORs precisely the satisfying assignments).
+- Therefore, the output is logically equivalent and parenthesis-free.
+
+### Complexity
+- Evaluate expression up to 1024 times.
+- Each evaluation scans the expression (≤ 2048 chars) with the parser.
+- Upper bound is easily fast enough: about ~2 million character operations.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper output for pairs (not used by the main logic, just generic utilities)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper input for pairs (not used by the main logic)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper input for vectors (not used by the main logic)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Helper output for vectors (not used by the main logic)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+string expr; // the input boolean expression as a string
+
+// Reads the whole expression (no spaces in input)
+void read() { cin >> expr; }
+
+int pos; // current parsing position in expr
+
+// Forward declarations of recursive-descent parsing functions.
+// Each parses a precedence level and returns the expression's boolean value
+// under a given variable assignment "mask".
+bool parse_low(int mask);
+bool parse_mid(int mask);
+bool parse_high(int mask);
+bool parse_atom(int mask);
+
+// Parse an atom: either "( ... )" or a variable 'a'..'j'.
+bool parse_atom(int mask) {
+    // Parenthesized subexpression
+    if(expr[pos] == '(') {
+        pos++;                          // consume '('
+        bool result = parse_low(mask);  // parse inside with lowest level (full expression)
+        pos++;                          // consume ')'
+        return result;
+    }
+
+    // Otherwise it must be a variable
+    char var = expr[pos++]; // consume variable letter
+    // Return its truth value from the bitmask: bit 0 for 'a', bit 1 for 'b', etc.
+    return (mask >> (var - 'a')) & 1;
+}
+
+// Parse highest-precedence: unary negation '!' (right-associative here), or atom.
+bool parse_high(int mask) {
+    if(expr[pos] == '!') {      // if there is a negation
+        pos++;                  // consume '!'
+        return !parse_high(mask); // negate the next high-precedence expression
+    }
+    return parse_atom(mask);    // otherwise parse an atom
+}
+
+// Parse middle-precedence: conjunction '&' (left-associative).
+bool parse_mid(int mask) {
+    bool result = parse_high(mask); // parse the first operand
+    // While there are more '&' operators, keep chaining with AND
+    while(pos < (int)expr.size() && expr[pos] == '&') {
+        pos++;                          // consume '&'
+        result = result & parse_high(mask); // AND with next operand
+    }
+    return result;
+}
+
+// Parse low-precedence operators: ||, <=>, =>, # (left-associative as implemented).
+bool parse_low(int mask) {
+    bool result = parse_mid(mask); // parse left side at higher precedence first
+
+    // Loop while the next token starts one of the low-precedence operators.
+    while(pos < (int)expr.size()) {
+        // Disjunction "||"
+        if(expr[pos] == '|' && expr[pos + 1] == '|') {
+            pos += 2;                     // consume "||"
+            result = result | parse_mid(mask); // OR with next operand
+        }
+        // Equivalence "<=>"
+        else if(expr[pos] == '<' && expr[pos + 1] == '=' && expr[pos + 2] == '>') {
+            pos += 3;                         // consume "<=>"
+            result = result == parse_mid(mask); // equivalence
+        }
+        // Implication "=>": (A => B) is (!A) OR B
+        else if(expr[pos] == '=' && expr[pos + 1] == '>') {
+            pos += 2;                          // consume "=>"
+            result = !result | parse_mid(mask); // implication
+        }
+        // XOR "#": true iff operands differ
+        else if(expr[pos] == '#') {
+            pos++;                               // consume '#'
+            result = result != parse_mid(mask);  // xor
+        } else {
+            break; // no more low-precedence operators
+        }
+    }
+    return result;
+}
+
+// Evaluate the full expression on a particular assignment mask (10-bit values for a..j).
+bool evaluate_expression(int mask) {
+    pos = 0;              // start parsing from the beginning
+    return parse_low(mask); // parse complete expression
+}
+
+// Construct a parenthesis-free DNF equivalent to expr.
+string create_dnf() {
+    // Track which variables (a..j) appear in the expression.
+    vector<bool> used_vars(10, false);
+    for(char c: expr) {
+        if(c >= 'a' && c <= 'j') {
+            used_vars[c - 'a'] = true;
+        }
+    }
+
+    // List of indices (0..9) of used variables, in increasing order.
+    vector<int> used_indices;
+    for(int i = 0; i < 10; i++) {
+        if(used_vars[i]) {
+            used_indices.push_back(i);
+        }
+    }
+
+    int num_used = (int)used_indices.size();
+
+    // Store all satisfying assignments, but compressed to only the used variables.
+    // Using a set also deduplicates (though duplicates aren't expected here).
+    set<int> true_assignments;
+
+    // Enumerate all possible assignments of 10 variables (1024 total).
+    for(int mask = 0; mask < (1 << 10); mask++) {
+        if(evaluate_expression(mask)) {
+            // Compress full 10-bit mask down to a num_used-bit number.
+            int assignment = 0;
+            for(int j = 0; j < num_used; j++) {
+                if((mask >> used_indices[j]) & 1) {
+                    assignment |= (1 << j);
+                }
+            }
+            true_assignments.insert(assignment);
+        }
+    }
+
+    // If expression is never true, return a contradiction with no parentheses.
+    if(true_assignments.empty()) {
+        return "a&!a";
+    }
+
+    // Build the DNF: OR of conjunctions, one for each satisfying assignment.
+    string result;
+    bool first = true;
+    for(int assignment: true_assignments) {
+        if(!first) {
+            result += "||"; // OR between clauses
+        }
+        first = false;
+
+        // Each clause contains all used variables as literals connected by '&'
+        for(int j = 0; j < num_used; j++) {
+            if(j > 0) {
+                result += '&'; // AND between literals
+            }
+
+            // If that variable is false in this satisfying assignment, add negation.
+            if(!((assignment >> j) & 1)) {
+                result += '!';
+            }
+
+            // Append the variable letter (original index from a..j)
+            result += char('a' + used_indices[j]);
+        }
+    }
+    return result;
+}
+
+void solve() {
+    // Generate the parenthesis-free DNF and print it.
+    string result = create_dnf();
+    cout << result << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+# We implement the same recursive-descent parser as the C++ code.
+# expr: input expression string
+# pos: current index into expr while parsing
+
+def solve():
+    expr = sys.stdin.readline().strip()
+    pos = 0  # parsing pointer
+
+    def parse_low(mask: int) -> bool:
+        """Parse lowest-precedence binary operators: ||, <=>, =>, #."""
+        nonlocal pos
+        result = parse_mid(mask)
+
+        while pos < len(expr):
+            # OR: "||"
+            if pos + 1 < len(expr) and expr[pos] == '|' and expr[pos + 1] == '|':
+                pos += 2
+                result = result or parse_mid(mask)
+
+            # Equivalence: "<=>"
+            elif pos + 2 < len(expr) and expr[pos:pos+3] == "<=>":
+                pos += 3
+                result = (result == parse_mid(mask))
+
+            # Implication: "=>", where (A => B) == (!A) or B
+            elif pos + 1 < len(expr) and expr[pos:pos+2] == "=>":
+                pos += 2
+                result = ((not result) or parse_mid(mask))
+
+            # XOR: "#"
+            elif expr[pos] == '#':
+                pos += 1
+                result = (result != parse_mid(mask))
+
+            else:
+                break
+
+        return result
+
+    def parse_mid(mask: int) -> bool:
+        """Parse conjunction '&' (middle precedence)."""
+        nonlocal pos
+        result = parse_high(mask)
+
+        while pos < len(expr) and expr[pos] == '&':
+            pos += 1
+            result = result and parse_high(mask)
+
+        return result
+
+    def parse_high(mask: int) -> bool:
+        """Parse unary '!' (highest precedence) or atom."""
+        nonlocal pos
+        if pos < len(expr) and expr[pos] == '!':
+            pos += 1
+            return not parse_high(mask)
+        return parse_atom(mask)
+
+    def parse_atom(mask: int) -> bool:
+        """Parse a variable a..j or a parenthesized subexpression."""
+        nonlocal pos
+
+        # Parenthesized expression
+        if expr[pos] == '(':
+            pos += 1              # consume '('
+            val = parse_low(mask) # parse inside
+            pos += 1              # consume ')'
+            return val
+
+        # Variable
+        ch = expr[pos]
+        pos += 1
+        bit = ord(ch) - ord('a')  # 0..9
+        return ((mask >> bit) & 1) == 1
+
+    def eval_expr(mask: int) -> bool:
+        """Evaluate full expression under assignment mask."""
+        nonlocal pos
+        pos = 0
+        return parse_low(mask)
+
+    # Determine which variables appear (to avoid outputting unused ones).
+    used = [False] * 10
+    for c in expr:
+        if 'a' <= c <= 'j':
+            used[ord(c) - ord('a')] = True
+
+    used_indices = [i for i in range(10) if used[i]]
+    k = len(used_indices)
+
+    true_assignments = set()
+
+    # Enumerate all 10-variable assignments
+    for mask in range(1 << 10):
+        if eval_expr(mask):
+            # Compress to just the used variables to keep output shorter
+            a = 0
+            for j, idx in enumerate(used_indices):
+                if (mask >> idx) & 1:
+                    a |= (1 << j)
+            true_assignments.add(a)
+
+    # If unsatisfiable: output a contradiction without parentheses.
+    if not true_assignments:
+        print("a&!a")
+        return
+
+    # Build DNF: OR over all satisfying minterms.
+    clauses = []
+    for a in sorted(true_assignments):
+        lits = []
+        for j, idx in enumerate(used_indices):
+            var = chr(ord('a') + idx)
+            if ((a >> j) & 1) == 0:
+                lits.append('!' + var)
+            else:
+                lits.append(var)
+        clauses.append("&".join(lits))
+
+    print("||".join(clauses))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- With only variables `a..j`, there are at most `1024` assignments.
+- Parse and evaluate the expression for every assignment (recursive descent with precedence: `!` > `&` > others).
+- Collect all assignments where the expression is `true`.
+- Output their DNF: for each satisfying assignment print a conjunction of literals (`x` or `!x`) over used variables, join literals by `&`, and join clauses by `||`.
+- No parentheses are needed since `&` binds tighter than `||`.
+- If no assignment satisfies the expression, print `a&!a`.

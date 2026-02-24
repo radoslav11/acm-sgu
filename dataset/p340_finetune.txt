@@ -1,0 +1,353 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+340. TeX2HTML
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Andrew just finished writing his thesis. That was a big work and now Andrew wants some remarks from his friends. He thinks the best way to share the paper is to post it to his blog. Andrew wrote his thesis in the TeX format and now he needs to convert them to HTML. Please help Andrew to implement the most essential part of the converter—the mathematical formulas converter.
+
+Andrew's formulas are always enclosed in the dollar signs. They contain Latin letters, digits, parentheses, white spaces, binary operators "+-*/", superscripts and subscripts. You should ignore all white spaces.
+
+Superscripts are written using the cap character "^" and braces "{}". The part of the formula inside the braces is the superscript itself. You may assume that only non-whitespace character will follow the cap character. If the superscript contains only one character, the braces can be omitted. The superscript will not be followed by another superscript or subscript. E.g. "a^2" means a2; "2^{2 + 2}" means 22 + 2.
+
+Subscripts are written using the underline character "_" and braces "{}". The part of the formula inside the braces is the subscript itself. You may assume that only non-whitespace character will follow the underline character. If the subscript contains only one character, the braces can be omitted. The subscript will not be followed by another subscript or superscript. E.g. "x_i" means xi and "P_{n+1-i}" means Pn+1-i.
+
+Your program should produce HTML-like output using the following rules. Each letter should be italicized using "<i>" open tag and "</i>" close tag. These tags should enclose each maximal sequence of letters (don't forget to ignore white spaces). Each binary operator should be surrounded by the non-breaking spaces "&nbsp;". Superscripts should be enclosed in "<sup>" and "</sup>" tags. Subscripts should be enclosed in "</sub>" and "</sub>" tags.
+
+You may assume that input will contain correct mathematical formula with only binary operators.
+
+Input
+The input file will contain several test cases. Each test case is a line with two dollar signs with the formula between them. No extra characters will appear on the line.
+
+The input file size is less than 128 KB.
+
+Output
+Print the HTML version of each formula on a separate line.
+
+Example(s)
+sample input
+sample output
+a
+
+a - (v - b)
+
+ai + b2
+
+Bki 
+<i>a</i>
+
+<i>a</i>&nbsp;-&nbsp;(<i>v</i>&nbsp;-&nbsp;<i>b</i>)
+
+<i>a</i><sub><i>i</i></sub>&nbsp;+&nbsp;<i>b</i><sub>2</sub>
+
+<i>B</i><sup><i>k</i><sub><i>i</i></sub></sup>
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+Each input line is a TeX-like math formula enclosed in `$...$`. Inside there may be Latin letters, digits, parentheses `()`, operators `+ - * /`, and scripts:
+
+- superscript: `^x` or `^{...}`
+- subscript: `_x` or `_{...}`
+
+Ignore all whitespace.
+
+Convert to an HTML-like form:
+
+- Maximal consecutive sequences of letters must be wrapped in `<i>...</i>`.
+- Each operator must be surrounded by `&nbsp;` on both sides.
+- Superscripts become `<sup>...</sup>`, subscripts become `<sub>...</sub>`.
+- Braces `{}` are only delimiters for script content and are not printed.
+
+Process all lines until EOF; output one converted line per input line.
+
+---
+
+## 2) Key observations
+
+1. **Whitespace and `$` never matter**: remove them (or just ignore while parsing).
+2. **Italicization is by maximal runs**: if you see a letter, consume all consecutive letters and wrap once: `<i>abc</i>`, not `<i>a</i><i>b</i><i>c</i>`.
+3. **Operators always binary**: simply print `&nbsp;op&nbsp;`.
+4. **The only tricky part is scripts (`^` / `_`)**:
+   - After `^` or `_`, the script content is either:
+     - a single non-whitespace character (e.g. `a^2`), or
+     - a brace group `{...}` (e.g. `a^{2+2}`)
+   - If it’s a single character, you must close the `<sup>/<sub>` **right after emitting that next atom**.
+   - If it’s grouped, you must close when you reach the matching `}`.
+5. A simple **stack of “currently open scripts”** works, because scripts can nest via braces (e.g. `B^{k_i}`), but each opened script has exactly one matching closure (either immediate or at `}`).
+
+---
+
+## 3) Full solution approach
+
+We implement two phases per line.
+
+### Phase A: Sanitize the line
+Build a string `s` containing only meaningful characters:
+- alphanumeric (letters/digits),
+- operators `+ - * /`,
+- script markers `^ _`,
+- braces `{ }`,
+- parentheses `( )`.
+
+This automatically removes `$` and all whitespace.
+
+### Phase B: Parse left-to-right and produce output
+Maintain:
+- `out` = output string builder
+- `stack` of open scripts; each item stores:
+  - `closing_tag` = `</sup>` or `</sub>`
+  - `auto_close` = whether to close immediately after printing the next emitted token  
+    (true for `^x` / `_x`, false for `^{...}` / `_{...}`)
+
+Parsing rules:
+- On `^` or `_`:
+  - output `<sup>` or `<sub>`
+  - push `(closing_tag, auto_close=true)` onto stack
+- On `{`:
+  - do not output it
+  - if stack is not empty, set the top’s `auto_close=false`  
+    (meaning we just started a grouped script)
+- On `}`:
+  - do not output it
+  - pop stack top and output its closing tag
+- On a letter:
+  - output `<i>`, consume maximal run of letters, output `</i>`
+- On an operator:
+  - output `&nbsp;op&nbsp;`
+- Otherwise (digits, parentheses, etc.):
+  - output as-is
+
+After emitting any “normal token” (letter run / operator / digit / parenthesis):
+- while the stack top has `auto_close=true`, pop it and output its closing tag  
+  (this closes `^x` / `_x` exactly after the single atom)
+
+Complexity: `O(n)` per line, with small constant factors.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p340 - TeX2HTML
+
+  Strategy:
+  1) Sanitize each input line: keep only relevant characters, remove '$' and whitespace.
+  2) Parse sanitized string left-to-right and generate HTML-like output.
+*/
+
+static inline bool isOp(char c) {
+    return c == '+' || c == '-' || c == '*' || c == '/';
+}
+
+static inline bool isAllowed(char c) {
+    // Keep only characters that can appear in the formula meaningfully.
+    // (Whitespace and '$' will be removed by not including them.)
+    return isalnum((unsigned char)c) ||
+           isOp(c) ||
+           c == '^' || c == '_' ||
+           c == '{' || c == '}' ||
+           c == '(' || c == ')';
+}
+
+string convertFormula(const string& line) {
+    // ---- Phase A: sanitize
+    string s;
+    s.reserve(line.size());
+    for (char c : line) {
+        if (isAllowed(c)) s.push_back(c);
+    }
+
+    // ---- Phase B: parse and generate output
+    // stack items: (closing tag, auto_close?)
+    // auto_close=true means script was ^x or _x (single atom), so close after next emitted token.
+    vector<pair<string, bool>> st;
+    string out;
+    out.reserve(s.size() * 8); // tags expand output
+
+    for (int i = 0; i < (int)s.size(); i++) {
+        char c = s[i];
+
+        // '{' : starts grouped script content (^{...} or _{...}); do not output it.
+        if (c == '{') {
+            if (!st.empty()) {
+                st.back().second = false; // this script is grouped, not single-atom
+            }
+            continue;
+        }
+
+        // '}' : ends grouped script; close the latest opened script; do not output '}'.
+        if (c == '}') {
+            if (!st.empty()) {
+                out += st.back().first; // append </sup> or </sub>
+                st.pop_back();
+            }
+            continue;
+        }
+
+        // '^' or '_' : open a script tag and push its closing tag
+        if (c == '^' || c == '_') {
+            if (c == '^') {
+                out += "<sup>";
+                st.push_back({"</sup>", true});
+            } else {
+                out += "<sub>";
+                st.push_back({"</sub>", true});
+            }
+            continue;
+        }
+
+        // Letters: wrap maximal consecutive run in <i>...</i>
+        if (isalpha((unsigned char)c)) {
+            out += "<i>";
+            while (i < (int)s.size() && isalpha((unsigned char)s[i])) {
+                out.push_back(s[i]);
+                i++;
+            }
+            out += "</i>";
+            i--; // compensate for the for-loop's i++
+        }
+        // Operators: surround with &nbsp;
+        else if (isOp(c)) {
+            out += "&nbsp;";
+            out.push_back(c);
+            out += "&nbsp;";
+        }
+        // Digits, parentheses, etc.: output as-is
+        else {
+            out.push_back(c);
+        }
+
+        // After emitting one token, close any single-atom scripts.
+        while (!st.empty() && st.back().second) {
+            out += st.back().first;
+            st.pop_back();
+        }
+    }
+
+    return out;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    string line;
+    while (getline(cin, line)) {
+        cout << convertFormula(line) << "\n";
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+def is_op(c: str) -> bool:
+    return c in "+-*/"
+
+def sanitize(line: str) -> str:
+    """
+    Keep only characters meaningful for the formula.
+    This removes whitespace and dollar signs automatically.
+    """
+    allowed = set("+-*/^_{}()")
+    out = []
+    for ch in line:
+        if ch.isalnum() or ch in allowed:
+            out.append(ch)
+    return "".join(out)
+
+def convert(s: str) -> str:
+    """
+    Parse sanitized TeX-like formula s and produce HTML-like output.
+
+    We maintain a stack of open scripts:
+      (closing_tag, auto_close)
+    auto_close=True means ^x/_x (single atom), so we close after emitting next token.
+    """
+    stack = []
+    parts = []
+
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+
+        # Group opening brace: marks script as grouped; not printed.
+        if c == "{":
+            if stack:
+                closing, _ = stack[-1]
+                stack[-1] = (closing, False)
+            i += 1
+            continue
+
+        # Group closing brace: close the most recent script; not printed.
+        if c == "}":
+            if stack:
+                closing, _ = stack.pop()
+                parts.append(closing)
+            i += 1
+            continue
+
+        # Superscript/subscript opening
+        if c == "^" or c == "_":
+            if c == "^":
+                parts.append("<sup>")
+                stack.append(("</sup>", True))
+            else:
+                parts.append("<sub>")
+                stack.append(("</sub>", True))
+            i += 1
+            continue
+
+        # Italicize maximal run of letters
+        if c.isalpha():
+            parts.append("<i>")
+            j = i
+            while j < n and s[j].isalpha():
+                parts.append(s[j])
+                j += 1
+            parts.append("</i>")
+            i = j
+        # Operators with &nbsp;
+        elif is_op(c):
+            parts.append("&nbsp;")
+            parts.append(c)
+            parts.append("&nbsp;")
+            i += 1
+        # Digits, parentheses, etc.
+        else:
+            parts.append(c)
+            i += 1
+
+        # Auto-close any single-atom scripts
+        while stack and stack[-1][1] is True:
+            closing, _ = stack.pop()
+            parts.append(closing)
+
+    return "".join(parts)
+
+def main():
+    for line in sys.stdin:
+        s = sanitize(line.rstrip("\n"))
+        print(convert(s))
+
+if __name__ == "__main__":
+    main()
+```
+
+Both implementations follow the same core idea: stream parsing with a small stack to correctly place `</sup>` / `</sub>` for both single-character and braced scripts.

@@ -1,0 +1,354 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+431. Wildcards
+Time limit per test: 2.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+You are given a list of files in a directory and need to match a specific subset of these files. You've decided to do that with a single string containing wildcards.
+
+More precisely, each file name is a string consisting of lowercase English letters ('a' through 'z'). You want to craft a string consisting of lowercase English letters, asterisks ('*'), and question marks ('?'). An asterisk matches any sequence of letters (including empty). A question mark matches exactly one letter. See examples for further clarification.
+
+Given a list of file names that you want to match and the list of file names that you don't want to match, output a string (which may include wildcards) that will achieve that.
+
+Input
+The first line of the input file contains two integers n and m (1 ≤ n, m ≤ 10) — the number of file names to match and the number of file names not to match, respectively. The next n lines contain file names to match, one per line, each no more than 11 characters long, without any whitespace expect newlines. The next m lines contain file names not to match in the same format. All file names in the input file are different.
+
+Output
+Output one string that will do the required matches. The length of that string must not exceed 100. If there're several possible solutions, output any. If there's no solution, output "OOPS" (without quotes) instead.
+
+Example(s)
+sample input
+sample output
+2 2
+list
+tablexx
+dataone
+datatwo
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given:
+
+- `n` file names that **must match**
+- `m` file names that **must not match**  
+  (`1 ≤ n, m ≤ 10`, each name is lowercase, length ≤ 11, all distinct)
+
+Output **one** pattern string (length ≤ 100) over:
+
+- lowercase letters `a..z`
+- `?` matches **exactly one** letter
+- `*` matches **any sequence** of letters (possibly empty)
+
+The pattern must match **all** required names and **none** of the forbidden names.  
+If impossible, print `OOPS`.
+
+---
+
+## 2) Key observations
+
+1. **Input sizes are tiny**: at most 20 total strings, each length ≤ 11.  
+   This allows **backtracking / search** over candidate patterns.
+
+2. Any valid pattern must match every “good” string; in particular, it must match the **shortest good string** `base`.  
+   Using the shortest string as a “skeleton” greatly reduces the search space.
+
+3. We can construct patterns by walking through `base` and gradually appending:
+   - a literal character (match exactly this char)
+   - `?` (match any single char)
+   - `*c` (skip any number of chars, then match a specific anchor char `c`)
+
+4. For each candidate pattern, we can quickly test it against all strings using a standard wildcard matching algorithm (glob matching with `*` and `?`).
+
+5. Pattern length limit (100) is generous; with `base` length ≤ 11, our constructed patterns stay short.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Wildcard matching function `match(pattern, text)`
+Implement classic greedy glob matching:
+
+- Move pointers through `pattern` and `text`.
+- On `?`: consume 1 char from text (must exist).
+- On a literal: must match the current text char.
+- On `*`: remember where the star occurred; initially match empty, but if later mismatch happens, “expand” the star to cover more text (backtrack to after the star and advance text position).
+
+This is fast and easy, and for length ≤ 11 it’s more than sufficient.
+
+### Step B: Check whether a pattern is valid
+`check_all(p)`:
+- For each good string: `match(p, s)` must be `true`
+- For each bad string: `match(p, s)` must be `false`
+
+### Step C: Backtracking to build a pattern from the shortest good string
+Let `base` = shortest among the good names.
+
+We use recursion:
+
+`rec(p, suff)` where:
+- `p` is the pattern built so far
+- `suff` is the remaining suffix of `base` not yet “accounted for”
+
+At each recursion:
+1. If `suff` is empty and `check_all(p)` is true → return solution.
+2. If `check_all(p + "*")` is true → return `p + "*"`.  
+   (Often a trailing star makes the pattern flexible enough.)
+3. Otherwise, try to extend using some character from `suff` as the next “anchor”:
+   - For each position `i` in `suff`, let `c = suff[i]`:
+     - Always try appending `"*"+c` (skip any chars, then match `c`)
+     - If `i == 0`, also try:
+       - `c` (match it literally immediately)
+       - `?` (match any single char)
+   - Recurse with the remainder `suff[i+1:]`.
+
+If no branch succeeds, there is no solution → print `OOPS`.
+
+Because `|base| ≤ 11`, recursion depth is tiny, and each node checks at most ~20 strings of length ≤ 11, so this fits easily in time.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int n, m;
+vector<string> files; // first n are "must match", next m are "must NOT match"
+
+// Classic greedy glob matching:
+// - '?' matches exactly one character
+// - '*' matches any sequence (possibly empty)
+static bool match_glob(const string& pattern, const string& text) {
+    int p = 0;                 // index in pattern
+    int t = 0;                 // index in text
+    int lastStarP = -1;        // most recent position of '*' in pattern
+    int nextTAfterStar = -1;   // next text index to try when expanding '*'
+
+    while (p < (int)pattern.size() || t < (int)text.size()) {
+        if (p < (int)pattern.size()) {
+            char c = pattern[p];
+
+            if (c == '?') {
+                // Must consume exactly one character from text
+                if (t < (int)text.size()) {
+                    ++p; ++t;
+                    continue;
+                }
+            } else if (c == '*') {
+                // Remember star, first try it as matching empty
+                lastStarP = p;
+                nextTAfterStar = t + 1; // if mismatch later, expand star to cover 1 char, then 2, ...
+                ++p;
+                continue;
+            } else {
+                // Literal match
+                if (t < (int)text.size() && text[t] == c) {
+                    ++p; ++t;
+                    continue;
+                }
+            }
+        }
+
+        // Direct match failed; if we saw a previous '*', expand it
+        if (lastStarP != -1 && 0 <= nextTAfterStar && nextTAfterStar <= (int)text.size()) {
+            p = lastStarP;     // go back to the star
+            t = nextTAfterStar; // try consuming more characters by the star
+            ++nextTAfterStar;
+            continue;
+        }
+
+        // No star to rescue us => mismatch
+        return false;
+    }
+
+    return true;
+}
+
+// Check whether pattern p matches all good strings and rejects all bad strings.
+static bool check_all(const string& p) {
+    for (int i = 0; i < n + m; i++) {
+        bool shouldMatch = (i < n);
+        if (match_glob(p, files[i]) != shouldMatch) return false;
+    }
+    return true;
+}
+
+// Backtracking constructor.
+// p: pattern built so far
+// suff: remaining suffix of the chosen base string
+static pair<bool,string> rec(const string& p, const string& suff) {
+    // If base is fully consumed and p already separates good/bad => done
+    if (suff.empty() && check_all(p)) {
+        return {true, p};
+    }
+
+    // Often, adding a trailing star makes it work immediately
+    if (check_all(p + "*")) {
+        return {true, p + "*"};
+    }
+
+    // If no base characters left and still not valid => fail
+    if (suff.empty()) {
+        return {false, ""};
+    }
+
+    // Try choosing an "anchor" character from some position i in suff
+    for (int i = 0; i < (int)suff.size(); i++) {
+        char c = suff[i];
+        string newSuff = suff.substr(i + 1);
+
+        // Always allow skipping some characters via '*' before matching c
+        vector<string> options;
+        options.push_back(string("*") + c); // "*c"
+
+        // If we are consuming the very next character (i == 0),
+        // we can match it directly as literal or as '?'
+        if (i == 0) {
+            options.push_back(string(1, c)); // literal
+            options.push_back("?");          // any one char
+        }
+
+        // Recurse on each option
+        for (const string& mid : options) {
+            auto [ok, ans] = rec(p + mid, newSuff);
+            if (ok) return {true, ans};
+        }
+    }
+
+    return {false, ""};
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n >> m;
+    files.resize(n + m);
+    for (int i = 0; i < n + m; i++) cin >> files[i];
+
+    // Choose the shortest string among those that must match
+    string base = files[0];
+    for (int i = 0; i < n; i++) {
+        if (files[i].size() < base.size()) base = files[i];
+    }
+
+    auto [ok, ans] = rec("", base);
+    if (ok) cout << ans << "\n";
+    else cout << "OOPS\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def match_glob(pattern: str, text: str) -> bool:
+    """
+    Greedy wildcard matching for:
+      '?' = exactly one char
+      '*' = any sequence (possibly empty)
+    Uses backtracking only to the most recent '*'.
+    """
+    p = 0
+    t = 0
+    last_star_p = -1
+    next_t_after_star = -1
+
+    while p < len(pattern) or t < len(text):
+        if p < len(pattern):
+            c = pattern[p]
+            if c == '?':
+                if t < len(text):
+                    p += 1
+                    t += 1
+                    continue
+            elif c == '*':
+                last_star_p = p
+                next_t_after_star = t + 1
+                p += 1
+                continue
+            else:
+                if t < len(text) and text[t] == c:
+                    p += 1
+                    t += 1
+                    continue
+
+        # Mismatch: try expanding previous '*'
+        if last_star_p != -1 and 0 <= next_t_after_star <= len(text):
+            p = last_star_p
+            t = next_t_after_star
+            next_t_after_star += 1
+            continue
+
+        return False
+
+    return True
+
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    n = int(data[0])
+    m = int(data[1])
+    files = data[2:2 + n + m]
+
+    base = min(files[:n], key=len)
+
+    def check_all(pat: str) -> bool:
+        for i, s in enumerate(files):
+            should_match = (i < n)
+            if match_glob(pat, s) != should_match:
+                return False
+        return True
+
+    def rec(p: str, suff: str):
+        # If base fully consumed and already valid
+        if not suff and check_all(p):
+            return True, p
+
+        # If trailing '*' makes it valid, accept
+        if check_all(p + "*"):
+            return True, p + "*"
+
+        if not suff:
+            return False, ""
+
+        # Try selecting an anchor char from position i
+        for i in range(len(suff)):
+            c = suff[i]
+            new_suff = suff[i + 1:]
+
+            options = ["*" + c]  # always allowed
+            if i == 0:
+                options.append(c)  # literal
+                options.append("?") # any single char
+
+            for mid in options:
+                ok, ans = rec(p + mid, new_suff)
+                if ok:
+                    return True, ans
+
+        return False, ""
+
+    ok, ans = rec("", base)
+    print(ans if ok else "OOPS")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This approach follows the editorial idea: use the shortest required string as a guide, backtrack to build a compact glob pattern, and validate candidates against all given names.

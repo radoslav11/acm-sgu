@@ -1,0 +1,390 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+82. Open the brackets
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+There is a syntactically correct boolean expression.
+The definition of syntactically correct expression follows as:
+1) "a","b","c",...,"j" are syntactically correct expressions.
+2) If A is a correct expression, then !A and (A) are correct expressions too.
+3) If A is a correct expression and B is a correct expression, then A||B, A&B, A<=>B, A=>B, A#B are syntactically correct expressions too.
+Syntactically correct expression doesn't contain spaces.
+Small Latin letters are variables, ! denotes negation, || - disjunction, & - conjunction, <=> - equality, => - implication, # - excepting or.
+Negation has the highest priority, conjunction has middle priority, and other operations have low priority. Brackets change the order of operations executing.
+Two expressions are called identical if their values are the same in any values of variables.
+Make the expression, which will be identical with given expression. New expression must be free of brackets.
+
+Input
+Single line of input contains the correct expression; its length does not exceed 2048 symbols. Variables are denoted by small Latin letters from 'a' to 'j'.
+
+Output
+In the first line of output write the sought for expression. Its length must not exceed 32768 symbols.
+
+Sample test(s)
+
+Input
+a&(b||c)
+
+Output
+a&b||a&c
+Author:	Dmitry Orlov
+Resource:	Saratov ST team Spring Contest #1
+Date:	18.05.2003
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given a syntactically correct Boolean expression over variables `a..j` (at most 10 variables) with operators:
+
+- Unary: `!` (NOT)
+- Binary: `&` (AND), `||` (OR), `<=>` (equivalence), `=>` (implication), `#` (XOR)
+
+Precedence: `!` highest, `&` middle, all others lowest. Parentheses may appear and override precedence.
+
+Output an **equivalent** expression (same value for every assignment of `a..j`) that contains **no parentheses**. Output length must be ≤ 32768.
+
+---
+
+## 2) Key observations
+
+1. There are only 10 possible variables ⇒ only `2^10 = 1024` truth assignments.
+2. If we can **evaluate** the input expression for all 1024 assignments, we know its full truth table.
+3. From the set of assignments where the expression is `true`, we can build a **DNF** (Disjunctive Normal Form):
+
+   - For each satisfying assignment, output a conjunction of literals:
+     - variable `x` if `x = true`
+     - `!x` if `x = false`
+   - OR (`||`) together all these conjunctions.
+
+4. This DNF uses **no parentheses** because `&` has higher precedence than `||`, so:
+   ```
+   a&b||a&c
+   ```
+   is parsed as `(a&b) || (a&c)` automatically.
+5. To keep output shorter, we should include only variables that actually appear in the input.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Parse and evaluate the expression
+We need a correct evaluator that respects precedence and parentheses. Use a recursive-descent parser with levels:
+
+- **low precedence**: `||`, `<=>`, `=>`, `#`
+- **mid precedence**: `&`
+- **high precedence**: unary `!`
+- **atom**: variable `a..j` or parenthesized `( ... )`
+
+For a given assignment `mask` (10-bit number), the parser returns the Boolean value.
+
+Operator semantics:
+- `A || B` : OR
+- `A & B` : AND
+- `A <=> B` : equivalence (`A == B`)
+- `A => B` : implication (`(!A) || B`)
+- `A # B` : XOR (`A != B`)
+
+### Step B — Enumerate all assignments and collect satisfying ones
+For each `mask` from `0` to `1023`:
+- Evaluate expression under `mask`.
+- If true, record the assignment restricted to *used* variables only (so output doesn’t mention unused variables).
+
+### Step C — Build parenthesis-free DNF
+- If there are **no** satisfying assignments, output a contradiction without parentheses, e.g. `a&!a`.
+- Otherwise, for each satisfying assignment:
+  - output `lit1&lit2&...&litK` (over used variables only)
+- join clauses with `||`
+
+This final string has no parentheses and is logically identical to the input.
+
+Complexity:
+- 1024 evaluations × O(length of expression) ≤ 1024 × 2048 operations (very safe).
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  p182 / "Open the brackets"
+
+  Strategy:
+  1) Parse+evaluate the input expression for all 2^10 assignments of a..j.
+  2) Collect assignments where expression is true.
+  3) Output DNF (OR of AND-clauses of literals), which needs no parentheses
+     because '&' has higher precedence than '||'.
+*/
+
+static string expr;
+static int posi; // current parsing index into expr
+
+// Forward declarations for recursive-descent parsing
+static bool parse_low(int mask);
+static bool parse_mid(int mask);
+static bool parse_high(int mask);
+static bool parse_atom(int mask);
+
+// atom := variable | '(' low ')'
+static bool parse_atom(int mask) {
+    if (expr[posi] == '(') {
+        posi++;                  // consume '('
+        bool v = parse_low(mask); // parse full expression inside
+        posi++;                  // consume ')'
+        return v;
+    }
+    // variable a..j
+    char c = expr[posi++];
+    return ((mask >> (c - 'a')) & 1) != 0;
+}
+
+// high := '!' high | atom     (unary NOT, highest precedence)
+static bool parse_high(int mask) {
+    if (posi < (int)expr.size() && expr[posi] == '!') {
+        posi++;                  // consume '!'
+        return !parse_high(mask);
+    }
+    return parse_atom(mask);
+}
+
+// mid := high ('&' high)*     (AND, middle precedence)
+static bool parse_mid(int mask) {
+    bool res = parse_high(mask);
+    while (posi < (int)expr.size() && expr[posi] == '&') {
+        posi++; // consume '&'
+        res = res & parse_high(mask);
+    }
+    return res;
+}
+
+// low := mid ( (|| | <=> | => | #) mid )*   (lowest precedence operators)
+static bool parse_low(int mask) {
+    bool res = parse_mid(mask);
+
+    while (posi < (int)expr.size()) {
+        // OR "||"
+        if (posi + 1 < (int)expr.size() && expr[posi] == '|' && expr[posi + 1] == '|') {
+            posi += 2;
+            res = res | parse_mid(mask);
+        }
+        // equivalence "<=>"
+        else if (posi + 2 < (int)expr.size() &&
+                 expr[posi] == '<' && expr[posi + 1] == '=' && expr[posi + 2] == '>') {
+            posi += 3;
+            res = (res == parse_mid(mask));
+        }
+        // implication "=>": A => B == (!A) || B
+        else if (posi + 1 < (int)expr.size() && expr[posi] == '=' && expr[posi + 1] == '>') {
+            posi += 2;
+            res = (!res) | parse_mid(mask);
+        }
+        // XOR "#"
+        else if (expr[posi] == '#') {
+            posi++;
+            res = (res != parse_mid(mask));
+        } else {
+            break; // no more low-precedence operators
+        }
+    }
+
+    return res;
+}
+
+static bool eval_expr(int mask) {
+    posi = 0;
+    return parse_low(mask);
+}
+
+static string build_dnf() {
+    // 1) Determine which variables are used in the input (for shorter output)
+    vector<bool> used(10, false);
+    for (char c : expr) {
+        if ('a' <= c && c <= 'j') used[c - 'a'] = true;
+    }
+    vector<int> idx;
+    for (int i = 0; i < 10; i++) if (used[i]) idx.push_back(i);
+    int k = (int)idx.size();
+
+    // 2) Enumerate all assignments; store satisfying assignments compressed to k bits
+    set<int> sat; // sorted, unique
+    for (int mask = 0; mask < (1 << 10); mask++) {
+        if (eval_expr(mask)) {
+            int compressed = 0;
+            for (int j = 0; j < k; j++) {
+                if ((mask >> idx[j]) & 1) compressed |= (1 << j);
+            }
+            sat.insert(compressed);
+        }
+    }
+
+    // 3) If unsatisfiable, output a contradiction without parentheses
+    if (sat.empty()) return "a&!a";
+
+    // 4) Build DNF: clause1||clause2||...
+    // Each clause is lit1&lit2&...&litk where lit is x or !x
+    string out;
+    bool first_clause = true;
+    for (int m : sat) {
+        if (!first_clause) out += "||";
+        first_clause = false;
+
+        for (int j = 0; j < k; j++) {
+            if (j) out += "&";
+            if (((m >> j) & 1) == 0) out += "!";
+            out += char('a' + idx[j]);
+        }
+    }
+    return out;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> expr;
+    cout << build_dnf() << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+"""
+p182 / "Open the brackets"
+
+Approach:
+- Evaluate the expression for all 2^10 assignments of variables a..j.
+- Collect assignments where expression is True.
+- Output them as DNF: OR of AND-clauses of literals.
+- No parentheses needed because '&' binds tighter than '||'.
+"""
+
+def solve() -> None:
+    expr = sys.stdin.readline().strip()
+    pos = 0  # parsing pointer
+
+    def parse_low(mask: int) -> bool:
+        """Lowest precedence: ||, <=>, =>, # (left-chained)."""
+        nonlocal pos
+        res = parse_mid(mask)
+
+        while pos < len(expr):
+            # OR
+            if pos + 1 < len(expr) and expr[pos:pos+2] == "||":
+                pos += 2
+                res = res or parse_mid(mask)
+
+            # equivalence
+            elif pos + 3 <= len(expr) and expr[pos:pos+3] == "<=>":
+                pos += 3
+                res = (res == parse_mid(mask))
+
+            # implication: A=>B == (!A) or B
+            elif pos + 2 <= len(expr) and expr[pos:pos+2] == "=>":
+                pos += 2
+                res = ((not res) or parse_mid(mask))
+
+            # XOR
+            elif expr[pos] == "#":
+                pos += 1
+                res = (res != parse_mid(mask))
+
+            else:
+                break
+
+        return res
+
+    def parse_mid(mask: int) -> bool:
+        """Middle precedence: '&'."""
+        nonlocal pos
+        res = parse_high(mask)
+        while pos < len(expr) and expr[pos] == "&":
+            pos += 1
+            res = res and parse_high(mask)
+        return res
+
+    def parse_high(mask: int) -> bool:
+        """Highest precedence: unary '!'."""
+        nonlocal pos
+        if pos < len(expr) and expr[pos] == "!":
+            pos += 1
+            return not parse_high(mask)
+        return parse_atom(mask)
+
+    def parse_atom(mask: int) -> bool:
+        """Atom: variable a..j or parenthesized subexpression."""
+        nonlocal pos
+        if expr[pos] == "(":
+            pos += 1
+            val = parse_low(mask)
+            pos += 1  # consume ')'
+            return val
+
+        # variable
+        ch = expr[pos]
+        pos += 1
+        bit = ord(ch) - ord("a")  # 0..9
+        return ((mask >> bit) & 1) == 1
+
+    def eval_expr(mask: int) -> bool:
+        """Evaluate whole expression for this assignment."""
+        nonlocal pos
+        pos = 0
+        return parse_low(mask)
+
+    # Track which variables appear (to omit unused ones in output)
+    used = [False] * 10
+    for c in expr:
+        if "a" <= c <= "j":
+            used[ord(c) - ord("a")] = True
+    used_indices = [i for i in range(10) if used[i]]
+    k = len(used_indices)
+
+    # Collect satisfying assignments compressed to k bits
+    sat = set()
+    for mask in range(1 << 10):
+        if eval_expr(mask):
+            comp = 0
+            for j, idx in enumerate(used_indices):
+                if (mask >> idx) & 1:
+                    comp |= (1 << j)
+            sat.add(comp)
+
+    # Unsatisfiable: output contradiction
+    if not sat:
+        print("a&!a")
+        return
+
+    # Build DNF string
+    clauses = []
+    for comp in sorted(sat):
+        lits = []
+        for j, idx in enumerate(used_indices):
+            var = chr(ord("a") + idx)
+            if ((comp >> j) & 1) == 0:
+                lits.append("!" + var)
+            else:
+                lits.append(var)
+        clauses.append("&".join(lits))
+
+    print("||".join(clauses))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This produces an equivalent bracket-free expression (DNF), respects operator precedence, and stays within the required output length for the given constraints.

@@ -1,0 +1,465 @@
+## 1) Abridged problem statement
+
+You are given **n** file names that must match and **m** file names that must not match (all lowercase, length ≤ 11; n,m ≤ 10).  
+Output a **single pattern** (length ≤ 100) consisting of lowercase letters plus wildcards:
+
+- `?` matches **exactly one** letter
+- `*` matches **any sequence** of letters (possibly empty)
+
+The pattern must match **all** of the first set and **none** of the second set.  
+If impossible, output `OOPS`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key idea
+Because all names are very short (≤ 11) and counts are tiny (≤ 20 total), we can **search** for a pattern that works by constructing candidate patterns and testing them against all strings.
+
+A crucial observation used by the solution:
+
+- Pick the **shortest** string among the “must match” set, call it `base`.
+- Any valid pattern must match `base`.
+- So we can generate patterns that are “based on” the characters of `base`, inserting wildcards in a controlled way, and whenever a partial pattern already separates the two sets, we stop.
+
+### Wildcard matching subroutines
+The code implements two matchers:
+
+1) **Classic greedy glob matcher** (`match_classic`)  
+This is the common linear-ish algorithm for patterns with `*` and `?`:
+- Walk through `pattern` and `name`.
+- On `?`: consume one char from `name`.
+- On letter: must match same letter.
+- On `*`: remember where the star is, and allow it to “expand” if later matching fails (backtracking to last star position).
+This is typically fast for short strings.
+
+2) **Bitset/bitmask matcher** (`match_bitwise`)  
+For name lengths 8..62 it uses a bitmask DP approach:
+- Maintain a bitmask `mask` where bit `i` means: “pattern processed so far can match the prefix of length `i`”.
+- For each pattern character, update `mask` accordingly.
+This is a compact simulation of NFA/DP in bit operations.
+
+The wrapper `match()` chooses bitwise for medium lengths, classic otherwise. With length ≤ 11, classic would suffice; bitwise is an optimization/experiment.
+
+### Checking a candidate pattern
+`check_all(p)` tests pattern `p` against all strings:
+- For indices `< n` it **must match**
+- For indices `>= n` it **must not match**
+If any violation occurs, pattern is rejected.
+
+### Recursive pattern construction (`rec(p, suff_to_match)`)
+The solver does backtracking over `base`:
+
+- `p` = pattern built so far
+- `suff_to_match` = remaining suffix of `base` we still need to account for
+
+It tries to find any pattern that satisfies all constraints.
+
+Stopping conditions:
+1) If `suff_to_match` is empty and `check_all(p)` succeeds → found exact solution.
+2) If `check_all(p + "*")` succeeds → appending a trailing `*` makes it work, return `p + "*"`.
+3) If suffix empty but not valid → fail.
+
+Transition / branching:
+It loops over positions `i` in `suff_to_match` and tries to “use” `suff_to_match[i]` as the next concrete anchor character in the pattern, but possibly preceded by a `*` to skip some characters:
+
+- Always consider option `"*"+suff_to_match[i]`  
+  Meaning: allow any run of chars, then match this specific character.
+- Additionally, only when `i == 0` (i.e., we are matching the next character immediately), it considers:
+  - the literal character alone: `suff_to_match[i]`
+  - a single-char wildcard: `?`
+
+Then it recurses with:
+- `p + mid` as new pattern
+- `suff_to_match.substr(i+1)` as remaining suffix (we consumed up to `i`)
+
+This explores a reasonable set of patterns built from `base` while mixing `*`, `?`, and literals.
+
+### Why this works within constraints
+- `base` length ≤ 11, so recursion depth is small.
+- Branching is limited: for each suffix position, at most 1 option (`*c`) plus up to 2 extra at `i==0`.
+- Each candidate is validated by `check_all`, which is cheap (≤ 20 strings, length ≤ 11).
+
+If recursion finds nothing: output `OOPS`.
+
+---
+
+## 3) Provided C++ solution with detailed line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper output for pair (not essential to solution)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper input for pair (not essential to solution)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper input for vector: reads all elements
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Helper output for vector (not essential to solution)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Classic greedy wildcard match:
+// '?' matches one char, '*' matches any sequence (possibly empty).
+bool match_classic(string pattern, string name) {
+    int px = 0;          // index in pattern
+    int nx = 0;          // index in name
+    int next_px = 0;     // last position of '*' in pattern (for backtracking)
+    int next_nx = 0;     // next position in name to try when expanding '*'
+
+    // Continue until both pattern and name are fully consumed.
+    while(px < (int)pattern.size() || nx < (int)name.size()) {
+        if(px < (int)pattern.size()) {
+            char c = pattern[px];
+
+            if(c == '?') {
+                // '?' must consume exactly one name character.
+                if(nx < (int)name.size()) {
+                    px++;
+                    nx++;
+                    continue;
+                }
+            } else if(c == '*') {
+                // Record star position. Initially let '*' match empty (px++).
+                // If later mismatch occurs, we will "expand" the star by moving nx.
+                next_px = px;
+                next_nx = nx + 1;  // next attempt: let '*' consume one more char
+                px++;
+                continue;
+            } else {
+                // Literal letter must match current name character.
+                if(nx < (int)name.size() && name[nx] == c) {
+                    px++;
+                    nx++;
+                    continue;
+                }
+            }
+        }
+
+        // If direct match failed, but we had a previous '*', expand it:
+        // reset px to star position and advance nx to try a longer match.
+        if(0 < next_nx && next_nx <= (int)name.size()) {
+            px = next_px;
+            nx = next_nx;
+            continue;
+        }
+
+        // No way to match.
+        return false;
+    }
+
+    return true;
+}
+
+// Preallocated masks for letters 'a'..'z' used by bitwise matcher.
+uint64_t char_masks[26];
+
+// Bitwise DP wildcard match for lengths up to 62.
+// Maintains a bitmask of reachable prefix lengths in the name.
+bool match_bitwise(string pattern, string name) {
+    // mask_all has bits [0..|name|] set to 1 (inclusive).
+    const uint64_t mask_all = (1llu << ((uint64_t)name.size() + 1)) - 1llu;
+
+    // Build char_masks: for each letter, set bits where that letter occurs in name.
+    memset(char_masks, 0, sizeof(char_masks));
+    for(uint64_t i = 0; i < (uint64_t)name.size(); i++) {
+        char_masks[name[i] - 'a'] |= (1llu << i);
+    }
+
+    // mask bit i = 1 means: we can match prefix of length i.
+    // Start with empty prefix matched.
+    uint64_t mask = 1;
+
+    for(char c: pattern) {
+        if(c == '*') {
+            // '*' can keep the same position or advance arbitrarily.
+            // This expression effectively sets all bits from the lowest-set-bit onward.
+            mask = mask_all - ((mask & -mask) - 1llu);
+        } else if(c == '?') {
+            // '?' consumes exactly one character: shift reachable prefixes by 1.
+            mask = (mask << 1llu);
+        } else {
+            // Literal letter: can only advance where the next char matches.
+            // mask & char_masks[...] keeps positions where current char matches,
+            // then shift by 1 to consume it.
+            mask = (mask & char_masks[c - 'a']) << 1llu;
+        }
+
+        // Keep only valid bits up to |name|.
+        mask = mask & mask_all;
+
+        // If no states are reachable, fail early.
+        if(mask == 0) {
+            return false;
+        }
+    }
+
+    // Accept if we can reach exactly prefix length |name|.
+    return mask & (1llu << (uint64_t)name.size());
+}
+
+// Choose matcher: bitwise for medium names, classic otherwise.
+bool match(string pattern, string name) {
+    if(8 <= name.size() && name.size() <= 62) {
+        return match_bitwise(pattern, name);
+    } else {
+        return match_classic(pattern, name);
+    }
+}
+
+int n, m;
+vector<string> a;
+
+// Read input: n match-strings followed by m non-match-strings.
+void read() {
+    cin >> n >> m;
+    a.resize(n + m);
+    for(int i = 0; i < n + m; i++) {
+        cin >> a[i];
+    }
+}
+
+// Check whether pattern p matches exactly the first n strings and none of the last m.
+bool check_all(string p) {
+    for(int i = 0; i < n + m; i++) {
+        bool should_match = i < n;              // first n must match
+        if(match(p, a[i]) != should_match) {    // mismatch vs requirement
+            return false;
+        }
+    }
+    return true;
+}
+
+// Recursive search:
+// p = built pattern so far
+// suff_to_match = remaining suffix of the chosen base string
+pair<bool, string> rec(string p, string suff_to_match) {
+    // If we consumed the base string and p already separates sets, done.
+    if(suff_to_match.empty() && check_all(p)) {
+        return {true, p};
+
+    // Often adding a trailing '*' makes the pattern flexible enough.
+    } else if(check_all(p + "*")) {
+        return {true, p + "*"};
+
+    // If base exhausted but we still don't have a valid pattern, fail.
+    } else if(suff_to_match.empty()) {
+        return {false, ""};
+    }
+
+    // Try to pick some position i in remaining base suffix as the next "anchor"
+    // character, possibly preceded by '*' to skip characters.
+    for(int i = 0; i < (int)suff_to_match.size(); i++) {
+        vector<string> options = {"*"};
+        options[0].push_back(suff_to_match[i]); // option "*c"
+
+        if(i == 0) {
+            // If we're using the very next character, we may:
+            // - match it literally
+            // - match it with '?'
+            options.push_back(string(1, suff_to_match[i]));
+            options.push_back("?");
+        }
+
+        // After consuming character at i, the rest is suffix starting at i+1.
+        string new_suff = suff_to_match.substr(i + 1);
+
+        // Try each mid option and recurse.
+        for(string mid: options) {
+            auto [ok, ans] = rec(p + mid, new_suff);
+            if(ok) {
+                return {true, ans};
+            }
+        }
+    }
+
+    return {false, ""};
+}
+
+void solve() {
+    // Choose the shortest string among the ones that MUST match.
+    // It reduces the backtracking search space.
+    string base = a[0];
+    for(int i = 0; i < n; i++) {
+        if(base.size() > a[i].size()) {
+            base = a[i];
+        }
+    }
+
+    // Run recursive construction starting from empty pattern.
+    auto [ok, ans] = rec("", base);
+
+    // Output answer or OOPS.
+    if(ok) {
+        cout << ans << endl;
+    } else {
+        cout << "OOPS" << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Single test case (T not used).
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def match_classic(pattern: str, name: str) -> bool:
+    """Greedy glob matching with backtracking to last '*'."""
+    px = 0  # index in pattern
+    nx = 0  # index in name
+
+    last_star_px = -1          # position of last '*' in pattern
+    next_nx_after_star = -1    # next name index to try when expanding '*'
+
+    while px < len(pattern) or nx < len(name):
+        if px < len(pattern):
+            c = pattern[px]
+            if c == '?':
+                if nx < len(name):
+                    px += 1
+                    nx += 1
+                    continue
+            elif c == '*':
+                # Remember where '*' is, try it as empty first.
+                last_star_px = px
+                next_nx_after_star = nx + 1
+                px += 1
+                continue
+            else:
+                # Literal
+                if nx < len(name) and name[nx] == c:
+                    px += 1
+                    nx += 1
+                    continue
+
+        # If mismatch, try to expand the last '*'
+        if last_star_px != -1 and 0 <= next_nx_after_star <= len(name):
+            px = last_star_px
+            nx = next_nx_after_star
+            next_nx_after_star += 1
+            continue
+
+        return False
+
+    return True
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    n = int(data[0])
+    m = int(data[1])
+    a = data[2:2+n+m]
+
+    # Pick shortest required-to-match string as base
+    base = min(a[:n], key=len)
+
+    def check_all(p: str) -> bool:
+        """Verify p matches first n strings and rejects last m strings."""
+        for i, s in enumerate(a):
+            should_match = (i < n)
+            if match_classic(p, s) != should_match:
+                return False
+        return True
+
+    def rec(p: str, suff: str):
+        """
+        Backtracking construction:
+        - p = built pattern
+        - suff = remaining suffix of base we still need to account for
+        Returns (ok, answer).
+        """
+        # If base fully accounted for and constraints satisfied
+        if not suff and check_all(p):
+            return True, p
+
+        # Often a trailing '*' is enough to finish
+        if check_all(p + "*"):
+            return True, p + "*"
+
+        # If no more base to use and not valid, fail
+        if not suff:
+            return False, ""
+
+        # Choose next anchor char from some position i in suff
+        for i in range(len(suff)):
+            c = suff[i]
+            new_suff = suff[i+1:]
+
+            # Always allow skipping via '*' then matching this character
+            options = ["*" + c]
+
+            # If i == 0, we can also match immediately by literal or '?'
+            if i == 0:
+                options.append(c)
+                options.append("?")
+
+            # Recurse for each possible addition
+            for mid in options:
+                ok, ans = rec(p + mid, new_suff)
+                if ok:
+                    return True, ans
+
+        return False, ""
+
+    ok, ans = rec("", base)
+    sys.stdout.write((ans if ok else "OOPS") + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- We need one glob pattern with `?` (one char) and `*` (any string) that matches all `n` good names and none of `m` bad names (all very small).
+- Pick `base` = shortest good name. Any valid pattern must match it.
+- Backtrack to build a pattern from `base`:
+  - At each step, pick a next character of the remaining suffix as an “anchor”.
+  - Add either `'*'+anchor` (skip anything then match anchor); if using the immediate next character also try `anchor` and `?`.
+  - After each build, test the whole pattern against all strings (`check_all`).
+  - If `p` works, or `p+'*'` works, return it.
+- Use greedy wildcard matching to evaluate a pattern against a name efficiently.
+- If backtracking finds no valid pattern, print `OOPS`.

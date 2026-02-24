@@ -1,0 +1,518 @@
+## 1) Concise, abridged problem statement
+
+You have an alphabet of size **N (≤ 13)**: letters `a..(a+N-1)`. There are **M (≤ 50)** distinct **2-letter words** (ordered pairs of letters).
+
+You must partition the **N letters** into **K buttons** (each letter on exactly one button). A word `xy` is typed by pressing the button containing `x` then the button containing `y`.
+
+A placement is **correct** if **no two different words** from the vocabulary produce the **same ordered pair of buttons**.
+
+Find the **minimum K** and output any corresponding partition (letters per button).
+
+---
+
+## 2) Detailed editorial (how the given solution works)
+
+### Key reformulation
+
+Let the partition be buttons/groups \(G_1, G_2, \dots, G_K\), each a subset of letters.
+
+For any ordered pair of groups \((G_i, G_j)\), all vocabulary words with first letter in \(G_i\) and last letter in \(G_j\) would be typed with the same two-button sequence.  
+So correctness means:
+
+> For every ordered pair of groups \((G_i, G_j)\), there is **at most one** vocabulary edge \(u \to v\) with \(u \in G_i, v \in G_j\).
+
+This includes:
+- **internal edges** inside one group \((G_i, G_i)\): at most one word with both ends in the same group.
+- **between two different groups** both directions must be safe:
+  - At most one edge from \(G_i\) to \(G_j\)
+  - At most one edge from \(G_j\) to \(G_i\)
+
+So we need a minimum-size partition of vertices of a directed graph with a special “at most one edge per group-pair” constraint.
+
+Since \(N \le 13\), bitmask DP / brute force over subsets is feasible, but we must be careful: the number of set partitions (Bell number) for 13 is large.
+
+The solution uses:
+1. **Bitmask precomputation** to test constraints quickly.
+2. **Binary search on K** (try if possible with ≤ K groups).
+3. **Backtracking (DFS) generating only valid groups/partitions**, with pruning.
+
+---
+
+### Graph bitmasks
+
+Number letters as `0..N-1`.
+
+Build bitmasks:
+- `out_edges[u]`: bitmask of vertices `v` such that edge `u -> v` exists.
+- `in_edges[v]`: bitmask of vertices `u` such that edge `u -> v` exists.
+
+---
+
+### Precomputations for every subset `mask`
+
+There are \(2^N \le 8192\) subsets.
+
+For each subset `mask` (a candidate group), compute:
+
+1) `any_out[mask]`  
+Bitmask of vertices that are targets of edges leaving *any* vertex in `mask`:
+\[
+any\_out(mask) = \bigcup_{u \in mask} out\_edges[u]
+\]
+
+2) `dang_out[mask]` (“dangerous outgoing”)  
+Bitmask of vertices `v` that have **at least two different sources** in `mask` pointing to `v`.  
+This matters because if `mask` is a group \(G\), and some other group \(H\) contains `v`, then there would be ≥2 edges from \(G\) to \(H\) (collision).
+
+Efficient recurrence when adding one vertex `u` to `prev`:
+- `any_out` updates by OR.
+- A target becomes “dangerous” if it was already in `any_out[prev]` and `u` also points to it:
+  \[
+dang\_out(mask) = dang\_out(prev) \cup (any\_out(prev) \cap out\_edges[u])
+\]
+
+3) `int_cnt[mask]`  
+Number of directed edges **with both endpoints inside** `mask` (including self-loops like `aa`).
+The group is internally valid iff `int_cnt[mask] <= 1` (since pair (Gi,Gi) must also have ≤1 vocabulary word).
+
+They compute this incrementally by adding vertex `u`:
+- edges `u -> v` where `v` already in `prev`
+- edges `v -> u` where `v` already in `prev`
+- self-loop `u -> u` if exists
+
+---
+
+### Compatibility test between two groups
+
+For two disjoint groups `g` and `h`, we must ensure:
+- There are **not ≥2 edges from g to h**
+- There are **not ≥2 edges from h to g**
+
+Using precomputed arrays:
+
+**From g to h:**
+- If `dang_out[g]` intersects `h`, then some vertex in `h` is hit by ≥2 sources from `g` ⇒ already ≥2 edges ⇒ invalid.
+- Else, total number of distinct targets in `h` hit by `g` is `popcount(any_out[g] & h)`.  
+  If it’s > 1, there are edges from `g` to at least two vertices in `h`, which would be ≥2 edges from group to group ⇒ invalid.
+
+Do the same swapping roles for `h` to `g`.
+
+So:
+
+```
+compatible(g,h) is true iff
+  dang_out[g] & h == 0
+  popcount(any_out[g] & h) <= 1
+  dang_out[h] & g == 0
+  popcount(any_out[h] & g) <= 1
+```
+
+This is O(1) bit operations.
+
+---
+
+### Searching for minimum K
+
+We need minimum number of groups. The code does:
+
+- Binary search `K` between 1 and N.
+- For a given `K`, run DFS trying to build a partition into ≤ K valid groups.
+- If it finds one, it’s feasible; try smaller K.
+
+This works because feasibility is monotonic: if you can partition into K groups, you can always split groups further to get K+1 groups.
+
+---
+
+### DFS partition generation
+
+State:
+- `remaining`: bitmask of letters not yet assigned to any group.
+- `used`: number of groups already built.
+- `k`: limit being tested.
+
+Method:
+1. If `remaining == 0`, success.
+2. If `used >= k`, fail (no room for more groups).
+3. Pick the lowest-set bit `lo` in `remaining`; force it into the next group to avoid symmetric duplicates (standard partition generation trick).
+4. Enumerate all subsets `sub` of the rest (`rest = remaining ^ lo`), create `group = sub | lo`.
+5. Only consider `group` if:
+   - `int_cnt[group] <= 1` (internal constraint)
+   - `group` compatible with all previously chosen groups
+6. Recurse with `remaining ^ group`.
+
+Because we enforce `lo` inclusion, each partition is generated once (no permutations of groups or reorderings).
+
+The moment a solution is found for this `k`, DFS stops early.
+
+---
+
+### Output
+
+After binary search, `best_k` and the corresponding `best_groups[i]` masks are printed, each as concatenated letters.
+
+---
+
+## 3) The provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes its size is already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector with spaces (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+}
+
+int n, m;
+vector<string> edges;
+
+void read() {
+    cin >> n >> m;           // N letters, M 2-letter words
+    edges.resize(m);         // store each word as a string like "ab"
+    cin >> edges;            // read all words
+}
+
+void solve() {
+    // Build adjacency as bitmasks:
+    // out_edges[u] has bit v set if there is a word (u -> v).
+    // in_edges[v]  has bit u set if there is a word (u -> v).
+    vector<int> out_edges(n, 0);
+    vector<int> in_edges(n, 0);
+    for (const auto& e: edges) {
+        int u = e[0] - 'a';
+        int v = e[1] - 'a';
+        out_edges[u] |= (1 << v);
+        in_edges[v]  |= (1 << u);
+    }
+
+    int masks = 1 << n;                 // total number of subsets of letters
+
+    // Precomputed arrays for each subset mask:
+    // any_out[mask]  = union of outgoing neighbors of vertices in mask
+    // dang_out[mask] = vertices that have >=2 incoming edges from vertices in mask
+    // int_cnt[mask]  = number of directed edges fully inside mask (including loops)
+    vector<int> any_out(masks);
+    vector<int> dang_out(masks);
+    vector<int> int_cnt(masks);
+
+    // Fill precomputed arrays using DP over subsets.
+    auto precompute = [&]() {
+        any_out[0] = dang_out[0] = int_cnt[0] = 0;
+        for (int mask = 1; mask < masks; mask++) {
+            // pick one vertex u from mask: the least significant set bit
+            int u = __builtin_ctz(mask);
+            int prev = mask ^ (1 << u);     // subset without u
+
+            // any_out: union of out neighbors
+            any_out[mask] = any_out[prev] | out_edges[u];
+
+            // dang_out: targets that are pointed to by >=2 sources in this mask.
+            // When adding u, any target already in any_out[prev] and also in out_edges[u]
+            // becomes "dangerous".
+            dang_out[mask] = dang_out[prev] | (any_out[prev] & out_edges[u]);
+
+            // int_cnt: count edges completely inside mask.
+            // Add edges u->v where v is already in prev
+            // and edges v->u where v is already in prev
+            // and self-loop u->u if it exists.
+            int_cnt[mask] = int_cnt[prev]
+                            + __builtin_popcount(out_edges[u] & prev)
+                            + __builtin_popcount(in_edges[u] & prev)
+                            + ((out_edges[u] >> u) & 1);
+        }
+    };
+
+    // Check if two groups g and h can coexist without collisions:
+    // i.e., at most one edge from g to h and at most one edge from h to g.
+    auto compatible = [&](int g, int h) -> bool {
+        // If some vertex in h is hit by >=2 edges from g => invalid
+        if (dang_out[g] & h) return false;
+
+        // If g hits >=2 distinct vertices of h => >=2 edges g->h => invalid
+        if (__builtin_popcount(any_out[g] & h) > 1) return false;
+
+        // Symmetric checks for h -> g
+        if (dang_out[h] & g) return false;
+        if (__builtin_popcount(any_out[h] & g) > 1) return false;
+
+        return true;
+    };
+
+    precompute();
+
+    // Best answer found so far: start with trivial partition into N singleton buttons.
+    int best_k = n;
+    vector<int> best_groups(n);
+    for (int i = 0; i < n; i++) best_groups[i] = (1 << i);
+
+    vector<int> groups(n);   // current partial solution groups[0..used-1]
+    bool found;              // used by DFS to early-stop once a solution is found
+
+    // DFS tries to partition 'remaining' vertices into at most k groups.
+    function<void(int, int, int)> dfs = [&](int remaining, int used, int k) {
+        if (found) return;               // already found a solution for this k
+
+        if (remaining == 0) {            // all letters assigned
+            found = true;
+            best_k = used;
+            for (int i = 0; i < used; i++) best_groups[i] = groups[i];
+            return;
+        }
+
+        if (used >= k) return;           // no more groups allowed
+
+        // Force the next group to contain the lowest remaining letter
+        // to avoid generating the same partition in different orders.
+        int lo = remaining & (-remaining);   // lowest set bit
+        int rest = remaining ^ lo;           // other available letters
+
+        // Enumerate all subsets 'sub' of 'rest', build group = sub ∪ {lo}.
+        for (int sub = rest;; sub = (sub - 1) & rest) {
+            int group = sub | lo;
+
+            // Internal constraint: within one group, at most 1 edge inside it
+            if (int_cnt[group] <= 1) {
+                bool good = true;
+
+                // Must be compatible with all previously created groups
+                for (int i = 0; i < used && good; i++) {
+                    if (!compatible(group, groups[i])) good = false;
+                }
+
+                if (good) {
+                    groups[used] = group;                    // choose this group
+                    dfs(remaining ^ group, used + 1, k);     // recurse
+                    if (found) return;                       // stop if solved
+                }
+            }
+
+            if (sub == 0) break;     // finished enumerating all subsets
+        }
+    };
+
+    // Binary search minimal K.
+    int left = 1, right = n, mid;
+    while (left <= right) {
+        mid = (left + right) / 2;
+        found = false;
+
+        // Try to find a partition with <= mid groups.
+        dfs((1 << n) - 1, 0, mid);
+
+        if (found) right = mid - 1;  // feasible: try smaller K
+        else left = mid + 1;         // not feasible: need more groups
+    }
+
+    // Output best solution.
+    cout << best_k << '\n';
+    for (int i = 0; i < best_k; i++) {
+        for (int j = 0; j < n; j++) {
+            if (best_groups[i] & (1 << j)) {
+                cout << char('a' + j);    // print letters belonging to this group
+            }
+        }
+        cout << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+    edges = [next(it) for _ in range(m)]
+
+    # Build adjacency bitmasks:
+    out_edges = [0] * n
+    in_edges = [0] * n
+    for e in edges:
+        u = ord(e[0]) - 97
+        v = ord(e[1]) - 97
+        out_edges[u] |= 1 << v
+        in_edges[v]  |= 1 << u
+
+    masks = 1 << n
+
+    # any_out[mask]  = union of out-neighbors of vertices in mask
+    # dang_out[mask] = set of vertices that receive >=2 edges from vertices in mask
+    # int_cnt[mask]  = number of directed edges fully inside mask (incl. loops)
+    any_out = [0] * masks
+    dang_out = [0] * masks
+    int_cnt = [0] * masks
+
+    # Precompute using subset DP:
+    for mask in range(1, masks):
+        # Extract least significant set bit and its index.
+        lsb = mask & -mask
+        u = (lsb.bit_length() - 1)      # index of lsb
+        prev = mask ^ lsb
+
+        any_out[mask] = any_out[prev] | out_edges[u]
+        dang_out[mask] = dang_out[prev] | (any_out[prev] & out_edges[u])
+
+        # Count edges fully inside mask added by introducing u:
+        # u -> v for v in prev
+        add1 = (out_edges[u] & prev).bit_count()
+        # v -> u for v in prev  (i.e., incoming to u from prev)
+        add2 = (in_edges[u] & prev).bit_count()
+        # self-loop u -> u
+        loop = (out_edges[u] >> u) & 1
+
+        int_cnt[mask] = int_cnt[prev] + add1 + add2 + loop
+
+    def compatible(g: int, h: int) -> bool:
+        # Check g -> h has at most 1 edge:
+        if dang_out[g] & h:
+            return False
+        if (any_out[g] & h).bit_count() > 1:
+            return False
+
+        # Check h -> g has at most 1 edge:
+        if dang_out[h] & g:
+            return False
+        if (any_out[h] & g).bit_count() > 1:
+            return False
+
+        return True
+
+    best_k = n
+    best_groups = [(1 << i) for i in range(n)]  # default: singletons
+
+    groups = [0] * n  # current solution under construction
+
+    sys.setrecursionlimit(1_000_000)
+
+    def feasible(k: int) -> bool:
+        """
+        Try to find a partition of all letters into <= k groups.
+        If found, store it into best_groups/best_k and return True.
+        """
+        nonlocal best_k, best_groups
+
+        found = False
+
+        def dfs(remaining: int, used: int) -> None:
+            nonlocal found, best_k, best_groups
+            if found:
+                return
+            if remaining == 0:
+                # Success: we built a complete partition.
+                found = True
+                best_k = used
+                best_groups[:used] = groups[:used]
+                return
+            if used >= k:
+                return
+
+            # Force next group to include the lowest remaining letter.
+            lo = remaining & -remaining
+            rest = remaining ^ lo
+
+            sub = rest
+            while True:
+                group = sub | lo
+
+                # Internal constraint: at most one edge inside the group.
+                if int_cnt[group] <= 1:
+                    ok = True
+                    for i in range(used):
+                        if not compatible(group, groups[i]):
+                            ok = False
+                            break
+                    if ok:
+                        groups[used] = group
+                        dfs(remaining ^ group, used + 1)
+                        if found:
+                            return
+
+                if sub == 0:
+                    break
+                sub = (sub - 1) & rest  # next subset
+
+        dfs((1 << n) - 1, 0)
+        return found
+
+    # Binary search minimum k
+    left, right = 1, n
+    while left <= right:
+        mid = (left + right) // 2
+        if feasible(mid):
+            right = mid - 1
+        else:
+            left = mid + 1
+
+    # Print result
+    out_lines = [str(best_k)]
+    for i in range(best_k):
+        mask = best_groups[i]
+        letters = []
+        for j in range(n):
+            if (mask >> j) & 1:
+                letters.append(chr(97 + j))
+        out_lines.append("".join(letters))
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model the vocabulary as a directed graph on N letters. A partition into buttons is valid iff for every ordered pair of groups \((A,B)\) there is at most one edge from a vertex in \(A\) to a vertex in \(B\) (including \(A=B\)).
+
+With \(N \le 13\), represent sets by bitmasks and precompute for all subsets `mask`:
+- `any_out[mask]`: union of outgoing neighbors.
+- `dang_out[mask]`: vertices that receive ≥2 edges from `mask` (computed incrementally).
+- `int_cnt[mask]`: number of edges fully inside `mask` (must be ≤1 for a group).
+
+Two groups `g,h` are compatible iff:
+- `dang_out[g]` doesn’t intersect `h` and `popcount(any_out[g] & h) ≤ 1`,
+- and symmetrically for `h -> g`.
+
+Binary search minimal K. For each K, do DFS to build ≤K groups: pick the lowest remaining letter, enumerate all subsets including it to form the next group, keep only groups with `int_cnt<=1` and compatible with previous groups. Stop on first solution; output its groups.

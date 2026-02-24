@@ -1,0 +1,340 @@
+## 1) Abridged problem statement (p340 — TeX2HTML)
+
+Each input line contains a TeX-style math formula enclosed in `$...$`. Ignore all whitespace and convert the formula to an HTML-like form:
+
+- Maximal consecutive Latin letters (`A-Z`, `a-z`) must be wrapped in `<i>...</i>`.
+- Binary operators `+ - * /` must be surrounded by `&nbsp;` on both sides.
+- Superscripts: `^x` or `^{...}` must become `<sup>...</sup>`.
+- Subscripts: `_x` or `_{...}` must become `<sub>...</sub>`.
+- After a `^` or `_`, the script content is either a single non-space character or a brace group `{...}`.
+- A script (super/sub) is **not** followed by another script immediately.
+- Parentheses, digits, and other characters are output as-is (except whitespace is removed).
+
+Process all lines until EOF; output one converted line per input line.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observations
+1. The input line is `$...$` only. We can ignore dollar signs and all whitespace.
+2. We need to “pretty print”:
+   - letters → italicize in maximal runs,
+   - operators → wrap with `&nbsp;`,
+   - scripts → open `<sup>`/`<sub>` when `^`/`_` appears, and close at the correct time.
+3. The only tricky part is deciding **when to emit closing `</sup>`/`</sub>`**:
+   - If the script is `^x` (single character), close immediately after that one character is emitted.
+   - If the script is `^{...}`, close when the matching `}` is reached.
+4. Braces `{}` themselves are not printed; they only delimit script content.
+
+### Approach
+We do the conversion in two phases (as in the provided C++ code):
+
+#### Phase A: sanitize the line
+Read a full line. Build a string `s` by keeping only characters relevant to the formula:
+- alphanumeric (`isalnum`)
+- operators `+ - * /`
+- `^ _ { } ( )`
+Everything else (including `$` and spaces/tabs) is dropped.
+
+Now `s` is the formula without whitespace and without `$`.
+
+#### Phase B: parse and generate HTML
+Scan `s` left to right and append to output `out`.
+
+Maintain a stack `close_stack` where each element stores:
+- which closing tag to print (`"</sup>"` or `"</sub>"`)
+- a boolean `auto_close` meaning: “close as soon as we output the next atom”
+
+How we use it:
+- On `^` or `_`:
+  - append `<sup>` or `<sub>` to output,
+  - push its closing tag onto the stack with `auto_close = true`.
+- On `{`:
+  - it means: the script is a grouped expression, so it should **not** auto-close after one character.
+  - therefore, if stack is not empty, set `auto_close` of the top element to `false`.
+  - do not output `{`.
+- On `}`:
+  - close the most recent script by outputting the top closing tag and popping it.
+  - do not output `}`.
+- On letters:
+  - output `<i>` then consume the maximal run of letters, then `</i>`.
+- On operators `+ - * /`:
+  - output `&nbsp;op&nbsp;`.
+- Otherwise:
+  - output character as-is (digits, parentheses, etc.).
+
+After outputting a normal token (letters/operator/digit/paren), we check:
+- while stack top has `auto_close == true`, output its closing tag and pop it.
+This exactly implements “single-character script closes immediately”.
+
+### Correctness reasoning (informal)
+- Grouped scripts: when `^{...}` or `_{...}` occurs, we see `^` then `{`. The `{` forces `auto_close=false`, so the script remains open until the matching `}` emits the closing tag.
+- Single-character scripts: when `^x` occurs, we push `auto_close=true`, then after emitting `x` (as digit/letter/paren etc.), the post-token loop closes the script immediately.
+- Since the statement guarantees no script is directly followed by another script, the simple stack logic is sufficient and won’t face ambiguous nesting of scripts without braces.
+- Italic runs are maximal because we consume consecutive letters in one go.
+
+### Complexity
+Let `L` be line length. Each character is processed O(1) times; total time O(L), memory O(L) for the output. Works easily within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard C++ headers
+using namespace std;
+
+// Overload output operator for pair (not used in this solution, but harmless utility)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pair (also unused utility)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vector: reads all elements (unused utility)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output operator for vector (unused utility)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+string line; // stores the current input line
+
+// Wrapper around getline: returns true if read succeeded
+bool readline(istream& in, string& s) { return (bool)getline(in, s); }
+
+// Reads one line into global "line"; exits program cleanly on EOF
+void read() {
+    if(!readline(cin, line)) {
+        exit(0); // no more test cases
+    }
+}
+
+// Core parser: converts sanitized TeX-like string s into HTML-like output "out"
+void parse(const string& s, string& out) {
+    // Stack of scripts currently open.
+    // Each entry: (closing_tag, auto_close_flag)
+    // auto_close_flag == true means close right after next printed token (single-char script).
+    vector<pair<const char*, bool>> close_stack;
+
+    int n = (int)s.size();
+    for(int i = 0; i < n; i++) {
+        char c = s[i];
+
+        // Opening brace: starts a grouped script content if we are inside a script.
+        // We do NOT print '{' in output.
+        if(c == '{') {
+            // If a script was just opened (by ^ or _), prevent auto-closing after one char.
+            if(!close_stack.empty()) {
+                close_stack.back().second = false;
+            }
+            continue;
+        }
+
+        // Closing brace: ends a grouped script -> output its closing tag.
+        // We do NOT print '}' in output.
+        if(c == '}') {
+            if(!close_stack.empty()) {
+                out += close_stack.back().first; // append </sup> or </sub>
+                close_stack.pop_back();          // script is now closed
+            }
+            continue;
+        }
+
+        // Check if current character begins a superscript/subscript
+        bool is_sup_sub = (c == '^' || c == '_');
+        if(is_sup_sub) {
+            // Emit opening tag
+            out += (c == '^') ? "<sup>" : "<sub>";
+
+            // Push the corresponding closing tag.
+            // Mark auto_close=true initially; if next char is '{', it will be set to false.
+            close_stack.push_back({(c == '^') ? "</sup>" : "</sub>", true});
+            continue; // go process script content
+        }
+
+        // If it's a Latin letter, italicize the maximal consecutive run of letters.
+        if(isalpha((unsigned char)c)) {
+            out += "<i>";
+            // Consume maximal run of letters
+            while(i < n && isalpha((unsigned char)s[i])) {
+                out += s[i++];
+            }
+            out += "</i>";
+            i--; // step back because for-loop will i++ again
+        }
+        // If it's an operator, surround it by non-breaking spaces.
+        else if(c == '+' || c == '-' || c == '*' || c == '/') {
+            out += "&nbsp;";
+            out += c;
+            out += "&nbsp;";
+        }
+        // Otherwise (digits, parentheses, etc.), output as-is.
+        else {
+            out += c;
+        }
+
+        // After outputting one token/atom, auto-close any script that was single-character.
+        while(!close_stack.empty() && close_stack.back().second) {
+            out += close_stack.back().first; // append closing tag
+            close_stack.pop_back();          // pop it
+        }
+    }
+}
+
+void solve() {
+    // Build a sanitized formula string s from the input line:
+    // keep only allowed/meaningful characters and drop whitespace and '$'.
+    string s;
+    for(char c: line) {
+        if(isalnum((unsigned char)c) || c == '+' || c == '-' || c == '*' || c == '/' ||
+           c == '^' || c == '_' || c == '{' || c == '}' || c == '(' || c == ')') {
+            s += c;
+        }
+    }
+
+    string out;
+    out.reserve(s.size() * 8); // reserve extra to avoid frequent reallocations (tags expand length)
+
+    parse(s, out);             // convert to HTML-like output
+    cout << out << "\n";       // print result for this test case
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Multiple test cases until EOF
+    while(true) {
+        read();   // read one full line; exits on EOF
+        solve();  // process and output converted formula
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (equivalent) with detailed comments
+
+```python
+import sys
+
+def parse(s: str) -> str:
+    # Stack entries are tuples: (closing_tag, auto_close)
+    # auto_close=True means this script was of the form ^x / _x (single char),
+    # so it should be closed immediately after emitting the next atom.
+    close_stack = []
+    out_parts = []
+
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+
+        # '{' starts a grouped script content (^{...} or _{...})
+        # Do not output braces.
+        if c == '{':
+            if close_stack:
+                # If a script has just been opened, it is not single-character anymore.
+                closing, _ = close_stack[-1]
+                close_stack[-1] = (closing, False)
+            i += 1
+            continue
+
+        # '}' ends a grouped script: output closing tag
+        if c == '}':
+            if close_stack:
+                closing, _ = close_stack.pop()
+                out_parts.append(closing)
+            i += 1
+            continue
+
+        # Superscript/subscript opening
+        if c == '^' or c == '_':
+            if c == '^':
+                out_parts.append("<sup>")
+                close_stack.append(("</sup>", True))
+            else:
+                out_parts.append("<sub>")
+                close_stack.append(("</sub>", True))
+            i += 1
+            continue
+
+        # Letters: italicize maximal run
+        if c.isalpha():
+            out_parts.append("<i>")
+            j = i
+            while j < n and s[j].isalpha():
+                out_parts.append(s[j])
+                j += 1
+            out_parts.append("</i>")
+            i = j
+        # Operators: surround with &nbsp;
+        elif c in "+-*/":
+            out_parts.append("&nbsp;")
+            out_parts.append(c)
+            out_parts.append("&nbsp;")
+            i += 1
+        # Digits, parentheses, etc.
+        else:
+            out_parts.append(c)
+            i += 1
+
+        # Auto-close any single-character scripts after emitting one atom
+        while close_stack and close_stack[-1][1] is True:
+            closing, _ = close_stack.pop()
+            out_parts.append(closing)
+
+    return "".join(out_parts)
+
+def sanitize_line(line: str) -> str:
+    # Keep only relevant characters; this removes '$' and whitespace automatically.
+    allowed = set("+-*/^_{}()")
+    res = []
+    for ch in line:
+        if ch.isalnum() or ch in allowed:
+            res.append(ch)
+    return "".join(res)
+
+def main():
+    for line in sys.stdin:
+        line = line.rstrip("\n")
+        s = sanitize_line(line)
+        print(parse(s))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Remove `$` and whitespace. Scan the remaining string left-to-right, generating HTML.
+
+- Italicize maximal letter runs: `<i>letters</i>`.
+- For `+ - * /`, output `&nbsp;op&nbsp;`.
+- For `^`/`_`, output `<sup>`/`<sub>` and push its closing tag onto a stack as “auto-close”.
+- If the next token is `{`, disable auto-close for that script; close it only when `}` is met (and print the closing tag).
+- Otherwise (single-character script), after emitting the next atom, immediately print the closing tag (pop while auto-close).
+
+O(n) per line.
