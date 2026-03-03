@@ -1,0 +1,428 @@
+## 1) Abridged problem statement
+
+There are **n (≤ 10)** participants and **m (≤ 1000)** consecutive river segments (riffles) between points \(p_0 \to p_1 \to \dots \to p_m\).
+
+For riffle \(i\):
+- If the total weight of people **on the raft** exceeds critical weight \(c_i\), the raft **capsizes** and takes \(D_i\) minutes to go from \(p_{i-1}\) to \(p_i\).
+- Otherwise it takes \(d_i\) minutes.
+
+For participant \(j\):
+- If they **walk** from \(p_{i-1}\) to \(p_i\), it takes \(t_j\) minutes.
+- Each time they **change** between bank and raft (either get on or get off), it costs \(s_j\) minutes.
+
+Before each riffle, you choose who rides and who walks. Everyone must arrive at \(p_i\), then you may perform swaps (paying sum of \(s_j\) for all who change), then proceed. The segment time is the time until **both** raft and all walkers arrive, i.e. the maximum of raft travel time and the slowest walker.
+
+Constraints/requirements:
+- Start at \(p_0\) with **everyone on the bank** (raft present).
+- Finish at \(p_m\) with **everyone on the bank** (raft also there).
+- The raft must never travel empty (so on each riffle at least one person rides).
+
+Compute the **minimum total time**.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation: the only “state” is who is on the raft
+At each point \(p_i\), the situation is fully described by the set of people currently **on the raft** (the rest are on the bank). Since \(n \le 10\), we can represent this set as a bitmask of size \(2^n\).
+
+Let:
+- `mask` = bitmask of people on the raft at the current point.
+- `0` means everyone on the bank.
+- We are not allowed to traverse a riffle with `mask = 0` (raft cannot move empty).
+
+We need the shortest time from:
+- start state: at \(p_0\), `mask = 0`
+to:
+- end state: at \(p_m\), `mask = 0`
+
+### Segment cost when traversing riffle i with a fixed mask
+Suppose at point \(p_{i-1}\) we have chosen `mask` (people on raft) and then traverse riffle \(i\).
+
+1) Raft travel time:
+- compute total raft weight \(W(mask)\)
+- if \(W(mask) > c_i\), raft time = \(D_i\) else \(d_i\)
+
+2) Walkers’ travel time:
+- walkers are those not in mask
+- all walkers move in parallel, so the group is ready only when the slowest walker arrives:
+  \[
+  T_{\text{walk}}(mask) = \max_{j \notin mask} t_j
+  \]
+  (If everyone is on the raft, this max is 0.)
+
+3) Because everyone must wait for everyone, the segment duration is:
+\[
+T_{\text{seg}}(i, mask)=\max(\text{raft time}, T_{\text{walk}}(mask))
+\]
+
+So, for each `mask`, we can compute segment time independently.
+
+### Cost for changing composition (swapping people) at a point
+At point \(p_i\), you may change who is on the raft before starting the next riffle. If you change from `maskA` to `maskB`, anyone whose bit differs must move between bank and raft, costing their \(s_j\). That is exactly:
+\[
+\text{swapCost}(maskA, maskB)=\sum_{j \in (maskA \oplus maskB)} s_j
+\]
+This is like a graph on masks where edges flip one bit with cost \(s_j\).
+
+### Why Dijkstra?
+You might try dynamic programming per riffle, but at a fixed point \(p_i\), you can perform swaps in any order, possibly multiple changes; this forms cycles among masks. The clean approach: view mask transitions as a weighted graph and run shortest paths.
+
+However, we also have progression over riffles \(i = 1..m\). The solution does:
+
+For each riffle \(i\):
+1) We start with current best times `prev_dp[mask]` meaning: minimum time to be at point \(p_{i-1}\) with raft set `mask`.
+2) Before traversing riffle \(i\), we can do any swaps at \(p_{i-1}\). This is exactly shortest paths over the mask graph (bit flips), starting from the initial distances `prev_dp`. Compute `dist[mask]` = best time after arbitrary swaps, still at \(p_{i-1}\) but ready to depart with raft set `mask`.
+   - This is done via Dijkstra over `2^n` nodes, each node has `n` neighbors (flip each bit).
+3) Now traverse riffle \(i\) with some non-empty `mask`:
+   \[
+   next\_dp[mask] = dist[mask] + T_{\text{seg}}(i, mask), \quad mask \neq 0
+   \]
+   (Because raft cannot be empty during traversal.)
+4) Set `prev_dp = next_dp` and proceed.
+
+After processing all m riffles, we are at point \(p_m\) but may still have people on the raft. We must end with everyone on the bank (`mask=0`), so we run one final Dijkstra over mask flips at \(p_m\) to allow everyone to get off:
+- answer = shortest distance to `mask=0`.
+
+### Precomputation for speed
+Since \(2^n \le 1024\), we can precompute for every mask:
+- `sum_w[mask] = W(mask)`
+- `max_out[mask] = max t_j among j not in mask` (0 if mask includes all)
+
+Then each riffle transition per mask is O(1).
+
+### Complexity
+Let \(N = 2^n \le 1024\).
+Each Dijkstra run:
+- nodes \(N\), edges \(N \cdot n\)
+- complexity \(O(N n \log N)\)
+
+We run it:
+- once per riffle (m times) + one final time
+So total:
+\[
+O((m+1)\, N\, n \log N)
+\]
+With \(m \le 1000\), \(N \le 1024\), \(n \le 10\), this is easily fast enough.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (used only for debugging; not used in final output)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input (also mostly utility)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector of known size: reads each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector (utility)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+// A large number representing "infinity" for 64-bit distances
+const int64_t inf = (int64_t)1e18 + 42;
+
+// n = participants, m = riffles
+int n, m;
+
+// Participant arrays: weight w[j], walk time t[j], swap time s[j]
+vector<int> w, t, s;
+
+// Riffle arrays: critical weight c[i], capsize time D[i], normal time d[i]
+vector<int> c, D, d;
+
+void read() {
+    cin >> n >> m;
+
+    // Resize participant arrays to size n
+    w.resize(n);
+    t.resize(n);
+    s.resize(n);
+
+    // Read each participant's parameters
+    for (int j = 0; j < n; j++) {
+        cin >> w[j] >> t[j] >> s[j];
+    }
+
+    // Resize riffle arrays to size m
+    c.resize(m);
+    D.resize(m);
+    d.resize(m);
+
+    // Read each riffle's parameters
+    for (int i = 0; i < m; i++) {
+        cin >> c[i] >> D[i] >> d[i];
+    }
+}
+
+void solve() {
+    // Since n <= 10, we can represent the set of raft riders as a bitmask of size 2^n.
+    int N = 1 << n; // number of masks
+
+    // Precompute for every mask:
+    // sum_w[mask] = total weight on raft
+    // max_out[mask] = max walking time among people NOT on raft (0 if everyone on raft)
+    vector<int> sum_w(N), max_out(N);
+
+    for (int mask = 0; mask < N; mask++) {
+        int sw = 0; // sum of weights on raft
+        int mo = 0; // maximum t[j] among walkers
+
+        for (int j = 0; j < n; j++) {
+            if (mask & (1 << j)) {
+                // person j is on raft
+                sw += w[j];
+            } else {
+                // person j walks; segment must wait for the slowest walker
+                mo = max(mo, t[j]);
+            }
+        }
+        sum_w[mask] = sw;
+        max_out[mask] = mo;
+    }
+
+    // prev_dp[mask] = minimal time to be at current point p_{i-1} with 'mask' on raft
+    vector<int64_t> prev_dp(N, inf);
+
+    // Start at p0 with everyone on the bank: mask = 0
+    prev_dp[0] = 0;
+
+    // Run Dijkstra over the mask graph:
+    // From current distances dist[mask], allow any sequence of swaps (bit flips).
+    // Edge: mask -> mask^(1<<j) with cost s[j] (person j changes side).
+    auto run_dijkstra = [&](vector<int64_t>& dist) {
+        priority_queue<pair<int64_t, int>, vector<pair<int64_t, int>>, greater<>> pq;
+
+        // Initialize heap with all masks that already have finite distance
+        for (int mask = 0; mask < N; mask++) {
+            if (dist[mask] < inf) pq.push({dist[mask], mask});
+        }
+
+        while (!pq.empty()) {
+            int64_t time = pq.top().first;
+            int umask = pq.top().second;
+            pq.pop();
+
+            // Standard Dijkstra stale-state check
+            if (time > dist[umask]) continue;
+
+            // Try flipping each person j (toggle membership in the raft set)
+            for (int j = 0; j < n; j++) {
+                int vmask = umask ^ (1 << j);     // new mask after toggling j
+                int64_t new_time = time + s[j];   // cost of that swap
+
+                if (new_time < dist[vmask]) {
+                    dist[vmask] = new_time;
+                    pq.push({new_time, vmask});
+                }
+            }
+        }
+    };
+
+    // Process each riffle in order
+    for (int riff = 0; riff < m; riff++) {
+        // dist = best time at point p_{riff} after arbitrary swaps (still before traveling)
+        vector<int64_t> dist(N, inf);
+        for (int mask = 0; mask < N; mask++) dist[mask] = prev_dp[mask];
+
+        // Allow any number of swaps at this point -> shortest swap costs between masks
+        run_dijkstra(dist);
+
+        // next_dp[mask] = best time to arrive at next point p_{riff+1} with raft mask 'mask'
+        vector<int64_t> next_dp(N, inf);
+
+        // Cannot travel with empty raft => mask must be non-zero
+        for (int mask = 1; mask < N; mask++) {
+            if (dist[mask] >= inf) continue;
+
+            // Determine whether raft capsizes with this mask
+            bool capsize = sum_w[mask] > c[riff];
+
+            // Raft travel time for this riffle
+            int raft_t = capsize ? D[riff] : d[riff];
+
+            // Segment finishes when both raft and all walkers arrive:
+            // time = max(raft travel time, slowest walker time)
+            int seg_t = max(raft_t, max_out[mask]);
+
+            // Total time to arrive at next point with same mask (no mid-segment changes allowed)
+            next_dp[mask] = dist[mask] + seg_t;
+        }
+
+        // Move to next point
+        prev_dp = next_dp;
+    }
+
+    // After last riffle we are at pm, but may still have people on raft.
+    // We must end with mask=0 (everyone on bank), so allow swaps one more time.
+    vector<int64_t> dist(N, inf);
+    for (int mask = 0; mask < N; mask++) dist[mask] = prev_dp[mask];
+
+    run_dijkstra(dist);
+
+    // The minimal time to finish with everyone on bank
+    cout << dist[0] << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Single test case (input format has no T)
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+import heapq
+
+INF = 10**30
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Participant parameters
+    w = [0] * n  # weight
+    t = [0] * n  # walking time per segment
+    s = [0] * n  # swap time to get on/off raft
+    for j in range(n):
+        w[j] = int(next(it))
+        t[j] = int(next(it))
+        s[j] = int(next(it))
+
+    # Riffle parameters
+    c = [0] * m  # critical weight
+    D = [0] * m  # time if capsizes
+    d = [0] * m  # time if not
+    for i in range(m):
+        c[i] = int(next(it))
+        D[i] = int(next(it))
+        d[i] = int(next(it))
+
+    N = 1 << n  # number of masks
+
+    # Precompute:
+    # sum_w[mask]  = total weight of people on raft
+    # max_out[mask]= max walking time among walkers (people NOT in mask)
+    sum_w = [0] * N
+    max_out = [0] * N
+    for mask in range(N):
+        sw = 0
+        mo = 0
+        for j in range(n):
+            if mask & (1 << j):
+                sw += w[j]
+            else:
+                if t[j] > mo:
+                    mo = t[j]
+        sum_w[mask] = sw
+        max_out[mask] = mo
+
+    def run_dijkstra(dist):
+        """
+        Dijkstra on the mask graph:
+        node = mask
+        edge: mask -> mask^(1<<j) with cost s[j]
+        Starts with initial distances in 'dist' and relaxes all masks.
+        """
+        pq = []
+        for mask in range(N):
+            if dist[mask] < INF:
+                heapq.heappush(pq, (dist[mask], mask))
+
+        while pq:
+            cur, umask = heapq.heappop(pq)
+            if cur != dist[umask]:
+                continue
+
+            # Try toggling each bit j
+            for j in range(n):
+                vmask = umask ^ (1 << j)
+                nd = cur + s[j]
+                if nd < dist[vmask]:
+                    dist[vmask] = nd
+                    heapq.heappush(pq, (nd, vmask))
+
+    # DP over points: prev_dp[mask] = best time at current point with raft set mask
+    prev_dp = [INF] * N
+    prev_dp[0] = 0  # start with everyone on bank
+
+    for i in range(m):
+        # Allow any swapping at point p_{i} before traversing riffle i+1
+        dist = prev_dp[:]        # copy
+        run_dijkstra(dist)
+
+        # Traverse the riffle with a non-empty raft
+        next_dp = [INF] * N
+        for mask in range(1, N):
+            if dist[mask] >= INF:
+                continue
+
+            capsize = sum_w[mask] > c[i]
+            raft_t = D[i] if capsize else d[i]
+
+            # segment finishes when raft and all walkers arrive
+            seg_t = raft_t if raft_t > max_out[mask] else max_out[mask]
+
+            next_dp[mask] = dist[mask] + seg_t
+
+        prev_dp = next_dp
+
+    # At finish point pm, allow swaps to get everyone off (reach mask=0)
+    dist = prev_dp[:]
+    run_dijkstra(dist)
+
+    print(dist[0])
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model the configuration at each point by a bitmask `mask` of people on the raft (\(n \le 10 \Rightarrow 2^n \le 1024\)). Swapping at a point from one mask to another costs \(\sum s_j\) over differing bits, i.e. edges `mask -> mask^(1<<j)` with cost `s[j]`. Before each riffle, compute the best achievable times for all masks via Dijkstra on this mask graph starting from current DP values.
+
+Traversing riffle \(i\) with non-empty `mask` takes:
+- raft time = \(D_i\) if total raft weight \(> c_i\) else \(d_i\)
+- walkers time = \(\max t_j\) over walkers (j not in mask)
+- segment time = `max(raft_time, walkers_time)`
+Then `next_dp[mask] = dist[mask] + segment_time`. Repeat for all \(m\) riffles.
+
+Finally, at \(p_m\) run Dijkstra once more to reach `mask=0` (everyone on bank). Output the distance to `0`.

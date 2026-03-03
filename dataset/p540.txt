@@ -1,0 +1,552 @@
+## 1) Abridged problem statement
+
+There are `n` traffic lights on a street. Light `i` is at distance `x_i` and has a periodic cycle: **green for `g_i` seconds**, then **red for `r_i` seconds**, repeating with period `c_i = r_i + g_i`. The value `d_i` is the smallest `t ≥ 0` when the light switches **from green to red**.
+
+The King starts at position 0 at time 0 and drives at a constant speed `v0` constrained by `vmin ≤ v0 ≤ vmax`. He passes light `i` at time `t_i = x_i / v0`. Passing exactly at a switching moment is allowed (counts as not red).
+
+We are allowed to switch any subset of lights into “always green”. Choose `v0` to **minimize** the number of lights that would be red when the King passes; if multiple `v0` give the same minimum, choose the **maximum** such `v0`. Output that `v0`, the number of switched lights, and their indices.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### A. Characterizing “green” times for one traffic light
+
+For light `i`, period `c = r_i + g_i`.
+
+Given `d_i` is a time when it changes **green → red**, that means the green interval right before that ends at `d_i`. So in each cycle `k` (integer), green lasts on:
+
+\[
+t \in [\, d_i - g_i + k c \;,\; d_i + k c \,]
+\]
+
+(Endpoints included because switching time is allowed.)
+
+The King passes at time:
+
+\[
+t = \frac{x_i}{v}
+\]
+
+So the condition “passes on green” becomes:
+
+\[
+\frac{x_i}{v} \in [\, d_i - g_i + k c \;,\; d_i + k c \,]
+\]
+
+Assuming the interval is in positive time, we can invert it to a speed interval (note inversion flips bounds):
+
+\[
+v \in \left[ \frac{x_i}{d_i + kc},\; \frac{x_i}{d_i - g_i + kc} \right]
+\]
+
+So **for each traffic light** we get a **union of disjoint speed intervals** (one per cycle `k`) in which that light will be green when we pass.
+
+We must restrict to the allowed speeds `[vmin, vmax]`, so we intersect each candidate interval with that.
+
+---
+
+### B. Reduce the global optimization to “maximum overlap of intervals”
+
+If we pick a speed `v`, the number of lights that are green equals the number of these intervals (over all lights and all `k`) that contain `v`.
+
+Minimizing the number of lights to switch to always green is equivalent to **maximizing** the number of lights that are already green:
+
+\[
+\text{switches}(v) = n - \text{greenCount}(v)
+\]
+
+So we want:
+
+- maximize `greenCount(v)` over `v ∈ [vmin, vmax]`
+- tie-break by choosing the **maximum** such `v`
+
+Now it becomes an interval stabbing / sweep-line problem:
+> Given many intervals on the real line, find a point `v` covered by the maximum number of intervals; among ties, choose the largest `v`.
+
+---
+
+### C. Enumerating only relevant cycles `k`
+
+For a light at `x`, the pass time range due to speed bounds is:
+
+\[
+t \in \left[\frac{x}{vmax},\; \frac{x}{vmin}\right]
+\]
+
+We only need cycles whose green interval intersects that time range.
+
+For each `k` we compute:
+
+- `gs = d - g + k*c` (green start)
+- `ge = d + k*c` (green end)
+
+We can stop when `gs > x/vmin` because then even the *earliest* time in that green interval is after the latest possible pass time.
+
+We also skip cycles that are entirely non-positive (`ge <= 0`) etc.
+
+Then we intersect times:
+
+\[
+t_{lo} = \max(gs,\; x/vmax), \quad t_{hi} = \min(ge,\; x/vmin)
+\]
+
+If `t_lo ≤ t_hi`, this produces a valid speed interval:
+
+\[
+v \in \left[\frac{x}{t_{hi}},\; \frac{x}{t_{lo}}\right]
+\]
+
+Finally clamp to `[vmin, vmax]`.
+
+Because `vmin..vmax` is small (10..50) and periods are 20..40, the number of `k` per light is small, so total intervals are manageable.
+
+---
+
+### D. Sweep line on interval endpoints (events)
+
+We build events:
+
+- at interval left endpoint `L`: `+1`
+- at interval right endpoint `R`: `-1`
+
+Then sort by position. Important detail: since endpoints are inclusive and we want to count coverage properly, we process:
+
+1. all `+1` at position `pos` (intervals start)
+2. evaluate best at `pos`
+3. all `-1` at position `pos` (intervals end)
+
+That way, intervals covering exactly `pos` are counted.
+
+Tie-breaking “choose maximum `v`” is handled by updating the best when:
+- `cnt > best_cnt`, or
+- `cnt == best_cnt` and `pos > best_v`
+
+Thus we end with `best_v`.
+
+---
+
+### E. Recover which lights must be switched at `best_v`
+
+For each light, compute pass time `t = x_i / best_v`.
+
+We need to know if `t` lies in a green segment. The code converts to a phase in `[0, c)` where phase 0 corresponds to green start:
+
+Let:
+
+\[
+\text{phase} = (t - d_i + g_i) \bmod c
+\]
+
+- If `phase ∈ [0, g_i]` => green
+- Else => red
+
+The implementation uses `fmod` with epsilons to handle floating point issues and boundary inclusiveness. Lights where the phase is strictly inside the red part are added to `switched`.
+
+---
+
+### F. Complexity
+
+Let `M` be the total number of generated intervals (sum over lights of possible `k`). Then:
+
+- interval generation: `O(M)`
+- sorting events: `O(M log M)`
+- final check over lights: `O(n)`
+
+With constraints (`n < 20000`, small speeds, small periods), this fits easily.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience: read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Convenience: read a vector of size already set
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Convenience: print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// Global input variables
+int n, s, v_min, v_max;
+vector<int> xi, ri, gi, di;
+
+// Read input
+void read() {
+    cin >> n >> s >> v_min >> v_max;
+
+    // Allocate arrays for traffic light parameters
+    xi.resize(n);
+    ri.resize(n);
+    gi.resize(n);
+    di.resize(n);
+
+    // Read each traffic light: position x, red duration r, green duration g, phase d
+    for (int i = 0; i < n; i++) {
+        cin >> xi[i] >> ri[i] >> gi[i] >> di[i];
+    }
+}
+
+void solve() {
+    /*
+      For light i, green times are:
+        t in [di - gi + k*(gi+ri),  di + k*(gi+ri)] for integer k
+
+      With constant speed v, pass time is t = xi / v.
+      Therefore xi/v must lie in that green interval.
+
+      For a fixed k, that implies v belongs to some interval [vl, vh].
+      Over all i,k we get many speed intervals within [v_min, v_max].
+
+      We want the speed v covered by the maximum number of these intervals,
+      because that maximizes lights passed on green, thus minimizes switches.
+      Tie-break: choose maximum v.
+    */
+
+    // Each interval [L, R] will generate two events:
+    // (L, +1) meaning coverage increases starting at L
+    // (R, -1) meaning coverage decreases after processing point R
+    vector<pair<double, int>> events;
+
+    // Build all feasible speed-intervals that correspond to "pass on green"
+    for (int i = 0; i < n; i++) {
+        int c = ri[i] + gi[i]; // cycle length
+
+        // Enumerate cycle index k until green start is beyond latest possible arrival time
+        for (int k = 0;; k++) {
+            // Green interval in time for this k
+            int gs = di[i] - gi[i] + k * c; // green start time
+            int ge = di[i] + k * c;         // green end time (green->red switch)
+
+            // Latest possible pass time for this light is xi/v_min.
+            // If green start is later than that, no further k will work -> break.
+            if ((double)gs > (double)xi[i] / v_min) {
+                break;
+            }
+
+            // If the whole green interval ends at non-positive time, skip it.
+            if (ge <= 0) {
+                continue;
+            }
+
+            // If even arriving at the end time ge requires speed > v_max, skip.
+            if ((double)xi[i] / ge > (double)v_max) {
+                continue;
+            }
+
+            // Intersect the green-time interval [gs, ge] with feasible arrival times
+            // given speed bounds: [xi/v_max, xi/v_min]
+            double t_lo = max((double)gs, xi[i] / (double)v_max);
+            double t_hi = min((double)ge, xi[i] / (double)v_min);
+
+            // Avoid division by 0 / negative due to numeric issues
+            if (t_lo < 1e-15) {
+                t_lo = 1e-15;
+            }
+
+            // If intersection is empty, skip
+            if (t_lo > t_hi + 1e-12) {
+                continue;
+            }
+
+            // Convert time interval [t_lo, t_hi] to speed interval [xi/t_hi, xi/t_lo]
+            // because v = x / t, decreasing in t.
+            double vl = xi[i] / t_hi; // smallest speed in this feasible-green set
+            double vh = xi[i] / t_lo; // largest speed
+
+            // Clamp to allowed speed bounds
+            vl = max(vl, (double)v_min);
+            vh = min(vh, (double)v_max);
+
+            // If empty after clamp, skip
+            if (vl > vh + 1e-12) {
+                continue;
+            }
+
+            // Add sweep events for this interval
+            events.push_back({vl, 1});
+            events.push_back({vh, -1});
+        }
+    }
+
+    // Sort events by coordinate.
+    // If same coordinate: process +1 before -1 so the point itself counts as covered.
+    sort(
+        events.begin(), events.end(),
+        [](const pair<double, int>& a, const pair<double, int>& b) {
+            if (a.first != b.first) {
+                return a.first < b.first;
+            }
+            return a.second > b.second; // +1 (start) before -1 (end)
+        }
+    );
+
+    int cnt = 0;          // current number of active intervals
+    int best_cnt = 0;     // maximum coverage seen
+    double best_v = v_max; // tie-break wants maximum v; init is safe
+
+    // Sweep through all unique event positions
+    for (int i = 0; i < (int)events.size();) {
+        double pos = events[i].first;
+
+        // Apply all starting events at pos
+        while (i < (int)events.size() && events[i].first == pos &&
+               events[i].second > 0) {
+            cnt++;
+            i++;
+        }
+
+        // Now cnt is the coverage at speed = pos.
+        // Update best; tie-break by larger pos (speed).
+        if (cnt > best_cnt || (cnt == best_cnt && pos > best_v)) {
+            best_cnt = cnt;
+            best_v = pos;
+        }
+
+        // Apply all ending events at pos
+        while (i < (int)events.size() && events[i].first == pos &&
+               events[i].second < 0) {
+            cnt--;
+            i++;
+        }
+    }
+
+    // Determine which lights are red at best_v and thus must be switched
+    const double eps = 1e-9;
+    vector<int> switched;
+
+    for (int i = 0; i < n; i++) {
+        double t = xi[i] / best_v; // time we reach light i
+        int c = ri[i] + gi[i];     // period
+
+        // Compute phase relative to green start.
+        // Green start times are: di - gi + k*c.
+        // So shift by ( -di + gi ) to align green start to phase 0.
+        double rem = fmod(t - di[i] + gi[i], (double)c);
+
+        // fmod can return negative; normalize into [0, c)
+        if (rem < -eps) {
+            rem += c;
+        }
+
+        // If phase rem is in (gi, c) then we are in red.
+        // Boundaries are allowed, so use eps to keep robustness.
+        if (rem > gi[i] + eps && rem < c - eps) {
+            switched.push_back(i + 1); // store 1-based index
+        }
+    }
+
+    // Output chosen speed with at least 10 digits after decimal
+    cout << fixed << setprecision(10) << best_v << "\n";
+
+    // Output count and list of switches
+    cout << switched.size() << "\n";
+    for (int i = 0; i < (int)switched.size(); i++) {
+        if (i) cout << " ";
+        cout << switched[i];
+    }
+    if (!switched.empty()) {
+        cout << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Problem has single test; code keeps template for multiple tests.
+    // cin >> T;
+
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys, math
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    s = int(next(it))      # not used in computations; lights are within [1, s-1]
+    vmin = int(next(it))
+    vmax = int(next(it))
+
+    x = [0]*n
+    r = [0]*n
+    g = [0]*n
+    d = [0]*n
+    for i in range(n):
+        x[i] = int(next(it))
+        r[i] = int(next(it))
+        g[i] = int(next(it))
+        d[i] = int(next(it))
+
+    # We will collect sweep events (position, delta):
+    # +1 at interval start, -1 at interval end.
+    events = []
+
+    for i in range(n):
+        c = r[i] + g[i]  # cycle length
+
+        # Enumerate cycle index k while there can still be intersection
+        k = 0
+        while True:
+            gs = d[i] - g[i] + k * c  # green start time in this cycle
+            ge = d[i] + k * c         # green end time in this cycle (inclusive)
+
+            # Latest arrival time allowed by min speed
+            if float(gs) > x[i] / vmin:
+                break
+
+            # If green interval ends at non-positive time, skip
+            if ge <= 0:
+                k += 1
+                continue
+
+            # If to arrive by time ge we would need speed > vmax, skip
+            if x[i] / ge > vmax:
+                k += 1
+                continue
+
+            # Feasible arrival times given speed limits
+            # t in [x/vmax, x/vmin]
+            t_lo = max(float(gs), x[i] / vmax)
+            t_hi = min(float(ge), x[i] / vmin)
+
+            # Avoid division by 0 and negative due to numeric corner cases
+            if t_lo < 1e-15:
+                t_lo = 1e-15
+
+            # If no intersection, skip
+            if t_lo > t_hi + 1e-12:
+                k += 1
+                continue
+
+            # Convert time window to speed window: v = x / t
+            vl = x[i] / t_hi
+            vh = x[i] / t_lo
+
+            # Clamp to [vmin, vmax]
+            if vl < vmin:
+                vl = float(vmin)
+            if vh > vmax:
+                vh = float(vmax)
+
+            # If interval is empty after clamping, skip
+            if vl > vh + 1e-12:
+                k += 1
+                continue
+
+            events.append((vl, +1))
+            events.append((vh, -1))
+
+            k += 1
+
+    # Sort: by position ascending; for equal positions, +1 before -1
+    events.sort(key=lambda p: (p[0], -p[1]))
+
+    cnt = 0
+    best_cnt = 0
+    best_v = float(vmax)  # tie-break wants maximum v
+
+    i = 0
+    m = len(events)
+    while i < m:
+        pos = events[i][0]
+
+        # Apply all starts at this pos
+        while i < m and events[i][0] == pos and events[i][1] > 0:
+            cnt += 1
+            i += 1
+
+        # Update best (tie-break by larger pos)
+        if cnt > best_cnt or (cnt == best_cnt and pos > best_v):
+            best_cnt = cnt
+            best_v = pos
+
+        # Apply all ends at this pos
+        while i < m and events[i][0] == pos and events[i][1] < 0:
+            cnt -= 1
+            i += 1
+
+    # Determine which lights are red at best_v
+    eps = 1e-9
+    switched = []
+    for i in range(n):
+        t = x[i] / best_v
+        c = r[i] + g[i]
+
+        # Phase relative to green start:
+        # green start at times d-g + k*c, so shift by (-d+g)
+        rem = math.fmod(t - d[i] + g[i], c)
+        if rem < -eps:
+            rem += c
+
+        # If strictly inside red (with epsilon margins), mark to switch
+        if rem > g[i] + eps and rem < c - eps:
+            switched.append(i + 1)  # 1-based index
+
+    # Output
+    sys.stdout.write(f"{best_v:.10f}\n")
+    sys.stdout.write(f"{len(switched)}\n")
+    if switched:
+        sys.stdout.write(" ".join(map(str, switched)) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+For each light `i`, green in cycle `k` occurs at times  
+`[d_i - g_i + k*c_i, d_i + k*c_i]` where `c_i = r_i + g_i`. With constant speed `v`, passing time is `t = x_i/v`. So for fixed `k`:
+
+\[
+x_i/v \in [A,B] \iff v \in [x_i/B,\; x_i/A]
+\]
+
+Intersect with allowed speeds `[vmin, vmax]`. Enumerate `k` while `A ≤ x_i/vmin`; skip invalid/negative intervals and compute the clamped speed interval `[L,R]`. Collect all such intervals over all lights.
+
+Now choose `v` covered by the maximum number of intervals (maximizes green lights, minimizes switches). Do sweep-line on endpoints: add event `(L,+1)`, `(R,-1)`, sort by coordinate and process `+1` before `-1` at same coordinate; update best by coverage, tie-breaking by larger `v`.
+
+Finally, for chosen `best_v`, for each light compute `t = x_i/best_v`, phase `rem = (t - d_i + g_i) mod c_i`; green iff `rem ∈ [0,g_i]`. Output indices that are red (must be switched).

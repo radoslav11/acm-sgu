@@ -1,0 +1,452 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+305. Exhibition
+Time limit per test: 0.75 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+The exhibition of arithmetical progressions will be opened in Berland soon. Each of N presented progressions is characterized by two integer numbers Ai and Bi. These numbers mean that all numbers X belong to the i-th progression if X = Ai*K+Bi for some non-negative integer K. Organizers decided that each sequence will be given a unique number from 1 to M. The organizers want as much as possible progressions to be assigned such a number, that would be a member of this progression. They hired you to do this job.
+
+Input
+The first line of the input contains two integer numbers N and M (1≤ N≤ 300; N≤ M≤ 109). Each of the following N lines contains the pair of numbers Ai and Bi (-109≤ Ai, Bi≤ 109).
+
+Output
+Write to the output distribution of numbers among sequences — N numbers delimited by spaces. All numbers should be unique. If there are several solutions output any of them.
+
+Example(s)
+sample input
+sample output
+5 6
+1 1
+2 1
+3 1
+3 1
+6 4
+2 3 1 6 4
+
+<|response|>
+## 1) Abridged problem statement
+
+You have **N** arithmetic progressions. Progression *i* contains all integers
+
+\[
+X = A_i \cdot K + B_i,\quad K \ge 0
+\]
+
+You must output **N distinct integers** in the range **[1..M]** (one per progression).  
+A progression is **satisfied** if its assigned number belongs to that progression.  
+Goal: **maximize the number of satisfied progressions**. Output any optimal assignment.
+
+Constraints: \(1 \le N \le 300\), \(N \le M \le 10^9\), \(A_i,B_i\) up to \(10^9\) by absolute value.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **This is a maximum bipartite matching problem**:
+   - Left side: progressions \(i=1..N\)
+   - Right side: numbers \(x \in [1..M]\)
+   - Edge \((i,x)\) exists if \(x\) is in progression \(i\)
+   - A matching corresponds to assigning distinct numbers to some progressions such that they are satisfied.
+
+2. **But \(M\) can be huge (up to \(10^9\))**, so we cannot create a node for every number.
+
+3. **We only need a small set of candidate numbers per progression**:
+   - There are only \(N\) progressions.
+   - For each progression, it is enough to consider **at most the first \(N\)** values of that progression that fall in \([1..M]\).
+   - This bounds the total edges by \(O(N^2)\), which is feasible.
+
+4. **Coordinate compression**:
+   - Candidate values are actual integers up to \(10^9\).
+   - Collect all candidates, sort+unique, and treat them as right-side nodes \(0..V-1\) where \(V \le N^2\).
+
+5. After maximum matching:
+   - Matched progressions get their matched (valid) number.
+   - Unmatched progressions can get any remaining unused numbers from \([1..M]\) (always possible because \(M \ge N\)).
+
+---
+
+## 3) Full solution approach based on the observations
+
+### Step A — Generate candidates for each progression (≤ N each)
+
+Progression: \(x = A k + B\), \(k \ge 0\).
+
+- If \(A = 0\): the progression is constant \(x=B\). Candidate is only \(B\) if \(1 \le B \le M\).
+- If \(A \ne 0\):
+  - Find the **smallest** \(k \ge 0\) such that \(x\) lands inside \([1..M]\), then generate up to \(N\) consecutive values.
+  - In practice:
+    - If \(A>0\) and \(B<1\), raise \(k\) so that \(A k + B \ge 1\):
+      \[
+      k = \left\lceil \frac{1-B}{A}\right\rceil
+      \]
+    - If \(A<0\) and \(B>M\), raise \(k\) so that \(A k + B \le M\):
+      \[
+      k = \left\lceil \frac{B-M}{-A}\right\rceil
+      \]
+    - Otherwise start at \(k=0\).
+  - Then produce values \(x = A(k+j)+B\) for \(j=0..N-1\) while \(1 \le x \le M\).
+
+This yields at most \(N\) candidates per progression ⇒ at most \(N^2\) edges.
+
+### Step B — Compress candidate values
+
+- Gather all candidate values from all progressions into one list.
+- Sort and remove duplicates.
+- Map each value to its index (compressed right node).
+
+### Step C — Build bipartite graph and compute maximum matching
+
+- Left nodes: progressions \(0..N-1\)
+- Right nodes: compressed values \(0..V-1\)
+- Add edges based on candidates.
+- Run **Hopcroft–Karp** to get maximum matching.
+
+### Step D — Build final output assignment
+
+- If progression \(i\) is matched to right node \(j\), assign the corresponding value.
+- Maintain a set of used numbers.
+- For unmatched progressions, assign the smallest unused numbers from 1 upward.
+
+This preserves optimality: matching already maximizes the number of satisfied progressions.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Hopcroft-Karp for maximum bipartite matching.
+  Left side: 0..n-1
+  Right side: 0..m-1
+*/
+struct HopcroftKarp {
+    int n, m;
+    vector<vector<int>> adj;   // adj[u] = list of right vertices v
+    vector<int> dist;          // BFS levels on left side
+    vector<int> match;         // match[v] = u (right->left), -1 if free
+    vector<int> inv_match;     // inv_match[u] = v (left->right), -1 if free
+
+    HopcroftKarp(int n_, int m_) : n(n_), m(m_) {
+        adj.assign(n, {});
+        match.assign(m, -1);
+        inv_match.assign(n, -1);
+        dist.resize(n);
+    }
+
+    void add_edge(int u, int v) {
+        adj[u].push_back(v);
+    }
+
+    // BFS builds layered graph of alternating paths from all free left nodes.
+    // Returns true if there exists at least one augmenting path to a free right node.
+    bool bfs() {
+        queue<int> q;
+        fill(dist.begin(), dist.end(), -1);
+
+        for (int u = 0; u < n; u++) {
+            if (inv_match[u] == -1) {
+                dist[u] = 0;
+                q.push(u);
+            }
+        }
+
+        bool found_free_right = false;
+
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (int v : adj[u]) {
+                int u2 = match[v]; // left node currently matched with v (or -1)
+                if (u2 == -1) {
+                    found_free_right = true; // we can potentially end an augmenting path here
+                } else if (dist[u2] == -1) {
+                    dist[u2] = dist[u] + 1;
+                    q.push(u2);
+                }
+            }
+        }
+        return found_free_right;
+    }
+
+    // DFS tries to find augmenting paths from left node u in the layered graph.
+    bool dfs(int u) {
+        for (int v : adj[u]) {
+            int u2 = match[v];
+            if (u2 == -1 || (dist[u2] == dist[u] + 1 && dfs(u2))) {
+                inv_match[u] = v;
+                match[v] = u;
+                return true;
+            }
+        }
+        // Mark as dead end for this BFS phase to prune further searches.
+        dist[u] = -1;
+        return false;
+    }
+
+    int max_matching() {
+        int res = 0;
+        while (bfs()) {
+            for (int u = 0; u < n; u++) {
+                if (inv_match[u] == -1 && dfs(u)) res++;
+            }
+        }
+        return res;
+    }
+};
+
+// Ceiling division for nonnegative numerator/denominator scenario used below.
+// We avoid generic signed ceil-div pitfalls by only calling it with a>0 and x>=0.
+static inline long long ceil_div_nonneg(long long x, long long a) {
+    return (x + a - 1) / a;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    long long M;
+    cin >> N >> M;
+
+    vector<long long> A(N), B(N);
+    for (int i = 0; i < N; i++) cin >> A[i] >> B[i];
+
+    // Step 1: generate up to N candidate values in [1..M] per progression
+    vector<vector<long long>> cand(N);
+
+    for (int i = 0; i < N; i++) {
+        long long a = A[i], b = B[i];
+
+        if (a == 0) {
+            // Constant progression: x = b
+            if (1 <= b && b <= M) cand[i].push_back(b);
+            continue;
+        }
+
+        long long start_k = 0;
+
+        if (a > 0) {
+            // Need a*k + b >= 1
+            if (b < 1) {
+                // k >= ceil((1-b)/a); here (1-b) is positive
+                start_k = ceil_div_nonneg(1 - b, a);
+            }
+        } else { // a < 0, decreasing
+            // Need a*k + b <= M
+            if (b > M) {
+                // b - (-a)*k <= M  =>  (-a)*k >= b-M
+                // k >= ceil((b-M)/(-a)); here (b-M) is positive, (-a) is positive
+                start_k = ceil_div_nonneg(b - M, -a);
+            }
+        }
+
+        // Generate first up to N values starting from start_k
+        for (int j = 0; j < N; j++) {
+            long long k = start_k + j;
+            __int128 x = (__int128)a * k + b; // safe multiplication
+            if (x < 1 || x > M) break;
+            cand[i].push_back((long long)x);
+        }
+    }
+
+    // Step 2: coordinate compression of all candidate values
+    vector<long long> all;
+    all.reserve(N * N);
+    for (int i = 0; i < N; i++)
+        for (auto v : cand[i]) all.push_back(v);
+
+    sort(all.begin(), all.end());
+    all.erase(unique(all.begin(), all.end()), all.end());
+    int V = (int)all.size();
+
+    auto get_id = [&](long long v) -> int {
+        return (int)(lower_bound(all.begin(), all.end(), v) - all.begin());
+    };
+
+    // Step 3: build compressed bipartite graph and run Hopcroft-Karp
+    HopcroftKarp hk(N, V);
+    for (int i = 0; i < N; i++)
+        for (auto v : cand[i])
+            hk.add_edge(i, get_id(v));
+
+    hk.max_matching();
+
+    // Step 4: build final assignment
+    vector<long long> ans(N, -1);
+    unordered_set<long long> used;
+    used.reserve(N * 2);
+
+    // Matched progressions get their matched candidate (satisfied)
+    for (int i = 0; i < N; i++) {
+        if (hk.inv_match[i] != -1) {
+            long long v = all[hk.inv_match[i]];
+            ans[i] = v;
+            used.insert(v);
+        }
+    }
+
+    // Unmatched progressions get smallest unused numbers from 1..M
+    long long cur = 1;
+    for (int i = 0; i < N; i++) {
+        if (ans[i] == -1) {
+            while (used.count(cur)) cur++;
+            ans[i] = cur;
+            used.insert(cur);
+            cur++;
+        }
+    }
+
+    for (int i = 0; i < N; i++) {
+        cout << ans[i] << (i + 1 == N ? '\n' : ' ');
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+from collections import deque
+
+# Hopcroft–Karp maximum bipartite matching
+# Left: 0..n-1, Right: 0..m-1
+class HopcroftKarp:
+    def __init__(self, n, m):
+        self.n = n
+        self.m = m
+        self.adj = [[] for _ in range(n)]
+        self.match = [-1] * m      # match[v] = u
+        self.inv = [-1] * n        # inv[u] = v
+        self.dist = [-1] * n
+
+    def add_edge(self, u, v):
+        self.adj[u].append(v)
+
+    def bfs(self):
+        q = deque()
+        self.dist = [-1] * self.n
+
+        # Start from all free left nodes
+        for u in range(self.n):
+            if self.inv[u] == -1:
+                self.dist[u] = 0
+                q.append(u)
+
+        found_free_right = False
+
+        while q:
+            u = q.popleft()
+            for v in self.adj[u]:
+                u2 = self.match[v]
+                if u2 == -1:
+                    found_free_right = True
+                elif self.dist[u2] == -1:
+                    self.dist[u2] = self.dist[u] + 1
+                    q.append(u2)
+
+        return found_free_right
+
+    def dfs(self, u):
+        for v in self.adj[u]:
+            u2 = self.match[v]
+            if u2 == -1 or (self.dist[u2] == self.dist[u] + 1 and self.dfs(u2)):
+                self.inv[u] = v
+                self.match[v] = u
+                return True
+
+        # dead end pruning
+        self.dist[u] = -1
+        return False
+
+    def max_matching(self):
+        res = 0
+        while self.bfs():
+            for u in range(self.n):
+                if self.inv[u] == -1 and self.dfs(u):
+                    res += 1
+        return res
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    it = iter(data)
+    n = int(next(it))
+    M = int(next(it))
+
+    prog = [(int(next(it)), int(next(it))) for _ in range(n)]
+
+    # Generate up to n candidates in [1..M] per progression
+    cand = [[] for _ in range(n)]
+
+    for i, (a, b) in enumerate(prog):
+        if a == 0:
+            if 1 <= b <= M:
+                cand[i].append(b)
+            continue
+
+        start_k = 0
+        if a > 0:
+            if b < 1:
+                # ceil((1-b)/a) with positive numerator/denominator
+                start_k = (1 - b + a - 1) // a
+        else:  # a < 0
+            if b > M:
+                # ceil((b-M)/(-a)) with positive numerator/denominator
+                start_k = (b - M + (-a) - 1) // (-a)
+
+        for j in range(n):
+            x = a * (start_k + j) + b
+            if x < 1 or x > M:
+                break
+            cand[i].append(x)
+
+    # Coordinate compress all candidate values
+    all_vals = sorted(set(v for lst in cand for v in lst))
+    idx = {v: k for k, v in enumerate(all_vals)}
+
+    # Build matching graph
+    hk = HopcroftKarp(n, len(all_vals))
+    for i in range(n):
+        for v in cand[i]:
+            hk.add_edge(i, idx[v])
+
+    hk.max_matching()
+
+    # Build final assignment
+    ans = [-1] * n
+    used = set()
+
+    for i in range(n):
+        j = hk.inv[i]
+        if j != -1:
+            val = all_vals[j]
+            ans[i] = val
+            used.add(val)
+
+    cur = 1
+    for i in range(n):
+        if ans[i] == -1:
+            while cur in used:
+                cur += 1
+            ans[i] = cur
+            used.add(cur)
+            cur += 1
+
+    print(" ".join(map(str, ans)))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+This produces **N unique numbers in [1..M]** and satisfies the **maximum possible** number of progressions, within the constraints.

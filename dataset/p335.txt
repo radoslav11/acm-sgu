@@ -1,0 +1,388 @@
+## 1) Abridged problem statement
+
+You have an \(H \times W\) grid. A cop and a thief start in different cells. They move alternately; each move must go to a side-adjacent cell (up/down/left/right). Staying in place is not allowed, and moving outside the grid is not allowed.
+
+The cop wants to catch the thief as soon as possible; the thief wants to avoid being caught (or delay it as much as possible). Both play optimally and have full information.
+
+If the cop can guarantee catching the thief, output the move number on which the capture occurs (moves are numbered globally starting from 1). Otherwise output `0`.
+
+Constraints: \(1 \le H,W \le 5\cdot 10^8\).
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+This game is on a grid graph. Two major phenomena decide the outcome:
+
+1. **1D case (a line):**  
+   If \(H=1\) or \(W=1\), the grid is a path. Since players must move every turn, parity matters and eventually the cop catches the thief (there’s no way to “dance forever” without being forced into a meeting), but the exact time depends on positions and parity.
+
+2. **2D case (both dimensions > 1): bipartite coloring (chessboard parity):**  
+   Color cell \((r,c)\) by parity of \(r+c\) (like a chessboard). Every move flips the color (because you change exactly one coordinate by 1).
+
+   If the two players start on **different colors**, then after each full move (one player moves), their colors swap relative to each other in a way that can allow the thief to avoid ever sharing a cell with the cop. In fact, in this problem’s known result (and used by the code):  
+   - When both dimensions > 1 and initial colors differ, the thief can avoid capture forever ⇒ answer `0`.
+
+3. **Otherwise (same color, both dimensions > 1):**  
+   The cop can force capture. The thief’s best defense is to run toward a corner; intuitively corners minimize escape options and force a “squeeze”.
+
+The provided solution doesn’t simulate (impossible for huge \(H,W\)); it computes the capture time in **closed form**, after reducing to canonical orientation.
+
+---
+
+### Canonical transformations used by the code
+
+Let cop be \(C=(x_c,y_c)\), thief \(T=(x_t,y_t)\).
+
+The code performs symmetry reductions so it can assume a standard case:
+
+1. **Ensure vertical distance dominates:**  
+   If \(|x_c-x_t| < |y_c-y_t|\), it swaps x with y for both players and also swaps \(H\) with \(W\).  
+   So afterward: \(|x_c-x_t| \ge |y_c-y_t|\).  
+   This means “the main separation is in the x/row direction”.
+
+2. **Ensure cop is “above” thief in x:**  
+   If \(x_c > x_t\), it reflects vertically: map \(x \mapsto (H+1-x)\).  
+   After this, \(x_c \le x_t\).
+
+These preserve game outcome and capture time, just expressed in a normalized coordinate frame.
+
+---
+
+### Accounting for who moves first
+
+The solution then converts to a simpler “thief moves first” style by doing:
+
+- If first mover is `"C"`, the code **executes one cop move immediately**: it increments \(x_c\) by 1 and increments `ans` by 1.  
+  This corresponds to “cop uses his first move to reduce the dominant x-gap” (reasonable optimal move under the normalization).
+
+If after that move positions coincide, capture happens immediately at move `ans`.
+
+---
+
+### Case A: 1D grid (after normalization this appears as `m == 1`)
+
+After possible swapping, `m` is the width. If `m==1`, the grid is a single column of height `n`.
+
+The code outputs:
+```cpp
+ans += (n - x_c - 1) * 2;
+ans += ((x_c ^ x_t) & 1);
+```
+
+Interpretation:
+
+- The cop will chase toward the far end (bottom) while the thief is forced to bounce; with mandatory movement, the game length is basically “how many forced steps until the cop reaches the end region” times 2 (because moves alternate).
+- The final `parity` tweak `((x_c ^ x_t) & 1)` adjusts whether an extra move is needed depending on whether they are on opposite parity positions along the line (since each move flips parity along the path).
+
+Thus capture is guaranteed; compute exact move count.
+
+---
+
+### Case B: both dimensions > 1 and opposite colors ⇒ infinite evasion
+
+The code checks:
+```cpp
+if ( ((x_c ^ y_c) ^ (x_t ^ y_t)) & 1 ) cout << 0;
+```
+Because parity of \(x+y\) is the same as parity of \(x \oplus y\) mod 2 (since xor’s LSB equals sum mod 2). This condition tests whether \((x_c+y_c)\) and \((x_t+y_t)\) differ mod 2.
+
+If different ⇒ output `0`.
+
+---
+
+### Case C: same color, both dimensions > 1 ⇒ capture time formula
+
+Now capture is forced. The code splits into two geometric subcases based on whether the two positions lie on a 45° diagonal:
+
+#### C1) Equal absolute differences: \(|x_c-x_t| = |y_c-y_t|\)
+
+This means they are on a diagonal line where an optimal “mirroring” defense changes; the formula differs.
+
+The code first ensures \(y_c \ge y_t\) by reflecting horizontally if needed:
+```cpp
+if (y_c < y_t) reflect y with y -> m+1-y
+```
+
+Then:
+```cpp
+ans += (y_c - x_c + n - 2) * 2;
+```
+
+This corresponds to: time until the cop can “line up” and then force capture while the thief runs to the corner consistent with that diagonal configuration. The expression is essentially the distance (in a transformed coordinate system) to a decisive boundary, multiplied by 2 for alternating moves.
+
+#### C2) Otherwise: not on a diagonal
+
+Then:
+```cpp
+ans += (n - x_c - 1 + max(y_c - 1, m - y_c)) * 2;
+```
+
+Interpretation:
+- `n - x_c - 1` = how far the cop is from the bottom border (in x).
+- `max(y_c - 1, m - y_c)` = distance from cop to the farther horizontal border (left or right).
+- Sum = distance to a “most constraining corner region” that ensures eventual capture under optimal play.
+- Multiply by 2 because players alternate moves.
+
+This matches the strategy: thief runs to a corner; cop reduces the region.
+
+---
+
+### Complexity
+
+All operations are O(1), just arithmetic, suitable for huge \(H,W\).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Pulls in almost all standard headers.
+
+using namespace std;
+
+// Overload output for pair: prints "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pair: reads "first second".
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vector: reads all elements sequentially.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output for vector: prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                              // n = height (H), m = width (W), after possible swaps.
+pair<int, int> p_cop, p_thief;         // (row, col) of cop and thief (possibly transformed).
+string first_mover;                    // "C" or "T".
+
+void read() {
+    cin >> n >> m;                     // Read grid size.
+    cin >> p_cop >> p_thief;           // Read initial positions.
+    cin >> first_mover;                // Read who moves first.
+}
+
+void solve() {
+    // The code uses symmetry reductions and known case analysis:
+    // - Reduce so that |dx| >= |dy|
+    // - Reduce so that cop is not below thief (cop_x <= thief_x)
+    // - Handle who moves first by "executing" one cop move if needed
+    // - Then solve via:
+    //   * 1D case
+    //   * bipartite parity infinite case
+    //   * remaining capture-time formulas
+
+    // If horizontal separation is larger than vertical, swap axes so that
+    // the dominant separation is in x (row) direction.
+    if(abs(p_cop.first - p_thief.first) < abs(p_cop.second - p_thief.second)) {
+        swap(p_cop.first, p_cop.second);    // swap cop row/col
+        swap(p_thief.first, p_thief.second);// swap thief row/col
+        swap(n, m);                         // swap grid dimensions accordingly
+    }
+
+    // Ensure cop is "above" thief in x: make cop_x <= thief_x.
+    // If not, reflect the grid vertically: x -> (n + 1 - x).
+    if(p_cop.first > p_thief.first) {
+        p_cop.first *= -1;                  // start reflection via negation + shift
+        p_thief.first *= -1;
+        p_cop.first += n + 1;               // x becomes n+1-x
+        p_thief.first += n + 1;
+    }
+
+    int ans = 0;                            // move counter: when capture occurs
+
+    // If cop moves first, the code assumes optimal is to move one step "down"
+    // (increase x) to reduce dominant x-gap in the normalized orientation.
+    if(first_mover == "C") {
+        p_cop.first++;                      // perform cop's first move
+        ans++;                              // capture would happen after move #1 now
+    }
+
+    // If after that immediate move they coincide, capture already happened.
+    if(p_cop == p_thief) {
+        cout << ans << endl;
+        return;
+    }
+
+    // 1D case: width m == 1 means only vertical moves exist.
+    if(m == 1) {
+        // Base time: cop walks toward bottom border; each "layer" costs 2 moves
+        // (thief moves in between).
+        ans += (n - p_cop.first - 1) * 2;
+
+        // Because both must move each turn, parity of positions can force one
+        // additional move before collision happens.
+        ans += (p_cop.first ^ p_thief.first) & 1;
+
+        cout << ans << endl;
+        return;
+    }
+
+    // If on different colors of chessboard (parity differs), thief can evade forever.
+    // Parity of (x+y) mod 2 equals parity of (x xor y) & 1.
+    if(((p_cop.first ^ p_cop.second) ^ (p_thief.first ^ p_thief.second)) & 1) {
+        cout << 0 << endl;
+        return;
+    }
+
+    // If they are on a diagonal: |dx| == |dy|, use special formula.
+    if(abs(p_cop.first - p_thief.first) == abs(p_cop.second - p_thief.second)) {
+
+        // Normalize so that cop is to the "right" (y_c >= y_t) by reflecting horizontally.
+        if(p_cop.second < p_thief.second) {
+            p_cop.second *= -1;
+            p_thief.second *= -1;
+            p_cop.second += m + 1;          // y becomes m+1-y
+            p_thief.second += m + 1;
+        }
+
+        // Closed-form capture time in this diagonal configuration (times 2 for alternation).
+        ans += (p_cop.second - p_cop.first + n - 2) * 2;
+
+        cout << ans << endl;
+        return;
+    }
+
+    // General remaining case (same color, not diagonal): another closed-form time.
+    // Distance to bottom border + distance to farther horizontal border, times 2.
+    ans += (n - p_cop.first - 1 + max(p_cop.second - 1, m - p_cop.second)) * 2;
+    cout << ans << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);  // Fast I/O.
+    cin.tie(nullptr);
+
+    int T = 1;                         // Only one test case in this problem.
+    // cin >> T;                       // (left disabled)
+    for(int test = 1; test <= T; test++) {
+        read();                        // Read input.
+        solve();                       // Compute answer.
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same logic) with detailed comments
+
+```python
+import sys
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    # Read grid size
+    n = int(next(it))   # height
+    m = int(next(it))   # width
+
+    # Read positions (row, col)
+    cx = int(next(it)); cy = int(next(it))
+    tx = int(next(it)); ty = int(next(it))
+
+    first = next(it)    # 'C' or 'T'
+
+    # --- Symmetry reduction 1: ensure |dx| >= |dy| by swapping axes if needed ---
+    if abs(cx - tx) < abs(cy - ty):
+        # swap x<->y for both players
+        cx, cy = cy, cx
+        tx, ty = ty, tx
+        # swap dimensions accordingly
+        n, m = m, n
+
+    # --- Symmetry reduction 2: ensure cop is not below thief (cx <= tx) ---
+    if cx > tx:
+        # reflect vertically: x -> n+1-x
+        cx = (n + 1) - cx
+        tx = (n + 1) - tx
+
+    ans = 0
+
+    # If cop moves first, the solution assumes optimal is to move +1 in x direction
+    # (downwards in normalized coordinates), thus consuming move #1.
+    if first == 'C':
+        cx += 1
+        ans += 1
+
+    # If capture already happened
+    if cx == tx and cy == ty:
+        sys.stdout.write(str(ans) + "\n")
+        return
+
+    # --- 1D case: width m == 1 (a single column path) ---
+    if m == 1:
+        # Base chase time (each step effectively costs 2 moves: thief moves in between)
+        ans += (n - cx - 1) * 2
+        # Parity adjustment because staying put is forbidden
+        ans += ((cx ^ tx) & 1)
+        sys.stdout.write(str(ans) + "\n")
+        return
+
+    # --- 2D case: if opposite chessboard colors, thief can evade forever ---
+    # Parity of (x+y) mod2 equals parity of (x xor y) & 1
+    if (((cx ^ cy) ^ (tx ^ ty)) & 1) == 1:
+        sys.stdout.write("0\n")
+        return
+
+    # --- Same color: cop can force capture. Use closed-form formulas. ---
+    if abs(cx - tx) == abs(cy - ty):
+        # Normalize so cop is not left of thief: ensure cy >= ty by reflecting horizontally
+        if cy < ty:
+            cy = (m + 1) - cy
+            ty = (m + 1) - ty
+
+        # Diagonal-case formula, multiplied by 2 for alternating turns
+        ans += (cy - cx + n - 2) * 2
+        sys.stdout.write(str(ans) + "\n")
+        return
+
+    # General case formula
+    ans += (n - cx - 1 + max(cy - 1, m - cy)) * 2
+    sys.stdout.write(str(ans) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Normalize by symmetry: swap axes if \(|dx|<|dy|\) so \(|dx|\ge|dy|\); reflect vertically so \(x_c\le x_t\).
+- If cop moves first, perform one cop step in \(+x\) direction and set `ans=1`.
+- If grid is 1D (`m==1` after normalization): capture is forced; answer is  
+  \((n-x_c-1)\cdot 2 + ((x_c \oplus x_t)\&1)\) plus any initial `ans`.
+- If both dimensions > 1 and initial chessboard colors differ: thief can avoid forever ⇒ output `0`.
+- Otherwise capture is forced:
+  - If \(|dx|=|dy|\) (diagonal case), possibly reflect horizontally so \(y_c\ge y_t\), then  
+    `ans += (y_c - x_c + n - 2) * 2`.
+  - Else  
+    `ans += (n - x_c - 1 + max(y_c-1, m-y_c)) * 2`.
+- Output `ans`.

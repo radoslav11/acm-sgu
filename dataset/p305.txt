@@ -1,0 +1,574 @@
+## 1) Abridged problem statement
+
+You are given **N** arithmetic progressions. Progression *i* contains all integers of the form:
+
+\[
+X = A_i \cdot K + B_i \quad \text{for some integer } K \ge 0
+\]
+
+You must assign **each** progression a **distinct** integer from **1..M** (so all chosen numbers are unique). The goal is to make **as many progressions as possible** receive a number that actually belongs to their progression. (The remaining progressions may receive any unused numbers from 1..M.)
+
+Output any valid assignment of **N** unique numbers in **[1, M]**.
+
+Constraints: \(1 \le N \le 300\), \(N \le M \le 10^9\), \(A_i, B_i\) up to \(10^9\) by absolute value.
+
+---
+
+## 2) Detailed editorial
+
+### Key idea: maximize “good” assignments via bipartite matching
+
+We want to pick for each progression a distinct number in \([1..M]\). If a progression gets a number from its own set, call it a **good** assignment. We want to **maximize** the number of good assignments.
+
+This is a classical setup for **maximum bipartite matching**:
+
+- Left side: progressions \(i = 0..N-1\)
+- Right side: numbers \(x \in [1..M]\)
+- Edge \((i, x)\) exists if \(x\) is in progression \(i\)
+
+Then a matching corresponds to assigning distinct numbers to some progressions, and maximum matching size is the maximum number of progressions that can be “satisfied”.
+
+### Problem: \(M\) can be huge (up to \(10^9\))
+
+We cannot build nodes for all numbers 1..M.
+
+We need to shrink the right side **without losing optimality**.
+
+### Why only the first N feasible numbers per progression are enough
+
+For each progression \(i\), consider the list of its elements that lie in \([1..M]\), in increasing order:
+\[
+x_0 < x_1 < x_2 < \dots
+\]
+
+Claim (standard “Hall/augmentation” style reasoning): in a maximum matching with only **N** left nodes, it is enough to consider at most the first **N** candidates per progression. Intuition:
+
+- There are only **N** progressions total.
+- If some matched number for a progression is “too far” in its list, there are many earlier numbers that could be swapped in unless they are all “blocked” by other matches; but only \(N-1\) other progressions exist.
+- Thus we can restrict each left node to a bounded number (≤ N) of candidate right nodes and still allow an optimal matching.
+
+The provided solution uses exactly that: for each progression, it generates up to **N** valid values in \([1..M]\), starting from the first one inside the interval.
+
+### Generating candidates for one progression
+
+Progression: \(x = A k + B\), \(k \ge 0\).
+
+- If \(A = 0\): the progression is constant \(x=B\). If \(1 \le B \le M\), the only candidate is \(B\).
+- If \(A \neq 0\):
+  - We need the smallest \(k \ge 0\) such that \(x\) falls inside \([1..M]\).
+  - For \(A>0\), if \(B < 1\), increase \(k\) to reach at least 1.
+  - For \(A<0\), values decrease with \(k\); to get into \([1..M]\), if \(B > M\), increase \(k\) to drop down to \(M\).
+  - After finding this starting \(k\), generate:
+    \[
+    x = A(start\_k + j) + B \quad \text{for } j=0..N-1
+    \]
+    stopping early when \(x\) leaves \([1..M]\).
+
+So each progression yields at most \(N\) candidates.
+
+### Coordinate compression of candidate values
+
+Different progressions may generate the same numeric candidates. We collect all candidates across all progressions, sort and unique them. Suppose there are `V` unique candidate values (with \(V \le N^2\)).
+
+Now the bipartite graph is:
+
+- Left: N progressions
+- Right: V compressed candidate values
+- Edge if the value is a candidate for that progression
+
+Then run **Hopcroft–Karp** to compute maximum matching in \(O(E\sqrt{V})\), where \(E \le N \cdot N = 90{,}000\) (since each left has ≤ N edges). This fits easily.
+
+### Completing the full assignment
+
+After matching:
+- For matched progressions, output their matched candidate value (these are guaranteed in the progression and unique).
+- For unmatched progressions, assign any still-unused numbers from 1..M (scan from 1 upwards). Since \(M \ge N\), there will always be enough unused numbers.
+
+This preserves maximal “good” count because we already maximized it with matching; the rest are forced to be “bad” anyway.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/hopcroft_karp.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes size is already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Hopcroft–Karp implementation for maximum bipartite matching.
+// Left side size = n, right side size = m.
+class HopcroftKarp {
+  private:
+    int n, m;               // n = #left nodes, m = #right nodes
+    vector<int> dist;       // BFS levels for left nodes
+
+    // BFS builds layered graph of alternating paths from all free left nodes.
+    // Returns true if there exists at least one augmenting path to a free right node.
+    bool bfs() {
+        queue<int> q;
+
+        // Initialize all distances to -1 (unvisited)
+        dist.assign(n, -1);
+
+        // Start BFS from all currently unmatched left nodes
+        for(int u = 0; u < n; u++) {
+            if(inv_match[u] == -1) {  // u is free on the left
+                dist[u] = 0;
+                q.push(u);
+            }
+        }
+
+        bool found = false; // whether we can reach any free right node
+
+        while(!q.empty()) {
+            int u = q.front();
+            q.pop();
+
+            // Explore all edges u -> v (v on right)
+            for(int v: adj[u]) {
+                int m = match[v]; // m = left node matched with v, or -1 if free
+
+                if(m == -1) {
+                    // We found an edge to a free right node: augmenting path exists
+                    found = true;
+                } else if(dist[m] == -1) {
+                    // Follow the matched edge back to left node m and continue BFS
+                    dist[m] = dist[u] + 1;
+                    q.push(m);
+                }
+            }
+        }
+
+        return found;
+    }
+
+    // DFS tries to find augmenting paths starting from left node u
+    // in the layered graph built by bfs().
+    bool dfs(int u) {
+        for(int v: adj[u]) {
+            int m = match[v]; // current matched left node for v
+
+            // If v is free, or we can reroute the matching from m deeper in the layer graph
+            if(m == -1 || (dist[m] == dist[u] + 1 && dfs(m))) {
+                // Match u with v
+                inv_match[u] = v;
+                match[v] = u;
+                return true;
+            }
+        }
+
+        // Mark u as dead-end in this BFS phase to prune future DFS calls
+        dist[u] = -1;
+        return false;
+    }
+
+  public:
+    vector<int> match, inv_match;      // match[v]=u, inv_match[u]=v
+    vector<vector<int>> adj;           // adjacency list from left to right
+
+    // Constructor: specify sizes for left and right sets
+    HopcroftKarp(int _n, int _m = -1) : n(_n), m(_m == -1 ? _n : _m) {
+        adj.assign(n, vector<int>());
+        clear(false); // reset matchings, keep adjacency
+    }
+
+    // Reset match arrays; optionally clear all edges too
+    void clear(bool clear_adj = true) {
+        match.assign(m, -1);      // initially all right nodes are unmatched
+        inv_match.assign(n, -1);  // initially all left nodes are unmatched
+        if(clear_adj) {
+            adj.assign(n, vector<int>());
+        }
+    }
+
+    // Add an edge from left node u to right node v
+    void add_edge(int u, int v) { adj[u].push_back(v); }
+
+    // Compute maximum matching; optional shuffling for randomized behavior
+    int max_matching(bool shuffle_edges = false) {
+        if(shuffle_edges) {
+            for(int i = 0; i < n; i++) {
+                shuffle(
+                    adj[i].begin(), adj[i].end(),
+                    mt19937(
+                        chrono::steady_clock::now().time_since_epoch().count()
+                    )
+                );
+            }
+        }
+
+        int ans = 0; // matching size
+
+        // Repeatedly find shortest augmenting paths using BFS layers
+        while(bfs()) {
+            // Try to augment starting from every free left node
+            for(int u = 0; u < n; u++) {
+                if(inv_match[u] == -1 && dfs(u)) {
+                    ans++;
+                }
+            }
+        }
+        return ans;
+    }
+
+    // Return list of matched pairs (u on left, v on right)
+    vector<pair<int, int>> get_matching() {
+        vector<pair<int, int>> matches;
+        for(int u = 0; u < n; u++) {
+            if(inv_match[u] != -1) {
+                matches.emplace_back(u, inv_match[u]);
+            }
+        }
+        return matches;
+    }
+
+    // Minimum vertex cover in bipartite graph (not used in this problem)
+    pair<vector<int>, vector<int>> minimum_vertex_cover() {
+        vector<int> left_cover, right_cover;
+        bfs();
+
+        // Left cover: left nodes NOT reachable in the BFS alternating forest
+        for(int u = 0; u < n; u++) {
+            if(dist[u] == -1) {
+                left_cover.push_back(u);
+            }
+        }
+
+        // Right cover: right nodes matched to reachable left nodes
+        for(int v = 0; v < m; v++) {
+            if(match[v] != -1 && dist[match[v]] != -1) {
+                right_cover.push_back(v);
+            }
+        }
+
+        return {left_cover, right_cover};
+    }
+};
+
+using BipartiteMatching = HopcroftKarp;
+
+int n, m;                 // n progressions, numbers in [1..m]
+vector<pair<int, int>> p; // (Ai, Bi) for each progression
+
+void read() {
+    cin >> n >> m;
+    p.resize(n);
+    cin >> p; // read all pairs
+}
+
+void solve() {
+    // Build limited candidate values for each progression.
+    // We'll store up to n values for each progression.
+    vector<vector<int64_t>> candidates(n);
+
+    for(int i = 0; i < n; i++) {
+        int64_t a = p[i].first, b = p[i].second;
+
+        if(a == 0) {
+            // Constant progression: only value is b (for any k)
+            if(b >= 1 && b <= m) {
+                candidates[i].push_back(b);
+            }
+        } else {
+            // Find starting k so that x = a*k + b is inside [1..m]
+            int64_t start_k = 0;
+
+            if(a > 0) {
+                // Increasing progression. If b < 1, increase k until x >= 1.
+                if(b < 1) {
+                    // ceil((1 - b) / a)
+                    start_k = (1 - b + a - 1) / a;
+                }
+            } else {
+                // Decreasing progression. If b > m, increase k until x <= m.
+                if(b > m) {
+                    // ceil((b - m) / (-a))
+                    start_k = (b - m + (-a) - 1) / (-a);
+                }
+            }
+
+            // Generate up to n values from start_k onward, stopping when leaving [1..m]
+            for(int j = 0; j < n; j++) {
+                int64_t x = a * (start_k + j) + b;
+                if(x < 1 || x > m) {
+                    break;
+                }
+                candidates[i].push_back(x);
+            }
+        }
+    }
+
+    // Collect all candidate values to compress them into 0..V-1
+    vector<int64_t> all_vals;
+    for(int i = 0; i < n; i++) {
+        for(int64_t v: candidates[i]) {
+            all_vals.push_back(v);
+        }
+    }
+
+    sort(all_vals.begin(), all_vals.end());
+    all_vals.erase(unique(all_vals.begin(), all_vals.end()), all_vals.end());
+    int num_vals = (int)all_vals.size();
+
+    // Map actual value -> compressed index
+    auto compress = [&](int64_t v) {
+        return (int)(lower_bound(all_vals.begin(), all_vals.end(), v) -
+                     all_vals.begin());
+    };
+
+    // Build bipartite matching instance:
+    // left = n progressions, right = num_vals distinct candidates.
+    BipartiteMatching bm(n, num_vals);
+
+    // Add edges i -> value_index for all candidate values of progression i
+    for(int i = 0; i < n; i++) {
+        for(int64_t v: candidates[i]) {
+            bm.add_edge(i, compress(v));
+        }
+    }
+
+    // Maximize number of satisfied progressions
+    bm.max_matching();
+
+    // Prepare answer: ans[i] is assigned number for progression i
+    set<int64_t> used;        // used assigned numbers
+    vector<int64_t> ans(n, -1);
+
+    // Put all matched (good) assignments in the answer
+    for(int i = 0; i < n; i++) {
+        if(bm.inv_match[i] != -1) {
+            ans[i] = all_vals[bm.inv_match[i]]; // decompress to actual number
+            used.insert(ans[i]);
+        }
+    }
+
+    // For the rest, assign smallest unused numbers from 1..m (may be "bad")
+    int64_t next_free = 1;
+    for(int i = 0; i < n; i++) {
+        if(ans[i] == -1) {
+            while(used.count(next_free)) { // skip already used numbers
+                next_free++;
+            }
+            ans[i] = next_free;
+            used.insert(next_free);
+            next_free++;
+        }
+    }
+
+    // Output the assignment
+    for(int i = 0; i < n; i++) {
+        cout << ans[i] << " \n"[i == n - 1];
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // problem has one test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque
+
+# Hopcroft–Karp maximum bipartite matching:
+# Left side: 0..n-1, Right side: 0..m-1
+class HopcroftKarp:
+    def __init__(self, n, m):
+        self.n = n
+        self.m = m
+        self.adj = [[] for _ in range(n)]  # edges from left to right
+        self.match = [-1] * m              # match[v] = u
+        self.inv_match = [-1] * n          # inv_match[u] = v
+        self.dist = [-1] * n               # BFS layers for left nodes
+
+    def add_edge(self, u, v):
+        self.adj[u].append(v)
+
+    def bfs(self):
+        q = deque()
+        self.dist = [-1] * self.n
+
+        # Start BFS from all free left nodes
+        for u in range(self.n):
+            if self.inv_match[u] == -1:
+                self.dist[u] = 0
+                q.append(u)
+
+        found_free_right = False
+
+        # BFS over alternating edges:
+        # left u -> right v (unmatched edge), right v -> left match[v] (matched edge)
+        while q:
+            u = q.popleft()
+            for v in self.adj[u]:
+                mu = self.match[v]  # left node matched with v (or -1)
+                if mu == -1:
+                    found_free_right = True
+                else:
+                    if self.dist[mu] == -1:
+                        self.dist[mu] = self.dist[u] + 1
+                        q.append(mu)
+
+        return found_free_right
+
+    def dfs(self, u):
+        for v in self.adj[u]:
+            mu = self.match[v]
+            # Either v is free, or we can recurse to rematch mu in next layer
+            if mu == -1 or (self.dist[mu] == self.dist[u] + 1 and self.dfs(mu)):
+                self.inv_match[u] = v
+                self.match[v] = u
+                return True
+
+        # Mark u as dead end for this phase
+        self.dist[u] = -1
+        return False
+
+    def max_matching(self):
+        res = 0
+        while self.bfs():
+            for u in range(self.n):
+                if self.inv_match[u] == -1 and self.dfs(u):
+                    res += 1
+        return res
+
+
+def solve():
+    it = iter(sys.stdin.read().strip().split())
+    n = int(next(it))
+    M = int(next(it))
+
+    prog = []
+    for _ in range(n):
+        a = int(next(it)); b = int(next(it))
+        prog.append((a, b))
+
+    # Build up to n candidate values per progression that lie in [1..M]
+    candidates = [[] for _ in range(n)]
+
+    for i, (a, b) in enumerate(prog):
+        if a == 0:
+            # Constant progression: x = b
+            if 1 <= b <= M:
+                candidates[i].append(b)
+        else:
+            start_k = 0
+
+            if a > 0:
+                # Need smallest k >= 0 with a*k + b >= 1
+                if b < 1:
+                    # ceil((1-b)/a)
+                    start_k = (1 - b + a - 1) // a
+            else:
+                # a < 0 decreasing: need a*k + b <= M
+                if b > M:
+                    # ceil((b-M)/(-a))
+                    start_k = (b - M + (-a) - 1) // (-a)
+
+            # Generate first up to n values from start_k, stop if out of bounds
+            for j in range(n):
+                x = a * (start_k + j) + b
+                if x < 1 or x > M:
+                    break
+                candidates[i].append(x)
+
+    # Coordinate compress all candidate values to a small right side
+    all_vals = []
+    for i in range(n):
+        all_vals.extend(candidates[i])
+
+    all_vals = sorted(set(all_vals))  # unique sorted
+    idx = {v: k for k, v in enumerate(all_vals)}  # value -> compressed id
+
+    # Build matching graph
+    hk = HopcroftKarp(n, len(all_vals))
+    for i in range(n):
+        for v in candidates[i]:
+            hk.add_edge(i, idx[v])
+
+    hk.max_matching()
+
+    # Construct final assignment
+    ans = [-1] * n
+    used = set()
+
+    # Matched ones get their progression member
+    for i in range(n):
+        j = hk.inv_match[i]
+        if j != -1:
+            val = all_vals[j]
+            ans[i] = val
+            used.add(val)
+
+    # Unmatched ones get smallest unused numbers in [1..M]
+    nxt = 1
+    for i in range(n):
+        if ans[i] == -1:
+            while nxt in used:
+                nxt += 1
+            ans[i] = nxt
+            used.add(nxt)
+            nxt += 1
+
+    print(" ".join(map(str, ans)))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Model “good assignments” as a bipartite graph: left = progressions, right = numbers; edge if number belongs to progression.
+- Need maximum number of satisfied progressions ⇒ **maximum bipartite matching**.
+- \(M\) is huge, so for each progression generate only the **first ≤ N** values in \([1..M]\) (starting from the first feasible \(k\)); this is enough for optimal matching because there are only N left nodes.
+- Collect all generated values, **coordinate compress** them to size \(V \le N^2\).
+- Run **Hopcroft–Karp** on graph with \(N\) left and \(V\) right.
+- Output matched values for satisfied progressions; fill the rest with smallest unused numbers from 1..M (possible since \(M \ge N\)).
