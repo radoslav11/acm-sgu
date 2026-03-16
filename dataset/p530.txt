@@ -1,0 +1,379 @@
+## 1) Abridged problem statement
+
+There are `n` programmers connected by an undirected friendship graph with `m` edges. Two companies hire alternately, Company 1 first.  
+A company may hire any single programmer as its **first** hire; afterwards, every new hire must have at least one friend already hired by that company (so each company grows a connected “territory” from its start vertex).
+
+Among programmers, vertices `1, 2, 3` are geniuses. With optimal play, exactly one company will end up hiring **two** geniuses (since each can always start by taking a genius to guarantee at least one).
+
+Given the graph, determine whether Company **1** or **2** gets two geniuses.
+
+Constraints: `n ≤ 1e5`, `m ≤ 2e5`.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### A. Model the hiring process as expanding regions by distance
+If a company starts at some vertex `s`, then the set of vertices it can possibly hire (ignoring the opponent for a moment) is exactly the vertices reachable from `s`, and the “earliest” it can reach a vertex `v` is its graph distance `dist(s, v)`:
+- on turn 0 it has `{s}`
+- then it can add neighbors (distance 1), then distance 2, etc.
+
+With alternating turns and competition, a vertex is essentially “claimed” by whichever company can reach and pick it earlier, but because they alternate, the exact race depends on who starts where.
+
+We only care about geniuses `1,2,3`, i.e. nodes `0,1,2` in 0-based indexing.
+
+So compute shortest path distances:
+- `d0[v] = dist(1, v)`
+- `d1[v] = dist(2, v)`
+- `d2[v] = dist(3, v)`
+
+This is done by 3 BFS runs (graph is unweighted).
+
+### B. Strategic “junction” vertices and dominance in distance space
+Imagine a company wants to eventually grab **two** geniuses. A useful start/junction vertex is one that is simultaneously “good” (close) to two geniuses while still being reachable early from the first genius it already has.
+
+The solution checks, for each of the 6 permutations of geniuses `(a,b,c)`:
+- treat `a` as the “primary” genius a company has/targets first,
+- and analyze vertices in increasing order of:
+  1) distance to `a`, then
+  2) distance to `b`, then
+  3) distance to `c`.
+
+Now sweep vertices by **layers of equal `dist_to_a`**. This matters because within the same primary-distance layer, neither company is strictly earlier via `a`; ties must be handled carefully, so we only allow a layer to “update the best seen so far” *after* classifying the whole layer.
+
+For a vertex `v`, define the pair:
+- `(db, dc) = (dist(v,b), dist(v,c))`
+
+We maintain while sweeping:
+- `best_sec` = minimum `db` among all vertices in *previous* layers (strictly smaller `dist_to_a`)
+- `best_tert` = minimum `dc` among all vertices in previous layers
+- `seen` = set of pairs `(db, dc)` already appearing in previous layers
+
+A vertex `v` is marked **dominated** (i.e., strategically “stealable” / not uniquely strong) if:
+- `db > best_sec` **or** `dc > best_tert`  
+  meaning there exists some earlier (closer-to-`a`) vertex that is strictly better in at least one of the other dimensions, and `v` is not simultaneously improving anything; **or**
+- `(db, dc)` already appeared earlier (`seen`)  
+  meaning an earlier vertex offers identical access to `b` and `c`, so `v` is redundant.
+
+Intuition: if a vertex is dominated in this sense, then whenever one company tries to rely on it as a critical junction, the opponent can choose an earlier (or equivalent) junction that is at least as good for reaching the remaining geniuses.
+
+We do this dominance test for **all 6 permutations** because we don’t know which genius becomes “primary/secondary/tertiary” under optimal play and counterplay.
+
+### C. Winning criterion
+- If there exists **any** vertex that is **not** dominated in **all** permutations, then Company 1 has a forcing strategy to secure two geniuses (output `1`).
+- Otherwise, every vertex is dominated in at least one scenario, and Company 2 can always counter such that Company 1 cannot secure an “unstealable” junction first (output `2`).
+
+This matches the provided solution’s final check:
+- if any `is_dominated[v] == false` ⇒ Company 1 wins.
+
+### D. Complexity
+- 3 BFS: `O(n + m)`
+- For each of 6 permutations: sort `n` vertices with a comparator using 3 distances ⇒ `O(6 * n log n)`
+- Sweeps are linear per permutation.
+
+Total fits easily in constraints.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// A large value used as "infinity" when a node is unreachable in BFS
+const int inf = (int)1e9 + 42;
+
+int n, m;                    // number of nodes and edges
+vector<vector<int>> adj;     // adjacency list of the undirected graph
+
+// Read graph input
+void read() {
+    cin >> n >> m;
+    adj.assign(n, {});       // allocate n empty adjacency lists
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        u--, v--;            // convert to 0-based indexing
+        adj[u].push_back(v);
+        adj[v].push_back(u);
+    }
+}
+
+// BFS from a given start vertex, store distances into distances[*][genius]
+void bfs(int start, vector<vector<int>>& distances, int genius) {
+    vector<int> d(n, -1);    // d[v] = BFS distance from start, -1 = unvisited
+    queue<int> q;
+
+    d[start] = 0;            // start at distance 0
+    q.push(start);
+
+    while (!q.empty()) {
+        int u = q.front();
+        q.pop();
+        for (int v: adj[u]) {
+            if (d[v] == -1) {        // first time we see v
+                d[v] = d[u] + 1;     // BFS distance update
+                q.push(v);
+            }
+        }
+    }
+
+    // Copy BFS result into the distances table; unreachable => inf
+    for (int i = 0; i < n; i++) {
+        distances[i][genius] = (d[i] == -1 ? inf : d[i]);
+    }
+}
+
+void solve() {
+    // distances[v][k] will store dist(v, genius_k), for k in {0,1,2}
+    vector<vector<int>> distances(n, vector<int>(3));
+
+    // BFS from each genius node: 0,1,2 (which correspond to 1,2,3 in statement)
+    for (int i = 0; i < 3; i++) {
+        bfs(i, distances, i);
+    }
+
+    // nodes = [0..n-1], will be sorted differently per permutation
+    vector<int> nodes(n);
+    iota(nodes.begin(), nodes.end(), 0);
+
+    // is_dominated[v] == true means v was found "dominated" in at least
+    // one permutation sweep
+    vector<bool> is_dominated(n, false);
+
+    // perm is a permutation of {0,1,2} describing primary/secondary/tertiary
+    vector<int> perm = {0, 1, 2};
+
+    // Try all 6 permutations
+    do {
+        int primary = perm[0];
+        int secondary = perm[1];
+        int tertiary = perm[2];
+
+        // Sort nodes by (dist to primary, then secondary, then tertiary), tie by id
+        sort(nodes.begin(), nodes.end(), [&](int a, int b) {
+            for (int k = 0; k < 3; k++) {
+                int ga = distances[a][perm[k]];
+                int gb = distances[b][perm[k]];
+                if (ga != gb) return ga < gb;
+            }
+            return a < b;
+        });
+
+        // seen keeps which (dist to secondary, dist to tertiary) pairs were
+        // encountered in earlier primary-layers.
+        map<pair<int,int>, int> seen;
+
+        // best_sec = minimum dist to secondary among earlier layers
+        // best_tert = minimum dist to tertiary among earlier layers
+        int best_sec = inf;
+        int best_tert = inf;
+
+        // Sweep nodes grouped by equal distance to primary
+        for (int i = 0; i < n; ) {
+            int layer_start = i;
+            int curr_dist = distances[nodes[i]][primary]; // primary distance for this layer
+
+            // First pass over this layer: classify dominance using only previous layers
+            while (i < n && distances[nodes[i]][primary] == curr_dist) {
+                int v = nodes[i];
+                int db = distances[v][secondary];
+                int dc = distances[v][tertiary];
+
+                // Dominated if it is worse than best so far in either component,
+                // or if an earlier layer had exactly the same (db,dc) pair.
+                if (db > best_sec || dc > best_tert || seen.count({db, dc})) {
+                    is_dominated[v] = true;
+                }
+                i++;
+            }
+
+            // Second pass: after processing the whole layer, "commit" it into history
+            for (int j = layer_start; j < i; j++) {
+                int v = nodes[j];
+                int db = distances[v][secondary];
+                int dc = distances[v][tertiary];
+
+                seen[{db, dc}] = 1;          // remember this exact pair
+                best_sec = min(best_sec, db); // update best distances seen so far
+                best_tert = min(best_tert, dc);
+            }
+        }
+    } while (next_permutation(perm.begin(), perm.end()));
+
+    // If any vertex was never marked dominated, Company 1 has a winning strategy.
+    bool company_one_wins = false;
+    for (bool marked: is_dominated) {
+        if (!marked) {
+            company_one_wins = true;
+            break;
+        }
+    }
+
+    cout << (company_one_wins ? 1 : 2) << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;           // single test case in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque
+
+INF = 10**18
+
+def bfs(start, adj, n):
+    """Return array d where d[v] is shortest distance from start, or INF if unreachable."""
+    d = [-1] * n
+    q = deque([start])
+    d[start] = 0
+
+    while q:
+        u = q.popleft()
+        for v in adj[u]:
+            if d[v] == -1:
+                d[v] = d[u] + 1
+                q.append(v)
+
+    # Convert -1 to INF for easier comparisons later
+    return [INF if x == -1 else x for x in d]
+
+
+def solve():
+    input = sys.stdin.readline
+    n, m = map(int, input().split())
+
+    # Build undirected graph
+    adj = [[] for _ in range(n)]
+    for _ in range(m):
+        u, v = map(int, input().split())
+        u -= 1
+        v -= 1
+        adj[u].append(v)
+        adj[v].append(u)
+
+    # distances[v][k] = distance from genius k (0,1,2) to v
+    d0 = bfs(0, adj, n)
+    d1 = bfs(1, adj, n)
+    d2 = bfs(2, adj, n)
+    distances = [d0, d1, d2]  # distances[k][v]
+    # For convenience in comparator-like access, we’ll also expose dist(v,k)
+    # as dist_vk[v][k]
+    dist_vk = list(zip(d0, d1, d2))  # tuple per vertex: (to g0, to g1, to g2)
+
+    nodes = list(range(n))
+    is_dominated = [False] * n
+
+    perms = [
+        (0, 1, 2),
+        (0, 2, 1),
+        (1, 0, 2),
+        (1, 2, 0),
+        (2, 0, 1),
+        (2, 1, 0),
+    ]
+
+    for primary, secondary, tertiary in perms:
+        # Sort by (dist to primary, then to secondary, then to tertiary, then id)
+        nodes.sort(key=lambda v: (dist_vk[v][primary], dist_vk[v][secondary], dist_vk[v][tertiary], v))
+
+        # seen pairs from strictly earlier primary-distance layers
+        seen = set()
+
+        best_sec = INF
+        best_tert = INF
+
+        i = 0
+        while i < n:
+            layer_start = i
+            curr_primary_dist = dist_vk[nodes[i]][primary]
+
+            # Classify nodes in this layer using only previous layers' info
+            while i < n and dist_vk[nodes[i]][primary] == curr_primary_dist:
+                v = nodes[i]
+                db = dist_vk[v][secondary]
+                dc = dist_vk[v][tertiary]
+
+                if db > best_sec or dc > best_tert or (db, dc) in seen:
+                    is_dominated[v] = True
+                i += 1
+
+            # Now add this layer into history
+            for j in range(layer_start, i):
+                v = nodes[j]
+                db = dist_vk[v][secondary]
+                dc = dist_vk[v][tertiary]
+                seen.add((db, dc))
+                if db < best_sec:
+                    best_sec = db
+                if dc < best_tert:
+                    best_tert = dc
+
+    # If any vertex is not dominated across all permutations, company 1 wins
+    company_one_wins = any(not x for x in is_dominated)
+    print(1 if company_one_wins else 2)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+1. Run BFS from geniuses 1,2,3 to get `dist[v][0..2]`.
+2. For each permutation `(a,b,c)` of geniuses:
+   - sort vertices by `(dist[v][a], dist[v][b], dist[v][c])`;
+   - sweep by equal `dist[v][a]` layers, maintaining:
+     - `best_b`, `best_c` = minimal `dist[*][b]`, `dist[*][c]` seen in earlier layers,
+     - `seen` = pairs `(dist[*][b], dist[*][c])` seen in earlier layers.
+   - mark vertex `v` dominated if `dist[v][b] > best_b` or `dist[v][c] > best_c` or its pair already in `seen`.
+3. If some vertex is never dominated (remains “undominated” overall), output `1`, else output `2`.
+
+This matches the provided code and runs in `O((n+m) + 6·n log n)`.

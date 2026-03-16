@@ -1,0 +1,348 @@
+## 1) Abridged problem statement
+
+You are given **K (2..6)** distinct monochrome symbols, each drawn on an **N×M (≤10×10)** grid as `0/1`.  
+Choose a **minimum-size set of pixel positions** such that **for every pair of symbols**, there exists **at least one chosen pixel** where the two symbols have **different** values.  
+
+Output:
+1) the minimum number of chosen pixels  
+2) an **N×M mask** of `0/1` indicating which pixel positions are chosen (any optimal set is acceptable).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key reformulation
+We need a set of pixel positions that *separates* all symbols.  
+For every pair of symbols \((a,b)\), we require at least one chosen pixel \(p\) such that:
+\[
+symbol[a][p] \ne symbol[b][p]
+\]
+This is a classic “distinguish all pairs” / “set cover over pairs” style problem.
+
+### Why a bitmask over symbol-pairs works
+Since \(K \le 6\), the number of unordered pairs is:
+\[
+P = \binom{K}{2} \le \binom{6}{2} = 15
+\]
+So we can represent “which pairs are already distinguishable” with a bitmask of length \(P\) (at most 15 bits), i.e. up to \(2^{15}=32768\) states.
+
+### Precompute what each pixel contributes
+Flatten the grid into a linear list of `total = N*M` pixel positions.
+
+Enumerate all pairs of symbols \((a,b)\) and give each pair an index `i` from `0..P-1`.
+
+For each pixel position `p`, build `pixel_mask[p]`:
+- bit `i` is set if symbols `a` and `b` differ at pixel `p`.
+
+Then if our current “distinguished pairs” mask is `mask`, and we choose pixel `p`, we transition to:
+\[
+new\_mask = mask \;|\; pixel\_mask[p]
+\]
+
+### Dynamic programming over pixels
+We do DP over positions:
+
+- `dp[p][mask]` = minimum number of chosen pixels among the first `p` pixel positions that achieves distinguished-pairs set `mask`.
+- Dimensions:
+  - `p` from `0..total`
+  - `mask` from `0..full_mask` where `full_mask = (1<<P)-1` means all pairs distinguished.
+
+Transitions at pixel `p`:
+1) Skip pixel:
+   - `dp[p+1][mask] = min(dp[p+1][mask], dp[p][mask])`
+2) Take pixel:
+   - `new_mask = mask | pixel_mask[p]`
+   - `dp[p+1][new_mask] = min(dp[p+1][new_mask], dp[p][mask] + 1)`
+
+Complexity:
+- States: `total * 2^P` ≤ `100 * 32768` = ~3.3M
+- Each state does O(1) work  
+This fits easily.
+
+### Reconstructing the chosen pixels
+The code stores `prev_mask_of[p][mask]`, meaning: when reaching `(p,mask)`, what mask did we come from at step `p-1`.
+
+While walking backward from `(total, full_mask)`:
+- If `prev_mask != current_mask`, the pixel was taken (because only “take” changes the mask; “skip” keeps it the same).
+- Mark that pixel as chosen and update `mask = prev_mask`.
+
+Finally print the count and the chosen pixel mask in grid form.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (common in contests)
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector (space-separated). (Not used in this solution output.)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m, k;                          // Grid size N x M and number of symbols K
+vector<vector<bool>> symbols;         // symbols[i] is the flattened bitmap of symbol i (size n*m)
+
+void read() {
+    cin >> n >> m >> k;               // Read dimensions and number of symbols
+    symbols.resize(k);                // Prepare storage for k symbols
+
+    for(int i = 0; i < k; i++) {
+        symbols[i] = {};              // Start with empty flattened vector<bool>
+        for(int j = 0; j < n; j++) {  // Read N rows for this symbol
+            string s;
+            cin >> s;                 // Each row is a string of length M (0/1)
+            for(char c: s) {
+                symbols[i].push_back(c - '0'); // Append each pixel as boolean (0/1)
+            }
+        }
+    }
+}
+
+void solve() {
+    // We need a minimum set of pixel positions that distinguishes every pair of symbols.
+    // Since k<=6, number of pairs C(k,2) <= 15, so we can track distinguished pairs in a bitmask.
+
+    int total = n * m;                // Total number of pixel positions
+    int pairs = 0;                    // Number of symbol pairs
+    vector<pair<int, int>> pair_list; // List of all (a,b) pairs in a fixed order
+
+    // Enumerate all unordered pairs (a,b), a<b
+    for(int a = 0; a < k; a++) {
+        for(int b = a + 1; b < k; b++) {
+            pair_list.push_back({a, b});
+            pairs++;
+        }
+    }
+
+    int full_mask = (1 << pairs) - 1; // Mask with all pairs distinguished (all bits = 1)
+
+    // pixel_mask[p] tells which symbol-pairs are distinguished by looking at pixel p alone
+    vector<int> pixel_mask(total);
+    for(int p = 0; p < total; p++) {              // For each pixel position
+        for(int i = 0; i < pairs; i++) {          // For each symbol pair
+            auto [a, b] = pair_list[i];
+            if(symbols[a][p] != symbols[b][p]) {  // If they differ at pixel p
+                pixel_mask[p] |= (1 << i);        // Then pair i becomes distinguished
+            }
+        }
+    }
+
+    // dp[p][mask] = minimum number of chosen pixels among first p pixels achieving 'mask'
+    // Initialize to "infinity" = total+1
+    vector<vector<int>> dp(total + 1, vector<int>(full_mask + 1, total + 1));
+
+    // prev_mask_of[p][mask] stores previous mask used to reconstruct solution
+    vector<vector<int>> prev_mask_of(total + 1, vector<int>(full_mask + 1, -1));
+
+    dp[0][0] = 0;                     // With 0 pixels considered, only mask=0 is possible with cost 0
+
+    // Iterate over pixel positions
+    for(int p = 0; p < total; p++) {
+        for(int mask = 0; mask <= full_mask; mask++) {
+
+            // If this state is unreachable, skip
+            if(dp[p][mask] > total) {
+                continue;
+            }
+
+            // Option 1: skip pixel p -> mask stays same, cost stays same
+            if(dp[p + 1][mask] > dp[p][mask]) {
+                dp[p + 1][mask] = dp[p][mask];
+                prev_mask_of[p + 1][mask] = mask; // Came from same mask => indicates "skipped"
+            }
+
+            // Option 2: take pixel p -> mask gains pixel_mask[p], cost + 1
+            int new_mask = mask | pixel_mask[p];
+            if(dp[p + 1][new_mask] > dp[p][mask] + 1) {
+                dp[p + 1][new_mask] = dp[p][mask] + 1;
+                prev_mask_of[p + 1][new_mask] = mask; // Came from old mask => indicates "taken"
+            }
+        }
+    }
+
+    // Reconstruct chosen pixels by walking backwards from (total, full_mask)
+    vector<bool> chosen(total, false); // chosen[p]=true if pixel p is included
+    int mask = full_mask;
+
+    for(int p = total; p > 0; p--) {
+        int pm = prev_mask_of[p][mask]; // previous mask at step p-1
+
+        // If previous mask differs, we must have taken pixel p-1
+        // (Skipping would have pm == mask)
+        if(pm != mask) {
+            chosen[p - 1] = true;
+        }
+        mask = pm;                      // move to previous state
+    }
+
+    // Output minimum number of selected pixels
+    cout << dp[total][full_mask] << '\n';
+
+    // Output N lines of M chars: 1 for chosen, 0 otherwise
+    for(int i = 0; i < total; i++) {
+        cout << (chosen[i] ? '1' : '0');
+        if((i + 1) % m == 0) {          // line break after each row of M pixels
+            cout << '\n';
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);   // Fast I/O
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;                        // Not used; problem has single test
+    for(int test = 1; test <= T; test++) {
+        read();                         // Read input
+        solve();                        // Solve and print output
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    # The input may contain blank lines; split() safely ignores them.
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+    k = int(next(it))
+
+    total = n * m
+
+    # Read k symbols, each as a flattened list of ints (0/1) length total
+    symbols = []
+    for _ in range(k):
+        flat = []
+        for _ in range(n):
+            row = next(it)             # string of length m
+            flat.extend(1 if c == '1' else 0 for c in row)
+        symbols.append(flat)
+
+    # Enumerate all unordered pairs of symbols (a,b), a<b
+    pair_list = []
+    for a in range(k):
+        for b in range(a + 1, k):
+            pair_list.append((a, b))
+    pairs = len(pair_list)             # <= 15
+    full_mask = (1 << pairs) - 1
+
+    # For each pixel position p, compute which symbol-pairs differ at p
+    pixel_mask = [0] * total
+    for p in range(total):
+        pm = 0
+        for i, (a, b) in enumerate(pair_list):
+            if symbols[a][p] != symbols[b][p]:
+                pm |= 1 << i
+        pixel_mask[p] = pm
+
+    INF = total + 1
+
+    # dp[mask] = minimal chosen pixels after processing current prefix of pixels
+    # We'll do iterative DP over p; for reconstruction we store parent pointers.
+    dp = [INF] * (full_mask + 1)
+    dp[0] = 0
+
+    # parent[p][mask] = previous mask used to reach state (after processing p pixels)
+    # This is (total+1) x (full_mask+1), similar to the C++ approach.
+    parent = [[-1] * (full_mask + 1) for _ in range(total + 1)]
+    parent[0][0] = 0
+
+    for p in range(total):
+        new_dp = dp[:]  # start with "skip" copied; we'll still relax carefully
+        # Initialize parent for skipped transitions (only when improved/equal? we need actual chosen)
+        # We'll only set parent when we improve the value.
+
+        for mask in range(full_mask + 1):
+            if dp[mask] >= INF:
+                continue
+
+            # Option 1: skip pixel p -> state (p+1, mask)
+            if new_dp[mask] > dp[mask]:
+                new_dp[mask] = dp[mask]
+                parent[p + 1][mask] = mask
+
+            # Option 2: take pixel p -> state (p+1, mask | pixel_mask[p])
+            nm = mask | pixel_mask[p]
+            if new_dp[nm] > dp[mask] + 1:
+                new_dp[nm] = dp[mask] + 1
+                parent[p + 1][nm] = mask
+
+        # One subtlety: for masks carried over unchanged from dp[:] (copy),
+        # parent might be unset. Ensure parent is consistent:
+        for mask in range(full_mask + 1):
+            if parent[p + 1][mask] == -1 and new_dp[mask] == dp[mask]:
+                # This means it came from skipping without improvement due to copy.
+                parent[p + 1][mask] = mask
+
+        dp = new_dp
+
+    # Reconstruct chosen pixels
+    chosen = [0] * total
+    mask = full_mask
+    for p in range(total, 0, -1):
+        pm = parent[p][mask]
+        if pm != mask:
+            chosen[p - 1] = 1  # pixel p-1 was taken
+        mask = pm
+
+    # Output
+    out = []
+    out.append(str(dp[full_mask]))
+    for i in range(n):
+        row = chosen[i * m:(i + 1) * m]
+        out.append("".join('1' if x else '0' for x in row))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- There are \(P=\binom{K}{2}\le 15\) symbol pairs to distinguish.  
+- For each pixel position \(p\), compute a bitmask `pixel_mask[p]` over these pairs: bit \(i\)=1 iff the two symbols of pair \(i\) differ at pixel \(p\).  
+- DP over pixels: `dp[p][mask]` = min chosen pixels among first `p` pixels achieving distinguished-pairs set `mask`.  
+  - Skip pixel: `(p+1, mask)`  
+  - Take pixel: `(p+1, mask | pixel_mask[p])` with +1 cost  
+- Answer is `dp[total][full_mask]`. Store predecessors to reconstruct which pixels were taken and print them as an N×M mask.

@@ -1,0 +1,296 @@
+p327.ans1
+======================
+avtobusubotva
+
+=================
+p327.cpp
+======================
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;
+vector<array<string, 2>> words;
+
+void read() {
+    cin >> n;
+    vector<string> all(n);
+    for(int i = 0; i < n; i++) {
+        cin >> all[i];
+    }
+
+    sort(all.begin(), all.end());
+    all.erase(unique(all.begin(), all.end()), all.end());
+
+    sort(all.begin(), all.end(), [](const string& a, const string& b) {
+        return a.size() < b.size();
+    });
+
+    n = 0;
+    for(int i = 0; i < (int)all.size(); i++) {
+        string rev_i(all[i].rbegin(), all[i].rend());
+        bool ok = true;
+        for(int j = 0; j < (int)all.size(); j++) {
+            if(i == j || all[j].size() <= all[i].size()) {
+                continue;
+            }
+            string rev_j(all[j].rbegin(), all[j].rend());
+            if(all[j].find(all[i]) != string::npos ||
+               all[j].find(rev_i) != string::npos ||
+               rev_j.find(all[i]) != string::npos ||
+               rev_j.find(rev_i) != string::npos) {
+                ok = false;
+                break;
+            }
+        }
+        if(ok) {
+            words.push_back({all[i], rev_i});
+            n++;
+        }
+    }
+}
+
+vector<vector<int>> max_overlap;
+
+void precompute_transitions() {
+    max_overlap.assign(2 * n, vector<int>(2 * n, 0));
+    for(int a = 0; a < 2 * n; a++) {
+        for(int b = 0; b < 2 * n; b++) {
+            if(a / 2 == b / 2) {
+                continue;
+            }
+            const string& wa = words[a / 2][a % 2];
+            const string& wb = words[b / 2][b % 2];
+            int lim = min(wa.size(), wb.size());
+            int best = 0;
+            for(int overlap = 1; overlap <= lim; overlap++) {
+                bool ok = true;
+                for(int k = 0; k < overlap; k++) {
+                    if(wa[wa.size() - overlap + k] != wb[k]) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if(ok) {
+                    best = overlap;
+                }
+            }
+            max_overlap[a][b] = best;
+        }
+    }
+}
+
+vector<vector<int>> dp, prev_state;
+
+void solve() {
+    // To find the shortest palindrome containing all given words, we chain
+    // words (or their reverses) in one half of the palindrome with maximal
+    // overlaps. Placing a word in the right half automatically places its
+    // reverse in the left half, so either orientation covers it. We filter out
+    // words whose original or reverse is a substring of a longer word (any
+    // orientation), since the longer word's placement guarantees coverage. For
+    // the remaining words (n<=14), dp[mask][c] tracks the minimal palindrome
+    // length covering the word set mask, with oriented word c last in the
+    // chain. The first word sits at the center, so its longest palindromic
+    // prefix determines how much of it is shared between the two halves.
+    // Transitions append a new word with max suffix-prefix overlap, adding
+    // 2*(new_word_size - overlap) to the palindrome length. We reconstruct by
+    // backtracking the chain and assembling the half string, then mirroring it.
+
+    precompute_transitions();
+
+    int full = (1 << n) - 1;
+    dp.assign(1 << n, vector<int>(2 * n, 1e9));
+    prev_state.assign(1 << n, vector<int>(2 * n, -1));
+
+    vector<string> start_str(2 * n);
+    vector<bool> start_odd(2 * n, false);
+
+    for(int i = 0; i < n; i++) {
+        for(int rev = 0; rev < 2; rev++) {
+            int c = 2 * i + rev;
+            int len_i = words[i][rev].size();
+            int best_pal = 1;
+            for(int len = 1; len <= len_i; len++) {
+                bool is_pal = true;
+                for(int a = 0, b = len - 1; a < b; a++, b--) {
+                    if(words[i][rev][a] != words[i][rev][b]) {
+                        is_pal = false;
+                        break;
+                    }
+                }
+                if(is_pal) {
+                    best_pal = len;
+                }
+            }
+
+            int half_start = best_pal / 2;
+            string half = words[i][rev].substr(half_start);
+            int half_len = half.size();
+            bool odd_center = (best_pal % 2 == 1);
+            int pal_len = 2 * half_len - (odd_center ? 1 : 0);
+
+            int init_mask = 1 << i;
+            dp[init_mask][c] = pal_len;
+            start_str[c] = half;
+            start_odd[c] = odd_center;
+        }
+    }
+
+    for(int mask = 1; mask <= full; mask++) {
+        for(int c = 0; c < 2 * n; c++) {
+            if(dp[mask][c] >= 1e8) {
+                continue;
+            }
+            for(int j = 0; j < n; j++) {
+                if(mask & (1 << j)) {
+                    continue;
+                }
+                for(int rev = 0; rev < 2; rev++) {
+                    int nc = 2 * j + rev;
+                    int overlap = max_overlap[c][nc];
+                    int cost = 2 * ((int)words[j][rev].size() - overlap);
+                    int new_mask = mask | (1 << j);
+                    int new_len = dp[mask][c] + cost;
+                    if(new_len < dp[new_mask][nc]) {
+                        dp[new_mask][nc] = new_len;
+                        prev_state[new_mask][nc] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    int best_c = 0;
+    for(int c = 1; c < 2 * n; c++) {
+        if(dp[full][c] < dp[full][best_c]) {
+            best_c = c;
+        }
+    }
+
+    vector<int> path;
+    {
+        int mask = full;
+        int c = best_c;
+        while(prev_state[mask][c] != -1) {
+            path.push_back(c);
+            int prev_c = prev_state[mask][c];
+            mask &= ~(1 << (c / 2));
+            c = prev_c;
+        }
+        path.push_back(c);
+        reverse(path.begin(), path.end());
+    }
+
+    string suf = start_str[path[0]];
+    for(int i = 1; i < (int)path.size(); i++) {
+        int c = path[i];
+        int prev_c = path[i - 1];
+        int overlap = max_overlap[prev_c][c];
+        suf += words[c / 2][c % 2].substr(overlap);
+    }
+
+    string rev_suf(suf.rbegin(), suf.rend());
+    string ans;
+    if(start_odd[path[0]]) {
+        ans = rev_suf.substr(0, rev_suf.size() - 1) + suf;
+    } else {
+        ans = rev_suf + suf;
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+p327.in1
+======================
+1
+avtobus
+
+=================
+p327.ans2
+======================
+edcabacde
+
+=================
+statement.txt
+======================
+327. Yet Another Palindrome
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+You are given N words. Find the shortest palindrome (a word that is the same with its reverse) containing all of them as contiguous substrings.
+
+Input
+The first line of input contains an integer N, 1 ≤ N ≤ 14. The next N lines contain one word each, between 1 and 30 characters long. All the characters are small English letters ('a' through 'z').
+
+Output
+Output the required palindrome. If there're several possible solutions, output any.
+
+Example(s)
+sample input
+sample output
+1
+avtobus
+avtobusubotva
+
+sample input
+sample output
+3
+bacd
+edcab
+cabac
+
+=================
+p327.in2
+======================
+3
+bacd
+edcab
+cabac
+
+=================

@@ -1,0 +1,232 @@
+p308.in1
+======================
+1 0 0
+0 1 0
+
+=================
+p308.cpp
+======================
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+const double UMIN = -1.5, UMAX = 1.5, DU = 0.018;
+const double PHIMIN = -15.0, PHIMAX = 15.0, DPHI = 0.028;
+
+vector<float> a, b;
+
+void read() {
+    a.resize(3);
+    b.resize(3);
+    cin >> a >> b;
+}
+
+void solve() {
+    // The key in this problem is that the tolerance is very large (+-0.1),
+    // so we do NOT need a perfectly exact formula. Any method whose error
+    // is safely below 0.05 will be accepted. Analytical solutions exist but
+    // they are quite tricky to get right near the neck and when points are on
+    // opposite horns. Therefore we choose a clean algorithmic approach.
+    //
+    // Imagine the hyperboloid as an infinite hourglass made of two funnels
+    // glued together at their narrowest point. The narrow neck is exactly
+    // the unit circle at z = 0. If you try to walk on this surface
+    // using ordinary (x, y, z) coordinates the distances feel messy because
+    // the circles get wider as you move away from the neck. So we change to
+    // much more natural coordinates. We keep the usual angle phi = atan2(y, x)
+    // which simply tells us how far around the current circle we are. For the
+    // "height" we do not use z. Instead we use u = arcsinh(z). This u is like a
+    // stretched height that automatically matches how the surface flares out.
+    //
+    // In these coordinates every point on the surface is given by:
+    //
+    //     x = cosh(u) * cos(phi),
+    //     y = cosh(u) * sin(phi),
+    //     z = sinh(u).
+    //
+    // At any fixed u the horizontal slice is a perfect circle whose radius
+    // is exactly cosh(u). So moving around the circle (changing phi) costs
+    // a distance of cosh(u) * dphi. Moving up or down (changing u)
+    // costs a different amount that depends on how slanted the surface is
+    // at that height. When we combine both directions the true distance element
+    // on the surface simplifies to:
+    //
+    //     ds = sqrt(cosh(2 * u) * du * du + cosh(u) * cosh(u) * dphi * dphi).
+    //
+    // This single formula is all we need to measure any path correctly. Now we
+    // build a fine rectangular grid in the flat (u, phi) plane. We should play
+    // with the constants, but if u goes from -1.5 to +1.5 with step 0.018 and
+    // phi goes from -15 to +15 with step 0.028, we get something that passes.
+    // Each grid point corresponds to a real point on the hyperboloid. One
+    // detail is that because phi repeats every 2 * pi we also consider several
+    // copies of point B shifted by 2 * pi * k for k from -5 to +5. Between any
+    // two neighbouring grid points we add an edge whose length is computed with
+    // the ds formula above, using the midpoint of the segment for u. Dijkstra
+    // then finds the shortest path on this graph. The result is a polygonal
+    // line on the surface that follows the true geodesic closely.
+
+    double xa = a[0], ya = a[1], za = a[2];
+    double xb = b[0], yb = b[1], zb = b[2];
+
+    double ua = asinh(za);
+    double ub = asinh(zb);
+    double dphi = atan2(yb, xb) - atan2(ya, xa);
+
+    const double PI = acos(-1.0);
+    dphi = fmod(dphi + 3 * PI, 2 * PI) - PI;
+
+    int NU = (int)((UMAX - UMIN) / DU) + 15;
+    int NP = (int)((PHIMAX - PHIMIN) / DPHI) + 15;
+
+    vector<vector<double>> dist(NU, vector<double>(NP, 1e18));
+
+    auto getiu = [&](double u) {
+        return max(0, min(NU - 1, (int)round((u - UMIN) / DU)));
+    };
+    auto getip = [&](double p) {
+        return max(0, min(NP - 1, (int)round((p - PHIMIN) / DPHI)));
+    };
+
+    int su = getiu(ua);
+    int sp = getip(0.0);
+
+    using T = tuple<double, int, int>;
+    priority_queue<T, vector<T>, greater<T>> pq;
+    pq.push({0.0, su, sp});
+    dist[su][sp] = 0.0;
+
+    int dirs[8][2] = {{-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+                      {0, 1},   {1, -1}, {1, 0},  {1, 1}};
+
+    while(!pq.empty()) {
+        auto [cost, i, j] = pq.top();
+        pq.pop();
+        if(cost > dist[i][j]) {
+            continue;
+        }
+
+        double u0 = UMIN + i * DU;
+        double p0 = PHIMIN + j * DPHI;
+
+        for(auto& d: dirs) {
+            int ni = i + d[0];
+            int nj = j + d[1];
+            if(ni < 0 || ni >= NU || nj < 0 || nj >= NP) {
+                continue;
+            }
+
+            double u1 = UMIN + ni * DU;
+            double p1 = PHIMIN + nj * DPHI;
+            double um = 0.5 * (u0 + u1);
+            double du = u1 - u0;
+            double dp = p1 - p0;
+            double ds =
+                sqrt(cosh(2 * um) * du * du + cosh(um) * cosh(um) * dp * dp);
+
+            double nc = cost + ds;
+            if(nc < dist[ni][nj]) {
+                dist[ni][nj] = nc;
+                pq.push({nc, ni, nj});
+            }
+        }
+    }
+
+    double ans = 1e18;
+    int tu = getiu(ub);
+    for(int k = -5; k <= 5; ++k) {
+        double tp = dphi + 2 * PI * k;
+        int basep = getip(tp);
+        for(int di = -3; di <= 3; ++di) {
+            for(int dj = -3; dj <= 3; ++dj) {
+                int ti = tu + di;
+                int tj = basep + dj;
+                if(ti >= 0 && ti < NU && tj >= 0 && tj < NP) {
+                    ans = min(ans, dist[ti][tj]);
+                }
+            }
+        }
+    }
+
+    if(ans > 1e9) {
+        ans = 0.0;
+    }
+    cout << setprecision(10) << fixed << ans << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+p308.ans1
+======================
+1.5707963267
+
+=================
+statement.txt
+======================
+308. Hyperboloid Distance
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+You are given two points A and B on the surface of the hyperboloid x2+y2-z2=1. Find the shortest distance between them along the surface.
+
+Input
+The input file contains six real numbers: xA, yA, zA, xB, yB and zB (coordinates of A and B), separated by spaces and/or line breaks (-1 ≤ zA, zB ≤ 1).
+
+Output
+Output the shortest distance between A and B along the surface of the hyperboloid. Your answer should be accurate within +-0.1.
+
+Example(s)
+sample input
+sample output
+1 0 0
+0 1 0
+1.5707963267
+
+=================
+p308.out1
+======================
+1.5200000000
+
+=================

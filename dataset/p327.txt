@@ -1,0 +1,669 @@
+## 1) Abridged problem statement
+
+Given **N (1 ≤ N ≤ 14)** lowercase words (length ≤ 30), output **any shortest palindrome string** that contains **each given word as a contiguous substring**.  
+
+---
+
+## 2) Detailed editorial (how the provided solution works)
+
+### Key observations
+
+1. **If a word appears as a substring of another word (or of its reverse), it’s redundant.**  
+   Suppose word `x` is contained in some longer word `y` (in some orientation: `y`, `reverse(y)`), and we ensure the final palindrome contains `y`. Then the final palindrome automatically contains `x` too.  
+   So we can safely remove such redundant words to reduce the problem size.
+
+2. **A palindrome is determined by one “half”.**  
+   If we build the right half string `S`, then the palindrome is:
+   - even center: `reverse(S) + S`
+   - odd center: `reverse(S without last char) + S` (the middle char is shared)
+
+3. **Handling words and their reverses.**  
+   In a palindrome, if a substring appears somewhere, its reverse appears symmetrically on the other side. This motivates allowing each word to be placed in **either orientation** when we build our half-chain.
+
+4. **We want to build a superstring with maximal overlaps.**  
+   Like shortest common superstring (SCS), we want to order chosen oriented strings to maximize overlaps between consecutive strings.  
+   But because we’re building a palindrome from a half, **each extra character added on the half contributes 2 characters** in the final palindrome (one on each side), except possibly the central shared character in the odd case.
+
+---
+
+### Step A: Filter redundant words
+
+- Read all words.
+- Remove duplicates.
+- For each word `w`, check if it is a substring of **any longer** word `u` in **any orientation**:
+  - `u` contains `w`
+  - `u` contains `reverse(w)`
+  - `reverse(u)` contains `w`
+  - `reverse(u)` contains `reverse(w)`
+- If yes, drop `w`. Otherwise keep it.
+- Store each kept word as a pair: `{w, reverse(w)}`.
+- After filtering, the effective `n` is small (still ≤ 14 in worst case).
+
+This pruning is essential for speed and for avoiding useless DP states.
+
+---
+
+### Step B: Precompute overlaps between all oriented forms
+
+We have `2*n` oriented “nodes”:
+- node `2*i` = word `i` in original orientation
+- node `2*i+1` = word `i` reversed
+
+For each ordered pair `(a, b)` with `a` and `b` from **different original words**, compute:
+
+`max_overlap[a][b]` = maximum `k` such that suffix of `a` of length `k` equals prefix of `b` of length `k`.
+
+This is the standard overlap used in superstring chaining.
+
+---
+
+### Step C: DP over subsets to choose the best chain (SCS-style)
+
+State:
+- `dp[mask][c]` = minimal palindrome length achievable after covering the set `mask` of words, where the **last appended oriented node** is `c` (`0..2n-1`).
+
+We also store `prev_state[mask][c]` to reconstruct the chain.
+
+#### Initialization: choosing the first word and the palindrome center
+
+The first chosen oriented word `w` sits around the center of the palindrome.  
+We compute the **longest palindromic prefix** of `w`, call its length `best_pal`.
+
+Why? Because if the prefix is already palindromic, part of it can lie on both sides with less duplication. Concretely:
+
+- Let `half_start = best_pal // 2`
+- Let `half = w[half_start:]`  (this is what we keep as the “right-half seed”)
+- If `best_pal` is odd, there is a shared center character (odd palindrome).
+
+If `half` has length `L`:
+- even center: initial palindrome length is `2*L`
+- odd center: initial palindrome length is `2*L - 1`
+
+So:
+- `dp[1<<i][c] = initial_length`
+- record `start_str[c] = half`
+- record `start_odd[c] = (best_pal % 2 == 1)`
+
+#### Transition: append a new word (in either orientation)
+
+From state `(mask, c)` append word `j` not in `mask`, and choose orientation `rev`:
+
+- `nc = 2*j + rev`
+- overlap = `max_overlap[c][nc]`
+- adding `words[j][rev].size() - overlap` new chars to the half
+- palindrome grows by **twice** that:  
+  `cost = 2 * (len(new_word) - overlap)`
+
+Update:
+`dp[mask | (1<<j)][nc] = min(dp[mask][c] + cost)`
+
+This is essentially SCS DP but with doubled costs.
+
+---
+
+### Step D: Reconstruct the best chain and build the answer
+
+- Pick `best_c` minimizing `dp[full_mask][c]`.
+- Backtrack using `prev_state` to recover the sequence of oriented nodes `path`.
+
+Build the right-half string `suf`:
+- Start with `suf = start_str[path[0]]`
+- For each next node, append only the non-overlapping suffix:
+  `suf += word(next)[overlap:]`
+
+Finally mirror:
+- `rev_suf = reverse(suf)`
+- If odd center: `ans = rev_suf[:-1] + suf`
+- Else: `ans = rev_suf + suf`
+
+This palindrome contains every chosen word (hence every original word after pruning) as a substring.
+
+Complexity:
+- `n ≤ 14`, `2n ≤ 28`
+- DP: `O(2^n * (2n) * n * 2)` ≈ feasible.
+- Overlap computation: `O((2n)^2 * L^2)` with small limits (L ≤ 30).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (mostly unused in this solution, but harmless utility)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector of items
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) in >> x;
+    return in;
+};
+
+// Print a vector of items (unused)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) out << x << ' ';
+    return out;
+};
+
+int n;  // number of effective (non-redundant) words after filtering
+vector<array<string, 2>> words; // for each i: words[i][0]=original, words[i][1]=reversed
+
+// Reads input, removes duplicates, and filters out redundant words.
+void read() {
+    cin >> n;
+    vector<string> all(n);
+    for (int i = 0; i < n; i++) cin >> all[i];
+
+    // Remove duplicates
+    sort(all.begin(), all.end());
+    all.erase(unique(all.begin(), all.end()), all.end());
+
+    // Sort by length ascending (helps when checking substring-in-longer)
+    sort(all.begin(), all.end(), [](const string& a, const string& b) {
+        return a.size() < b.size();
+    });
+
+    n = 0;          // will recount after filtering
+    words.clear();  // ensure empty in case of multiple tests
+
+    // For each word all[i], check if it is contained in any longer word in any orientation
+    for (int i = 0; i < (int)all.size(); i++) {
+        string rev_i(all[i].rbegin(), all[i].rend()); // reverse(all[i])
+        bool ok = true;
+
+        for (int j = 0; j < (int)all.size(); j++) {
+            // only compare against strictly longer words
+            if (i == j || all[j].size() <= all[i].size()) continue;
+
+            string rev_j(all[j].rbegin(), all[j].rend());
+
+            // If all[i] or its reverse appears in all[j] or reverse(all[j]),
+            // then all[i] is redundant.
+            if (all[j].find(all[i]) != string::npos ||
+                all[j].find(rev_i) != string::npos ||
+                rev_j.find(all[i]) != string::npos ||
+                rev_j.find(rev_i) != string::npos) {
+                ok = false;
+                break;
+            }
+        }
+
+        // Keep only non-redundant words, store both orientations
+        if (ok) {
+            words.push_back({all[i], rev_i});
+            n++;
+        }
+    }
+}
+
+vector<vector<int>> max_overlap;
+
+// Precompute maximum suffix-prefix overlaps between all oriented nodes.
+void precompute_transitions() {
+    // total oriented nodes = 2*n
+    max_overlap.assign(2 * n, vector<int>(2 * n, 0));
+
+    for (int a = 0; a < 2 * n; a++) {
+        for (int b = 0; b < 2 * n; b++) {
+            // Do not allow using the same original word twice in a row
+            if (a / 2 == b / 2) continue;
+
+            // Pick the concrete strings for these oriented nodes
+            const string& wa = words[a / 2][a % 2];
+            const string& wb = words[b / 2][b % 2];
+
+            // Compute largest k where suffix(wa,k) == prefix(wb,k)
+            int lim = min(wa.size(), wb.size());
+            int best = 0;
+            for (int overlap = 1; overlap <= lim; overlap++) {
+                bool ok = true;
+                for (int k = 0; k < overlap; k++) {
+                    if (wa[wa.size() - overlap + k] != wb[k]) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) best = overlap;
+            }
+            max_overlap[a][b] = best;
+        }
+    }
+}
+
+vector<vector<int>> dp, prev_state;
+
+void solve() {
+    /*
+      We build the palindrome by constructing its "right half" as a chain
+      of chosen oriented words with maximal overlaps.
+
+      dp[mask][c] = minimal palindrome length when we already included
+      words in 'mask' and the last oriented node used is 'c'.
+
+      Initialization chooses the first oriented word; its longest palindromic
+      prefix allows saving characters around the center (odd/even center).
+    */
+
+    precompute_transitions();
+
+    int full = (1 << n) - 1;
+
+    // Large value for infinity
+    dp.assign(1 << n, vector<int>(2 * n, (int)1e9));
+    prev_state.assign(1 << n, vector<int>(2 * n, -1));
+
+    // For reconstructing the final half:
+    // start_str[c] is the initial half string when starting with oriented node c
+    vector<string> start_str(2 * n);
+    // start_odd[c] indicates whether the palindrome center is odd for this start
+    vector<bool> start_odd(2 * n, false);
+
+    // Initialize DP for each word i in each orientation rev
+    for (int i = 0; i < n; i++) {
+        for (int rev = 0; rev < 2; rev++) {
+            int c = 2 * i + rev;                 // oriented node index
+            int len_i = words[i][rev].size();
+
+            // Find the longest palindromic prefix length of words[i][rev]
+            int best_pal = 1;
+            for (int len = 1; len <= len_i; len++) {
+                bool is_pal = true;
+                for (int a = 0, b = len - 1; a < b; a++, b--) {
+                    if (words[i][rev][a] != words[i][rev][b]) {
+                        is_pal = false;
+                        break;
+                    }
+                }
+                if (is_pal) best_pal = len;
+            }
+
+            // If prefix length best_pal is palindromic, then in the half
+            // we can "skip" best_pal/2 characters because they will be mirrored.
+            int half_start = best_pal / 2;
+
+            // The starting right-half string seed
+            string half = words[i][rev].substr(half_start);
+            int half_len = (int)half.size();
+
+            // Odd center if best_pal is odd
+            bool odd_center = (best_pal % 2 == 1);
+
+            // The palindrome length produced by mirroring this half.
+            int pal_len = 2 * half_len - (odd_center ? 1 : 0);
+
+            // Mask includes only word i
+            int init_mask = 1 << i;
+
+            dp[init_mask][c] = pal_len;
+            start_str[c] = half;
+            start_odd[c] = odd_center;
+        }
+    }
+
+    // Subset DP: try appending a not-yet-used word in either orientation
+    for (int mask = 1; mask <= full; mask++) {
+        for (int c = 0; c < 2 * n; c++) {
+            if (dp[mask][c] >= (int)1e8) continue; // unreachable
+
+            for (int j = 0; j < n; j++) {
+                if (mask & (1 << j)) continue; // already used word j
+
+                for (int rev = 0; rev < 2; rev++) {
+                    int nc = 2 * j + rev;              // next oriented node
+                    int overlap = max_overlap[c][nc];  // overlap on the half
+
+                    // Additional characters added to the half = len - overlap
+                    // Palindrome grows by twice that
+                    int cost = 2 * ((int)words[j][rev].size() - overlap);
+
+                    int new_mask = mask | (1 << j);
+                    int new_len = dp[mask][c] + cost;
+
+                    if (new_len < dp[new_mask][nc]) {
+                        dp[new_mask][nc] = new_len;
+                        prev_state[new_mask][nc] = c; // remember predecessor node
+                    }
+                }
+            }
+        }
+    }
+
+    // Choose best ending oriented node
+    int best_c = 0;
+    for (int c = 1; c < 2 * n; c++) {
+        if (dp[full][c] < dp[full][best_c]) best_c = c;
+    }
+
+    // Reconstruct path of oriented nodes by backtracking prev_state
+    vector<int> path;
+    {
+        int mask = full;
+        int c = best_c;
+
+        while (prev_state[mask][c] != -1) {
+            path.push_back(c);
+            int prev_c = prev_state[mask][c];
+
+            // Remove the word corresponding to node c from the mask
+            mask &= ~(1 << (c / 2));
+            c = prev_c;
+        }
+        path.push_back(c);
+        reverse(path.begin(), path.end());
+    }
+
+    // Build the right-half string 'suf' by concatenating with overlaps
+    string suf = start_str[path[0]];
+    for (int i = 1; i < (int)path.size(); i++) {
+        int c = path[i];
+        int prev_c = path[i - 1];
+        int overlap = max_overlap[prev_c][c];
+
+        // Append only the non-overlapping part of the next word
+        suf += words[c / 2][c % 2].substr(overlap);
+    }
+
+    // Mirror to build the full palindrome
+    string rev_suf(suf.rbegin(), suf.rend());
+    string ans;
+
+    // If odd center, the middle character is shared, so drop 1 char from left mirror
+    if (start_odd[path[0]]) {
+        ans = rev_suf.substr(0, rev_suf.size() - 1) + suf;
+    } else {
+        ans = rev_suf + suf;
+    }
+
+    cout << ans << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same idea) with detailed comments
+
+```python
+import sys
+
+def reverse(s: str) -> str:
+    return s[::-1]
+
+def longest_pal_prefix(s: str) -> int:
+    """Return length of the longest prefix of s that is a palindrome."""
+    best = 1
+    for L in range(1, len(s) + 1):
+        pref = s[:L]
+        if pref == pref[::-1]:
+            best = L
+    return best
+
+def max_suffix_prefix_overlap(a: str, b: str) -> int:
+    """Maximum k such that suffix(a,k) == prefix(b,k)."""
+    lim = min(len(a), len(b))
+    best = 0
+    for k in range(1, lim + 1):
+        if a[-k:] == b[:k]:
+            best = k
+    return best
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n_in = int(next(it))
+    all_words = [next(it) for _ in range(n_in)]
+
+    # Remove duplicates
+    all_words = sorted(set(all_words), key=len)
+
+    # Filter redundant words: drop w if it appears in any longer word in any orientation
+    kept = []
+    for i, w in enumerate(all_words):
+        rw = reverse(w)
+        ok = True
+        for j, u in enumerate(all_words):
+            if i == j or len(u) <= len(w):
+                continue
+            ru = reverse(u)
+            if (w in u) or (rw in u) or (w in ru) or (rw in ru):
+                ok = False
+                break
+        if ok:
+            kept.append(w)
+
+    # Build words[i][0]=original, words[i][1]=reversed
+    words = [(w, reverse(w)) for w in kept]
+    n = len(words)
+    m = 2 * n  # number of oriented nodes
+
+    # Precompute overlaps between oriented nodes
+    overlap = [[0] * m for _ in range(m)]
+    for a in range(m):
+        wa = words[a // 2][a % 2]
+        for b in range(m):
+            if a // 2 == b // 2:
+                continue
+            wb = words[b // 2][b % 2]
+            overlap[a][b] = max_suffix_prefix_overlap(wa, wb)
+
+    FULL = (1 << n) - 1
+    INF = 10**9
+
+    # dp[mask][c] = minimal palindrome length
+    dp = [[INF] * m for _ in range(1 << n)]
+    prev = [[-1] * m for _ in range(1 << n)]
+
+    # start_half[c] and start_odd[c] allow reconstructing final palindrome
+    start_half = [""] * m
+    start_odd = [False] * m
+
+    # Initialize: choose first word i with orientation rev
+    for i in range(n):
+        for rev in (0, 1):
+            c = 2 * i + rev
+            w = words[i][rev]
+
+            best_pal = longest_pal_prefix(w)
+            half_start = best_pal // 2
+            half = w[half_start:]   # right-half seed
+            odd_center = (best_pal % 2 == 1)
+
+            pal_len = 2 * len(half) - (1 if odd_center else 0)
+
+            mask = 1 << i
+            dp[mask][c] = pal_len
+            start_half[c] = half
+            start_odd[c] = odd_center
+
+    # DP transitions: append a new word j (either orientation)
+    for mask in range(1, FULL + 1):
+        for c in range(m):
+            if dp[mask][c] >= INF:
+                continue
+            for j in range(n):
+                if mask & (1 << j):
+                    continue
+                for rev in (0, 1):
+                    nc = 2 * j + rev
+                    ov = overlap[c][nc]
+                    # cost added to palindrome length is double the new chars on the half
+                    cost = 2 * (len(words[j][rev]) - ov)
+                    nmask = mask | (1 << j)
+                    new_len = dp[mask][c] + cost
+                    if new_len < dp[nmask][nc]:
+                        dp[nmask][nc] = new_len
+                        prev[nmask][nc] = c
+
+    # Find best ending node
+    best_c = min(range(m), key=lambda c: dp[FULL][c])
+
+    # Reconstruct oriented node path
+    path = []
+    mask = FULL
+    c = best_c
+    while prev[mask][c] != -1:
+        path.append(c)
+        mask ^= (1 << (c // 2))  # remove that word from the set
+        c = prev[mask | (1 << (path[-1] // 2))][path[-1]]  # not used; ignore
+    # The line above is messy; do it cleanly with a loop storing prev first.
+
+def solve_clean():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n_in = int(next(it))
+    all_words = [next(it) for _ in range(n_in)]
+
+    all_words = sorted(set(all_words), key=len)
+
+    kept = []
+    for i, w in enumerate(all_words):
+        rw = w[::-1]
+        ok = True
+        for j, u in enumerate(all_words):
+            if i == j or len(u) <= len(w):
+                continue
+            ru = u[::-1]
+            if (w in u) or (rw in u) or (w in ru) or (rw in ru):
+                ok = False
+                break
+        if ok:
+            kept.append(w)
+
+    words = [(w, w[::-1]) for w in kept]
+    n = len(words)
+    m = 2 * n
+
+    overlap = [[0] * m for _ in range(m)]
+    for a in range(m):
+        wa = words[a // 2][a % 2]
+        for b in range(m):
+            if a // 2 == b // 2:
+                continue
+            wb = words[b // 2][b % 2]
+            lim = min(len(wa), len(wb))
+            best = 0
+            for k in range(1, lim + 1):
+                if wa[-k:] == wb[:k]:
+                    best = k
+            overlap[a][b] = best
+
+    def longest_pal_prefix(s: str) -> int:
+        best = 1
+        for L in range(1, len(s) + 1):
+            pref = s[:L]
+            if pref == pref[::-1]:
+                best = L
+        return best
+
+    FULL = (1 << n) - 1
+    INF = 10**9
+    dp = [[INF] * m for _ in range(1 << n)]
+    prev = [[-1] * m for _ in range(1 << n)]
+
+    start_half = [""] * m
+    start_odd = [False] * m
+
+    for i in range(n):
+        for rev in (0, 1):
+            c = 2 * i + rev
+            w = words[i][rev]
+            best_pal = longest_pal_prefix(w)
+            half = w[best_pal // 2:]
+            odd = (best_pal % 2 == 1)
+            dp[1 << i][c] = 2 * len(half) - (1 if odd else 0)
+            start_half[c] = half
+            start_odd[c] = odd
+
+    for mask in range(1, FULL + 1):
+        for c in range(m):
+            cur = dp[mask][c]
+            if cur >= INF:
+                continue
+            for j in range(n):
+                if mask & (1 << j):
+                    continue
+                for rev in (0, 1):
+                    nc = 2 * j + rev
+                    ov = overlap[c][nc]
+                    cost = 2 * (len(words[j][rev]) - ov)
+                    nmask = mask | (1 << j)
+                    nl = cur + cost
+                    if nl < dp[nmask][nc]:
+                        dp[nmask][nc] = nl
+                        prev[nmask][nc] = c
+
+    best_c = min(range(m), key=lambda c: dp[FULL][c])
+
+    # Backtrack
+    path = []
+    mask = FULL
+    c = best_c
+    while True:
+        path.append(c)
+        pc = prev[mask][c]
+        if pc == -1:
+            break
+        mask ^= (1 << (c // 2))  # remove current word from mask
+        c = pc
+    path.reverse()
+
+    # Build right half
+    suf = start_half[path[0]]
+    for i in range(1, len(path)):
+        prev_c = path[i - 1]
+        c = path[i]
+        ov = overlap[prev_c][c]
+        suf += words[c // 2][c % 2][ov:]
+
+    rev_suf = suf[::-1]
+    if start_odd[path[0]]:
+        ans = rev_suf[:-1] + suf
+    else:
+        ans = rev_suf + suf
+
+    sys.stdout.write(ans + "\n")
+
+if __name__ == "__main__":
+    solve_clean()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Remove duplicates; discard any word that (in either orientation) is a substring of a longer word in either orientation.  
+- For remaining `n ≤ 14`, treat each word in two orientations (original/reverse) → `2n` nodes.
+- Precompute `overlap[a][b]`: max suffix-prefix match between oriented strings `a → b` (disallow same original word).
+- DP over subsets like shortest common superstring:
+  - `dp[mask][c]` = minimal palindrome length covering `mask`, last node `c`.
+  - Initialize each start node using the longest palindromic prefix to decide odd/even center and initial half.
+  - Transition by appending a new word with maximal overlap; adding `k` chars to half adds `2k` to palindrome length.
+- Reconstruct best path, build right-half string by overlaps, mirror it (drop 1 char on mirror if odd center) to output the palindrome.

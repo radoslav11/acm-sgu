@@ -1,0 +1,354 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+323. Aviamachinations
+Time limit per test: 2.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Berland consists of N towns as you probably already know. Berland also has M domestic airlines. In fact all these airlines belong to Don Berlione. Don Berlione was forced to create a number of companies instead of just one by the Antimonopoly Committee.
+
+The Antimonopoly Committee was disbanded as a result of a government crisis. So, Don Berlione decided to close all but one airline. Naturally, this company should have flights (possibly including stopovers) from any town of Berland to any other one. To be able to choose the airline satisfying the above requirement, Don Berlione decided to carry out a number of fake purchase-sell operations. During a purchase-sell operation a flight of one airline is passed under the control of another airline. A purchase-sell operation is just a money transfer from one pocket to another. But still a special tax should be paid to the government for each operation.
+
+So each flight is characterized by two towns it connects, the airline it belongs to and the tax amount that should be paid for a purchase-sell operation.
+
+Your task is to find P — the minimum possible amount of money Don Berlione needs to spend to make it possible to leave only one airline carrying out flights (possibly with stopovers) from each town of Berland to any other. Also you need to suggest a plan of actions for Don Berlione.
+
+Input
+The first line of the input file contains three integer numbers N, M, K (1 ≤ N ≤ 2000; 1 ≤ M ≤ 2000; 0 ≤ K ≤ 200000), where N is the number of towns, M is the number of airlines, K is the number of flights. Each of the following K lines contains the description of the flight given by four integer numbers ai, bi, ci, pi, where ai, bi (ai != bi; 1≤ ai, bi≤ N) are the numbers of towns connected by the flight (towns are numbered from 1 to N), ci (1≤ ci≤ M) is the number of the airline owning the flight (airlines are numbered from 1 to M), pi (1≤ pi≤ 100000) is the tax amount required for the purchase-sell operation of the flight. Originally all flights are planned in such a way that it is possible to get from each town to any other using flights of one or several airlines. There can be several flights between a pair of towns.
+
+Output
+Write the desired minimum amount of money P to the first line of the output. After that write a pair of numbers R and Q to the same line, where R is the index of an airline which should be chosen by Don and Q is the number of purchase-sell operations. Write the description of operations to the following Q lines. Each operation should be characterized by a single integer number idxj, which means that the flight idxj should be sold to the company R. If there are several solutions for the problem, choose any of them.
+
+Example(s)
+sample input
+sample output
+4 3 4
+2 3 1 6
+4 3 2 7
+1 2 2 3
+1 3 3 5
+5 2 1
+4
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+There are **N** towns, **M** airlines, and **K** flights.  
+Flight `i` connects towns `ai` and `bi`, belongs to airline `ci`, and if we transfer this flight to another airline we must pay tax `pi`.
+
+Don wants to keep exactly one airline `R`. After transferring some flights to `R` (paying taxes), the set of flights owned by `R` must allow traveling (with stopovers) between **every pair of towns** (i.e., be **connected** as an undirected graph).
+
+Output:
+- minimum total tax `P`,
+- the chosen airline `R`,
+- and the list of flight indices to transfer to `R`.
+
+Constraints: `N, M ≤ 2000`, `K ≤ 200000`.
+
+---
+
+## 2) Key observations
+
+1. **Fix an airline `R`.**  
+   All flights already owned by `R` are **free** (no tax). Other flights can be “bought” (transferred) to `R` paying their `p`.
+
+2. With `R` fixed, the problem becomes:  
+   - Start with the graph consisting of all edges of airline `R` (free).
+   - Add some other edges (each has cost `p`) so that the whole graph becomes connected with **minimum added cost**.
+
+   This is a classic “connect components with minimum edge cost” problem solvable by a **Kruskal-like** process with DSU:
+   - DSU initially unions endpoints of all free edges of `R`.
+   - Consider purchasable edges in increasing `p`, add an edge iff it connects two different DSU components.
+
+3. Doing this over **all K edges for each R** is too slow: `M * K` can be ~4e8.
+
+4. **Crucial optimization:** only edges from a **global MST** matter.
+   - Build an MST of the entire graph considering all flights with weight `p` (standard Kruskal).
+   - Let `relevant` be the MST edges (at most `N-1 ≤ 1999` edges).
+   - For any airline `R`, there exists an optimal set of purchased edges that uses only edges from `relevant` (by MST cut/exchange arguments).
+   - Therefore, for each `R` we only need to run the Kruskal-augmentation on `relevant`, not on all `K`.
+
+This yields about:  
+`O(K log K)` for global sort + `O(K α(N))` unions overall + `O(M * (N + edges_of_R) α(N))`, which fits comfortably.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Read input and store edges
+Store each flight as:
+- endpoints `(u, v)` (0-based),
+- airline `c` (0-based),
+- cost `p`,
+- original index `idx` (1-based for output).
+
+Also store, for each airline `c`, the list of its own edges `(u, v)` so we can union them quickly as “free” edges.
+
+### Step B — Compute `relevant` edges (global MST)
+Run Kruskal on all `K` edges by sorting by `p`:
+- Maintain DSU over towns.
+- If an edge connects two different components, take it into `relevant`.
+
+Now `relevant.size() ≤ N-1`.
+
+### Step C — Try each airline `R` and compute minimum extra tax
+For each `R = 0..M-1`:
+1. Initialize DSU over towns.
+2. Union all edges owned by `R` (free).
+3. Iterate over edges in `relevant` in increasing `p`:
+   - If the edge connects two different DSU components, “buy” it:
+     - union components,
+     - add `p` to cost,
+     - record its original index for output (this is a transfer to `R`).
+
+Track the airline `R` with minimum cost and its purchase list.
+
+### Step D — Output
+Print:
+- best cost `P`,
+- `R+1`,
+- number of purchased edges `Q`,
+then the `Q` indices.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  DSU (Disjoint Set Union) / Union-Find
+  - path compression
+  - union by size
+*/
+struct DSU {
+    vector<int> parent, sz;
+
+    DSU(int n = 0) { init(n); }
+
+    void init(int n) {
+        parent.resize(n);
+        sz.assign(n, 1);
+        iota(parent.begin(), parent.end(), 0);
+    }
+
+    int find(int x) {
+        if (parent[x] == x) return x;
+        return parent[x] = find(parent[x]);
+    }
+
+    bool unite(int a, int b) {
+        a = find(a); b = find(b);
+        if (a == b) return false;
+        if (sz[a] > sz[b]) swap(a, b);
+        parent[a] = b;
+        sz[b] += sz[a];
+        return true;
+    }
+
+    bool connected(int a, int b) {
+        return find(a) == find(b);
+    }
+};
+
+// Edge: weight p, airline c, endpoints u,v, original index idx
+struct Edge {
+    int p, c, u, v, idx;
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M, K;
+    cin >> N >> M >> K;
+
+    vector<Edge> edges;
+    edges.reserve(K);
+
+    // airlines[c] holds endpoints of edges originally owned by airline c
+    vector<vector<pair<int,int>>> airlines(M);
+
+    for (int i = 0; i < K; i++) {
+        int a, b, c, p;
+        cin >> a >> b >> c >> p;
+        --a; --b; --c; // convert to 0-based
+
+        edges.push_back({p, c, a, b, i + 1});       // idx is 1-based for output
+        airlines[c].push_back({a, b});              // store for free unions later
+    }
+
+    // ---- Step 1: Global MST -> relevant edges ----
+    sort(edges.begin(), edges.end(),
+         [](const Edge& e1, const Edge& e2) {
+            return e1.p < e2.p;
+         });
+
+    DSU dsu_global(N);
+    vector<Edge> relevant;
+    relevant.reserve(N - 1);
+
+    for (const auto &e : edges) {
+        if (dsu_global.unite(e.u, e.v)) {
+            relevant.push_back(e); // MST edge
+            if ((int)relevant.size() == N - 1) break; // MST complete
+        }
+    }
+
+    // ---- Step 2: Try each airline as the one to keep ----
+    long long best_cost = (1LL << 62);
+    int best_airline = -1;
+    vector<int> best_ops;
+
+    for (int keep = 0; keep < M; keep++) {
+        DSU dsu(N);
+
+        // Free edges: all edges that already belong to 'keep'
+        for (auto [u, v] : airlines[keep]) {
+            dsu.unite(u, v);
+        }
+
+        long long cost = 0;
+        vector<int> ops; // purchased edges (indices)
+
+        // Only MST edges are sufficient to achieve optimal augmentation
+        for (const auto &e : relevant) {
+            if (!dsu.connected(e.u, e.v)) {
+                dsu.unite(e.u, e.v);
+                cost += e.p;
+                ops.push_back(e.idx);
+            }
+        }
+
+        if (cost < best_cost) {
+            best_cost = cost;
+            best_airline = keep;
+            best_ops = move(ops);
+        }
+    }
+
+    // ---- Output ----
+    cout << best_cost << ' ' << (best_airline + 1) << ' ' << best_ops.size() << "\n";
+    for (int idx : best_ops) {
+        cout << idx << "\n";
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+class DSU:
+    """Disjoint Set Union with path compression and union by size."""
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        # Path compression (iterative)
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        a = self.find(a)
+        b = self.find(b)
+        if a == b:
+            return False
+        if self.size[a] > self.size[b]:
+            a, b = b, a
+        self.parent[a] = b
+        self.size[b] += self.size[a]
+        return True
+
+    def connected(self, a: int, b: int) -> bool:
+        return self.find(a) == self.find(b)
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    N = int(next(it))
+    M = int(next(it))
+    K = int(next(it))
+
+    # edges stored as tuples: (p, c, u, v, idx)
+    edges = []
+    airlines = [[] for _ in range(M)]  # airlines[c] = list of (u,v)
+
+    for idx in range(1, K + 1):
+        a = int(next(it)) - 1
+        b = int(next(it)) - 1
+        c = int(next(it)) - 1
+        p = int(next(it))
+        edges.append((p, c, a, b, idx))
+        airlines[c].append((a, b))
+
+    # ---- Step 1: Build global MST to get relevant edges ----
+    edges.sort(key=lambda x: x[0])  # sort by p
+    dsu_global = DSU(N)
+    relevant = []
+
+    for p, c, u, v, idx in edges:
+        if dsu_global.union(u, v):
+            relevant.append((p, c, u, v, idx))
+            if len(relevant) == N - 1:
+                break
+
+    # ---- Step 2: Try each airline to keep ----
+    INF = 10**30
+    best_cost = INF
+    best_airline = -1
+    best_ops = []
+
+    for keep in range(M):
+        dsu = DSU(N)
+
+        # Add all edges of this airline for free
+        for u, v in airlines[keep]:
+            dsu.union(u, v)
+
+        cost = 0
+        ops = []
+
+        # Augment using only MST edges
+        for p, c, u, v, idx in relevant:
+            if not dsu.connected(u, v):
+                dsu.union(u, v)
+                cost += p
+                ops.append(idx)
+
+        if cost < best_cost:
+            best_cost = cost
+            best_airline = keep
+            best_ops = ops
+
+    # ---- Output ----
+    out = []
+    out.append(f"{best_cost} {best_airline + 1} {len(best_ops)}\n")
+    out.extend(f"{idx}\n" for idx in best_ops)
+    sys.stdout.write("".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+These implementations follow exactly the optimized strategy:
+- compute a global MST once,
+- then evaluate each airline using only MST edges for purchases,
+- output any optimal plan.

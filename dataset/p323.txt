@@ -1,0 +1,380 @@
+## 1) Concise abridged problem statement
+
+There are **N** towns and **M** airlines. There are **K** flights; each flight connects two towns `(a, b)`, belongs to airline `c`, and if we “transfer” (sell) it to another airline we must pay a tax `p`.
+
+Don wants to **close all airlines except one** airline `R`. After transfers, the remaining airline `R` must be able to travel (possibly via stopovers) **between every pair of towns** using only flights owned by `R`.
+
+Find:
+- the **minimum total tax P** needed,
+- an airline `R` to keep,
+- and the list of flights to transfer to `R` (by their original indices).
+
+Any optimal plan is acceptable.
+
+Constraints: `N, M ≤ 2000`, `K ≤ 200000`.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation
+If we decide to keep airline `R`, then all flights originally owned by `R` are “free” (no tax) because they already belong to `R`. We may additionally transfer some flights from other airlines to `R`, paying their taxes, until the graph formed by `R`’s owned + transferred flights becomes **connected**.
+
+So for a fixed `R`, the problem becomes:
+
+> Start with a graph containing only edges of airline `R` (free). Add some other edges (each with cost `p`) to make the graph connected with minimum total added cost.
+
+This is exactly “minimum additional cost to connect components”, which is solved by a Kruskal-like process using DSU:
+- DSU initially unions all endpoints of airline `R` edges (free).
+- Consider other edges in increasing `p`, add an edge if it connects two different DSU components.
+
+That would be `O(K log K)` per airline, too slow for `M` up to 2000.
+
+### Crucial optimization: only “relevant” edges
+The provided solution first computes a **global MST** over *all flights*, ignoring airlines, by sorting all edges by tax `p` and running Kruskal once.
+
+Let `relevant` be the set of edges chosen into this MST. Its size is at most `N-1` (≤ 1999).
+
+Why is it enough to consider only those edges later?
+
+- Suppose we are connecting DSU components (for chosen airline `R`) with minimum added tax.
+- Any minimum way of connecting components can be transformed to use only edges from some MST of the whole graph: for connectivity problems with costs, MST edges form a basis; for any cut, the cheapest edge crossing that cut is safe, etc.
+- More concretely: when you run Kruskal globally, for every pair of components that ever needs to be connected cheaply, Kruskal has already selected a cheapest (or one of the cheapest) useful edges across the necessary cuts. Non-MST edges are never strictly necessary to achieve a minimum connection cost in this setting.
+- Therefore, for every `R`, the minimum additional tax can be achieved using only edges from `relevant`.
+
+Result: for each airline `R`, we only need to run Kruskal on at most `N-1` edges, giving:
+- Build DSU with free edges of `R`: `O(#edges_of_R α(N))`
+- Add from `relevant`: `O(N α(N))`
+Total across all airlines: `O(K α(N) + M·N α(N))` which is fine.
+
+### Algorithm
+1. **Read input**, store all edges as tuples `(p, c, u, v, idx)`, 0-index towns and airlines, and also store for each airline the list of its edges `(u, v)` for fast “free unions”.
+2. **Compute `relevant` edges**:
+   - Sort all edges by `p`.
+   - Run Kruskal with a DSU; any edge that connects different components is appended to `relevant`.
+3. For each airline `R = 0..M-1`:
+   - Create DSU `d`.
+   - Union all edges of airline `R` (free).
+   - Iterate edges in `relevant` (already sorted by `p` because `relevant` was taken in sorted order):
+     - If endpoints are in different components, union them, pay `p`, record that edge index to be transferred to `R` (unless it’s already in `R`—but even if it is, it would already be connected, so it won’t be chosen).
+   - Track the best (minimum) total cost; store best `R` and list of purchased edge indices.
+4. Output best cost, airline (1-based), number of operations, and the purchased flight indices (1-based).
+
+### Correctness sketch
+- Global Kruskal yields an MST `T`. `T` has the property that for any cut, it contains a minimum-weight edge crossing that cut (cut property).
+- For a fixed airline `R`, after adding all free `R` edges, the remaining task is to connect DSU components. Whenever we need to connect two DSU components, we are effectively choosing edges across some cut. By the cut property, there exists an MST edge in `T` that is no more expensive than any edge connecting those components at that moment.
+- Thus, there exists an optimal solution using only edges from `T` (i.e., `relevant`), and running Kruskal restricted to `relevant` yields that minimum.
+- Checking all `R` finds the global minimum.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (space-separated)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a whole vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Disjoint Set Union / Union-Find structure
+class DSU {
+  public:
+    int n;                 // number of elements (we allocate 0..n)
+    vector<int> par;       // parent pointer
+    vector<int> sz;        // size of component (for union by size)
+
+    DSU(int _n = 0) { init(_n); }
+
+    // initialize DSU for elements 0..n
+    void init(int _n) {
+        n = _n;
+        par.assign(n + 1, 0);
+        sz.assign(n + 1, 0);
+        for (int i = 0; i <= n; i++) {
+            par[i] = i;    // each node is its own parent initially
+            sz[i] = 1;     // component size = 1
+        }
+    }
+
+    // find with path compression
+    int root(int u) { 
+        return par[u] = ((u == par[u]) ? u : root(par[u])); 
+    }
+
+    // check whether x and y are in same component
+    bool connected(int x, int y) { 
+        return root(x) == root(y); 
+    }
+
+    // union components of x and y; returns new root
+    int unite(int x, int y) {
+        x = root(x), y = root(y);
+        if (x == y) {
+            return x;      // already united
+        }
+        // union by size: attach smaller to larger
+        if (sz[x] > sz[y]) {
+            swap(x, y);
+        }
+        par[x] = y;
+        sz[y] += sz[x];
+        return y;
+    }
+
+    // not used in this solution; returns nodes grouped by component root
+    vector<vector<int>> components() {
+        vector<vector<int>> comp(n + 1);
+        for (int i = 0; i <= n; i++) {
+            comp[root(i)].push_back(i);
+        }
+        return comp;
+    }
+};
+
+// Edge stored as tuple: (p, c, u, v, i)
+// p = tax (weight), c = airline, u/v = endpoints, i = original index
+using Edge = tuple<int, int, int, int, int>;
+
+int n, m, k;
+vector<Edge> edges;                         // all edges
+vector<vector<pair<int, int>>> airlines;    // airlines[c] = list of (u,v) edges of that airline
+
+void read() {
+    cin >> n >> m >> k;
+    edges.resize(k);
+    airlines.assign(m, {});                 // m airlines, each list initially empty
+    int idx = 0;                            // 0-based edge index
+    for (auto& [p, c, u, v, i] : edges) {
+        // input format: u v c p
+        cin >> u >> v >> c >> p;
+
+        i = idx++;                          // store original index (0-based)
+
+        u--;                                // convert towns to 0-based
+        v--;
+        c--;                                // convert airline to 0-based
+
+        // store this edge's endpoints inside its airline bucket
+        airlines[c].push_back({u, v});
+    }
+}
+
+void solve() {
+    // Sort all edges by (p, c, u, v, i) lexicographically.
+    // Most importantly: increasing p (tax).
+    sort(edges.begin(), edges.end());
+
+    // First pass: build a global MST (by tax only) and keep its edges as "relevant"
+    DSU global_mst(n);
+    vector<Edge> relevant;
+    for (auto [p, c, u, v, i] : edges) {
+        // standard Kruskal step
+        if (!global_mst.connected(u, v)) {
+            global_mst.unite(u, v);
+            relevant.push_back({p, c, u, v, i}); // store MST edge
+        }
+    }
+
+    // Track best result across all airlines
+    int64_t best_cost = LLONG_MAX;
+    int best_airline = -1;
+    vector<int> best_purchases;             // list of 1-based indices of edges to transfer
+
+    // Try keeping each airline as the final one
+    for (int airline_to_keep = 0; airline_to_keep < m; airline_to_keep++) {
+        DSU d(n);
+
+        // Add all edges of this airline for free: union their endpoints
+        for (auto [u, v] : airlines[airline_to_keep]) {
+            d.unite(u, v);
+        }
+
+        int64_t curr_ans = 0;               // total tax paid for this airline choice
+        vector<int> purchases;              // edges bought (transferred) to this airline
+
+        // Only consider MST edges; they are enough to achieve an optimal set
+        for (auto [p, c, u, v, i] : relevant) {
+            // If this edge connects two different components, we need it (pay p)
+            if (!d.connected(u, v)) {
+                d.unite(u, v);
+                curr_ans += p;
+                purchases.push_back(i + 1); // output is 1-based edge indices
+            }
+        }
+
+        // Keep best (minimum cost)
+        if (curr_ans < best_cost) {
+            best_cost = curr_ans;
+            best_airline = airline_to_keep;
+            best_purchases = purchases;
+        }
+    }
+
+    // Output: P R Q
+    cout << best_cost << ' ' << best_airline + 1 << ' ' << best_purchases.size()
+         << '\n';
+
+    // Output Q lines: indices of flights to transfer to airline R
+    for (int idx : best_purchases) {
+        cout << idx << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;            // single test case
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(1_000_000)
+
+class DSU:
+    """Disjoint Set Union with path compression + union by size."""
+    def __init__(self, n: int):
+        # We'll use elements 0..n-1
+        self.parent = list(range(n))
+        self.size = [1] * n
+
+    def find(self, x: int) -> int:
+        # Path compression
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> bool:
+        # Returns True if merged, False if already in same set
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False
+        # Union by size: attach smaller tree to larger tree
+        if self.size[ra] > self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[ra] = rb
+        self.size[rb] += self.size[ra]
+        return True
+
+    def connected(self, a: int, b: int) -> bool:
+        return self.find(a) == self.find(b)
+
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+    k = int(next(it))
+
+    # edges: (p, c, u, v, idx)
+    edges = []
+    # airlines[c] = list of (u, v) owned by airline c
+    airlines = [[] for _ in range(m)]
+
+    for idx in range(k):
+        u = int(next(it)) - 1
+        v = int(next(it)) - 1
+        c = int(next(it)) - 1
+        p = int(next(it))
+        edges.append((p, c, u, v, idx))
+        airlines[c].append((u, v))
+
+    # 1) Global MST by p => relevant edges
+    edges.sort()  # sorts by p primarily
+    dsu_global = DSU(n)
+    relevant = []
+    for p, c, u, v, idx in edges:
+        if dsu_global.union(u, v):
+            relevant.append((p, c, u, v, idx))
+            # At most n-1 edges will be collected
+
+    # 2) Try each airline as the one to keep
+    best_cost = 10**30
+    best_airline = -1
+    best_purchases = []
+
+    for keep in range(m):
+        dsu = DSU(n)
+
+        # Add all edges of airline 'keep' for free
+        for u, v in airlines[keep]:
+            dsu.union(u, v)
+
+        cost = 0
+        purchases = []
+
+        # Add only relevant MST edges (Kruskal-style)
+        for p, c, u, v, idx in relevant:
+            if not dsu.connected(u, v):
+                dsu.union(u, v)
+                cost += p
+                purchases.append(idx + 1)  # output must be 1-based
+
+        if cost < best_cost:
+            best_cost = cost
+            best_airline = keep
+            best_purchases = purchases
+
+    # Output
+    out = []
+    out.append(f"{best_cost} {best_airline + 1} {len(best_purchases)}\n")
+    for idx in best_purchases:
+        out.append(f"{idx}\n")
+    sys.stdout.write("".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- For a fixed airline `R`, its own edges are free; we must buy (transfer) some other edges with minimum total tax so that the graph becomes connected.
+- This is “connect DSU components with minimum added cost” → Kruskal on paid edges after pre-unioning free edges.
+- Doing that for every `R` over all `K` edges is too slow.
+- Compute a global MST of all edges (by tax). Let `relevant` be its edges (`≤ N-1`).
+- For each `R`: union all edges of `R`, then run Kruskal **only on `relevant`**; this suffices by MST cut property / exchange argument.
+- Choose `R` with smallest total tax; output indices of selected edges to transfer.

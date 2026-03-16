@@ -1,0 +1,603 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+333. Random Shooting
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+You're playing a new game at the shooting range. First, a target is placed on a square board. The target itself is a convex polygon strictly inside the board.
+
+Then, you're allowed to shoot twice. In case at least one of your shots gets inside the target, you win. Moreover, if the segment connecting the points of your shots intersects the target, you still win. If none of the above holds, you lose.
+
+Assuming your aiming is very bad (i.e., the points of your shots are independently uniformly distributed all over the board), compute the probability of you winning.
+
+Input
+The first line of input contains an integer N, 3 ≤ N ≤ 8, — the number of vertices of the target. The next N lines contain two integers each, xi and yi, 1 ≤ xi, yi ≤ 99, decribing the coordinates of the vertices of the target (a convex polygon) in the counter-clockwise direction. No three vertices of the target lie on the same line. The coordinate system is chosen so that the corners of the board have coordinates (0, 0), (0, 100), (100, 0) and (100, 100).
+
+Output
+Output the required probability. Your solution will be accepted if it is within 10-7 of the correct one.
+
+Example(s)
+sample input
+sample output
+4
+25 25
+75 25
+75 75
+25 75
+0.7328341830
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+A 100×100 square board contains a convex polygon target strictly inside it. Two points \(P\) and \(Q\) are chosen independently and uniformly at random on the board.
+
+You **win** if:
+
+- \(P\) is inside the polygon, or
+- \(Q\) is inside the polygon, or
+- the segment \(\overline{PQ}\) intersects the polygon.
+
+Compute the winning probability with error ≤ \(10^{-7}\).  
+Polygon has \(3 \le N \le 8\), vertices are given CCW, no three collinear.
+
+---
+
+## 2) Key observations
+
+1. **Conditioning on the first shot turns probability into an area integral.**  
+   For a fixed first point \(P\), define \(W(P)\subseteq B\) (board) as all \(Q\) that make you win. Then:
+   \[
+   \Pr(\text{win})=\frac{1}{|B|^2}\int_{P\in B}|W(P)|\,dP
+   \]
+   Here \(|B|=10000\), so divide by \(10000^2=10^8\).
+
+2. **If \(P\) is inside the target, you always win.**  
+   So for \(P\in T\): \(|W(P)| = |B| = 10000\).
+
+3. **If \(P\) is outside a convex target, the winning \(Q\) form a “shadow” region.**  
+   For convex \(T\), the set of directions from \(P\) whose rays hit \(T\) is a single angular interval bounded by two tangents.  
+   All \(Q\) in those directions (until the board boundary) make \(\overline{PQ}\) intersect \(T\). Union with \(T\) itself is already included by the same construction if handled carefully.
+
+4. **That shadow region can be built as a polygon.**  
+   - Find the two “extreme” vertices of the target as seen from \(P\) (tangent vertices).
+   - Take the visible chain of target vertices between them.
+   - Extend both tangent rays until they hit the board.
+   - Close the region by walking along the board boundary between those two hit points.
+   - Compute area by shoelace.
+
+5. **Use numerical integration (adaptive Simpson) for the double integral.**  
+   The function \(|W(P)|\) is complicated but cheap to evaluate (since \(N\le 8\)). Adaptive Simpson focuses evaluations near where the function changes rapidly.
+
+6. **Fast inside-test via vertical slicing.**  
+   For each fixed \(x\), intersect the vertical line \(X=x\) with the convex polygon. Intersection is empty or a single interval \([y_{\min},y_{\max}]\).  
+   For \(y\in[y_{\min},y_{\max}]\), \(P\in T\) ⇒ contribute constant \(10000\) without calling shadow computation.
+
+---
+
+## 3) Full solution approach
+
+Let the board be \(B=[0,100]^2\), target \(T\) convex.
+
+### Step A: Rewrite as an integral
+\[
+\Pr(\text{win})=\frac{1}{10^8}\int_{x=0}^{100}\int_{y=0}^{100} A(x,y)\,dy\,dx
+\]
+where \(A(x,y)=|W(P)|\) is the area (within the board) of winning second-shot points \(Q\) for \(P=(x,y)\).
+
+### Step B: Compute \(A(P)\)
+
+- If \(P\in T\): \(A(P)=10000\).
+- Else:
+  1. Determine the two tangent/extreme vertices from \(P\) (min/max polar angle around \(P\)).
+  2. Build a polygon `shadow_poly`:
+     - add target chain from `max` to `min` (CCW)
+     - intersect ray \(P\to v_{\min}\) with the board boundary, add that point
+     - follow board corners (CCW) until intersecting ray \(P\to v_{\max}\), add that point
+  3. `A(P)` = area of `shadow_poly`.
+
+This polygon represents exactly the set of all \(Q\) such that segment \(\overline{PQ}\) hits \(T\) (and it effectively covers “\(Q\in T\)” as well).
+
+### Step C: Double integration using adaptive Simpson
+
+- Outer integral: over \(x\in[0,100]\).
+- For each \(x\), compute inner integral over \(y\):
+  - Find \([y_{\min},y_{\max}]\) where \(P\in T\) (vertical slice intersection).
+  - Add \((y_{\max}-y_{\min})\cdot 10000\) directly.
+  - Integrate `compute_shadow_area(x,y)` only on the outside parts: \([0,y_{\min})\) and \((y_{\max},100]\).
+
+Finally:
+\[
+\text{answer} = \frac{\text{integral}}{10^8}
+\]
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Random Shooting (p333)
+
+  Approach:
+  - Probability = (1 / 10000^2) * ∫_P |W(P)| dP
+  - If P inside target: |W(P)| = 10000
+  - Else: |W(P)| = area of "shadow polygon" of target from P, clipped to board
+  - Compute double integral via adaptive Simpson:
+      outer over x in [0,100]
+      inner over y in [0,100]
+    with a shortcut: for each x, find y-interval where (x,y) lies inside target,
+    contributing (ymax-ymin)*10000 immediately.
+
+  N <= 8, board is fixed, numerical integration is fast enough in C++.
+*/
+
+using coord_t = double;
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+    coord_t x{}, y{};
+    Point() = default;
+    Point(coord_t x_, coord_t y_) : x(x_), y(y_) {}
+    Point operator+(const Point& o) const { return {x + o.x, y + o.y}; }
+    Point operator-(const Point& o) const { return {x - o.x, y - o.y}; }
+    Point operator*(coord_t k) const { return {x * k, y * k}; }
+};
+
+static inline coord_t cross(const Point& a, const Point& b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+// Intersect ray (ray_start -> ray_through) with segment [a,b].
+// Return intersection point if:
+// - lines are not parallel
+// - intersection lies on ray with parameter t > 0
+// - intersection lies strictly inside segment with s in (0,1) (eps margins)
+static optional<Point> intersect_ray_segment(
+    const Point& ray_start, const Point& ray_through,
+    const Point& a, const Point& b
+) {
+    Point rd = ray_through - ray_start;
+    Point sd = b - a;
+    coord_t denom = cross(rd, sd);
+    if (fabs(denom) < Point::eps) return nullopt; // parallel or nearly
+
+    // Solve: ray_start + t*rd = a + s*sd
+    coord_t t = cross(a - ray_start, sd) / denom;
+    if (t < Point::eps) return nullopt;
+
+    coord_t s = cross(a - ray_start, rd) / denom;
+    if (s < Point::eps || s > 1.0 - Point::eps) return nullopt;
+
+    return ray_start + rd * t;
+}
+
+int n;
+vector<Point> poly;
+vector<Point> board = { {0,0}, {100,0}, {100,100}, {0,100} };
+
+// Global current P used by polar comparator (matches reference solution style)
+Point nowP;
+
+// A weak polar-angle comparator around nowP (sufficient here for finding extremes)
+// It compares slopes by cross-multiplying:
+//   (ay - py)/(ax - px) < (by - py)/(bx - px)  (in a consistent manner)
+static bool polar_less(const Point& a, const Point& b) {
+    return (a.y - nowP.y) * (b.x - nowP.x) < (a.x - nowP.x) * (b.y - nowP.y);
+}
+
+// Build and return area of the shadow region for a fixed P=(px,py).
+// If P is outside the polygon, this is |W(P)|: area of all Q such that segment PQ
+// intersects polygon (clipped to board). This construction also covers Q in target.
+static coord_t compute_shadow_area(coord_t px, coord_t py) {
+    nowP = Point(px, py);
+
+    // 1) Find extreme vertices by polar order around P
+    int min_idx = 0, max_idx = 0;
+    for (int i = 0; i < n; i++) {
+        if (polar_less(poly[i], poly[min_idx])) min_idx = i;
+        if (polar_less(poly[max_idx], poly[i])) max_idx = i;
+    }
+
+    vector<Point> shadow;
+    shadow.reserve(n + 10);
+
+    // 2) Add polygon chain from max_idx to min_idx along CCW order
+    shadow.push_back(poly[max_idx]);
+    for (int j = (max_idx + 1) % n; j != min_idx; j = (j + 1) % n)
+        shadow.push_back(poly[j]);
+    shadow.push_back(poly[min_idx]);
+
+    // 3) Intersect ray P -> poly[min_idx] with the board boundary (first hit)
+    int start_edge = -1;
+    Point thru_min = poly[min_idx];
+
+    for (int e = 0; e < 4; e++) {
+        Point a = board[e];
+        Point b = board[(e + 1) % 4];
+
+        if (auto inter = intersect_ray_segment(nowP, thru_min, a, b)) {
+            shadow.push_back(*inter);
+            start_edge = e;
+            break;
+        }
+
+        // Special-case: ray passes exactly through corner a.
+        // Then treat corner as the "intersection" to keep polygon well-defined.
+        coord_t cv = (a.x - nowP.x) * (thru_min.y - nowP.y)
+                   - (a.y - nowP.y) * (thru_min.x - nowP.x);
+        coord_t dist = fabs(a.x - nowP.x) + fabs(a.y - nowP.y);
+        if (fabs(cv) < Point::eps && dist > Point::eps) {
+            shadow.push_back(a);
+            start_edge = e;
+            break;
+        }
+    }
+
+    if (start_edge == -1) return 0.0; // should not happen for valid input
+
+    // 4) Walk along board edges (CCW), adding corners, until we hit ray P->poly[max_idx]
+    Point thru_max = poly[max_idx];
+    for (int j = start_edge; j < start_edge + 4; j++) {
+        int idx = j % 4;
+        if (j != start_edge) shadow.push_back(board[idx]);
+
+        Point a = board[idx];
+        Point b = board[(idx + 1) % 4];
+
+        if (auto inter = intersect_ray_segment(nowP, thru_max, a, b)) {
+            shadow.push_back(*inter);
+            break;
+        }
+
+        // Corner-on-ray case
+        coord_t cv = (board[idx].x - nowP.x) * (thru_max.y - nowP.y)
+                   - (board[idx].y - nowP.y) * (thru_max.x - nowP.x);
+        coord_t dist = fabs(board[idx].x - nowP.x) + fabs(board[idx].y - nowP.y);
+        if (fabs(cv) < Point::eps && dist > Point::eps) {
+            break;
+        }
+    }
+
+    // 5) Compute area by triangulation from vertex 0 (equivalent to shoelace)
+    if (shadow.size() < 3) return 0.0;
+    coord_t area2 = 0.0;
+    Point p0 = shadow[0];
+    for (size_t i = 1; i + 1 < shadow.size(); i++) {
+        Point a = shadow[i] - p0;
+        Point b = shadow[i + 1] - p0;
+        area2 += cross(a, b);
+    }
+    return 0.5 * area2;
+}
+
+// Adaptive Simpson's rule for ∫_a^b f(x) dx.
+// tol is absolute tolerance on Simpson refinement difference.
+template <class F>
+static coord_t adaptive_simpson(
+    coord_t a, coord_t b, F f, coord_t tol,
+    coord_t whole = numeric_limits<coord_t>::quiet_NaN()
+) {
+    if (isnan(whole)) {
+        coord_t m = (a + b) * 0.5;
+        whole = (b - a) / 6.0 * (f(a) + 4.0 * f(m) + f(b));
+    }
+
+    coord_t m = (a + b) * 0.5;
+    coord_t lm = (a + m) * 0.5;
+    coord_t rm = (m + b) * 0.5;
+
+    coord_t fa = f(a), fm = f(m), fb = f(b);
+    coord_t left  = (m - a) / 6.0 * (fa + 4.0 * f(lm) + fm);
+    coord_t right = (b - m) / 6.0 * (fm + 4.0 * f(rm) + fb);
+
+    if (fabs((left + right) - whole) < tol) {
+        // small Richardson-style correction (same as reference)
+        return 0.5 * (left + right + whole);
+    }
+    return adaptive_simpson(a, m, f, tol, left) + adaptive_simpson(m, b, f, tol, right);
+}
+
+// For a fixed x, compute ∫_0^100 A(x,y) dy.
+// Uses vertical intersection to quickly add inside-polygon part.
+static coord_t integrand_x(coord_t x) {
+    const coord_t INF = 1e100;
+    coord_t ymin = INF, ymax = -INF;
+
+    // Find intersection of vertical line X=x with polygon edges.
+    // For convex polygon, intersection is empty or a single y-interval.
+    Point v0(x, 0), v1(x, 100);
+
+    for (int i = 0; i < n; i++) {
+        Point a = poly[i];
+        Point b = poly[(i + 1) % n];
+
+        if (auto inter = intersect_ray_segment(v0, v1, a, b)) {
+            ymin = min(ymin, inter->y);
+            ymax = max(ymax, inter->y);
+        }
+
+        // Stabilize when vertex lies exactly on the vertical line
+        if (fabs(poly[i].x - x) <= Point::eps) {
+            ymin = min(ymin, poly[i].y);
+            ymax = max(ymax, poly[i].y);
+        }
+    }
+
+    auto fy = [x](coord_t y) -> coord_t {
+        return compute_shadow_area(x, y);
+    };
+
+    // No intersection => P=(x,y) is always outside for all y
+    if (ymin > ymax) {
+        return adaptive_simpson(0, 100, fy, 1e-4);
+    }
+
+    // Inside strip: contribution is constant 10000
+    coord_t inside = (ymax - ymin) * 10000.0;
+
+    // Outside parts integrate compute_shadow_area
+    coord_t low = 0.0;
+    coord_t low_b = ymin - Point::eps;
+    if (low_b > 0) low = adaptive_simpson(0, low_b, fy, 1e-4);
+
+    coord_t high = 0.0;
+    coord_t high_a = ymax + Point::eps;
+    if (high_a < 100) high = adaptive_simpson(high_a, 100, fy, 1e-4);
+
+    return inside + low + high;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n;
+    poly.resize(n);
+    for (int i = 0; i < n; i++) cin >> poly[i].x >> poly[i].y;
+
+    // Outer integral over x
+    coord_t integral = adaptive_simpson(0, 100, [](coord_t x){ return integrand_x(x); }, 1e-1);
+
+    // Convert ∫_P |W(P)| dP to probability by dividing by 10000^2 = 1e8
+    cout << fixed << setprecision(10) << (integral / 1e8) << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+> Note: this mirrors the C++ approach closely. Python might be tight under a **0.25s** limit on some judges; if needed, run with PyPy and consider optimizations (reduce recursion overhead, memoize evaluations inside Simpson, etc.). The algorithmic idea is the same.
+
+```python
+import sys
+import math
+from typing import Optional, Callable, List
+
+EPS = 1e-9
+INF = 1e100
+
+class Point:
+    __slots__ = ("x", "y")
+    def __init__(self, x: float = 0.0, y: float = 0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def __add__(self, o: "Point") -> "Point":
+        return Point(self.x + o.x, self.y + o.y)
+
+    def __sub__(self, o: "Point") -> "Point":
+        return Point(self.x - o.x, self.y - o.y)
+
+    def __mul__(self, k: float) -> "Point":
+        return Point(self.x * k, self.y * k)
+
+def cross(a: Point, b: Point) -> float:
+    return a.x * b.y - a.y * b.x
+
+def intersect_ray_segment(ray_start: Point, ray_through: Point,
+                          a: Point, b: Point) -> Optional[Point]:
+    """
+    Intersect ray (ray_start -> ray_through) with segment [a,b].
+    Return intersection point if:
+      - not parallel
+      - ray parameter t > 0
+      - segment parameter s in (0,1) with EPS margins
+    """
+    rd = ray_through - ray_start
+    sd = b - a
+    denom = cross(rd, sd)
+    if abs(denom) < EPS:
+        return None
+
+    # Solve ray_start + t*rd = a + s*sd
+    t = cross(a - ray_start, sd) / denom
+    if t < EPS:
+        return None
+
+    s = cross(a - ray_start, rd) / denom
+    if s < EPS or s > 1.0 - EPS:
+        return None
+
+    return ray_start + rd * t
+
+def adaptive_simpson(a: float, b: float, f: Callable[[float], float],
+                     tol: float, whole: float = float("nan")) -> float:
+    """
+    Adaptive Simpson integration of f on [a,b].
+    """
+    if math.isnan(whole):
+        m = 0.5 * (a + b)
+        whole = (b - a) / 6.0 * (f(a) + 4.0 * f(m) + f(b))
+
+    m = 0.5 * (a + b)
+    lm = 0.5 * (a + m)
+    rm = 0.5 * (m + b)
+
+    fa, fm, fb = f(a), f(m), f(b)
+    left  = (m - a) / 6.0 * (fa + 4.0 * f(lm) + fm)
+    right = (b - m) / 6.0 * (fm + 4.0 * f(rm) + fb)
+
+    if abs((left + right) - whole) < tol:
+        return 0.5 * (left + right + whole)
+
+    return (adaptive_simpson(a, m, f, tol, left) +
+            adaptive_simpson(m, b, f, tol, right))
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    poly = [Point(float(next(it)), float(next(it))) for _ in range(n)]
+    board = [Point(0, 0), Point(100, 0), Point(100, 100), Point(0, 100)]
+
+    # current P for polar comparator
+    nowP = Point(0, 0)
+
+    def polar_less(a: Point, b: Point) -> bool:
+        # Same comparator as C++: cross-multiplied slope ordering around nowP
+        return (a.y - nowP.y) * (b.x - nowP.x) < (a.x - nowP.x) * (b.y - nowP.y)
+
+    def compute_shadow_area(px: float, py: float) -> float:
+        """
+        For P outside target, compute area of "shadow polygon" = winning Q region.
+        """
+        nonlocal nowP
+        nowP = Point(px, py)
+
+        # Find polar extremes
+        min_idx = 0
+        max_idx = 0
+        for i in range(n):
+            if polar_less(poly[i], poly[min_idx]):
+                min_idx = i
+            if polar_less(poly[max_idx], poly[i]):
+                max_idx = i
+
+        shadow: List[Point] = []
+
+        # Polygon chain max -> min (CCW)
+        shadow.append(poly[max_idx])
+        j = (max_idx + 1) % n
+        while j != min_idx:
+            shadow.append(poly[j])
+            j = (j + 1) % n
+        shadow.append(poly[min_idx])
+
+        # Intersect ray P->min with board boundary
+        start_edge = -1
+        thru_min = poly[min_idx]
+        for e in range(4):
+            a = board[e]
+            b = board[(e + 1) % 4]
+            inter = intersect_ray_segment(nowP, thru_min, a, b)
+            if inter is not None:
+                shadow.append(inter)
+                start_edge = e
+                break
+
+            # Corner-on-ray special case
+            cv = (a.x - nowP.x) * (thru_min.y - nowP.y) - (a.y - nowP.y) * (thru_min.x - nowP.x)
+            dist = abs(a.x - nowP.x) + abs(a.y - nowP.y)
+            if abs(cv) < EPS and dist > EPS:
+                shadow.append(a)
+                start_edge = e
+                break
+
+        if start_edge == -1:
+            return 0.0
+
+        # Walk board until intersect ray P->max
+        thru_max = poly[max_idx]
+        for jj in range(start_edge, start_edge + 4):
+            idx = jj % 4
+            if jj != start_edge:
+                shadow.append(board[idx])
+
+            a = board[idx]
+            b = board[(idx + 1) % 4]
+            inter = intersect_ray_segment(nowP, thru_max, a, b)
+            if inter is not None:
+                shadow.append(inter)
+                break
+
+            cv = (board[idx].x - nowP.x) * (thru_max.y - nowP.y) - (board[idx].y - nowP.y) * (thru_max.x - nowP.x)
+            dist = abs(board[idx].x - nowP.x) + abs(board[idx].y - nowP.y)
+            if abs(cv) < EPS and dist > EPS:
+                break
+
+        # Area by triangulation from p0
+        if len(shadow) < 3:
+            return 0.0
+        p0 = shadow[0]
+        area2 = 0.0
+        for i in range(1, len(shadow) - 1):
+            area2 += cross(shadow[i] - p0, shadow[i + 1] - p0)
+        return 0.5 * area2
+
+    def integrand_x(x: float) -> float:
+        """
+        Return ∫_0^100 A(x,y) dy.
+        Use a vertical slice intersection to get y-interval where P is inside target.
+        """
+        ymin = INF
+        ymax = -INF
+
+        v0 = Point(x, 0.0)
+        v1 = Point(x, 100.0)
+
+        for i in range(n):
+            a = poly[i]
+            b = poly[(i + 1) % n]
+            inter = intersect_ray_segment(v0, v1, a, b)
+            if inter is not None:
+                ymin = min(ymin, inter.y)
+                ymax = max(ymax, inter.y)
+
+            # Stabilize: vertex exactly on x
+            if abs(poly[i].x - x) <= EPS:
+                ymin = min(ymin, poly[i].y)
+                ymax = max(ymax, poly[i].y)
+
+        fy = lambda y: compute_shadow_area(x, y)
+
+        # Always outside
+        if ymin > ymax:
+            return adaptive_simpson(0.0, 100.0, fy, 1e-4)
+
+        # Inside strip contributes full 10000
+        inside = (ymax - ymin) * 10000.0
+
+        low_b = ymin - EPS
+        low = adaptive_simpson(0.0, low_b, fy, 1e-4) if low_b > 0.0 else 0.0
+
+        high_a = ymax + EPS
+        high = adaptive_simpson(high_a, 100.0, fy, 1e-4) if high_a < 100.0 else 0.0
+
+        return inside + low + high
+
+    # Outer integral over x
+    integral = adaptive_simpson(0.0, 100.0, integrand_x, 1e-1)
+
+    # Convert to probability
+    ans = integral / 1e8
+    sys.stdout.write(f"{ans:.10f}\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also provide (1) a more robust polar-angle extreme finder (guaranteed for all quadrants) and/or (2) a faster, non-recursive Simpson implementation to better fit strict time limits.

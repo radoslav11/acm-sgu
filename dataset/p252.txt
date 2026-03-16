@@ -1,0 +1,599 @@
+## 1) Concise, abridged problem statement
+
+Given a directed acyclic graph with **N towns** and **M one-way railroads**, choose a set of train paths (each path is a directed sequence of towns) such that:
+
+- Each **railroad** is used by **at most one** path.
+- Each **town** is visited by **exactly one** path (because “at most one” and “at least one” together).
+- Minimize the **number of paths**.
+- Subject to that, minimize the **total maintenance cost** (sum of costs of used railroads).
+
+Output the number of paths and the minimum cost, then output the actual paths.
+
+Constraints: \(1 \le N \le 100\), \(0 \le M \le 1000\), costs \(0..1000\).
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observation: the schedule is a collection of vertex-disjoint paths covering all vertices
+Conditions (2) and (3) imply every town must be used by **exactly one** path. Since paths follow directed edges, the schedule is a **vertex-disjoint path cover** of the directed graph.
+
+Also condition (1) is automatically satisfied once paths are vertex-disjoint (a directed edge can’t appear in two different vertex-disjoint paths), but we can keep it in mind.
+
+So we need:
+
+1) **Minimum path cover size** (fewest paths that cover all vertices with vertex-disjoint directed paths).
+2) Among all minimum path covers, **minimum total edge cost**.
+
+This is a classic reduction to **matching** in a bipartite graph.
+
+### Reduction to bipartite matching (DAG path cover)
+Create a bipartite graph with:
+- Left part: towns \(1..N\) (represent “outgoing choice” from a town)
+- Right part: towns \(1..N\) (represent “incoming choice” into a town)
+
+For each directed railroad \(a \to b\) with cost \(c\), add a bipartite edge \(a_L \to b_R\) with cost \(c\).
+
+We want to choose some of these edges such that:
+- Each left vertex is incident to **at most one** chosen edge (a town has at most one outgoing used edge in the cover).
+- Each right vertex is incident to **at most one** chosen edge (a town has at most one incoming used edge).
+
+That is exactly a **matching**.
+
+### Why minimizing number of paths = maximizing matching size
+In a path cover:
+- If a vertex has an outgoing edge to the next vertex in its path, that corresponds to selecting one railroad leaving it.
+- Every selected railroad “connects” two towns into the same path, reducing the number of separate paths by 1.
+
+If we select \(k\) connecting edges (matching size \(k\)), then the number of paths becomes:
+\[
+\text{paths} = N - k
+\]
+So to minimize number of paths, we must **maximize matching size**.
+
+### Secondary objective: minimum total cost among maximum matchings
+Among all matchings of maximum size, we want the smallest sum of costs of the chosen edges. This is exactly a **min-cost maximum matching** in a bipartite graph.
+
+A standard way: convert to **min-cost max-flow**:
+- Source -> each left node capacity 1 cost 0
+- Each right node -> sink capacity 1 cost 0
+- Left \(a\) -> Right \(b\) capacity 1 cost \(c\) if railroad exists.
+
+Running min-cost max-flow yields:
+- Maximum possible flow = maximum matching size
+- Minimum cost among those maximum flows = minimum total railroad cost.
+
+### Reconstructing the paths
+From the chosen matching edges \(a \to b\):
+- Set `nxt[a] = b`
+- Mark `has_prev[b] = true`
+
+Path starts are vertices with no predecessor (`has_prev[v] == false`). From each start, follow `nxt` until 0.
+
+This produces exactly \(N - \text{matching}\) paths covering all vertices once.
+
+Complexity:
+- Nodes in flow graph: \(2N + 2 \le 202\)
+- Edges: \(M + 2N\) (plus reverse edges internally)
+- Min-cost flow with potentials + Dijkstra is fast enough for these constraints.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/graph/mincost_flow.hpp>
+
+using namespace std;
+
+// Print a pair "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector: reads each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces after each element (unused in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Min-cost max-flow implementation using:
+// - potentials to ensure non-negative reduced costs
+// - Dijkstra on reduced costs each augmentation
+template<typename T>
+class MinCostFlow {
+  private:
+    // "Infinity" for type T
+    const static T inf = numeric_limits<T>::max();
+
+    // Residual graph edge
+    struct Edge {
+        int to;        // destination vertex
+        int rev;       // index of the reverse edge in g[to]
+        T capacity;    // capacity of the edge
+        T cost;        // cost per unit of flow
+        T flow;        // current flow through this edge
+
+        Edge(int _to, int _rev, T _capacity, T _cost, T _flow)
+            : to(_to),
+              rev(_rev),
+              capacity(_capacity),
+              cost(_cost),
+              flow(_flow) {}
+    };
+
+    int n;                        // number of vertices in flow graph
+    vector<vector<Edge>> g;       // adjacency list of edges
+    vector<T> potential;          // Johnson potentials for reduced costs
+    vector<pair<int, int>> parent;// for path reconstruction in Dijkstra:
+                                  // parent[v] = {prev_vertex, reverse_edge_index}
+    vector<pair<T, T>> dist;      // dist[v] = {distance, bottleneck_capacity}
+
+    // Build initial potentials using Bellman-Ford style relaxations
+    // (works even with negative costs, though here costs are non-negative)
+    void build_potential(int source) {
+        fill(potential.begin(), potential.end(), inf);
+        potential[source] = 0;
+
+        // Repeated relaxation until no change
+        while(true) {
+            bool any = false;
+            for(int v = 0; v < n; v++) {
+                for(const auto& e: g[v]) {
+                    // Only consider edges with remaining capacity
+                    if(e.capacity != 0 && potential[v] != inf &&
+                       potential[v] + e.cost < potential[e.to]) {
+                        potential[e.to] = potential[v] + e.cost;
+                        any = true;
+                    }
+                }
+            }
+            if(!any) {
+                break;
+            }
+        }
+    }
+
+    // Dijkstra on reduced costs to find shortest augmenting path
+    // Returns true if sink reachable.
+    bool dijkstra(int source, int sink, T flow_limit, T flow) {
+        // Initialize distances to inf; store also remaining amount we can push
+        fill(dist.begin(), dist.end(), make_pair(inf, flow_limit - flow));
+        dist[source].first = 0;
+
+        // Min-heap by distance
+        priority_queue<pair<T, int>, vector<pair<T, int>>, greater<>> q;
+        q.push({0, source});
+
+        while(!q.empty()) {
+            auto [cur_dist, v] = q.top();
+            q.pop();
+
+            // Skip outdated entries
+            if(cur_dist > dist[v].first) {
+                continue;
+            }
+
+            for(const auto& e: g[v]) {
+                // Only consider nodes with finite potential (reachable in potential graph)
+                // and edges with remaining capacity (e.flow < e.capacity)
+                // Reduced cost = e.cost + potential[v] - potential[to]
+                if(potential[e.to] != inf &&
+                   cur_dist + e.cost - potential[e.to] + potential[v] <
+                       dist[e.to].first &&
+                   e.flow < e.capacity) {
+
+                    // Store parent info for path reconstruction:
+                    // we store (v, e.rev) so later we can find the forward edge as:
+                    // g[parent][ g[cur][rev].rev ]
+                    parent[e.to] = {v, e.rev};
+
+                    // Update best distance and bottleneck capacity
+                    dist[e.to] = {
+                        cur_dist + e.cost - potential[e.to] + potential[v],
+                        min(dist[v].second, e.capacity - e.flow)
+                    };
+
+                    q.push({dist[e.to].first, e.to});
+                }
+            }
+        }
+        return dist[sink].first != inf;
+    }
+
+  public:
+    MinCostFlow(int _n = 0) { init(_n); }
+
+    // Initialize graph with _n vertices
+    void init(int _n) {
+        n = _n;
+        g.assign(n, {});
+        potential.resize(n);
+        parent.resize(n);
+        dist.resize(n);
+    }
+
+    int size() const { return n; }
+
+    // Get current flow on edge g[from][id]
+    T edge_flow(int from, int id) const { return g[from][id].flow; }
+
+    // Add directed edge (from -> to) with given capacity and cost
+    // Also adds reverse edge with capacity 0 and cost -cost
+    // Returns the index of the forward edge in g[from].
+    int add_edge(int from, int to, T capacity, T cost) {
+        int id = g[from].size();
+
+        // Forward edge: rev points to where reverse edge will land in g[to]
+        // (the + (from == to) handles self-loops safely)
+        g[from].push_back(
+            Edge(to, g[to].size() + (from == to), capacity, cost, 0)
+        );
+
+        // Reverse edge: capacity 0, negative cost
+        g[to].push_back(Edge(from, id, 0, -cost, 0));
+        return id;
+    }
+
+    // Compute min-cost flow from source to sink, up to flow_limit
+    // Returns {total_cost, total_flow}
+    pair<T, T> flow(int source, int sink, T flow_limit = inf) {
+        // Reset all flows to 0
+        for(int v = 0; v < n; v++) {
+            for(auto& e: g[v]) {
+                e.flow = 0;
+            }
+        }
+
+        T cost = 0, flow = 0;
+
+        // Initial potentials
+        build_potential(source);
+
+        // Repeatedly find shortest augmenting path and send flow
+        while(flow < flow_limit && dijkstra(source, sink, flow_limit, flow)) {
+            // Amount we can augment on this path
+            T delta = dist[sink].second;
+            flow += delta;
+
+            // Walk back from sink to source using parent pointers
+            for(int v = sink; v != source; v = parent[v].first) {
+                // parent[v].second stores reverse-edge index in g[v]
+                // g[v][rev].rev is the index of the forward edge in g[parent]
+                auto& e = g[parent[v].first][g[v][parent[v].second].rev];
+
+                // Add cost for pushing delta through this forward edge
+                cost += e.cost * delta;
+
+                // Update forward and reverse flows in residual graph
+                e.flow += delta;
+                g[v][parent[v].second].flow -= delta;
+            }
+
+            // Update potentials: potential[i] += dist[i] for all reached nodes
+            for(int i = 0; i < n; i++) {
+                if(dist[i].first != inf) {
+                    potential[i] += dist[i].first;
+                }
+            }
+        }
+        return {cost, flow};
+    }
+};
+
+int n, m;
+vector<tuple<int, int, int>> edges; // (a, b, c)
+MinCostFlow<int> mcf;
+
+void read() {
+    cin >> n >> m;
+    edges.resize(m);
+    for(auto& [a, b, c]: edges) {
+        cin >> a >> b >> c;
+    }
+}
+
+void solve() {
+    // We need a minimum path cover in a DAG with minimum total edge cost.
+    // Minimum number of paths = n - (maximum matching size).
+    // Among maximum matchings, minimize sum of costs => min-cost max-flow.
+
+    int source = 0, sink = 2 * n + 1;
+
+    // Graph vertices:
+    // 0 = source
+    // 1..n = left part (towns as "outgoing")
+    // n+1..2n = right part (towns as "incoming")
+    // 2n+1 = sink
+    mcf.init(2 * n + 2);
+
+    // Connect source -> each left node with cap 1 (choose at most one outgoing)
+    // Connect each right node -> sink with cap 1 (choose at most one incoming)
+    for(int i = 1; i <= n; i++) {
+        mcf.add_edge(source, i, 1, 0);
+        mcf.add_edge(n + i, sink, 1, 0);
+    }
+
+    // Add bipartite edges corresponding to railroads (a_L -> b_R) with cost c
+    vector<int> edge_ids(m); // store edge indices in adjacency list for later
+    for(int i = 0; i < m; i++) {
+        auto [a, b, c] = edges[i];
+        edge_ids[i] = mcf.add_edge(a, n + b, 1, c);
+    }
+
+    // Send as much flow as possible => maximum matching
+    // Min-cost among those => optimal total cost for min-path schedule
+    auto [cost, matching] = mcf.flow(source, sink);
+
+    // Number of paths in min path cover
+    int num_paths = n - matching;
+
+    // Reconstruct chosen edges from the flow on each railroad edge
+    vector<int> nxt(n + 1, 0);       // nxt[a] = b if matched edge a->b chosen
+    vector<bool> has_prev(n + 1, false); // has_prev[b] = true if some a->b chosen
+
+    for(int i = 0; i < m; i++) {
+        // If the corresponding flow edge carries 1 unit, it's in the matching
+        if(mcf.edge_flow(get<0>(edges[i]), edge_ids[i]) > 0) {
+            auto [a, b, c] = edges[i];
+            nxt[a] = b;
+            has_prev[b] = true;
+        }
+    }
+
+    // Output: number of paths and total cost
+    cout << num_paths << ' ' << cost << '\n';
+
+    // Each path starts at a node with no predecessor (has_prev == false)
+    for(int i = 1; i <= n; i++) {
+        if(has_prev[i]) {
+            continue; // not a start
+        }
+        vector<int> path;
+
+        // Follow nxt pointers until 0 (no outgoing chosen)
+        for(int v = i; v != 0; v = nxt[v]) {
+            path.push_back(v);
+        }
+
+        // Output path length and vertices
+        cout << path.size();
+        for(int v: path) {
+            cout << ' ' << v;
+        }
+        cout << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Problem has one test; could be extended.
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import heapq
+
+# Min-cost max-flow with potentials + Dijkstra (successive shortest augmenting path)
+class MinCostFlow:
+    def __init__(self, n=0):
+        self.init(n)
+
+    def init(self, n):
+        self.n = n
+        self.g = [[] for _ in range(n)]   # adjacency list of edges
+        self.potential = [0] * n          # Johnson potentials
+        self.parent_v = [-1] * n          # parent vertex in shortest path tree
+        self.parent_e = [-1] * n          # parent edge index in g[parent_v]
+        self.INF = 10**18
+
+    # Edge stored as [to, rev, cap, cost]
+    # rev is the index of the reverse edge in g[to]
+    def add_edge(self, fr, to, cap, cost):
+        fwd = [to, len(self.g[to]), cap, cost]
+        rev = [fr, len(self.g[fr]), 0, -cost]
+        self.g[fr].append(fwd)
+        self.g[to].append(rev)
+        return len(self.g[fr]) - 1  # index of forward edge
+
+    def flow(self, s, t, flow_limit=None):
+        if flow_limit is None:
+            flow_limit = self.INF
+
+        n = self.n
+        # Initialize potentials using Bellman-Ford-like relaxation.
+        # Here costs are non-negative, so all zeros would work too,
+        # but we keep it generic.
+        pot = [self.INF] * n
+        pot[s] = 0
+        changed = True
+        while changed:
+            changed = False
+            for v in range(n):
+                if pot[v] == self.INF:
+                    continue
+                for to, rev, cap, cost in self.g[v]:
+                    if cap > 0 and pot[v] + cost < pot[to]:
+                        pot[to] = pot[v] + cost
+                        changed = True
+        # Replace INF with 0 for unreachable to avoid overflow in reduced costs;
+        # they won't be used anyway because they remain unreachable in Dijkstra.
+        self.potential = [0 if x == self.INF else x for x in pot]
+
+        total_flow = 0
+        total_cost = 0
+
+        while total_flow < flow_limit:
+            # Dijkstra on reduced costs
+            dist = [self.INF] * n
+            dist[s] = 0
+            self.parent_v = [-1] * n
+            self.parent_e = [-1] * n
+
+            pq = [(0, s)]
+            while pq:
+                d, v = heapq.heappop(pq)
+                if d != dist[v]:
+                    continue
+                for ei, e in enumerate(self.g[v]):
+                    to, rev, cap, cost = e
+                    if cap <= 0:
+                        continue
+                    # reduced cost
+                    nd = d + cost + self.potential[v] - self.potential[to]
+                    if nd < dist[to]:
+                        dist[to] = nd
+                        self.parent_v[to] = v
+                        self.parent_e[to] = ei
+                        heapq.heappush(pq, (nd, to))
+
+            if dist[t] == self.INF:
+                break  # no augmenting path
+
+            # Update potentials for nodes reached by Dijkstra
+            for i in range(n):
+                if dist[i] < self.INF:
+                    self.potential[i] += dist[i]
+
+            # Find bottleneck capacity on the path
+            add = flow_limit - total_flow
+            v = t
+            while v != s:
+                pv = self.parent_v[v]
+                pe = self.parent_e[v]
+                if pv == -1:
+                    add = 0
+                    break
+                add = min(add, self.g[pv][pe][2])  # cap
+                v = pv
+            if add == 0:
+                break
+
+            # Augment flow and compute real cost (use original costs)
+            v = t
+            while v != s:
+                pv = self.parent_v[v]
+                pe = self.parent_e[v]
+                e = self.g[pv][pe]
+                to, rev, cap, cost = e
+
+                # send 'add' through forward edge
+                e[2] -= add  # reduce residual capacity
+                # increase residual capacity on reverse edge
+                self.g[v][rev][2] += add
+
+                total_cost += cost * add
+                v = pv
+
+            total_flow += add
+
+        return total_cost, total_flow
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    edges = []
+    for _ in range(m):
+        a = int(next(it)); b = int(next(it)); c = int(next(it))
+        edges.append((a, b, c))
+
+    # Build flow network for bipartite min-cost max matching
+    source = 0
+    sink = 2 * n + 1
+    mcf = MinCostFlow(2 * n + 2)
+
+    # source -> left nodes, right nodes -> sink
+    for i in range(1, n + 1):
+        mcf.add_edge(source, i, 1, 0)
+        mcf.add_edge(n + i, sink, 1, 0)
+
+    # Add edges for each railroad a->b with cost c
+    edge_ids = []  # (a, idx_in_g[a]) for later inspection via residuals
+    for a, b, c in edges:
+        idx = mcf.add_edge(a, n + b, 1, c)
+        edge_ids.append((a, idx))
+
+    # Run min-cost max-flow => min-cost maximum matching
+    cost, matching = mcf.flow(source, sink)
+
+    num_paths = n - matching
+
+    # Reconstruct chosen matching:
+    # If edge a->(n+b) was used, then its capacity became 0 (from 1),
+    # because we pushed 1 unit through it.
+    nxt = [0] * (n + 1)
+    has_prev = [False] * (n + 1)
+
+    for (a, b, c), (aa, idx) in zip(edges, edge_ids):
+        e = mcf.g[aa][idx]
+        # e[2] is residual capacity; if it is 0, the edge is saturated => chosen
+        if e[2] == 0:
+            nxt[a] = b
+            has_prev[b] = True
+
+    out = []
+    out.append(f"{num_paths} {cost}")
+
+    # Output each path starting from nodes with no predecessor
+    for i in range(1, n + 1):
+        if has_prev[i]:
+            continue
+        path = []
+        v = i
+        while v != 0:
+            path.append(v)
+            v = nxt[v]
+        out.append(str(len(path)) + " " + " ".join(map(str, path)))
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+We need a set of vertex-disjoint directed paths covering all vertices exactly once. Selecting an edge \(u\to v\) means \(u\) is immediately before \(v\) in some path, so each vertex may have at most one chosen outgoing and one chosen incoming edge ⇒ chosen edges form a matching in a bipartite graph (left copy = outgoing, right copy = incoming). If the matching size is \(k\), then the cover has \(N-k\) paths, so minimizing paths means maximizing matching size. Among maximum matchings, minimize the sum of edge costs, which is min-cost maximum matching, solved by min-cost max-flow on the bipartite network. Reconstruct paths by following chosen successor `nxt[u]=v` from nodes with no predecessor.

@@ -1,0 +1,318 @@
+## 1) Abridged problem statement
+
+You are given an undirected graph with **signs on each edge end**: for each edge \(e=\{u,v\}\), two values \(\omega(e,u),\omega(e,v)\in\{-1,+1\}\).
+
+An **elementary transformation** at a vertex \(x\) flips (negates) \(\omega(e,x)\) for every incident edge \(e\).
+
+A bidirected graph corresponds to a usual directed graph iff **for every edge \(\{u,v\}\)**, after some transformations, the two endpoint signs become **opposite**:
+\[
+\omega(e,u)\cdot \omega(e,v) = -1.
+\]
+
+Task:
+- Determine if it is possible to reach such a state.
+- If possible, output a set of vertices to transform with **minimum size** (any optimal set).
+
+---
+
+## 2) Detailed editorial
+
+### Key observation: transformations are “vertex flips”
+Let \(x_v\in\{0,1\}\) indicate whether we flip vertex \(v\) (1 = flipped, 0 = not flipped).
+
+If an endpoint sign is \(d\in\{-1,+1\}\), after flipping vertex \(v\) it becomes:
+\[
+d' = d \cdot (-1)^{x_v}.
+\]
+
+For an edge \(e=\{u,v\}\) with original endpoint signs \(d_u=\omega(e,u)\), \(d_v=\omega(e,v)\), the product after flips is:
+\[
+d_u' d_v' = (d_u d_v)\cdot (-1)^{x_u+x_v}.
+\]
+
+We need \(d_u'd_v'=-1\). Let \(w = d_u d_v \in \{-1,+1\}\). Then:
+\[
+w\cdot (-1)^{x_u+x_v} = -1
+\]
+which is equivalent to:
+- If \(w = +1\): then \((-1)^{x_u+x_v}=-1\) ⇒ \(x_u+x_v\) is odd ⇒ **\(x_u \ne x_v\)**.
+- If \(w = -1\): then \((-1)^{x_u+x_v}=+1\) ⇒ \(x_u+x_v\) is even ⇒ **\(x_u = x_v\)**.
+
+So each edge imposes an XOR constraint:
+\[
+x_v = x_u \oplus c \quad\text{where } c=
+\begin{cases}
+1 & \text{if } w=+1\\
+0 & \text{if } w=-1
+\end{cases}
+\]
+
+### Graph coloring view (2-coloring with “same/different” edges)
+We can treat \(x_v\) as a 2-color (0/1). For every edge:
+- if \(w=+1\), endpoints must have **different** colors,
+- if \(w=-1\), endpoints must have **same** colors.
+
+This is exactly a bipartite-like constraint system solvable by BFS/DFS:
+- Assign a color to a start vertex.
+- Propagate required colors across edges.
+- If a contradiction occurs, answer is **NO**.
+
+This is also equivalent to checking consistency of a system of linear equations over GF(2).
+
+### Minimizing number of transformations
+Within a **connected component**, once you choose the color of one vertex, all others are forced. There are exactly two solutions in a component: all colors flipped (0↔1).
+
+Flipped vertices are exactly those with \(x_v=1\). To minimize flips in a component, choose the solution with fewer 1s:
+- BFS collects vertices of color 0 and color 1,
+- add the smaller group to the answer set.
+
+Do this independently per component; sums of minima give the global minimum.
+
+### Complexity
+- Build adjacency with constraint \(w=d_1 d_2\).
+- BFS each component once.
+
+Time: \(O(n+m)\). Memory: \(O(n+m)\).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (GNU extension)
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                // iterate by reference to fill each element
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                             // number of vertices and edges
+vector<tuple<int, int, int, int>> edges; // each edge: (a, b, d1, d2)
+
+void read() {
+    cin >> n >> m;                    // read n and m
+    edges.resize(m);                  // allocate m edges
+    for(auto& [a, b, d1, d2]: edges) {// structured binding to fill tuple parts
+        cin >> a >> b >> d1 >> d2;    // read endpoints and endpoint signs
+    }
+}
+
+void solve() {
+    // We need for each edge {u,v} after flips: d_u' * d_v' = -1.
+    // Let x_v be 0/1 indicating whether we flip vertex v.
+    // For edge, w = d1*d2:
+    //   w = +1 => x_u != x_v
+    //   w = -1 => x_u == x_v
+    // This is a 2-coloring problem with "same/different" constraints.
+    // In each connected component, choose the color class with fewer vertices
+    // as the vertices to flip (minimizes flips).
+
+    vector<vector<pair<int, int>>> adj(n + 1);
+    // adj[u] contains pairs (v, w) where w = d_u * d_v in {-1,+1}
+
+    for(auto& [a, b, d1, d2]: edges) {
+        int w = d1 * d2;              // product of endpoint signs
+        adj[a].push_back({b, w});     // store constraint on both directions
+        adj[b].push_back({a, w});
+    }
+
+    vector<int> color(n + 1, -1);     // color[v] = 0/1 assigned; -1 means unvisited
+    vector<int> flips;                // vertices chosen to flip (apply transformation)
+    bool possible = true;             // becomes false if contradiction found
+
+    // Process each connected component
+    for(int start = 1; start <= n && possible; start++) {
+        if(color[start] != -1) {      // already colored by previous BFS
+            continue;
+        }
+
+        color[start] = 0;             // arbitrary initial choice for this component
+
+        vector<vector<int>> groups(2);// groups[0] = vertices with color 0, groups[1] = color 1
+        queue<int> q;                 // BFS queue
+        q.push(start);
+        groups[0].push_back(start);
+
+        // BFS over the component, enforcing constraints
+        while(!q.empty() && possible) {
+            int u = q.front();
+            q.pop();
+
+            for(auto [v, w]: adj[u]) {
+                // Determine which color v MUST have given u's color and edge constraint w
+                // If w == +1 => x_u != x_v => v needs 1 - color[u]
+                // If w == -1 => x_u == x_v => v needs color[u]
+                int need = (w == 1) ? (1 - color[u]) : color[u];
+
+                if(color[v] == -1) {  // not assigned yet: assign and continue BFS
+                    color[v] = need;
+                    groups[need].push_back(v);
+                    q.push(v);
+                } else if(color[v] != need) {
+                    possible = false; // contradiction -> no solution exists
+                }
+            }
+        }
+
+        if(possible) {
+            // Choose the smaller color group to flip (minimizes number of transformations)
+            auto& smaller =
+                (groups[0].size() <= groups[1].size()) ? groups[0] : groups[1];
+
+            for(int v: smaller) {
+                flips.push_back(v);   // mark these vertices to be flipped
+            }
+        }
+    }
+
+    if(!possible) {                   // if any component is inconsistent
+        cout << "NO\n";
+        return;
+    }
+
+    sort(flips.begin(), flips.end()); // output can be any order; sorting is fine
+    cout << "YES\n";
+    cout << flips.size() << "\n";
+    for(int v: flips) {
+        cout << v << "\n";            // each line is a vertex index to transform
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // fast I/O
+    cin.tie(nullptr);                 // untie cin/cout
+
+    int T = 1;
+    // cin >> T;                      // (disabled) problem has one test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    # Build adjacency list with constraints.
+    # For each edge (a,b) with endpoint signs d1,d2, define w = d1*d2 in {-1,+1}.
+    # Constraint:
+    #   w = +1 => x_a != x_b
+    #   w = -1 => x_a == x_b
+    adj = [[] for _ in range(n + 1)]
+    for _ in range(m):
+        a = int(next(it))
+        b = int(next(it))
+        d1 = int(next(it))
+        d2 = int(next(it))
+        w = d1 * d2
+        adj[a].append((b, w))
+        adj[b].append((a, w))
+
+    # color[v] = assigned value of x_v (0/1), -1 means unassigned/unvisited
+    color = [-1] * (n + 1)
+
+    flips = []      # vertices where x_v = 1 in our chosen optimal solution
+
+    for start in range(1, n + 1):
+        if color[start] != -1:
+            continue
+
+        # Start BFS for this connected component.
+        color[start] = 0
+        groups = [[], []]         # groups[0] and groups[1] store vertices by color
+        groups[0].append(start)
+
+        q = deque([start])
+        possible = True
+
+        while q and possible:
+            u = q.popleft()
+            cu = color[u]
+
+            for v, w in adj[u]:
+                # Required color for v given u:
+                # if w==+1 => different: need = 1 - cu
+                # if w==-1 => same:     need = cu
+                need = (1 - cu) if w == 1 else cu
+
+                if color[v] == -1:
+                    color[v] = need
+                    groups[need].append(v)
+                    q.append(v)
+                elif color[v] != need:
+                    possible = False
+
+        if not possible:
+            sys.stdout.write("NO\n")
+            return
+
+        # To minimize flips in this component, pick the smaller of the two groups
+        # to be x_v = 1 (i.e., vertices we will flip).
+        smaller = groups[0] if len(groups[0]) <= len(groups[1]) else groups[1]
+        flips.extend(smaller)
+
+    flips.sort()
+    out = ["YES", str(len(flips))]
+    out.extend(str(v) for v in flips)
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+For edge \(\{u,v\}\) with signs \(d_u,d_v\), flipping a vertex negates all its incident signs. Let \(x_v\in\{0,1\}\) be whether \(v\) is flipped. After flips:
+\[
+(d_u(-1)^{x_u})(d_v(-1)^{x_v}) = (d_ud_v)(-1)^{x_u+x_v}.
+\]
+We need product \(-1\). Let \(w=d_ud_v\). Then:
+- \(w=+1 \Rightarrow x_u\neq x_v\),
+- \(w=-1 \Rightarrow x_u=x_v\).
+
+So we 2-color vertices with “different” edges for \(w=+1\) and “same” edges for \(w=-1\). BFS/DFS detects contradictions (⇒ NO). Each connected component has two valid colorings (swap colors). To minimize flips, choose the smaller color class as vertices to flip. Total time \(O(n+m)\).

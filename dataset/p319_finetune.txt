@@ -1,0 +1,412 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+319. Kalevich Strikes Back
+Time limit per test: 0.5 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+And yet again the Berland community can see that talent is always multi-sided. The talent is always seeking new ways of self-expression. This time genius Kalevich amazed everybody with his new painting "Rectangular Frames". The masterpiece is full of impenetrable meaning and hidden themes.
+
+Narrow black rectangular frames are drawn on a white rectangular canvas. No two frames have a common point. Sides of each frame are parallel to the sides of the canvas.
+
+The painting is very big and the reduced replica cannot pass the idea of the original drawing. That's why Kalevich requested that the simplified versions of the masterpiece should be used as replicas. The simplified version is the sequence of the areas of all facets of the original. A facet is a connected enclosed white area within the painting. The areas in the sequence should be written in the non-decreasing order.
+
+Input
+The first line of the input contains an integer N (1 ≤ N ≤ 60000) — the number of the frames on the drawing. The second line contains integer numbers W and H (1 ≤ W, H ≤ 108).
+
+Let's introduce the Cartesian coordinate system in such a way that the left bottom corner of the canvas has (0, 0) coordinate and the right top corner has the (W, H) coordinate. The sides of the canvas are parallel to the axes.
+
+The following N lines contain the description of the frames. Each description is composed of the coordinates of the two opposite corners of the corresponding frame x1, y1, x2, y2 (1 ≤ x1, x2 < W; 1 ≤ y1, y2 < H; x1 != x2, y1 != y2). All coordinates are integers. No two frames have a common point.
+
+Output
+Write the desired sequence to the output.
+
+Example(s)
+sample input
+sample output
+1
+3 3
+2 1 1 2
+1 8
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+Given a white canvas rectangle of size \(W \times H\) and \(N\) thin black axis-aligned rectangular **frames** (only borders, zero thickness). No two frames share any point (they don’t intersect or touch).
+
+A **facet** is a connected white region remaining after removing all frame borders. Output the **areas of all facets** in **non-decreasing order**.
+
+Constraints: \(1 \le N \le 60000\), \(W,H \le 10^8\).
+
+---
+
+## 2) Key observations
+
+1. **No intersections ⇒ laminar (nested/disjoint) structure**  
+   Since frames don’t intersect or touch, any two rectangles are either:
+   - completely disjoint, or
+   - one strictly inside the other.  
+   So the set of rectangles forms a **forest by containment**.
+
+2. **Add the canvas as a “rectangle 0” root ⇒ containment tree**  
+   Let rectangle 0 be the whole canvas \((0,0)-(W,H)\). Then every frame has a unique smallest containing rectangle (possibly the canvas), so we get a rooted tree.
+
+3. **Facet areas are “area minus children areas”**  
+   Borders have zero area, so only rectangle interiors matter.  
+   For each node \(u\) (canvas or a frame):
+   \[
+   \text{facet}(u) = \text{area}(u) - \sum_{c \in children(u)} \text{area}(c)
+   \]
+   Children are disjoint, so subtraction is valid.
+
+4. **We only need each rectangle’s parent**  
+   Once we know `parent[i]`, we can compute all facet areas using a simple difference accumulation:
+   - `facet[0] = W*H`
+   - for each rectangle \(i\) of area \(a\):
+     - `facet[i] += a`
+     - `facet[parent[i]] -= a`
+
+5. **Parent can be found in \(O(\log N)\) with a sweep line + ordered map**  
+   Sweep vertical line from left to right, maintain active rectangles using a map keyed by certain y-boundaries. For a rectangle opening at its left side, a predecessor query at \(y_1\) identifies the immediate container.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Normalize rectangles
+For each input \((x_1,y_1,x_2,y_2)\), swap so that:
+- \(x_1 < x_2\), \(y_1 < y_2\)
+
+Store canvas as rectangle `0: (0,0)-(W,H)`.
+
+---
+
+### Step B — Build containment parents with a sweep line
+
+**Events**  
+For each rectangle \(i\) (1..N), create 3 events:
+- open boundary at \((x_1, y_1)\)
+- open boundary at \((x_1, y_2)\)
+- close at \((x_2, 0)\) (y is just a tie-breaker)
+
+Sort events by `(x, y)`.
+
+**Active structure**  
+Maintain an ordered map:
+- `active[y] = rect_id`
+
+Initialize:
+- `active[0] = 0`
+- `active[H] = 0`
+
+This map encodes which rectangle “owns” the vertical strip at the current sweep x.
+
+**Processing**
+- If event is an **opening** (x == rectangle’s x1):
+  - When handling the bottom boundary event (y == y1), compute parent:
+    - find predecessor key just below `y1` using `lower_bound(y1)` then `--it`
+    - candidate = `it->second`
+    - subtle boundary fix: if `it->first` equals candidate’s `y2` (top boundary), then the true container is `parent[candidate]` (because we are on a boundary, not inside).
+  - insert `active[y] = i` (for both y1 and y2)
+- If event is a **closing** (x == x2):
+  - erase keys `y1` and `y2`
+
+Complexity: \(O(N \log N)\).
+
+---
+
+### Step C — Compute facet areas
+Create array `ans[0..N]` (64-bit).
+- `ans[0] = W*H`
+- For each rectangle \(i\):
+  - \(a = (x_2-x_1)(y_2-y_1)\)
+  - `ans[i] += a`
+  - `ans[parent[i]] -= a`
+
+Now `ans[u]` equals the facet area associated with node `u`.  
+Sort `ans` and print.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Kalevich Strikes Back (p319)
+  Approach:
+    1) Rectangles form a containment tree (nested/disjoint) due to no touching.
+    2) Each facet area = area(u) - sum(area(children)).
+    3) Build parent[] via sweep line with an ordered map of y-boundaries.
+    4) Compute facet areas with:
+         ans[0]=W*H,
+         ans[i]+=area(i), ans[parent[i]]-=area(i)
+    5) Sort ans[0..N] and output.
+*/
+
+struct Rect {
+    int x1, y1, x2, y2; // normalized: x1<x2, y1<y2
+};
+
+struct Event {
+    int x, y, id;
+    bool operator<(Event const& other) const {
+        if (x != other.x) return x < other.x;
+        return y < other.y;
+    }
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N;
+    int W, H;
+    cin >> N;
+    cin >> W >> H;
+
+    vector<Rect> rect(N + 1);
+    // Canvas as rectangle 0
+    rect[0] = {0, 0, W, H};
+
+    for (int i = 1; i <= N; i++) {
+        int x1, y1, x2, y2;
+        cin >> x1 >> y1 >> x2 >> y2;
+        if (x1 > x2) swap(x1, x2);
+        if (y1 > y2) swap(y1, y2);
+        rect[i] = {x1, y1, x2, y2};
+    }
+
+    // Build events: two opens at x1 (for y1 and y2), one close at x2
+    vector<Event> events;
+    events.reserve(3 * N);
+    for (int i = 1; i <= N; i++) {
+        events.push_back({rect[i].x1, rect[i].y1, i}); // open bottom boundary
+        events.push_back({rect[i].x1, rect[i].y2, i}); // open top boundary
+        events.push_back({rect[i].x2, 0, i});          // close event
+    }
+    sort(events.begin(), events.end());
+
+    // active[y] = id: ordered map of y-boundaries at current sweep x
+    map<int,int> active;
+    active[0] = 0;
+    active[H] = 0;
+
+    vector<int> parent(N + 1, 0);
+
+    for (auto &e : events) {
+        int v = e.id;
+        if (e.x == rect[v].x1) {
+            // Opening event: insert boundary y -> v
+            // Only once (at y1) compute parent[v]
+            if (e.y == rect[v].y1) {
+                // Find predecessor boundary below y1
+                auto it = active.lower_bound(rect[v].y1);
+                --it; // safe because active has key 0
+
+                int below = it->second; // candidate container
+
+                // Boundary disambiguation:
+                // if predecessor key equals below's top y2, we are on its top boundary,
+                // so the actual containing rectangle is parent[below]
+                if (rect[below].y2 == it->first) parent[v] = parent[below];
+                else parent[v] = below;
+            }
+            active[e.y] = v; // insert/overwrite boundary
+        } else {
+            // Closing: remove both boundaries of v
+            active.erase(rect[v].y1);
+            active.erase(rect[v].y2);
+        }
+    }
+
+    // Compute facet areas by accumulation
+    vector<long long> ans(N + 1, 0);
+    ans[0] = 1LL * W * H;
+
+    for (int i = 1; i <= N; i++) {
+        long long a = 1LL * (rect[i].x2 - rect[i].x1) * (rect[i].y2 - rect[i].y1);
+        ans[i] += a;
+        ans[parent[i]] -= a;
+    }
+
+    sort(ans.begin(), ans.end());
+    for (int i = 0; i <= N; i++) {
+        if (i) cout << ' ';
+        cout << ans[i];
+    }
+    cout << '\n';
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Python lacks a built-in ordered map with \(O(\log N)\) predecessor queries, so we implement a **Treap** (randomized BST) to support:
+- insert / erase
+- predecessor (largest key < y)
+in expected \(O(\log N)\).
+
+```python
+import sys
+import random
+
+# ---------------- Treap (randomized balanced BST) ----------------
+
+random.seed(0)
+
+class Node:
+    __slots__ = ("key", "val", "prio", "left", "right")
+    def __init__(self, key, val):
+        self.key = key
+        self.val = val
+        self.prio = random.randint(1, 1 << 30)
+        self.left = None
+        self.right = None
+
+def rot_right(p):
+    q = p.left
+    p.left = q.right
+    q.right = p
+    return q
+
+def rot_left(p):
+    q = p.right
+    p.right = q.left
+    q.left = p
+    return q
+
+def insert(root, key, val):
+    """Insert key->val (overwrite if key exists)."""
+    if root is None:
+        return Node(key, val)
+    if key == root.key:
+        root.val = val
+        return root
+    if key < root.key:
+        root.left = insert(root.left, key, val)
+        if root.left.prio > root.prio:
+            root = rot_right(root)
+    else:
+        root.right = insert(root.right, key, val)
+        if root.right.prio > root.prio:
+            root = rot_left(root)
+    return root
+
+def erase(root, key):
+    """Erase key if exists."""
+    if root is None:
+        return None
+    if key < root.key:
+        root.left = erase(root.left, key)
+        return root
+    if key > root.key:
+        root.right = erase(root.right, key)
+        return root
+
+    # key == root.key: remove this node by rotating it down
+    if root.left is None:
+        return root.right
+    if root.right is None:
+        return root.left
+    if root.left.prio > root.right.prio:
+        root = rot_right(root)
+        root.right = erase(root.right, key)
+    else:
+        root = rot_left(root)
+        root.left = erase(root.left, key)
+    return root
+
+def predecessor(root, key):
+    """Return node with maximum node.key < key (or None)."""
+    cur = root
+    ans = None
+    while cur is not None:
+        if cur.key < key:
+            ans = cur
+            cur = cur.right
+        else:
+            cur = cur.left
+    return ans
+
+# ---------------- Solution ----------------
+
+def main():
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    it = iter(data)
+
+    n = next(it)
+    w = next(it)
+    h = next(it)
+
+    # rects[i] = (x1,y1,x2,y2), rects[0] is canvas
+    rects = [(0, 0, w, h)]
+    for _ in range(n):
+        x1 = next(it); y1 = next(it); x2 = next(it); y2 = next(it)
+        if x1 > x2: x1, x2 = x2, x1
+        if y1 > y2: y1, y2 = y2, y1
+        rects.append((x1, y1, x2, y2))
+
+    # events: (x, y, id)
+    events = []
+    for i in range(1, n + 1):
+        x1, y1, x2, y2 = rects[i]
+        events.append((x1, y1, i))  # open y1
+        events.append((x1, y2, i))  # open y2
+        events.append((x2, 0, i))   # close
+    events.sort()
+
+    # Treap stores active boundaries y -> rect_id
+    root = None
+    root = insert(root, 0, 0)
+    root = insert(root, h, 0)
+
+    parent = [0] * (n + 1)
+
+    for x, y, v in events:
+        x1, y1, x2, y2 = rects[v]
+        if x == x1:
+            # opening: compute parent only on the bottom boundary event
+            if y == y1:
+                pred = predecessor(root, y1)  # must exist due to y=0
+                below = pred.val
+                bx1, by1, bx2, by2 = rects[below]
+                # boundary disambiguation (same as C++ logic)
+                if by2 == pred.key:
+                    parent[v] = parent[below]
+                else:
+                    parent[v] = below
+
+            root = insert(root, y, v)  # insert boundary
+        else:
+            # closing: remove both boundaries
+            root = erase(root, y1)
+            root = erase(root, y2)
+
+    # facet areas by difference accumulation
+    area = [0] * (n + 1)
+    area[0] = w * h
+    for i in range(1, n + 1):
+        x1, y1, x2, y2 = rects[i]
+        a = (x2 - x1) * (y2 - y1)
+        area[i] += a
+        area[parent[i]] -= a
+
+    area.sort()
+    sys.stdout.write(" ".join(map(str, area)) + "\n")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+If you want, I can also add a small diagram-style explanation of why the sweep-line `active[y]` representation correctly identifies the immediate containing rectangle (the only tricky part of the solution).

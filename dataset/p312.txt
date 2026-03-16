@@ -1,0 +1,704 @@
+## 1) Concise, abridged problem statement
+
+You are given a polygonal “kingdom” with **N = 3 or N = 4** vertices (a triangle or quadrilateral), listed in clockwise or counterclockwise order, and a ratio string `K1:K2:...:KN` (each `Ki ≥ 1`). Side `Ki` corresponds to the original side between vertex `i` and `i+1` (with `N` wrapping to `1`).
+
+Partition the kingdom into **N polygons**, each being a **triangle or quadrilateral**, such that:
+
+- Part `i` has an edge that coincides exactly with the original side `i`.
+- Areas of parts are in ratio `K1:K2:...:KN`.
+
+Output the `N` polygons (each as `3` or `4` vertices with real coordinates allowed). If impossible, output `-1`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Geometry basics used
+- Signed triangle area:  
+  \[
+  \text{area}(A,B,C)=\frac12 ((B-A)\times(C-A))
+  \]
+  (cross product in 2D).  
+- **Key linearity fact**: If point \(P\) moves along segment \(XY\), then the area of triangle \(\triangle AXP\) changes **linearly** with the position of \(P\) along \(XY\).
+
+This linearity is what makes “pick a point on an edge/diagonal to match an area ratio” easy.
+
+---
+
+## Case N = 3 (triangle)
+
+Let the triangle be \(A=p_1\), \(B=p_2\), \(C=p_3\), and ratios \(K_1,K_2,K_3\) correspond to sides \(AB, BC, CA\).
+
+We want 3 regions, each sharing one side of the triangle. A classic way is to choose an interior point \(O\) and use triangles:
+- Region 1: \(A,B,O\) (shares side \(AB\))
+- Region 2: \(B,C,O\) (shares side \(BC\))
+- Region 3: \(C,A,O\) (shares side \(CA\))
+
+Then:
+\[
+\frac{[ABO]}{[ABC]} \text{ depends linearly on } O
+\]
+There is a known construction that directly gives the correct ratios:
+
+\[
+O = \frac{K_2 A + K_3 B + K_1 C}{K_1+K_2+K_3}
+\]
+
+Why does this work? Using barycentric coordinates: a point
+\[
+O=\alpha A+\beta B+\gamma C,\quad \alpha+\beta+\gamma=1
+\]
+satisfies:
+- \([BCO] = \alpha[ABC]\)
+- \([CAO] = \beta[ABC]\)
+- \([ABO] = \gamma[ABC]\)
+
+So if we want:
+- \([ABO] : [BCO] : [CAO] = K_1 : K_2 : K_3\)
+we set:
+- \(\gamma = K_1/S\)
+- \(\alpha = K_2/S\)
+- \(\beta = K_3/S\)
+with \(S=K_1+K_2+K_3\).  
+That yields exactly the formula used in code.
+
+**Conclusion:** For \(N=3\), it’s always possible.
+
+---
+
+## Case N = 4 (quadrilateral, possibly non-convex)
+
+Let vertices be \(A,B,C,D\) and ratios \(K_1,K_2,K_3,K_4\) correspond to sides \(AB, BC, CD, DA\).
+
+The solution uses two ideas:
+
+### (A) Pick a diagonal that lies inside the quadrilateral
+A simple test: check whether \(B\) and \(D\) are on opposite sides of line \(AC\) using orientation (`ccw` signs):
+- If `ccw(A,C,B)` and `ccw(A,C,D)` have opposite signs, then diagonal \(AC\) is inside (works for both convex and “arrow” shapes in this task’s constraints).
+- Otherwise use diagonal \(BD\).
+
+### (B) Split along the chosen diagonal at the correct area ratio
+Suppose diagonal \(AC\) is chosen.
+
+We pick a point \(Q\) on segment \(AC\) such that the quadrilateral is split into two sub-polygons with area ratio:
+- one side: \(K_1 + K_4\)  (the “A-side” pieces corresponding to sides \(AB\) and \(DA\))
+- other side: \(K_2 + K_3\)  (the “C-side” pieces corresponding to \(BC\) and \(CD\))
+
+Because area accumulates linearly along a diagonal, choosing
+\[
+Q = A + t(C-A),\quad t=\frac{K_1+K_4}{K_1+K_2+K_3+K_4}
+\]
+makes:
+- area of polygon \(ABQD\) equal to fraction \(t\) of total (given the diagonal is interior and the polygon order matches).
+
+Now we have **two independent problems** of the form:
+
+> Split a quadrilateral \(v_0 v_1 v_2 v_3\) into two parts with areas in ratio \(r_1:r_2\), such that the first part uses side \(v_0v_1\) and the second uses side \(v_3v_0\) (equivalently, both share vertex \(v_0\)).
+
+This is what `split_quad` does.
+
+---
+
+### How `split_quad` works
+Input: vertices \(v_0,v_1,v_2,v_3\) in order, and desired ratio \(r_1:r_2\).
+
+1. Compute areas of triangles in a fan from \(v_0\):
+   - \(a_1 = [v_0,v_1,v_2]\)
+   - \(a_2 = [v_0,v_2,v_3]\)
+   - total \(= a_1 + a_2\)
+
+2. Target area for the first region:
+   \[
+   target = \frac{r_1}{r_1+r_2}\cdot total
+   \]
+
+3. We will draw a cut from \(v_0\) to some point \(P\) on the chain \(v_1 \to v_2 \to v_3\).
+   - If `target <= a1`, then \(P\) lies on segment \(v_1v_2\).  
+     Because area scales linearly with interpolation on \(v_1v_2\),
+     \[
+     [v_0,v_1,P] = s\cdot [v_0,v_1,v_2]
+     \Rightarrow s = target/a_1
+     \]
+     Then:
+     - Region1 = triangle \((v_0,v_1,P)\)
+     - Region2 = quadrilateral \((v_0,P,v_2,v_3)\)
+   - Else \(P\) lies on segment \(v_2v_3\). Let remaining = `target - a1`:
+     \[
+     [v_0,v_2,P] = s_2\cdot [v_0,v_2,v_3]
+     \Rightarrow s_2 = (target-a_1)/a_2
+     \]
+     Then:
+     - Region1 = quadrilateral \((v_0,v_1,v_2,P)\)
+     - Region2 = triangle \((v_0,P,v_3)\)
+
+This always succeeds as long as the diagonal used is inside (so the sub-quads are valid in the intended order).
+
+Finally, the program assembles the four output regions in the correct order (matching sides AB, BC, CD, DA).
+
+**Impossibility:** This solution assumes the given constraints guarantee a valid diagonal choice; it never prints `-1`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Pulls in almost all standard headers (GCC).
+#include <vector>
+
+using namespace std;
+
+// Stream output for a pair: prints "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Stream input for a pair: reads two values.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Stream input for a vector: reads each element in order.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Stream output for a vector: prints each element separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = double;          // Coordinate type for geometry.
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;              // Epsilon for comparisons.
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;                                     // Coordinates.
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic.
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product.
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (scalar in 2D).
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons (mostly unused in this task).
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Norms and angle.
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate by angle a around origin.
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector.
+    Point perp() const { return Point(-y, x); }
+    // Unit vector (normalized).
+    Point unit() const { return *this / norm(); }
+    // Unit normal.
+    Point normal() const { return perp().unit(); }
+
+    // Project vector p onto this vector.
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    // Reflect vector p across this vector.
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Point output: "x y"
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    // Point input: reads x y.
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // Orientation test: returns +1,0,-1 for ccw/collinear/cw.
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    // Many additional helpers below are not used in this particular solution
+    // (point_on_segment, circumcenter, circle intersections, etc.), likely from
+    // a personal geometry template.
+
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+};
+
+int n;                      // Number of vertices (3 or 4).
+vector<Point> pnts;         // Input polygon vertices.
+string k_ratios;            // Ratio string like "1:3:1:3".
+
+// Parse "K1:K2:...:KN" into vector<int>.
+vector<int> parse_ratios(const string& s) {
+    vector<int> res;
+    int cur = 0;
+    for(char c: s) {
+        if(c == ':') {             // Separator: push current number.
+            res.push_back(cur);
+            cur = 0;
+        } else {                   // Digit: build number.
+            cur = cur * 10 + (c - '0');
+        }
+    }
+    res.push_back(cur);            // Last number.
+    return res;
+}
+
+// Signed area of triangle (A,B,C). Positive if counterclockwise.
+double tri_area(const Point& a, const Point& b, const Point& c) {
+    return 0.5 * ((b - a) ^ (c - a));
+}
+
+// Output region can be triangle (3 points) or quadrilateral (4 points).
+struct Region {
+    int cnt;          // 3 or 4.
+    Point p[4];       // Vertices (first cnt are used).
+};
+
+// Create triangle region.
+Region make_tri(Point a, Point b, Point c) {
+    Region r;
+    r.cnt = 3;
+    r.p[0] = a;
+    r.p[1] = b;
+    r.p[2] = c;
+    return r;
+}
+
+// Create quadrilateral region.
+Region make_quad(Point a, Point b, Point c, Point d) {
+    Region r;
+    r.cnt = 4;
+    r.p[0] = a;
+    r.p[1] = b;
+    r.p[2] = c;
+    r.p[3] = d;
+    return r;
+}
+
+// Print a region in required format: cnt followed by coordinates.
+void print_region(const Region& r) {
+    cout << r.cnt;
+    for(int i = 0; i < r.cnt; i++) {
+        cout << ' ' << r.p[i];
+    }
+    cout << '\n';
+}
+
+// Split quadrilateral v0-v1-v2-v3 into two regions with area ratio r1:r2.
+// The cut is from v0 to a point P on polyline v1->v2->v3.
+pair<Region, Region> split_quad(
+    Point v0, Point v1, Point v2, Point v3, double r1, double r2
+) {
+    // Fan triangulation around v0.
+    double a1 = tri_area(v0, v1, v2);     // area of triangle (v0,v1,v2)
+    double a2 = tri_area(v0, v2, v3);     // area of triangle (v0,v2,v3)
+    double total = a1 + a2;               // quadrilateral signed area
+
+    // Desired signed area for first part (matching r1/(r1+r2) of total).
+    double target = r1 / (r1 + r2) * total;
+
+    // Try placing P on segment v1->v2.
+    double s = target / a1;
+    if(s >= -1e-9 && s <= 1 + 1e-9) {     // within tolerance -> P on v1v2
+        s = max(0.0, min(1.0, s));        // clamp due to floating errors
+        Point P = v1 + (v2 - v1) * s;     // interpolate point
+
+        // First region: triangle v0-v1-P with area "target".
+        // Second region: remaining quad v0-P-v2-v3.
+        return {make_tri(v0, v1, P), make_quad(v0, P, v2, v3)};
+    } else {
+        // Otherwise P lies on segment v2->v3.
+        double rem = target - a1;         // area needed beyond first triangle
+        double s2 = rem / a2;             // fraction along v2->v3
+        s2 = max(0.0, min(1.0, s2));      // clamp for safety
+        Point P = v2 + (v3 - v2) * s2;    // interpolate point
+
+        // First region: quad v0-v1-v2-P (includes full first triangle)
+        // Second region: triangle v0-P-v3.
+        return {make_quad(v0, v1, v2, P), make_tri(v0, P, v3)};
+    }
+}
+
+// Read input.
+void read() {
+    cin >> n;                     // N=3 or N=4
+    pnts.resize(n);               // allocate vertices
+    cin >> pnts >> k_ratios;      // read N points and ratio string
+}
+
+void solve() {
+    vector<int> K = parse_ratios(k_ratios);   // parse ratios to ints
+    cout << fixed << setprecision(10);        // print many decimals
+
+    if(n == 3) {
+        // Triangle case: A,B,C.
+        Point A = pnts[0], B = pnts[1], C = pnts[2];
+        double sum = K[0] + K[1] + K[2];
+
+        // Construct interior point O via barycentric combination.
+        // Note: Point * scalar uses member operator*(coord_t),
+        // and Point + Point is defined.
+        Point O = (A * K[1] + B * K[2] + C * K[0]) / sum;
+
+        // Output 3 triangles sharing AB, BC, CA respectively.
+        cout << "3 " << A << ' ' << B << ' ' << O << '\n';
+        cout << "3 " << B << ' ' << C << ' ' << O << '\n';
+        cout << "3 " << C << ' ' << A << ' ' << O << '\n';
+    } else {
+        // Quadrilateral case: A,B,C,D.
+        Point A = pnts[0], B = pnts[1], C = pnts[2], D = pnts[3];
+        double sum = K[0] + K[1] + K[2] + K[3];
+
+        // Determine whether diagonal AC is inside: B and D on opposite sides
+        // of line AC <=> ccw(A,C,B) and ccw(A,C,D) have opposite signs.
+        int s1 = ccw(A, C, B), s2 = ccw(A, C, D);
+
+        Region r[4]; // regions for sides AB, BC, CD, DA in this order
+
+        if(s1 * s2 < 0) {
+            // Use diagonal AC.
+
+            // Pick Q on AC so that area near A (for K1+K4) matches ratio.
+            double t = (K[0] + K[3]) / sum;
+            Point Q = A + (C - A) * t;
+
+            // Split quad A-B-Q-D into K1 (AB side) and K4 (DA side).
+            auto [r0, r3] = split_quad(A, B, Q, D, K[0], K[3]);
+
+            // Split quad C-D-Q-B into K3 (CD side) and K2 (BC side),
+            // but pay attention to ordering returned by split_quad.
+            auto [r2, r1] = split_quad(C, D, Q, B, K[2], K[1]);
+
+            // Assign to output array in side order: AB, BC, CD, DA.
+            r[0] = r0;
+            r[1] = r1;
+            r[2] = r2;
+            r[3] = r3;
+        } else {
+            // Otherwise use diagonal BD.
+
+            // Choose point Q on BD so that area near B (for K1+K2) matches.
+            double t = (K[0] + K[1]) / sum;
+            Point Q = B + (D - B) * t;
+
+            // Split quad B-C-Q-A into K2 (BC side) and K1 (AB side),
+            // returned as (first, second) = (K2-part, K1-part).
+            auto [r1, r0] = split_quad(B, C, Q, A, K[1], K[0]);
+
+            // Split quad D-A-Q-C into K4 (DA side) and K3 (CD side).
+            auto [r3, r2] = split_quad(D, A, Q, C, K[3], K[2]);
+
+            r[0] = r0;
+            r[1] = r1;
+            r[2] = r2;
+            r[3] = r3;
+        }
+
+        // Print all four regions.
+        for(int i = 0; i < 4; i++) {
+            print_region(r[i]);
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);  // fast IO
+    cin.tie(nullptr);                 // untie cin/cout
+
+    int T = 1;                        // single test
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+from dataclasses import dataclass
+from typing import List, Tuple
+
+EPS = 1e-9
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+    # Vector ops
+    def __add__(self, other): return Point(self.x + other.x, self.y + other.y)
+    def __sub__(self, other): return Point(self.x - other.x, self.y - other.y)
+    def __mul__(self, k: float): return Point(self.x * k, self.y * k)  # scalar
+    def __truediv__(self, k: float): return Point(self.x / k, self.y / k)
+
+def cross(a: Point, b: Point) -> float:
+    """2D cross product of vectors a and b."""
+    return a.x * b.y - a.y * b.x
+
+def ccw(a: Point, b: Point, c: Point) -> int:
+    """Orientation of triangle (a,b,c): +1 ccw, 0 collinear, -1 cw."""
+    v = cross(b - a, c - a)
+    if -EPS <= v <= EPS:
+        return 0
+    return 1 if v > 0 else -1
+
+def tri_area(a: Point, b: Point, c: Point) -> float:
+    """Signed area of triangle (a,b,c)."""
+    return 0.5 * cross(b - a, c - a)
+
+def parse_ratios(s: str) -> List[int]:
+    """Parse '1:3:1:3' -> [1,3,1,3]."""
+    return list(map(int, s.strip().split(":")))
+
+# Region is (cnt, [points...])
+Region = Tuple[int, List[Point]]
+
+def make_tri(a: Point, b: Point, c: Point) -> Region:
+    return (3, [a, b, c])
+
+def make_quad(a: Point, b: Point, c: Point, d: Point) -> Region:
+    return (4, [a, b, c, d])
+
+def split_quad(v0: Point, v1: Point, v2: Point, v3: Point,
+               r1: float, r2: float) -> Tuple[Region, Region]:
+    """
+    Split quadrilateral v0-v1-v2-v3 into two regions with area ratio r1:r2
+    by cutting from v0 to some point on chain v1->v2->v3.
+    """
+    a1 = tri_area(v0, v1, v2)
+    a2 = tri_area(v0, v2, v3)
+    total = a1 + a2
+
+    target = (r1 / (r1 + r2)) * total
+
+    # Try placing cut point on segment v1->v2
+    s = target / a1
+    if -1e-9 <= s <= 1 + 1e-9:
+        s = max(0.0, min(1.0, s))
+        P = v1 + (v2 - v1) * s
+        return make_tri(v0, v1, P), make_quad(v0, P, v2, v3)
+
+    # Otherwise on segment v2->v3
+    rem = target - a1
+    s2 = rem / a2
+    s2 = max(0.0, min(1.0, s2))
+    P = v2 + (v3 - v2) * s2
+    return make_quad(v0, v1, v2, P), make_tri(v0, P, v3)
+
+def fmt_point(p: Point) -> str:
+    # Print with many digits; judge accepts any reasonable precision.
+    return f"{p.x:.10f} {p.y:.10f}"
+
+def print_region(region: Region) -> str:
+    cnt, pts = region
+    parts = [str(cnt)]
+    for p in pts:
+        parts.append(fmt_point(p))
+    return " ".join(parts)
+
+def solve(data: str) -> str:
+    it = iter(data.strip().split())
+    n = int(next(it))
+    pts = [Point(float(next(it)), float(next(it))) for _ in range(n)]
+    # ratio string may have ':' so it is tokenized as one word already
+    ratio_str = next(it)
+    K = parse_ratios(ratio_str)
+
+    out: List[str] = []
+
+    if n == 3:
+        A, B, C = pts
+        s = K[0] + K[1] + K[2]
+
+        # Same barycentric construction as C++:
+        # O = (K2*A + K3*B + K1*C) / sum
+        O = (A * K[1] + B * K[2] + C * K[0]) / s
+
+        out.append(print_region(make_tri(A, B, O)))
+        out.append(print_region(make_tri(B, C, O)))
+        out.append(print_region(make_tri(C, A, O)))
+        return "\n".join(out)
+
+    # n == 4
+    A, B, C, D = pts
+    s = sum(K)
+
+    s1 = ccw(A, C, B)
+    s2 = ccw(A, C, D)
+
+    r = [None] * 4  # type: ignore
+
+    if s1 * s2 < 0:
+        # Use diagonal AC
+        t = (K[0] + K[3]) / s
+        Q = A + (C - A) * t
+
+        r0, r3 = split_quad(A, B, Q, D, K[0], K[3])
+        r2, r1 = split_quad(C, D, Q, B, K[2], K[1])
+
+        r[0], r[1], r[2], r[3] = r0, r1, r2, r3
+    else:
+        # Use diagonal BD
+        t = (K[0] + K[1]) / s
+        Q = B + (D - B) * t
+
+        r1, r0 = split_quad(B, C, Q, A, K[1], K[0])
+        r3, r2 = split_quad(D, A, Q, C, K[3], K[2])
+
+        r[0], r[1], r[2], r[3] = r0, r1, r2, r3
+
+    return "\n".join(print_region(x) for x in r)  # type: ignore
+
+if __name__ == "__main__":
+    data = sys.stdin.read()
+    sys.stdout.write(solve(data))
+```
+
+---
+
+## 5) Compressed editorial
+
+- Parse ratios \(K_i\).
+- **Triangle (N=3):** output three triangles sharing the original sides using point  
+  \[
+  O=\frac{K_2A+K_3B+K_1C}{K_1+K_2+K_3}
+  \]
+  Then areas \([ABO]:[BCO]:[CAO]=K_1:K_2:K_3\).
+- **Quadrilateral (N=4):**
+  - Choose an interior diagonal: if \(B\) and \(D\) are on opposite sides of line \(AC\), use \(AC\); else use \(BD\).
+  - Pick point \(Q\) on that diagonal so that the diagonal splits total area into \((K_1+K_4):(K_2+K_3)\) (or analogous for \(BD\)) using linear interpolation with parameter \(t=\frac{\text{needed sum}}{\sum K}\).
+  - Now split each resulting quadrilateral into two parts with ratio \(r_1:r_2\) by cutting from a vertex to a point on the opposite chain; compute that point using linearity of triangle area along a segment.
+- Print 3–4 vertices per region; real coordinates allowed.

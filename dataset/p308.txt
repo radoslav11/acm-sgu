@@ -1,0 +1,426 @@
+## 1) Abridged problem statement
+
+Given two points \(A(x_A,y_A,z_A)\) and \(B(x_B,y_B,z_B)\) on the hyperboloid
+\[
+x^2+y^2-z^2=1,
+\]
+find the length of the shortest path **along the surface** (a geodesic) connecting them.  
+Input: six real numbers (coordinates), with \(-1 \le z_A,z_B \le 1\).  
+Output: the surface distance, with error tolerance \(\pm 0.1\).
+
+---
+
+## 2) Detailed editorial (explaining the provided approach)
+
+### Key idea: avoid exact geodesic formulas; use a numerical shortest-path
+The exact analytic geodesic on a hyperboloid can be derived but is easy to implement incorrectly near the “neck” and when the points lie on opposite sides. Fortunately, the required accuracy is only \(\pm 0.1\), so we can approximate the surface by a fine grid and run Dijkstra’s algorithm to obtain a near-geodesic distance.
+
+### Step 1: Parametrize the hyperboloid with natural coordinates \((u,\phi)\)
+Use:
+- \(\phi = \mathrm{atan2}(y,x)\) (angle around the axis),
+- \(u = \mathrm{asinh}(z)\) (a “stretched” vertical coordinate).
+
+With these, every surface point is:
+\[
+x=\cosh(u)\cos\phi,\quad y=\cosh(u)\sin\phi,\quad z=\sinh(u).
+\]
+Indeed:
+\[
+x^2+y^2-z^2=\cosh^2(u)-\sinh^2(u)=1.
+\]
+
+So the hyperboloid becomes a “rectangle-like” domain in \((u,\phi)\) space.
+
+### Step 2: Surface metric (distance element)
+Compute the first fundamental form (or accept the known result for this parametrization). The infinitesimal distance on the surface is:
+\[
+ds^2 = \cosh(2u)\,du^2 + \cosh^2(u)\,d\phi^2,
+\]
+so
+\[
+ds = \sqrt{\cosh(2u)\,du^2 + \cosh^2(u)\,d\phi^2}.
+\]
+
+This formula lets us assign a length to a small move in \((u,\phi)\).
+
+### Step 3: Discretize \((u,\phi)\) into a grid graph
+Choose ranges and steps (constants in the code):
+
+- \(u \in [U_{\min},U_{\max}] = [-1.5, 1.5]\) with step \(DU=0.018\)
+- \(\phi \in [\Phi_{\min},\Phi_{\max}] = [-15, 15]\) with step \(DPHI=0.028\)
+
+Each grid node \((i,j)\) corresponds to:
+\[
+u = U_{\min} + i\cdot DU,\quad \phi = \Phi_{\min} + j\cdot DPHI.
+\]
+
+Connect each node to its 8 neighbors (including diagonals). For an edge from \((u_0,\phi_0)\) to \((u_1,\phi_1)\), approximate its length by evaluating the metric at the midpoint \(u_m=(u_0+u_1)/2\):
+\[
+\Delta u = u_1-u_0,\quad \Delta\phi = \phi_1-\phi_0,
+\]
+\[
+\text{edge length} \approx \sqrt{\cosh(2u_m)\Delta u^2 + \cosh^2(u_m)\Delta\phi^2}.
+\]
+
+This turns the problem into shortest path on a weighted graph.
+
+### Step 4: Fix periodicity in \(\phi\)
+Angle \(\phi\) is periodic modulo \(2\pi\). The code handles this by:
+- Shifting coordinates so that point \(A\) is treated as \(\phi=0\),
+- Using \(\Delta\phi\) between \(A\) and \(B\), normalized to \((-\pi,\pi]\),
+- Considering multiple “copies” of \(B\) at \(\Delta\phi + 2\pi k\) for \(k \in [-5,5]\) because the grid’s \(\phi\) span is wide (\([-15,15]\)).
+
+This ensures Dijkstra can find routes that wrap around the axis.
+
+### Step 5: Run Dijkstra from \(A\), read best distance near \(B\)
+- Start node: \(u=\mathrm{asinh}(z_A)\), \(\phi=0\).
+- Dijkstra computes shortest distances to all grid nodes.
+- Target: \(u=\mathrm{asinh}(z_B)\), \(\phi=\Delta\phi + 2\pi k\) for several \(k\).
+- Because the true point may not land exactly on a grid node, the code checks a small \(7\times 7\) neighborhood around the nearest target cell and takes the minimum.
+
+### Complexity
+Let \(N = NU \cdot NP\) nodes. Each has up to 8 edges. Dijkstra is:
+\[
+O(N\log N).
+\]
+With the chosen grid sizes, this fits in time in C++ for the given limits, and the coarse tolerance makes it acceptable.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element sequentially
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces (not used for final answer)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Discretization bounds and steps for u and phi.
+// u = asinh(z) is bounded because z is in [-1,1], but the algorithm
+// uses a slightly larger safe window.
+// phi range is wide to allow multiple wraps (2*pi periodicity).
+const double UMIN = -1.5, UMAX = 1.5, DU = 0.018;
+const double PHIMIN = -15.0, PHIMAX = 15.0, DPHI = 0.028;
+
+// Store the two input points as 3D vectors (float is enough for input)
+vector<float> a, b;
+
+void read() {
+    a.resize(3);
+    b.resize(3);
+    cin >> a >> b; // reads x y z for A then for B
+}
+
+void solve() {
+    // Extract coordinates into doubles for computation
+    double xa = a[0], ya = a[1], za = a[2];
+    double xb = b[0], yb = b[1], zb = b[2];
+
+    // Convert z to u = asinh(z) for both points
+    double ua = asinh(za);
+    double ub = asinh(zb);
+
+    // Compute angular difference in phi between B and A
+    // (phi = atan2(y,x)). This is later normalized into (-pi, pi].
+    double dphi = atan2(yb, xb) - atan2(ya, xa);
+
+    const double PI = acos(-1.0);
+
+    // Normalize angle difference to (-pi, pi] to choose a "principal" delta
+    dphi = fmod(dphi + 3 * PI, 2 * PI) - PI;
+
+    // Compute grid sizes. The "+ 15" is a cushion to ensure enough cells
+    // even if rounding/endpoint issues happen.
+    int NU = (int)((UMAX - UMIN) / DU) + 15;
+    int NP = (int)((PHIMAX - PHIMIN) / DPHI) + 15;
+
+    // dist[i][j] = current best known distance from start to grid cell (i,j)
+    vector<vector<double>> dist(NU, vector<double>(NP, 1e18));
+
+    // Map a continuous u value to nearest grid index (clamped)
+    auto getiu = [&](double u) {
+        return max(0, min(NU - 1, (int)round((u - UMIN) / DU)));
+    };
+
+    // Map a continuous phi value to nearest grid index (clamped)
+    auto getip = [&](double p) {
+        return max(0, min(NP - 1, (int)round((p - PHIMIN) / DPHI)));
+    };
+
+    // Start indices:
+    // u is ua; phi for A is treated as 0 by construction (we measure relative phi)
+    int su = getiu(ua);
+    int sp = getip(0.0);
+
+    // Priority queue entries: (distance_so_far, i, j)
+    using T = tuple<double, int, int>;
+    priority_queue<T, vector<T>, greater<T>> pq;
+
+    // Initialize Dijkstra
+    pq.push({0.0, su, sp});
+    dist[su][sp] = 0.0;
+
+    // 8-neighbor moves in the grid (including diagonals)
+    int dirs[8][2] = {{-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+                      {0, 1},   {1, -1}, {1, 0},  {1, 1}};
+
+    // Standard Dijkstra over the grid graph
+    while(!pq.empty()) {
+        auto [cost, i, j] = pq.top();
+        pq.pop();
+
+        // Skip outdated queue entries
+        if(cost > dist[i][j]) {
+            continue;
+        }
+
+        // Convert grid indices back to actual coordinate values
+        double u0 = UMIN + i * DU;
+        double p0 = PHIMIN + j * DPHI;
+
+        // Relax all neighbors
+        for(auto& d: dirs) {
+            int ni = i + d[0];
+            int nj = j + d[1];
+
+            // Stay inside the grid
+            if(ni < 0 || ni >= NU || nj < 0 || nj >= NP) {
+                continue;
+            }
+
+            // Neighbor coordinate values
+            double u1 = UMIN + ni * DU;
+            double p1 = PHIMIN + nj * DPHI;
+
+            // Midpoint u used to approximate the metric along this small segment
+            double um = 0.5 * (u0 + u1);
+
+            // Coordinate differences
+            double du = u1 - u0;
+            double dp = p1 - p0;
+
+            // Edge length from the hyperboloid metric:
+            // ds = sqrt( cosh(2u) du^2 + cosh(u)^2 dphi^2 )
+            double ds =
+                sqrt(cosh(2 * um) * du * du + cosh(um) * cosh(um) * dp * dp);
+
+            // Dijkstra relaxation
+            double nc = cost + ds;
+            if(nc < dist[ni][nj]) {
+                dist[ni][nj] = nc;
+                pq.push({nc, ni, nj});
+            }
+        }
+    }
+
+    // Now find the best distance to point B.
+    // We consider multiple equivalent phis: dphi + 2*pi*k.
+    // Also search a small neighborhood around the nearest grid node.
+    double ans = 1e18;
+    int tu = getiu(ub);
+
+    for(int k = -5; k <= 5; ++k) {
+        double tp = dphi + 2 * PI * k;  // candidate phi for B copy
+        int basep = getip(tp);
+
+        // Search in a 7x7 window to reduce discretization error
+        for(int di = -3; di <= 3; ++di) {
+            for(int dj = -3; dj <= 3; ++dj) {
+                int ti = tu + di;
+                int tj = basep + dj;
+                if(ti >= 0 && ti < NU && tj >= 0 && tj < NP) {
+                    ans = min(ans, dist[ti][tj]);
+                }
+            }
+        }
+    }
+
+    // Safety fallback: if unreachable for some reason, output 0
+    if(ans > 1e9) {
+        ans = 0.0;
+    }
+
+    // Print with enough precision
+    cout << setprecision(10) << fixed << ans << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Problem input has a single test; multi-test support is commented.
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same method) with detailed comments
+
+```python
+import math
+import heapq
+import sys
+
+# Same discretization constants as the C++ solution
+UMIN, UMAX, DU = -1.5, 1.5, 0.018
+PHIMIN, PHIMAX, DPHI = -15.0, 15.0, 0.028
+PI = math.acos(-1.0)
+
+def clamp(x, lo, hi):
+    return lo if x < lo else hi if x > hi else x
+
+def solve():
+    data = list(map(float, sys.stdin.read().split()))
+    xa, ya, za, xb, yb, zb = data
+
+    # Convert to u = asinh(z)
+    ua = math.asinh(za)
+    ub = math.asinh(zb)
+
+    # Principal angular difference between B and A
+    dphi = math.atan2(yb, xb) - math.atan2(ya, xa)
+    # Normalize to (-pi, pi]
+    dphi = math.fmod(dphi + 3 * PI, 2 * PI) - PI
+
+    # Grid sizes (+15 padding as in C++)
+    NU = int((UMAX - UMIN) / DU) + 15
+    NP = int((PHIMAX - PHIMIN) / DPHI) + 15
+
+    # Map continuous u to nearest grid index, clamped
+    def getiu(u):
+        idx = int(round((u - UMIN) / DU))
+        return clamp(idx, 0, NU - 1)
+
+    # Map continuous phi to nearest grid index, clamped
+    def getip(p):
+        idx = int(round((p - PHIMIN) / DPHI))
+        return clamp(idx, 0, NP - 1)
+
+    # Dijkstra distance array (use a large number as infinity)
+    INF = 1e100
+    dist = [[INF] * NP for _ in range(NU)]
+
+    # Start at (ua, phi=0)
+    su = getiu(ua)
+    sp = getip(0.0)
+    dist[su][sp] = 0.0
+
+    # Min-heap entries are (cost, i, j)
+    pq = [(0.0, su, sp)]
+
+    # 8-neighborhood
+    dirs = [(-1, -1), (-1, 0), (-1, 1),
+            (0, -1),          (0, 1),
+            (1, -1),  (1, 0), (1, 1)]
+
+    while pq:
+        cost, i, j = heapq.heappop(pq)
+        if cost != dist[i][j]:
+            continue
+
+        # Convert indices to coordinate values
+        u0 = UMIN + i * DU
+        p0 = PHIMIN + j * DPHI
+
+        for di, dj in dirs:
+            ni, nj = i + di, j + dj
+            if not (0 <= ni < NU and 0 <= nj < NP):
+                continue
+
+            u1 = UMIN + ni * DU
+            p1 = PHIMIN + nj * DPHI
+
+            # Midpoint approximation for u in the metric
+            um = 0.5 * (u0 + u1)
+
+            du = u1 - u0
+            dp = p1 - p0
+
+            # ds = sqrt( cosh(2u) du^2 + cosh(u)^2 dphi^2 )
+            ds = math.sqrt(math.cosh(2.0 * um) * du * du +
+                           (math.cosh(um) ** 2) * dp * dp)
+
+            nc = cost + ds
+            if nc < dist[ni][nj]:
+                dist[ni][nj] = nc
+                heapq.heappush(pq, (nc, ni, nj))
+
+    # Evaluate best distance near B, considering periodic copies in phi
+    ans = INF
+    tu = getiu(ub)
+
+    for k in range(-5, 6):
+        tp = dphi + 2 * PI * k
+        basep = getip(tp)
+
+        # 7x7 neighborhood around the nearest cell
+        for di in range(-3, 4):
+            for dj in range(-3, 4):
+                ti, tj = tu + di, basep + dj
+                if 0 <= ti < NU and 0 <= tj < NP:
+                    ans = min(ans, dist[ti][tj])
+
+    if ans > 1e50:
+        ans = 0.0
+
+    # Print with fixed precision
+    print(f"{ans:.10f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Parametrize the hyperboloid \(x^2+y^2-z^2=1\) by \(u=\mathrm{asinh}(z)\), \(\phi=\mathrm{atan2}(y,x)\):
+\[
+(x,y,z)=(\cosh u\cos\phi,\ \cosh u\sin\phi,\ \sinh u).
+\]
+Then the surface metric is
+\[
+ds^2=\cosh(2u)\,du^2+\cosh^2(u)\,d\phi^2.
+\]
+Discretize \((u,\phi)\) into a fine grid over \(u\in[-1.5,1.5]\), \(\phi\in[-15,15]\), connect each cell to its 8 neighbors, and weight edges by
+\[
+\Delta s \approx \sqrt{\cosh(2u_m)\Delta u^2+\cosh^2(u_m)\Delta\phi^2}
+\]
+(midpoint \(u_m\)). Run Dijkstra from \(A\) (set \(\phi_A=0\)) and take the minimum distance to \(B\) over multiple \(\phi\) copies \(\Delta\phi+2\pi k\) and a small neighborhood to reduce discretization error. Accuracy is sufficient due to the \(\pm0.1\) tolerance.

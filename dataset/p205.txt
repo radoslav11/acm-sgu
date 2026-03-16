@@ -1,0 +1,266 @@
+## 1) Abridged problem statement
+
+You are given `n` measured integers `x1..xn`. There are `m` quantization level sets `L0..L(m-1)`, each containing `s` integer levels (sorted). For each position `j`, you must choose an index `kj` (0…s−1) and quantize `xj` to level `Lj[kj]`, where `Lj` is the set used at that position.
+
+The set used evolves deterministically:
+- The first value uses set `L0`.
+- If position `j` uses set `Li` and you choose index `kj`, then the next set index is  
+  `f(j+1) = kj & (m-1)` (bitwise AND).
+
+Goal: choose all indices `k1..kn` to minimize total deviation  
+\[
+\sum_{j=1}^{n} |x_j - L_{f(j)}[k_j]|
+\]
+Output the minimal deviation and the chosen indices `k1..kn`.
+
+Constraints: `n ≤ 1000`, `m ≤ 128`, `s ≤ 128`, `m ≤ s`.
+
+---
+
+## 2) Detailed editorial (DP)
+
+### Key observation
+The choice of `kj` affects:
+1) immediate error: `|xj - Lset[kj]|`
+2) next set: `next_set = kj & (m-1)`
+
+So a locally best level might lead to a worse next set, increasing future error. This is a classic dynamic programming with state = “position + current set”.
+
+### DP definition
+Let:
+
+- `dp[j][set]` = minimal total deviation for quantizing positions `j..n-1` (0-based),
+  **given that** position `j` must use level set `Lset`.
+
+Answer will be `dp[0][0]` because the first quantization uses `L0`.
+
+### Transition
+At `(j, set)` we may choose any level index `k ∈ [0, s-1]`:
+
+- quantized value: `L[set][k]`
+- immediate cost: `abs(x[j] - L[set][k])`
+- next set: `next_set = k & (m-1)`
+- future cost: `dp[j+1][next_set]`
+
+So:
+\[
+dp[j][set] = \min_{k=0..s-1} \left( |x[j] - L[set][k]| + dp[j+1][(k\ \&\ (m-1))] \right)
+\]
+
+Base case:
+- `dp[n][set] = 0` for all `set` (no elements left).
+
+### Reconstruction
+To output the chosen `kj`, store:
+- `choice[j][set]` = index `k` that achieved the minimum in `dp[j][set]`.
+
+Then simulate forward:
+- start `cur_set = 0`
+- for `j=0..n-1`:
+  - `k = choice[j][cur_set]`
+  - output `k`
+  - `cur_set = k & (m-1)`
+
+### Complexity
+States: `(n * m)` ≤ `1000 * 128 = 128k`  
+Transitions per state: `s` ≤ 128  
+Time: `O(n*m*s)` ≤ ~16 million operations (fast).  
+Memory: `O(n*m)` for dp and choices.
+
+---
+
+## 3) Provided C++ solution with detailed line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector: assumes size is already set
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector with spaces (not used in final output)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+// A very large number used as +infinity for DP initialization
+const int64_t inf = (int64_t)1e18 + 42;
+
+int n, m, s;                 // n values, m sets, s levels per set
+vector<int> x;               // measured values
+vector<vector<int>> L;       // level sets: L[set][k]
+
+void read() {
+    cin >> n;                // read n
+    x.resize(n);             // allocate x
+    cin >> x;                // read all x[i]
+    cin >> m >> s;           // read m and s
+    L.resize(m, vector<int>(s));   // allocate L as m rows of length s
+    for (auto& row: L) {
+        cin >> row;          // read each row
+    }
+}
+
+void solve() {
+    /*
+      DP meaning:
+      dp[j][set] = min total deviation for positions j..n-1,
+                   if position j uses level set 'set'.
+
+      Transition:
+      choose k in [0..s-1],
+      next_set = k & (m-1),
+      cost = abs(x[j] - L[set][k]) + dp[j+1][next_set].
+    */
+
+    // dp has n+1 rows so dp[n][*] exists and is 0
+    vector<vector<int64_t>> dp(n + 1, vector<int64_t>(m, 0));
+
+    // choice[j][set] remembers which k was best (for reconstruction)
+    vector<vector<int>> choice(n, vector<int>(m, -1));
+
+    // Fill DP backwards from j = n-1 down to 0
+    for (int j = n - 1; j >= 0; j--) {
+        for (int set = 0; set < m; set++) {
+            dp[j][set] = inf;              // initialize as infinity
+
+            for (int k = 0; k < s; k++) {  // try all possible level indices
+                int next_set = k & (m - 1); // next set determined by low bits
+                int64_t cost = llabs((long long)x[j] - L[set][k])
+                             + dp[j + 1][next_set]; // immediate + future
+
+                if (cost < dp[j][set]) {    // take best
+                    dp[j][set] = cost;
+                    choice[j][set] = k;     // store argmin
+                }
+            }
+        }
+    }
+
+    // Minimal deviation starting at position 0 with set 0
+    cout << dp[0][0] << '\n';
+
+    // Reconstruct chosen indices
+    int cur_set = 0;
+    for (int j = 0; j < n; j++) {
+        int k = choice[j][cur_set];        // chosen index at this state
+        cout << k << " \n"[j == n - 1];    // space-separated, newline at end
+        cur_set = k & (m - 1);             // advance to next set
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // single test case in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm, detailed comments)
+
+```python
+import sys
+
+INF = 10**18
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    it = iter(data)
+
+    n = next(it)
+    x = [next(it) for _ in range(n)]
+
+    m = next(it)
+    s = next(it)
+
+    # Read level sets L[set][k]
+    L = [[next(it) for _ in range(s)] for _ in range(m)]
+
+    # dp_next[set] will represent dp[j+1][set] while iterating backwards
+    dp_next = [0] * m
+
+    # To reconstruct, we need the chosen k for each (j, set)
+    # choice[j][set] = best k at that state
+    choice = [[0] * m for _ in range(n)]
+
+    # Iterate j from n-1 down to 0
+    for j in range(n - 1, -1, -1):
+        dp_cur = [INF] * m
+
+        for set_idx in range(m):
+            best_cost = INF
+            best_k = 0
+
+            levels = L[set_idx]
+            xj = x[j]
+
+            # Try all k in this set
+            for k in range(s):
+                next_set = k & (m - 1)
+                cost = abs(xj - levels[k]) + dp_next[next_set]
+                if cost < best_cost:
+                    best_cost = cost
+                    best_k = k
+
+            dp_cur[set_idx] = best_cost
+            choice[j][set_idx] = best_k
+
+        dp_next = dp_cur
+
+    # dp[0][0] is now dp_next[0] after the loop
+    out = []
+    out.append(str(dp_next[0]))
+
+    # Reconstruct k's
+    cur_set = 0
+    ks = []
+    for j in range(n):
+        k = choice[j][cur_set]
+        ks.append(k)
+        cur_set = k & (m - 1)
+
+    out.append(" ".join(map(str, ks)))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+DP over position and current level-set.  
+`dp[j][set]` = minimal deviation for `x[j..]` if `x[j]` uses set `set`.  
+Transition over all `k` in `0..s-1`:
+`dp[j][set] = min_k ( abs(x[j]-L[set][k]) + dp[j+1][k & (m-1)] )`.  
+Base: `dp[n][*]=0`.  
+Store `choice[j][set]` to reconstruct indices starting from `(0,0)`.  
+Complexity `O(n*m*s)` (≤ 16M ops), memory `O(n*m)`.
