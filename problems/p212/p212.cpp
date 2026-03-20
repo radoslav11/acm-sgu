@@ -1,0 +1,285 @@
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+struct edge {
+    int from, to, idx, cap, flow;
+};
+
+int n, m, l, src, snk;
+vector<int> lev;
+vector<edge> edges;
+vector<vector<int>> out_edges, in_edges, by_level;
+
+void add_edge(int u, int v, int c, int idx) {
+    int eid = edges.size();
+    edges.push_back({u, v, idx, c, 0});
+    out_edges[u].push_back(eid);
+    in_edges[v].push_back(eid);
+}
+
+void read() {
+    cin >> n >> m >> l;
+    lev.resize(n + 1);
+    out_edges.resize(n + 1);
+    in_edges.resize(n + 1);
+    by_level.resize(l + 1);
+    for(int i = 1; i <= n; i++) {
+        cin >> lev[i];
+        if(lev[i] == 1) {
+            src = i;
+        }
+        if(lev[i] == l) {
+            snk = i;
+        }
+        by_level[lev[i]].push_back(i);
+    }
+    edges.reserve(m);
+    for(int i = 0; i < m; i++) {
+        int a, b, c;
+        cin >> a >> b >> c;
+        add_edge(a, b, c, i);
+    }
+}
+
+void solve() {
+    // This is a flow problem, but with fairly large constraints. However,
+    // there is a constraint that the original graph is "layered", or in other
+    // words there are only edges between layer L and layer L+1 for each L. We
+    // also only need a blocking flow, not max flow, which is the core
+    // observation.
+    //
+    // A naive advance/retreat blocking flow (one phase of Dinic's) is O(VE):
+    // each augmenting path takes O(V) to push flow but may only saturate one
+    // edge, and there are up to E saturations total. Two better approaches:
+    //
+    // 1) MKM (Malhotra-Kumar-Maheshwari) - O(V^2 + E), used here.
+    //    Define pot(v) = min(sum of residual in-capacities, sum of residual
+    //    out-capacities) for internal nodes; out-sum for source, in-sum for
+    //    sink. Pick the node v with minimum potential p. Push p units of flow
+    //    forward from v to sink and backward from v to source, both done
+    //    greedily level-by-level. This works because every other alive node
+    //    has potential >= p, so intermediate nodes always have enough capacity
+    //    to forward the flow. After pushing, v (and possibly other nodes) have
+    //    pot = 0 and are removed with cascading (removing a node's edges may
+    //    reduce neighbors' potentials to 0). Each iteration kills >= 1 node,
+    //    giving O(V) iterations. Edge scanning is O(E) total across all
+    //    iterations (pointers only advance). Finding min potential and clearing
+    //    buffers is O(V) per iteration, so O(V^2) total.
+    //
+    // 2) Link-cut trees - O(E log V) or O(E log^2 V).
+    //    The bottleneck of naive advance/retreat is that blocking a path costs
+    //    O(V) but may only saturate one edge. The key idea is to build a forest
+    //    where initially there would be no edges. We will try to manipulate
+    //    this Also, nodes closer to the sink are "parents" of nodes further
+    //    away, or in other words we direct the edges towards the source. After
+    //    some operations, the goal is to get to a state where there is a path
+    //    from the source to the sink, or in other words the sink is the global
+    //    root. If that's the case, we could find the lowest residual edge on
+    //    the (s-t) path, subtract this value from all edges on the path, and
+    //    then erase all edges that become 0. This splits the tree into a few
+    //    smaller ones, so we are back at the stage of trying to get to a
+    //    configuration that has a s-t path.
+    //
+    //    Now the question is how to do this. Let's consider s, and find it's
+    //    current root x. The core observation is that we can simply choose any
+    //    outgoing edge that's still present (x, p), and merge tree(x) and
+    //    tree(p). This is because this edge will now be a part of the tree
+    //    structure until it is cut. But there is a corner case of no edge (x,
+    //    p) existing. This actually implies that x is already a "dead end", so
+    //    we can't push more flow through it. However, we need to fix our tree
+    //    structure. A simple way is to go through all children c of x, and
+    //    disconnect them, where as part of this we also delete the edge (c, v).
+    //    If eventually we reach the stage where x = s and we had to cut, we can
+    //    show that we have to terminate. For every edge, we link at most once,
+    //    and we cut each edge at most once, giving us a O(E polylog) solution.
+    //    However, this approach is fairly complicated to implement so we opt
+    //    for the simpler MKM algorithm. Either way, a good tutorial for the LCT
+    //    approach is here:
+    //
+    //        https://people.seas.harvard.edu/~cs224/spring17/lec/lec26.pdf
+
+    vector<int> out_sum(n + 1, 0), in_sum(n + 1, 0);
+    vector<int> out_ptr(n + 1, 0), in_ptr(n + 1, 0);
+    vector<bool> alive(n + 1, true);
+
+    for(auto& e: edges) {
+        out_sum[e.from] += e.cap;
+        in_sum[e.to] += e.cap;
+    }
+
+    auto get_pot = [&](int v) -> int {
+        if(v == src) {
+            return out_sum[v];
+        }
+        if(v == snk) {
+            return in_sum[v];
+        }
+        return min(in_sum[v], out_sum[v]);
+    };
+
+    queue<int> dead_q;
+    auto try_kill = [&](int v) {
+        if(alive[v] && v != src && v != snk && get_pot(v) == 0) {
+            dead_q.push(v);
+        }
+    };
+
+    auto kill_dead = [&]() {
+        while(!dead_q.empty()) {
+            int u = dead_q.front();
+            dead_q.pop();
+            if(!alive[u]) {
+                continue;
+            }
+            alive[u] = false;
+            for(int eid: out_edges[u]) {
+                int res = edges[eid].cap - edges[eid].flow;
+                if(res > 0) {
+                    in_sum[edges[eid].to] -= res;
+                    try_kill(edges[eid].to);
+                }
+            }
+            for(int eid: in_edges[u]) {
+                int res = edges[eid].cap - edges[eid].flow;
+                if(res > 0) {
+                    out_sum[edges[eid].from] -= res;
+                    try_kill(edges[eid].from);
+                }
+            }
+        }
+    };
+
+    for(int i = 1; i <= n; i++) {
+        try_kill(i);
+    }
+    kill_dead();
+
+    vector<int> buf(n + 1);
+
+    while(true) {
+        int v = -1, min_pot = INT_MAX;
+        for(int i = 1; i <= n; i++) {
+            if(alive[i]) {
+                int p = get_pot(i);
+                if(p > 0 && p < min_pot) {
+                    min_pot = p;
+                    v = i;
+                }
+            }
+        }
+        if(v == -1) {
+            break;
+        }
+        int p = min_pot;
+
+        fill(buf.begin(), buf.end(), 0);
+        buf[v] = p;
+        for(int level = lev[v]; level < l; level++) {
+            for(int u: by_level[level]) {
+                if(!alive[u] || buf[u] == 0) {
+                    continue;
+                }
+                for(int& ptr = out_ptr[u];
+                    ptr < (int)out_edges[u].size() && buf[u] > 0;) {
+                    auto& e = edges[out_edges[u][ptr]];
+                    int res = e.cap - e.flow;
+                    if(res <= 0 || !alive[e.to]) {
+                        ptr++;
+                        continue;
+                    }
+                    int f = min(buf[u], res);
+                    e.flow += f;
+                    buf[u] -= f;
+                    buf[e.to] += f;
+                    out_sum[u] -= f;
+                    in_sum[e.to] -= f;
+                    if(e.flow == e.cap) {
+                        ptr++;
+                    }
+                }
+            }
+        }
+
+        fill(buf.begin(), buf.end(), 0);
+        buf[v] = p;
+        for(int level = lev[v]; level > 1; level--) {
+            for(int u: by_level[level]) {
+                if(!alive[u] || buf[u] == 0) {
+                    continue;
+                }
+                for(int& ptr = in_ptr[u];
+                    ptr < (int)in_edges[u].size() && buf[u] > 0;) {
+                    auto& e = edges[in_edges[u][ptr]];
+                    int res = e.cap - e.flow;
+                    if(res <= 0 || !alive[e.from]) {
+                        ptr++;
+                        continue;
+                    }
+                    int f = min(buf[u], res);
+                    e.flow += f;
+                    buf[u] -= f;
+                    buf[e.from] += f;
+                    out_sum[e.from] -= f;
+                    in_sum[u] -= f;
+                    if(e.flow == e.cap) {
+                        ptr++;
+                    }
+                }
+            }
+        }
+
+        for(int i = 1; i <= n; i++) {
+            try_kill(i);
+        }
+        kill_dead();
+    }
+
+    vector<int> ans(m);
+    for(auto& e: edges) {
+        ans[e.idx] = e.flow;
+    }
+    for(int i = 0; i < m; i++) {
+        cout << ans[i] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}

@@ -1,0 +1,350 @@
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = double;
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    Point perp() const { return Point(-y, x); }
+    Point unit() const { return *this / norm(); }
+    Point normal() const { return perp().unit(); }
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through, const Point& seg_a,
+        const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) {
+            return {};
+        }
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) {
+            return {};
+        }
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) {
+            return {};
+        }
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) {
+            return {};
+        }
+        return ray_start + ray_dir * t;
+    }
+};
+
+int n;
+vector<pair<Point, Point>> segments;
+vector<char> colors;
+
+coord_t y_at(const pair<Point, Point>& seg, coord_t x) {
+    auto& [a, b] = seg;
+    return a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
+}
+
+bool covers(const pair<Point, Point>& seg, coord_t x) {
+    return x >= seg.first.x - 1e-9 && x <= seg.second.x + 1e-9;
+}
+
+void read() {
+    cin >> n;
+    segments.resize(n);
+    colors.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> segments[i].first >> segments[i].second >> colors[i];
+        if(segments[i].first.x > segments[i].second.x) {
+            swap(segments[i].first, segments[i].second);
+        }
+    }
+}
+
+void solve() {
+    // We can first notice that when we project there are at most O(n^2)
+    // "maximal" ranges that have the same colour, defined by the X-s of all
+    // intersection points and borders of the original segments. So we will
+    // start by finding all relevant X values and sorting them. Then in each
+    // interval, we want to find the closest line segment and this would be the
+    // colour we want. Note that because we consider all intersections, for any
+    // point of the segment, the closest segment would be the same. Therefore,
+    // an easy approach is that for each of these O(n^2) points we will consider
+    // the midpoints m, and then evaluate all segments that "cover" the
+    // corresponding range and choose the smallest f(m), where f(m) is the
+    // linear function defined by the segment. This can be done with a simple
+    // O(n) loop giving us a O(n^3) solution.
+    //
+    // The O(n^3) solution is enough to pass and this is what we implement, but
+    // there is also a way to speed it up to at least O(n^2 log n). We can use
+    // a Li Chao or dynamic convex hull. Each line acts as a linear function for
+    // a range of X values and we can build a segment tree over the ranges we
+    // are interested in, such that each of the n segment splits into at most
+    // O(log n) of them. We then do a walk on the tree, and query the state in
+    // the leafs. The part we should be careful about is the fact that we need
+    // to "undo" the updates, so a persistent Li Chao is a good option. There
+    // are at most O(n log n) updates, each in O(log n), and there are O(n^2)
+    // leafs which we have to query. This yields a direct O(n^2 log n) bound.
+
+    vector<coord_t> xs;
+    for(auto& [a, b]: segments) {
+        if(abs(b.x - a.x) < 1e-9) {
+            continue;
+        }
+        xs.push_back(a.x);
+        xs.push_back(b.x);
+    }
+
+    for(int i = 0; i < n; i++) {
+        auto& [ai, bi] = segments[i];
+        if(abs(bi.x - ai.x) < 1e-9) {
+            continue;
+        }
+        coord_t si = (bi.y - ai.y) / (bi.x - ai.x);
+        coord_t ci = ai.y - si * ai.x;
+        for(int j = i + 1; j < n; j++) {
+            auto& [aj, bj] = segments[j];
+            if(abs(bj.x - aj.x) < 1e-9) {
+                continue;
+            }
+            coord_t sj = (bj.y - aj.y) / (bj.x - aj.x);
+            coord_t cj = aj.y - sj * aj.x;
+            if(abs(si - sj) < 1e-12) {
+                continue;
+            }
+            coord_t x = (cj - ci) / (si - sj);
+            coord_t lo = max(ai.x, aj.x);
+            coord_t hi = min(bi.x, bj.x);
+            if(x >= lo - 1e-9 && x <= hi + 1e-9) {
+                xs.push_back(x);
+            }
+        }
+    }
+
+    sort(xs.begin(), xs.end());
+    xs.erase(
+        unique(
+            xs.begin(), xs.end(),
+            [](coord_t a, coord_t b) { return abs(a - b) < 1e-9; }
+        ),
+        xs.end()
+    );
+
+    coord_t sr = 0, sg = 0, sb = 0;
+
+    for(int i = 0; i + 1 < (int)xs.size(); i++) {
+        coord_t mid = (xs[i] + xs[i + 1]) / 2.0;
+        coord_t len = xs[i + 1] - xs[i];
+        coord_t best_y = 1e18;
+        char best_color = '?';
+        for(int j = 0; j < n; j++) {
+            if(abs(segments[j].second.x - segments[j].first.x) < 1e-9) {
+                continue;
+            }
+            if(!covers(segments[j], mid)) {
+                continue;
+            }
+            coord_t y = y_at(segments[j], mid);
+            if(y < best_y) {
+                best_y = y;
+                best_color = colors[j];
+            }
+        }
+        if(best_color == 'R') {
+            sr += len;
+        } else if(best_color == 'G') {
+            sg += len;
+        } else if(best_color == 'B') {
+            sb += len;
+        }
+    }
+
+    cout << fixed << setprecision(2);
+    cout << "R " << sr << "\n";
+    cout << "G " << sg << "\n";
+    cout << "B " << sb << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}

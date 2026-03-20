@@ -1,0 +1,590 @@
+## 1) Abridged problem statement
+
+You are given \(N\) line segments in the plane (\(1 \le N \le 300\)), each colored **R**, **G**, or **B**.  
+Project all points of all segments onto the \(x\)-axis (vertical projection). For each \(x\) on the axis, among all segment points that project to this \(x\), the projected point gets the color of the point **closest to the \(x\)-axis** (i.e., the segment point with minimal \(y\) at that \(x\)).  
+Compute the total projected lengths on the \(x\)-axis colored **R**, **G**, and **B**. Output each length with precision 0.01.
+
+Given: no two segments share more than one common point.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observation: “winner” only changes at endpoints or intersections
+Consider any fixed \(x\). Every (non-vertical) segment that spans this \(x\) contributes exactly one point with that \(x\), with some height \(y(x)\). The color on the projection at \(x\) is determined by the segment with **minimum** \(y(x)\) among those covering \(x\).
+
+Each segment defines a **linear function** \(y(x)\) on its \(x\)-interval \([x_{\min}, x_{\max}]\). The identity of the minimum among a set of lines can only change when:
+1. a segment starts/ends (an endpoint \(x\)), or
+2. two segments swap order (their graphs intersect), i.e., at an intersection \(x\).
+
+Because the statement guarantees two segments have at most one common point, any pair of (non-parallel) supporting lines intersects at one \(x\), and this can affect ordering at most once.
+
+So if we collect:
+- all segment endpoint \(x\)-coordinates, and
+- all \(x\)-coordinates of intersections between pairs of segments **within their overlapping \(x\)-ranges**,
+
+then between any two consecutive such \(x\)-values, the set of covering segments is fixed and their relative order by \(y(x)\) is fixed. Therefore, the “winning color” is constant throughout that open interval.
+
+### Strategy
+1. **Ignore vertical segments** (where \(x_1 = x_2\)): they project to a single point on the \(x\)-axis, contributing **zero length** to totals. (They can be ignored safely for length sums.)
+2. Build an array `xs` of critical \(x\)-coordinates:
+   - add each non-vertical segment’s \(x\)-endpoints,
+   - for every pair of non-vertical segments, compute intersection \(x\) of their supporting lines (if not parallel), and if that \(x\) lies inside the overlap of their \(x\)-intervals, add it.
+3. Sort `xs` and unique it with epsilon tolerance.
+4. For each consecutive interval \([xs[i], xs[i+1]]\):
+   - take `mid = (xs[i] + xs[i+1]) / 2`,
+   - among all segments covering `mid`, compute their \(y(\text{mid})\),
+   - pick the minimum \(y\) => that segment’s color owns the entire interval,
+   - add the interval length \((xs[i+1] - xs[i])\) to that color’s sum.
+
+### Correctness reasoning
+- Since `xs` contains all endpoints and all relevant intersection \(x\)-coordinates, no segment can appear/disappear or swap ordering inside an interval between consecutive `xs`.  
+- Thus the segment achieving the minimum \(y(x)\) (closest to the axis) is constant throughout that interval, so evaluating at the midpoint is enough.
+
+### Complexity
+- Collecting pairwise intersections: \(O(N^2)\).
+- Number of critical \(x\)’s is \(O(N^2)\).
+- For each interval (also \(O(N^2)\)), scanning all \(N\) segments to find the minimum is \(O(N)\).
+
+Total: **\(O(N^3)\)** worst-case. With \(N \le 300\), it is borderline but accepted in the intended setting (and the provided code uses simple operations).
+
+The code comments also mention a faster approach (\(O(N^2 \log N)\)) using Li Chao tree / segment tree with rollback, but it is not implemented.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Import almost all standard C++ headers
+
+using namespace std;
+
+// Overload output for pair: prints "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pair: reads "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vector: reads all elements sequentially
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output for vector: prints all elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Coordinates are stored as doubles for intersection computations
+using coord_t = double;
+
+// A fairly complete 2D point structure (only a small subset is used here)
+struct Point {
+    static constexpr coord_t eps = 1e-9;                // geometric epsilon
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D "signed area" scalar)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons (exact comparisons; mostly unused in this solution)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Norms and angle
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate around origin by angle a
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector and unit vectors
+    Point perp() const { return Point(-y, x); }
+    Point unit() const { return *this / norm(); }
+    Point normal() const { return perp().unit(); }
+
+    // Project and reflect (unused here)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Stream I/O for points
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // CCW orientation test: returns 1, 0, -1
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    // Check whether p lies on segment ab (unused here)
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    // Point-in-triangle test (unused)
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection of two infinite lines (unused in final algorithm)
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    // Collinearity test (unused)
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    // Circumcenter (unused)
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    // Area of circular arc (unused)
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    // Circle-circle intersection (unused)
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    // Ray-segment intersection (unused)
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through, const Point& seg_a,
+        const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) {
+            return {};
+        }
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) {
+            return {};
+        }
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) {
+            return {};
+        }
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) {
+            return {};
+        }
+        return ray_start + ray_dir * t;
+    }
+};
+
+int n;                                     // number of segments
+vector<pair<Point, Point>> segments;       // segment endpoints (a,b)
+vector<char> colors;                        // segment color per index
+
+// Compute y-value of a segment at x, assuming it is non-vertical
+coord_t y_at(const pair<Point, Point>& seg, coord_t x) {
+    auto& [a, b] = seg;
+    // Linear interpolation: y = a.y + (b.y-a.y)*(x-a.x)/(b.x-a.x)
+    return a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
+}
+
+// Check whether x lies within the segment's x-range (with epsilon)
+bool covers(const pair<Point, Point>& seg, coord_t x) {
+    return x >= seg.first.x - 1e-9 && x <= seg.second.x + 1e-9;
+}
+
+// Read input, and normalize each segment so that first.x <= second.x
+void read() {
+    cin >> n;
+    segments.resize(n);
+    colors.resize(n);
+    for(int i = 0; i < n; i++) {
+        cin >> segments[i].first >> segments[i].second >> colors[i];
+        // Ensure ordering by x to simplify range checks
+        if(segments[i].first.x > segments[i].second.x) {
+            swap(segments[i].first, segments[i].second);
+        }
+    }
+}
+
+void solve() {
+    // Collect all "critical" x-coordinates where the lowest segment can change:
+    // endpoints and segment-segment intersection x-coordinates.
+    vector<coord_t> xs;
+
+    // Add all endpoints for non-vertical segments
+    for(auto& [a, b]: segments) {
+        if(abs(b.x - a.x) < 1e-9) {    // vertical => projection length zero
+            continue;
+        }
+        xs.push_back(a.x);
+        xs.push_back(b.x);
+    }
+
+    // For each pair of segments, compute intersection x of their supporting lines
+    for(int i = 0; i < n; i++) {
+        auto& [ai, bi] = segments[i];
+        if(abs(bi.x - ai.x) < 1e-9) {  // skip vertical
+            continue;
+        }
+        // Line i in form y = si*x + ci
+        coord_t si = (bi.y - ai.y) / (bi.x - ai.x);
+        coord_t ci = ai.y - si * ai.x;
+
+        for(int j = i + 1; j < n; j++) {
+            auto& [aj, bj] = segments[j];
+            if(abs(bj.x - aj.x) < 1e-9) { // skip vertical
+                continue;
+            }
+            // Line j in form y = sj*x + cj
+            coord_t sj = (bj.y - aj.y) / (bj.x - aj.x);
+            coord_t cj = aj.y - sj * aj.x;
+
+            // Parallel (or nearly) lines => no unique intersection x
+            if(abs(si - sj) < 1e-12) {
+                continue;
+            }
+
+            // Solve si*x + ci = sj*x + cj => x = (cj-ci)/(si-sj)
+            coord_t x = (cj - ci) / (si - sj);
+
+            // Intersection matters only if x is inside both segments' x-ranges
+            coord_t lo = max(ai.x, aj.x);
+            coord_t hi = min(bi.x, bj.x);
+            if(x >= lo - 1e-9 && x <= hi + 1e-9) {
+                xs.push_back(x);
+            }
+        }
+    }
+
+    // Sort and unique x-values with an epsilon-based comparator
+    sort(xs.begin(), xs.end());
+    xs.erase(
+        unique(
+            xs.begin(), xs.end(),
+            [](coord_t a, coord_t b) { return abs(a - b) < 1e-9; }
+        ),
+        xs.end()
+    );
+
+    // Accumulators for total projected lengths per color
+    coord_t sr = 0, sg = 0, sb = 0;
+
+    // For each adjacent x-interval, determine which segment is closest to OX
+    for(int i = 0; i + 1 < (int)xs.size(); i++) {
+        coord_t mid = (xs[i] + xs[i + 1]) / 2.0;   // representative x in interval
+        coord_t len = xs[i + 1] - xs[i];           // interval length
+
+        coord_t best_y = 1e18;                     // minimal y found so far
+        char best_color = '?';                     // color of minimal y segment
+
+        // Brute force: check every segment at x = mid
+        for(int j = 0; j < n; j++) {
+            // Ignore vertical segments (no length contribution; also y_at invalid)
+            if(abs(segments[j].second.x - segments[j].first.x) < 1e-9) {
+                continue;
+            }
+            // Only segments that cover this x are candidates
+            if(!covers(segments[j], mid)) {
+                continue;
+            }
+            // Compute y on this segment
+            coord_t y = y_at(segments[j], mid);
+
+            // Choose the smallest y (closest to the x-axis)
+            if(y < best_y) {
+                best_y = y;
+                best_color = colors[j];
+            }
+        }
+
+        // Add this interval's length to the winning color
+        if(best_color == 'R') {
+            sr += len;
+        } else if(best_color == 'G') {
+            sg += len;
+        } else if(best_color == 'B') {
+            sb += len;
+        }
+    }
+
+    // Output with 2 decimals as required (precision 0.01)
+    cout << fixed << setprecision(2);
+    cout << "R " << sr << "\n";
+    cout << "G " << sg << "\n";
+    cout << "B " << sb << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);   // faster I/O
+    cin.tie(nullptr);
+
+    int T = 1;                          // single test case
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+import math
+
+EPS = 1e-9
+
+def y_at(seg, x):
+    """Compute y-value of non-vertical segment at coordinate x."""
+    (x1, y1), (x2, y2) = seg
+    return y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+
+def covers(seg, x):
+    """Check if x lies within segment's x-range (inclusive with epsilon)."""
+    (x1, _), (x2, _) = seg
+    return x >= x1 - EPS and x <= x2 + EPS
+
+def is_vertical(seg):
+    """True if segment is vertical (x1 == x2 within epsilon)."""
+    (x1, _), (x2, _) = seg
+    return abs(x2 - x1) < EPS
+
+def unique_sorted(xs):
+    """Sort xs and remove near-duplicates using EPS tolerance."""
+    xs.sort()
+    res = []
+    for v in xs:
+        if not res or abs(v - res[-1]) >= EPS:
+            res.append(v)
+    return res
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+
+    segments = []
+    colors = []
+
+    # Read segments, normalize so that x1 <= x2 (swap endpoints if needed)
+    for _ in range(n):
+        x1 = float(next(it)); y1 = float(next(it))
+        x2 = float(next(it)); y2 = float(next(it))
+        c = next(it)
+        if x1 > x2:
+            x1, x2 = x2, x1
+            y1, y2 = y2, y1
+        segments.append(((x1, y1), (x2, y2)))
+        colors.append(c)
+
+    xs = []
+
+    # Add endpoints for non-vertical segments
+    for seg in segments:
+        if is_vertical(seg):
+            continue
+        (x1, _), (x2, _) = seg
+        xs.append(x1)
+        xs.append(x2)
+
+    # Add intersection x-coordinates for each pair of non-vertical segments
+    for i in range(n):
+        seg_i = segments[i]
+        if is_vertical(seg_i):
+            continue
+        (xi1, yi1), (xi2, yi2) = seg_i
+        si = (yi2 - yi1) / (xi2 - xi1)          # slope
+        ci = yi1 - si * xi1                     # intercept
+
+        for j in range(i + 1, n):
+            seg_j = segments[j]
+            if is_vertical(seg_j):
+                continue
+            (xj1, yj1), (xj2, yj2) = seg_j
+            sj = (yj2 - yj1) / (xj2 - xj1)
+            cj = yj1 - sj * xj1
+
+            # Parallel lines => no single intersection x
+            if abs(si - sj) < 1e-12:
+                continue
+
+            # Compute intersection x of supporting lines
+            x = (cj - ci) / (si - sj)
+
+            # Only keep x if within both segments' x-overlap
+            lo = max(xi1, xj1)
+            hi = min(xi2, xj2)
+            if x >= lo - EPS and x <= hi + EPS:
+                xs.append(x)
+
+    xs = unique_sorted(xs)
+
+    sr = sg = sb = 0.0
+
+    # Scan each interval between consecutive critical x's
+    for k in range(len(xs) - 1):
+        x_left = xs[k]
+        x_right = xs[k + 1]
+        mid = (x_left + x_right) / 2.0
+        length = x_right - x_left
+
+        best_y = 1e100
+        best_c = None
+
+        # Find segment with minimal y(mid) among those covering mid
+        for seg, c in zip(segments, colors):
+            if is_vertical(seg):
+                continue
+            if not covers(seg, mid):
+                continue
+            y = y_at(seg, mid)
+            if y < best_y:
+                best_y = y
+                best_c = c
+
+        # Add this interval to the winning color
+        if best_c == 'R':
+            sr += length
+        elif best_c == 'G':
+            sg += length
+        elif best_c == 'B':
+            sb += length
+        # If best_c is None, no segment covers mid => contributes nothing
+
+    # Print with 2 digits after decimal point (precision 0.01)
+    print(f"R {sr:.2f}")
+    print(f"G {sg:.2f}")
+    print(f"B {sb:.2f}")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Each non-vertical segment induces a linear function \(y(x)\) on its \(x\)-range.  
+- The projection color at \(x\) is the color of the segment with **minimal** \(y(x)\) among those covering \(x\).  
+- This minimum can change only at segment endpoints or at \(x\)-coordinates of intersections of two segments’ supporting lines (within their overlapping \(x\)-ranges).  
+- Collect all such critical \(x\)’s, sort+unique. For each adjacent interval, evaluate all covering segments at the midpoint, pick the smallest \(y\), and add the interval length to that color’s total.  
+- Vertical segments project to a point (zero length) and can be ignored.  
+- Complexity: \(O(N^2)\) critical points, \(O(N)\) scan per interval → \(O(N^3)\).

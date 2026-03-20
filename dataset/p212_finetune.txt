@@ -1,0 +1,560 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+212. Data Transmission
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Recently one known microprocessor productioner has developed the new type of microprocessors that can be used in difficult mathematical calculations. The processor contains N so called nodes that are connected by M channels. Data organized in packets, pass from source node to target node by channels and are processed by the intermediate nodes.
+
+Each node has its level that determines the type of work this node does. The source node has level 1 while the target node has level L. For data to be correctly processed each packet of it must pass in order all nodes with levels from 1 to L — that is, first it must be processed by the source node, after that by some node of level 2, so on, and finally by the target node.
+
+Nodes can process as much data as they are asked to, however channels can only transmit the limited amount of data in a unit of time. For synchronization reasons, any data can only be transmitted from a node with level i to some node with level i+1 and cannot be transmitted between nodes which levels differ by more than one or from a node of higher level to a node of lower level. Nodes are so fast that they can process data packet immediately, so as soon as it reaches the node it is ready to be transmitted to the node of the next level.
+
+No data should stall in any node and no node can produce its own data, so each unit of time the number of packets coming to any node except source and target, must be equal to the number of packets leaving this node.
+
+The scheme of data transmission that satisfies the conditions provided is called the data flow. Data flow is called blocking if there is no way to increase the value of the data flow just increasing the amount of data passing by some channels (however, there may be the way to increase it, decreasing the amount of data for some channels and increasing for other ones).
+
+Your task is to find some blocking data flow for the microprocessor given its scheme. Note, that you need not find the maximal possible data flow, just any blocking one.
+
+Input
+
+The first line of the input file contains three integer numbers — N, M and L (2 ≤ N ≤ 1,500, 1 ≤ M ≤ 300,000, 2 ≤ L ≤ N). Let nodes be numbered from 1 to N. The second line contains N integer numbers, i-th of them is the level li of the i-th node (1 ≤ li ≤ L). Only one node has level 1, that is the source node, and only one node has level L — that is the target node.
+
+Next M lines describe channels, each lines contains three integer numbers a, b and c — nodes connected by this channel and its capacity in packets per unit of time (1 ≤ a, b ≤ N, lb = la + 1, 1 ≤ c ≤ 106).
+
+Two nodes can be connected by at most one channel.
+
+Output
+
+Output the description of the data flow found. Output file must contain M lines, they must correspond to channels and contain the amount of data transmitted by the channel in a unit of time. Channels must be listed in the order they are specified in the input file.
+
+Sample test(s)
+
+Input
+6 7 4
+1 2 3 4 3 2
+1 2 3
+2 3 3
+3 4 4
+1 6 4
+6 3 2
+5 4 3
+6 5 4
+
+Output
+3
+3
+4
+4
+1
+3
+3
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Summer Trainings 2003
+Date:	2003-08-30
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+We have a directed network of `N` nodes partitioned into `L` levels.  
+Exactly one node is the **source** (level `1`) and exactly one node is the **sink** (level `L`).  
+Every channel (directed edge) goes only from level `i` to level `i+1`, and has capacity `c`.
+
+A **flow** assigns `f_e` to each edge such that:
+
+- `0 ≤ f_e ≤ c_e`
+- For every node except source and sink: **inflow = outflow**
+
+A flow is **blocking** if you cannot increase the total flow value by only *increasing* some edge flows (never decreasing any).  
+Equivalently: **there is no residual (unused-capacity) path from source to sink**.
+
+Task: output **any blocking flow** (not necessarily maximum), as `M` flow values in input edge order.
+
+Constraints are large (`M` up to 300,000) with a very small time limit, so we need a near-linear method.
+
+---
+
+## 2) Key observations
+
+1. **The graph is already a layered DAG**: every edge goes from level `i` to `i+1`.  
+   This is exactly a Dinic “level graph”.
+
+2. A flow is blocking **iff** there is **no** `s → t` path consisting only of edges with **residual capacity** (`cap - flow > 0`).  
+   That matches the usual “blocking flow” notion in Dinic.
+
+3. We do **not** need maximum flow. Producing **one blocking flow** is enough.
+
+4. A straightforward DFS-based blocking-flow phase (like Dinic) can be too slow on worst cases for these constraints.
+
+5. Use **MKM algorithm** (Malhotra–Kumar–Maheshwari) which computes a blocking flow in a layered graph in  
+   **O(E + V²)** time. Here `V ≤ 1500`, so `V²` is tiny, while `E = M` can be large.
+
+---
+
+## 3) Full solution approach (MKM blocking flow)
+
+### Data maintained
+
+For each node `v` we maintain:
+
+- `out_sum[v]`: sum of residual capacities of outgoing edges from `v` to “alive” nodes  
+- `in_sum[v]`: sum of residual capacities of incoming edges into `v` from “alive” nodes  
+- `alive[v]`: whether the node is still considered usable by MKM
+
+Residual of edge `e`: `res(e) = cap(e) - flow(e)`.
+
+Define **potential**:
+
+- `pot(source) = out_sum[source]`
+- `pot(sink)   = in_sum[sink]`
+- otherwise `pot(v) = min(in_sum[v], out_sum[v])`
+
+Interpretation: `pot(v)` is an upper bound on how much flow can pass *through* node `v` in the remaining residual graph.
+
+### Killing useless nodes
+
+If an internal node has `pot(v) = 0`, then either:
+
+- nothing can enter it (`in_sum=0`), or
+- nothing can leave it (`out_sum=0`),
+
+so it cannot belong to any residual `s→t` path. MKM “kills” it:
+
+- mark `alive[v] = false`
+- for each residual outgoing edge `v→x`, subtract that residual from `in_sum[x]`
+- for each residual incoming edge `y→v`, subtract that residual from `out_sum[y]`
+- this can cause neighbors to become `pot=0` too → cascade via a queue
+
+This removal is safe: it never removes any possible residual `s→t` path, because dead nodes cannot participate in one.
+
+### Main MKM loop
+
+Repeat while there exists an alive node with `pot > 0`:
+
+1. Choose an alive node `v` with **minimum positive** `pot(v) = p`.
+2. Push `p` units of flow:
+   - **forward** from `v` to the sink (using outgoing edges level by level),
+   - **backward** from `v` to the source (using incoming edges level by level).
+3. After pushing, kill all nodes that now have `pot = 0` (cascade).
+
+Implementation details for speed:
+
+- Keep adjacency lists of edge IDs: `out_edges[u]`, `in_edges[u]`
+- Keep per-node pointers `out_ptr[u]`, `in_ptr[u]` so each adjacency list is scanned only once overall  
+  (classic Dinic optimization; crucial for `M=300k`).
+- Process nodes by levels using `by_level[level]` lists.
+
+### Why this produces a blocking flow
+
+When the algorithm finishes, every alive node has `pot=0` or no alive nodes remain with `pot>0`.  
+This implies there is no residual path from source to sink in the alive subgraph; dead nodes cannot participate either.  
+So **no residual `s→t` path exists**, hence the flow is **blocking**.
+
+### Complexity
+
+- Each edge is scanned at most once by `out_ptr` and once by `in_ptr` ⇒ **O(E)** edge work.
+- Each iteration kills at least one node; selecting minimum potential by scanning all nodes costs **O(V)** per iteration ⇒ **O(V²)** total.
+- Total: **O(E + V²)**.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Blocking flow in a layered DAG (edges only from level i to i+1).
+  We must output any flow such that there is no residual s->t path
+  (i.e., a blocking flow on this level graph).
+
+  We use MKM algorithm: O(E + V^2).
+*/
+
+struct Edge {
+    int from, to;
+    int idx;          // original input order
+    int cap;
+    int flow;
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M, L;
+    cin >> N >> M >> L;
+
+    vector<int> lev(N + 1);
+    vector<vector<int>> by_level(L + 1);
+
+    int src = -1, snk = -1;
+    for (int i = 1; i <= N; i++) {
+        cin >> lev[i];
+        by_level[lev[i]].push_back(i);
+        if (lev[i] == 1) src = i;
+        if (lev[i] == L) snk = i;
+    }
+
+    vector<Edge> edges;
+    edges.reserve(M);
+
+    // adjacency lists store edge IDs
+    vector<vector<int>> out_edges(N + 1), in_edges(N + 1);
+    out_edges.reserve(N + 1);
+    in_edges.reserve(N + 1);
+
+    for (int i = 0; i < M; i++) {
+        int a, b, c;
+        cin >> a >> b >> c;
+        // guaranteed lev[b] = lev[a] + 1
+        int eid = (int)edges.size();
+        edges.push_back({a, b, i, c, 0});
+        out_edges[a].push_back(eid);
+        in_edges[b].push_back(eid);
+    }
+
+    // out_sum[v] = sum of residual outgoing capacities to alive nodes (initially all alive)
+    // in_sum[v]  = sum of residual incoming capacities from alive nodes
+    vector<int> out_sum(N + 1, 0), in_sum(N + 1, 0);
+    for (const auto &e : edges) {
+        out_sum[e.from] += e.cap;
+        in_sum[e.to] += e.cap;
+    }
+
+    // persistent pointers into adjacency lists, so each list is scanned only once total
+    vector<int> out_ptr(N + 1, 0), in_ptr(N + 1, 0);
+
+    vector<char> alive(N + 1, 1);
+
+    auto pot = [&](int v) -> int {
+        if (v == src) return out_sum[v];
+        if (v == snk) return in_sum[v];
+        return min(in_sum[v], out_sum[v]);
+    };
+
+    queue<int> qdead;
+
+    auto try_kill = [&](int v) {
+        // only internal nodes are killed by pot==0 rule
+        if (alive[v] && v != src && v != snk && pot(v) == 0) qdead.push(v);
+    };
+
+    auto kill_dead = [&]() {
+        // cascade deletions
+        while (!qdead.empty()) {
+            int u = qdead.front();
+            qdead.pop();
+            if (!alive[u]) continue;
+            alive[u] = 0;
+
+            // remove residual contributions of u's outgoing edges: they can no longer be used,
+            // so their residual should be subtracted from in_sum of the destination
+            for (int eid : out_edges[u]) {
+                int res = edges[eid].cap - edges[eid].flow;
+                if (res > 0) {
+                    int v = edges[eid].to;
+                    in_sum[v] -= res;
+                    try_kill(v);
+                }
+            }
+
+            // similarly for incoming edges: subtract residual from out_sum of the source
+            for (int eid : in_edges[u]) {
+                int res = edges[eid].cap - edges[eid].flow;
+                if (res > 0) {
+                    int v = edges[eid].from;
+                    out_sum[v] -= res;
+                    try_kill(v);
+                }
+            }
+        }
+    };
+
+    // initial killing pass
+    for (int v = 1; v <= N; v++) try_kill(v);
+    kill_dead();
+
+    vector<int> buf(N + 1, 0); // temporary "amount to send" buffer
+
+    while (true) {
+        // pick alive node with minimum positive potential
+        int v = -1;
+        int best = INT_MAX;
+        for (int i = 1; i <= N; i++) if (alive[i]) {
+            int p = pot(i);
+            if (p > 0 && p < best) best = p, v = i;
+        }
+        if (v == -1) break; // no positive-potential node -> done, flow is blocking
+
+        int p = best;
+
+        // ---- push p forward from v to sink (levels increasing) ----
+        fill(buf.begin(), buf.end(), 0);
+        buf[v] = p;
+
+        for (int level = lev[v]; level < L; level++) {
+            for (int u : by_level[level]) {
+                if (!alive[u] || buf[u] == 0) continue;
+
+                // send buf[u] along outgoing edges using out_ptr[u]
+                for (int &ptr = out_ptr[u];
+                     ptr < (int)out_edges[u].size() && buf[u] > 0; ) {
+                    Edge &e = edges[out_edges[u][ptr]];
+                    int res = e.cap - e.flow;
+
+                    if (res <= 0 || !alive[e.to]) { // saturated or dead target
+                        ptr++;
+                        continue;
+                    }
+
+                    int f = min(buf[u], res);
+                    e.flow += f;
+                    buf[u] -= f;
+                    buf[e.to] += f;
+
+                    // consuming residual decreases the sums
+                    out_sum[u] -= f;
+                    in_sum[e.to] -= f;
+
+                    if (e.flow == e.cap) ptr++; // edge saturated -> never useful again
+                }
+            }
+        }
+
+        // ---- push p backward from v to source (levels decreasing) ----
+        // This is done by pushing "up" on incoming edges (still increasing flow on those edges),
+        // which balances flow conservation around v.
+        fill(buf.begin(), buf.end(), 0);
+        buf[v] = p;
+
+        for (int level = lev[v]; level > 1; level--) {
+            for (int u : by_level[level]) {
+                if (!alive[u] || buf[u] == 0) continue;
+
+                for (int &ptr = in_ptr[u];
+                     ptr < (int)in_edges[u].size() && buf[u] > 0; ) {
+                    Edge &e = edges[in_edges[u][ptr]];
+                    int res = e.cap - e.flow;
+
+                    if (res <= 0 || !alive[e.from]) { // saturated or dead source
+                        ptr++;
+                        continue;
+                    }
+
+                    int f = min(buf[u], res);
+                    e.flow += f;
+                    buf[u] -= f;
+                    buf[e.from] += f;
+
+                    out_sum[e.from] -= f;
+                    in_sum[u] -= f;
+
+                    if (e.flow == e.cap) ptr++;
+                }
+            }
+        }
+
+        // kill newly zero-potential nodes (with cascade)
+        for (int i = 1; i <= N; i++) try_kill(i);
+        kill_dead();
+    }
+
+    // output flows in input order
+    vector<int> ans(M, 0);
+    for (auto &e : edges) ans[e.idx] = e.flow;
+    for (int i = 0; i < M; i++) cout << ans[i] << "\n";
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from collections import deque
+
+# MKM blocking flow on a layered DAG.
+# Complexity: O(E + V^2) with V<=1500, E up to 3e5.
+
+def solve() -> None:
+    input = sys.stdin.readline
+
+    n, m, L = map(int, input().split())
+    lev = [0] * (n + 1)
+    by_level = [[] for _ in range(L + 1)]
+
+    levels = list(map(int, input().split()))
+    src = snk = -1
+    for i in range(1, n + 1):
+        lev[i] = levels[i - 1]
+        by_level[lev[i]].append(i)
+        if lev[i] == 1:
+            src = i
+        if lev[i] == L:
+            snk = i
+
+    # Store edges in structure-of-arrays form for speed
+    frm = [0] * m
+    to = [0] * m
+    cap = [0] * m
+    flow = [0] * m
+
+    out_edges = [[] for _ in range(n + 1)]
+    in_edges = [[] for _ in range(n + 1)]
+
+    for eid in range(m):
+        a, b, c = map(int, input().split())
+        frm[eid] = a
+        to[eid] = b
+        cap[eid] = c
+        out_edges[a].append(eid)
+        in_edges[b].append(eid)
+
+    out_sum = [0] * (n + 1)
+    in_sum = [0] * (n + 1)
+    for eid in range(m):
+        out_sum[frm[eid]] += cap[eid]
+        in_sum[to[eid]] += cap[eid]
+
+    out_ptr = [0] * (n + 1)
+    in_ptr = [0] * (n + 1)
+    alive = [True] * (n + 1)
+
+    def pot(v: int) -> int:
+        if v == src:
+            return out_sum[v]
+        if v == snk:
+            return in_sum[v]
+        return out_sum[v] if out_sum[v] < in_sum[v] else in_sum[v]
+
+    qdead = deque()
+
+    def try_kill(v: int) -> None:
+        if alive[v] and v != src and v != snk and pot(v) == 0:
+            qdead.append(v)
+
+    def kill_dead() -> None:
+        # Cascade: when removing a node, neighbors lose residual capacity contributions
+        while qdead:
+            u = qdead.popleft()
+            if not alive[u]:
+                continue
+            alive[u] = False
+
+            # remove residual on u->x from x's incoming sum
+            for eid in out_edges[u]:
+                res = cap[eid] - flow[eid]
+                if res > 0:
+                    v = to[eid]
+                    in_sum[v] -= res
+                    try_kill(v)
+
+            # remove residual on y->u from y's outgoing sum
+            for eid in in_edges[u]:
+                res = cap[eid] - flow[eid]
+                if res > 0:
+                    v = frm[eid]
+                    out_sum[v] -= res
+                    try_kill(v)
+
+    for v in range(1, n + 1):
+        try_kill(v)
+    kill_dead()
+
+    buf = [0] * (n + 1)
+
+    while True:
+        # choose alive node with minimum positive potential
+        v = -1
+        best = 10**30
+        for i in range(1, n + 1):
+            if alive[i]:
+                p = pot(i)
+                if 0 < p < best:
+                    best = p
+                    v = i
+        if v == -1:
+            break
+
+        p = best
+
+        # ---- forward push v -> sink ----
+        for i in range(1, n + 1):
+            buf[i] = 0
+        buf[v] = p
+
+        for level in range(lev[v], L):
+            for u in by_level[level]:
+                if (not alive[u]) or buf[u] == 0:
+                    continue
+                ptr = out_ptr[u]
+                adj = out_edges[u]
+                while ptr < len(adj) and buf[u] > 0:
+                    eid = adj[ptr]
+                    res = cap[eid] - flow[eid]
+                    w = to[eid]
+                    if res <= 0 or (not alive[w]):
+                        ptr += 1
+                        continue
+                    f = buf[u] if buf[u] < res else res
+                    flow[eid] += f
+                    buf[u] -= f
+                    buf[w] += f
+                    out_sum[u] -= f
+                    in_sum[w] -= f
+                    if flow[eid] == cap[eid]:
+                        ptr += 1
+                out_ptr[u] = ptr
+
+        # ---- backward push v -> source (using incoming edges) ----
+        for i in range(1, n + 1):
+            buf[i] = 0
+        buf[v] = p
+
+        for level in range(lev[v], 1, -1):
+            for u in by_level[level]:
+                if (not alive[u]) or buf[u] == 0:
+                    continue
+                ptr = in_ptr[u]
+                adj = in_edges[u]
+                while ptr < len(adj) and buf[u] > 0:
+                    eid = adj[ptr]
+                    res = cap[eid] - flow[eid]
+                    w = frm[eid]
+                    if res <= 0 or (not alive[w]):
+                        ptr += 1
+                        continue
+                    f = buf[u] if buf[u] < res else res
+                    flow[eid] += f
+                    buf[u] -= f
+                    buf[w] += f
+                    out_sum[w] -= f
+                    in_sum[u] -= f
+                    if flow[eid] == cap[eid]:
+                        ptr += 1
+                in_ptr[u] = ptr
+
+        # kill zero-potential nodes
+        for i in range(1, n + 1):
+            try_kill(i)
+        kill_dead()
+
+    sys.stdout.write("\n".join(map(str, flow)))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also add a short “correctness proof sketch” section (invariants + why no residual `s→t` path remains) tailored to MKM, but the above already matches what’s required to implement and pass within the limits.
