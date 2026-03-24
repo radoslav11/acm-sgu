@@ -1,0 +1,589 @@
+## 1) Abridged problem statement
+
+You are given **N** rectangular pies (each by 4 corner coordinates) and **two candle points** on each pie. You must choose **exactly K pies** such that the **total area is as large as possible** (if many choices tie for maximum total area, any of them may be delivered).
+
+For any delivered pie, they will eat it only if it can be cut by a **single straight line** into **two equal-area parts**, with **one candle in each part**, and the cut **must not pass through a candle**.
+
+Output two values (3 decimals):
+
+- **Pessimist**: the *minimum* total area the optimist will get among all maximum-area choices of K pies.
+- **Optimist**: the *maximum* total area he can get among all maximum-area choices.
+
+(When a pie is eatable, each person gets half its area; we output the optimist’s total share.)
+
+Constraints: `N ≤ 1000`, `K ≤ 10`.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### A. Geometry fact: equal-area cut of a rectangle
+A rectangle is **centrally symmetric**: its center is the midpoint of both diagonals. For any centrally symmetric shape (including rectangles), a line cuts it into **two equal areas** **iff** the line passes through the **center**.
+
+So any valid equal-area cut line must pass through the rectangle’s center `O`.
+
+Now we also require: the line places the two candles in **different open half-planes**, and **does not pass through either candle**.
+
+Let the candle vectors from the center be:
+- `p = X - O`
+- `q = Y - O`
+
+A line through `O` separates the candles iff there exists a direction (a normal vector `n`) such that:
+- `n·p` and `n·q` have **opposite signs** (strict, because the line cannot pass through a candle → dot product cannot be 0).
+
+When is this impossible?
+
+1. **A candle at the center**: `p = 0` or `q = 0`.  
+   Every line through `O` passes through that candle → forbidden → not cuttable.
+
+2. **Both candles lie on the same ray from the center** (same direction):  
+   That means `p` and `q` are **collinear** and point in the **same** direction.  
+   Then for any line through `O`, the two points are always on the same side (or one on the line), so you cannot strictly separate them.
+
+If `p` and `q` are not collinear, you can choose a line through `O` between their directions to separate them.  
+If they are collinear but opposite directions (i.e., `p·q < 0`), then the line **perpendicular** to that ray separates them.
+
+So a rectangle is **cuttable** iff:
+- `p` and `q` are **not collinear** (`|p×q| > eps`), **or**
+- they are collinear but in **opposite directions** (`p·q < 0`)
+
+That is exactly what the code checks:
+```cpp
+bool cuttable = abs(px ^ py) > 1e-9 || (px * py) < -1e-9;
+```
+
+### B. Compute each pie’s area
+Corner order in input is arbitrary. The code:
+1. Computes the center as average of the 4 corners (for a rectangle that’s correct regardless of order).
+2. Sorts corners by polar angle around the center.
+3. Uses the shoelace formula (cross-sum) on the sorted polygon to get area.
+
+### C. Picking K pies with maximum total area
+We must select **K pies maximizing total area**. So we sort pies by `area` descending.
+
+Let `threshold = area of the K-th pie` in sorted order.
+
+- All pies with `area > threshold` are **forced** into every maximum-area selection.
+- Pies with `area == threshold` are **ties**; we must choose some of them to reach K pies.
+- Pies with `area < threshold` can never be chosen in a maximum-area solution.
+
+Thus all maximum-area selections differ **only** in which `need` pies we pick among the `area == threshold` group.
+
+Let:
+- `above` = count of pies with area `> threshold`
+- `need = K - above`
+- among equal-area pies:
+  - `cuttable_eq` = how many are cuttable
+  - `non_cuttable_eq` = how many are not cuttable
+
+For the pies strictly above threshold, the optimist’s share is fixed:
+- add `area/2` for each cuttable forced pie (non-cuttable contribute 0 because they won’t eat it).
+
+Now for the `need` pies among equals:
+
+- **Optimist (best case):** choose as many cuttable pies as possible  
+  number of cuttable picked = `min(need, cuttable_eq)`  
+  additional share = that * `threshold/2`
+
+- **Pessimist (worst case):** adversary tries to minimize cuttable among picked threshold pies, i.e., pick non-cuttable first.  
+  If `need <= non_cuttable_eq`, pessimist gets 0 from equals.  
+  Otherwise, must take `need - non_cuttable_eq` cuttable pies.  
+  additional share = `max(0, need - non_cuttable_eq) * threshold/2`
+
+Total complexity: `O(N log N)` due to sorting, easily fits.
+
+---
+
+## 3) Given C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+// Print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (debug helper)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = double;
+
+// 2D point / vector with common geometry operations
+struct Point {
+    static constexpr coord_t eps = 1e-9;                 // floating tolerance
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D scalar cross)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons (mostly for sorting)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Length squared, length, polar angle
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate around origin by angle a
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector (rotated 90°)
+    Point perp() const { return Point(-y, x); }
+    // Unit vector in same direction
+    Point unit() const { return *this / norm(); }
+
+    // Normal unit vector (perp then unit)
+    Point normal() const { return perp().unit(); }
+
+    // Project p onto this vector (treating this as direction)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+
+    // Reflect p around this vector direction
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Stream output/input
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // ccw orientation test: sign of cross product (b-a) x (c-a)
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;           // collinear
+        } else if(v > 0) {
+            return 1;           // counter-clockwise
+        } else {
+            return -1;          // clockwise
+        }
+    }
+
+    // Check if point p lies on segment [a,b]
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    // Check if p is inside or on boundary of triangle abc
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection point of two infinite lines a1-b1 and a2-b2 (assumes not parallel)
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    // Whether vectors a and b are collinear (cross ~ 0)
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    // Circumcenter of triangle abc (not used in this solution)
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    // Signed area contribution of a circular arc (not used here)
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    // Intersection points of two circles (not used here)
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    // Intersection of a ray and a segment (not used here)
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through, const Point& seg_a,
+        const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) {
+            return {};
+        }
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) {
+            return {};
+        }
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) {
+            return {};
+        }
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) {
+            return {};
+        }
+        return ray_start + ray_dir * t;
+    }
+};
+
+int n, k;
+
+// Each cake stores 4 corners (a,b,c,d) and two candles (x,y)
+vector<tuple<Point, Point, Point, Point, Point, Point>> cakes;
+
+void read() {
+    cin >> n >> k;
+    cakes.resize(n);
+    for(auto& [a, b, c, d, x, y]: cakes) {
+        // Input is integer coordinates; read into ints first
+        int ax, ay, bx, by, cx, cy, dx, dy, xx, xy, yx, yy;
+        cin >> ax >> ay >> bx >> by >> cx >> cy >> dx >> dy >> xx >> xy >> yx >>
+            yy;
+        // Convert to Points (double)
+        a = Point(ax, ay);
+        b = Point(bx, by);
+        c = Point(cx, cy);
+        d = Point(dx, dy);
+        x = Point(xx, xy);
+        y = Point(yx, yy);
+    }
+}
+
+void solve() {
+    // We will store for each pie:
+    // (area, cuttable?)
+    vector<pair<coord_t, bool>> pies(n);
+
+    for(int i = 0; i < n; i++) {
+        auto& [a, b, c, d, x, y] = cakes[i];
+
+        // Rectangle center: average of four corners
+        Point center = (a + b + c + d) / 4.0;
+
+        // Sort corners by angle around the center to get a proper polygon order
+        vector<Point> corners = {a, b, c, d};
+        sort(
+            corners.begin(), corners.end(),
+            [&](const Point& p, const Point& q) {
+                return (p - center).angle() < (q - center).angle();
+            }
+        );
+
+        // Shoelace formula using cross products
+        coord_t area = 0;
+        for(int j = 0; j < 4; j++) {
+            area += corners[j] ^ corners[(j + 1) % 4];
+        }
+        area = abs(area) / 2.0;
+
+        // Vectors from center to candles
+        Point px = x - center, py = y - center;
+
+        // Cuttable iff:
+        // - not collinear (cross != 0), OR
+        // - collinear but opposite directions (dot < 0)
+        bool cuttable = abs(px ^ py) > 1e-9 || (px * py) < -1e-9;
+
+        pies[i] = {area, cuttable};
+    }
+
+    // Sort pies by area descending
+    sort(pies.begin(), pies.end(), [](auto& a, auto& b) {
+        return a.first > b.first;
+    });
+
+    // Special case: choose 0 pies => both get 0
+    if(k == 0) {
+        cout << fixed << setprecision(3) << 0.0 << " " << 0.0 << "\n";
+        return;
+    }
+
+    // The K-th area defines the "threshold" for ties
+    coord_t threshold = pies[k - 1].first;
+
+    // fixed_area: optimist share from pies strictly above threshold
+    coord_t fixed_area = 0;
+
+    // above: count pies with area > threshold
+    int above = 0;
+
+    // Among pies with area == threshold:
+    int cuttable_eq = 0;
+    int total_eq = 0;
+
+    for(auto& [area, cut]: pies) {
+        if(area > threshold + 1e-9) {
+            // Forced into any maximum-area selection
+            above++;
+            if(cut) {
+                // If cuttable, optimist gets half
+                fixed_area += area / 2.0;
+            }
+        } else if(abs(area - threshold) < 1e-9) {
+            // Tie group
+            total_eq++;
+            if(cut) {
+                cuttable_eq++;
+            }
+        }
+    }
+
+    // Need to pick this many pies from the tie group
+    int need = k - above;
+
+    // How many tie pies are NOT cuttable
+    int non_cuttable_eq = total_eq - cuttable_eq;
+
+    // Optimist: choose as many cuttable from equals as possible
+    coord_t opt = fixed_area + min(need, cuttable_eq) * threshold / 2.0;
+
+    // Pessimist: forced cuttable count = max(0, need - non_cuttable_eq)
+    coord_t pes = fixed_area + max(0, need - non_cuttable_eq) * threshold / 2.0;
+
+    cout << fixed << setprecision(3) << pes << " " << opt << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;   // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+import math
+
+EPS = 1e-9
+
+def cross(ax, ay, bx, by):
+    return ax * by - ay * bx
+
+def dot(ax, ay, bx, by):
+    return ax * bx + ay * by
+
+def angle(dx, dy):
+    return math.atan2(dy, dx)
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    k = int(next(it))
+
+    pies = []  # list of (area, cuttable)
+
+    for _ in range(n):
+        # Read rectangle corners and two candles (all ints)
+        ax, ay = int(next(it)), int(next(it))
+        bx, by = int(next(it)), int(next(it))
+        cx, cy = int(next(it)), int(next(it))
+        dx, dy = int(next(it)), int(next(it))
+        xx, xy = int(next(it)), int(next(it))
+        yx, yy = int(next(it)), int(next(it))
+
+        # Center of rectangle: average of 4 corners
+        ox = (ax + bx + cx + dx) / 4.0
+        oy = (ay + by + cy + dy) / 4.0
+
+        # Sort corners by polar angle around center to get consistent polygon order
+        corners = [(ax, ay), (bx, by), (cx, cy), (dx, dy)]
+        corners.sort(key=lambda p: angle(p[0] - ox, p[1] - oy))
+
+        # Shoelace via cross sum
+        s = 0.0
+        for i in range(4):
+            x1, y1 = corners[i]
+            x2, y2 = corners[(i + 1) % 4]
+            s += cross(x1, y1, x2, y2)
+        area = abs(s) / 2.0
+
+        # Vectors from center to candles
+        px, py = xx - ox, xy - oy
+        qx, qy = yx - ox, yy - oy
+
+        # Cuttable iff:
+        # - not collinear (cross != 0), OR
+        # - collinear but opposite directions (dot < 0)
+        c = cross(px, py, qx, qy)
+        d = dot(px, py, qx, qy)
+        cuttable = (abs(c) > EPS) or (d < -EPS)
+
+        pies.append((area, cuttable))
+
+    # Sort by area descending (max total area selection)
+    pies.sort(key=lambda t: t[0], reverse=True)
+
+    if k == 0:
+        print(f"{0.0:.3f} {0.0:.3f}")
+        return
+
+    threshold = pies[k - 1][0]
+
+    fixed_area = 0.0    # forced pies above threshold (optimist share)
+    above = 0           # count of pies with area > threshold
+    total_eq = 0        # count of pies with area == threshold
+    cuttable_eq = 0     # among equals, how many cuttable
+
+    for area, cut in pies:
+        if area > threshold + EPS:
+            above += 1
+            if cut:
+                fixed_area += area / 2.0
+        elif abs(area - threshold) < EPS:
+            total_eq += 1
+            if cut:
+                cuttable_eq += 1
+
+    need = k - above
+    non_cuttable_eq = total_eq - cuttable_eq
+
+    # Best case: pick as many cuttable among the equals
+    opt = fixed_area + min(need, cuttable_eq) * threshold / 2.0
+
+    # Worst case: pick non-cuttable first; forced cuttable are what's left
+    pes = fixed_area + max(0, need - non_cuttable_eq) * threshold / 2.0
+
+    print(f"{pes:.3f} {opt:.3f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Any equal-area cut of a rectangle must pass through its center `O`.
+- Such a line can separate candles `X,Y` without passing through them iff with vectors `p=X-O`, `q=Y-O`:
+  - either `p×q ≠ 0` (non-collinear), or
+  - `p×q = 0` but `p·q < 0` (opposite directions).
+  Otherwise impossible (candle at center or same ray).
+- Compute each pie’s area (sort corners by angle around center; shoelace).
+- Sort pies by area descending. Let `threshold = area[K-1]`.
+  - Pies with area `> threshold` are forced in any maximum-area selection → their cuttable contributions are fixed.
+  - Only the `area==threshold` group can vary. Let `need` be how many must be chosen from it.
+  - Optimist picks as many cuttable among equals as possible; pessimist minimizes cuttable (picks non-cuttable first).
+- Add `area/2` for each cuttable selected pie; output pessimist and optimist totals.

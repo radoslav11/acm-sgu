@@ -1,0 +1,509 @@
+## 1) Abridged problem statement
+
+You must typeset an article of **N words** on a page of fixed width **W** characters. Word *i* has length **Li** and words are placed in order using this greedy rule:
+
+- Each word occupies **Li consecutive free cells** in a row.
+- Between consecutive words in the same row there must be **at least 1 empty cell** (a “space”).
+- Among all valid placements consistent with previous words, choose the **earliest** possible position (topmost row, then leftmost column).
+
+Before placing text, you must place one rectangular illustration of size **R rows × C columns** anywhere; its cells become occupied.
+
+A row is “used” if after placing illustration and text it contains at least one occupied cell.  
+For each test case, find the **minimum possible number of used rows** over all illustration placements.
+
+---
+
+## 2) Detailed editorial (explaining the solution)
+
+### Key viewpoint: we only care about “what word starts each row”
+Without any illustration, greedy text layout is deterministic: it walks through words, maintaining a cursor (row, col). With an illustration, the layout is still greedy/deterministic, but now each row has a blocked interval (the illustration’s columns) for **R consecutive rows**.
+
+The illustration placement can be described by:
+- its **top row** (somewhere; unbounded downward, but only relative to where text ends matters),
+- its **left column** `col` (0…W−C),
+- and therefore, in each affected row, there are two available free segments:
+  - left segment width = `gap_left = col`
+  - right segment width = `gap_right = W - col - C`
+
+If a word doesn’t fit entirely in a free segment (respecting spaces between words), the greedy algorithm moves forward until it can place it, potentially skipping to the next row.
+
+The trick is to evaluate, for each column `col`, how the presence of R “split rows” changes which word index is reached after passing those R rows.
+
+---
+
+### Precompute: “how many words fit starting at v in a segment of width s”
+Define a function:
+
+`fit(v, s) = index of first word NOT placed after filling one row segment of usable width s, starting from word v`
+
+So if `fit(v, s) = t`, it means words `v..t-1` fit in that segment.
+
+We need this fast for all `v` and all `s <= W`, repeatedly.
+
+The code builds:
+
+`len_next[v][s]` for all `v in [0..N]`, `s in [0..W]`
+
+in **O(N·W)** using a sliding process per starting word `v`. Then:
+
+- If `v==N` or `s < L[v]`, return `v` (nothing fits)
+- else return `len_next[v][s]`
+
+This avoids an O(log N) binary search per query.
+
+---
+
+### Model one illustration row as a “jump” function next(v)
+In a row that contains the illustration, usable cells are split into:
+- left segment of width `gap_left`
+- then blocked `C`
+- then right segment of width `gap_right`
+
+Greedy placement within that row will:
+1) Place as many words as possible in left segment: `v1 = fit(v, gap_left)`
+2) Then continue in right segment: `v2 = fit(v1, gap_right)`
+
+So for that fixed column placement, one illustrated row maps:
+
+`next(v) = fit(fit(v, gap_left), gap_right)`
+
+Passing through **R** illustrated rows means applying this mapping R times:
+
+`next^R(v)`
+
+We need this for many starting `v` (the word at the beginning of each row).
+
+---
+
+### Get row starts in the “no illustration” layout
+The solution computes `row_start[j]`: the word index that begins row `j` in normal layout (no illustration).
+
+This is done by simulating the plain greedy layout with `advance(...)`, which updates the (row, col) where each word starts, respecting spaces and line breaks.
+
+Let `num_lines` be the last used row index in the no-illustration layout (0-based in code); the baseline answer is then roughly `num_lines + 1` (rows count), but the code stores variants and takes mins.
+
+---
+
+### Fast computation of next^R(v): path compression memoization
+Naively, applying `next` R times per starting row is O(R) each, too slow.
+
+Binary lifting would be O(log R) but still heavier with tight 0.25s.
+
+Instead, the code uses a *memoized recursion with compression*:
+
+For each `v`, store:
+- `comp[v].result`: where you end up after `comp[v].steps` applications
+- `comp[v].steps`: how many steps that stored result corresponds to
+
+When asked for `(v, steps)`:
+- If already computed with some `comp[v].steps`, reuse it and recurse only for remaining steps.
+- Otherwise compute one `next(v)` and recurse.
+
+Because many queries share subpaths (successive rows’ starts are close in word index), this “compresses” chains aggressively in practice.
+
+This is created per column via `make_compress(gap_left, gap_right)`.
+
+---
+
+### Evaluate all columns
+For each column `col` (0..W−C):
+- Build the compressed `next^k` solver for this `col`.
+- For each row `j` in the base layout:
+  - Start word is `row_start[j]`
+  - After R illustrated rows: `end = next^R(row_start[j])`
+  - This yields a candidate “state” for dynamic combination with the rest of layout, stored in `best[end]`.
+
+Interpretation of stored `best[x]`:
+- It keeps the best (smallest) coordinate `(row, col)` representing the earliest position just before placing word `x` in the final combined layout.
+- For ends reached after inserting the illustration block, we store a candidate row count like `j + R - (end==N)` (minor adjustment: if the text ends exactly at N, the last illustrated row might not need to be counted as used by text).
+
+---
+
+### Final pass: lay out the remaining words normally
+Once `best` has initial states from trying all illustration columns, the code “propagates” them word-by-word:
+
+For each `j` from 0 to N−1:
+- `best[j+1] = min(best[j+1], advance(j+1, best[j]))`
+
+This is just greedy placement continuing from the best known position for word `j`, producing a candidate position for word `j+1`.
+
+Finally, `best[N].first + 1` is the number of used rows (row index + 1) in the best arrangement. Output the minimum.
+
+---
+
+### Complexity
+Let `W ≤ (small, per statement)`, `sum N` bounded.
+
+Per test:
+- Precompute `len_next`: **O(N·W)**
+- For each `col` in `0..W-C`:
+  - compression structure reset O(N)
+  - process each base row once; compression makes jumps fast in practice
+
+Overall it is designed to fit very tight time limits with low constants.
+
+---
+
+## 3) Provided C++ solution with detailed line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (unused in core logic, but handy for debugging).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair (unused in core logic here).
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+
+// Print an entire vector (unused).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+int n, w, r, c;        // N words, page width W, illustration R x C
+vector<int> lens;      // word lengths, with an extra sentinel at index n
+
+void read() {
+    cin >> n >> w >> r >> c;
+    lens.resize(n + 1);
+    for (int i = 0; i < n; i++) cin >> lens[i];
+    lens[n] = 0; // sentinel "word" of length 0 to simplify boundary cases
+}
+
+void solve() {
+    // Precompute len_next[v][space]:
+    // the first word index NOT placed after filling a segment of width 'space'
+    // starting from word v, under the usual "1 space between words" rule.
+    //
+    // We'll only ever query space up to (w - c) because in an illustrated row
+    // each free segment is at most w-c wide.
+    vector<vector<int>> len_next(n + 1, vector<int>(w + 1, n));
+
+    for (int v = 0; v <= n; v++) {
+        // nxt will represent how far we can go (exclusive) as space increases.
+        int nxt = min(n, v + 1);
+
+        // With exactly lens[v] cells, we can place word v (if v < n),
+        // but no room for a following space+word.
+        len_next[v][lens[v]] = nxt;
+
+        // Now grow available space k from lens[v]+1 up to w-c.
+        // 'gap' counts how many extra cells beyond the already placed prefix.
+        // When gap is large enough to place "1 space + next word", we extend nxt.
+        for (int k = lens[v] + 1, gap = 0; k <= w - c; k++) {
+            gap++;
+
+            // If we still have words, and we accumulated enough cells to place
+            // a mandatory 1 space plus the next word's letters, then "consume"
+            // that and advance nxt.
+            if (nxt < n && gap >= 1 + lens[nxt]) {
+                nxt++;
+                gap = 0; // reset: we've just used the accumulated gap
+            }
+            len_next[v][k] = nxt;
+        }
+    }
+
+    // fit(v, space): for a single contiguous free segment of length 'space',
+    // return the first word index that does NOT fit when starting at v.
+    auto fit = [&](int v, int space) -> int {
+        // If we're already done, or even the first word doesn't fit, nothing moves.
+        if (v == n || space < lens[v]) return v;
+        return len_next[v][space];
+    };
+
+    // advance(v, prev):
+    // Given that we are about to place word v (1..n) and the previous word v-1
+    // ended at position described by 'prev' = (row, col_end_of_previous_start?),
+    // compute the (row, col) start position of word v in normal text layout.
+    //
+    // In this code's coordinate, prev.second is effectively the column where
+    // previous word started; then we compute where we are after placing it.
+    auto advance = [&](int v, pair<int, int> prev) -> pair<int, int> {
+        // Move column to just after previous word, plus 1 space if v < n.
+        // lens[v-1] is length of previous word.
+        int col = prev.second + lens[v - 1] + (v < n ? 1 : 0);
+        int row = prev.first;
+
+        // If word v doesn't fit in remaining columns, go to next row at col 0.
+        if (col + lens[v] > w) {
+            col = 0;
+            row++;
+        }
+        return {row, col};
+    };
+
+    // row_start[j] = word index that begins row j in the no-illustration layout.
+    vector<int> row_start(n + 1, 0);
+
+    // Simulate normal layout to determine row starts and total number of rows.
+    pair<int, int> cur = {0, 0}; // (row, col_start_of_current_word)
+    int num_lines = 0;           // last row index used (0-based)
+    for (int j = 1; j <= n; j++) {
+        cur = advance(j, cur);
+
+        // When a word starts at column 0, it begins a new row => record row_start.
+        if (cur.second == 0) row_start[cur.first] = j;
+
+        // Capture the last used row index near the end of simulation.
+        if (j == n - 1) num_lines = cur.first;
+    }
+
+    // Structure for memoized "jump steps" with compression.
+    struct Comp {
+        int result = 0; // where you end up
+        int steps = 0;  // for how many steps this result is valid
+    };
+    vector<Comp> comp(n + 1);
+
+    // Build a function that can compute next^steps(v) for a *fixed* illustration
+    // column placement, described by the two free segment widths gap_left/right.
+    auto make_compress = [&](int gap_left, int gap_right) {
+        // Reset memo table for this column placement.
+        fill(comp.begin(), comp.end(), Comp{});
+
+        // Recursive helper:
+        // returns the word index after applying "one illustrated row jump" 'steps' times.
+        auto impl = [&, gap_left, gap_right](auto&& self, int v, int steps) -> int {
+            // If no steps remain, or we're already at end, stop.
+            if (v == n || steps == 0) return v;
+
+            // If this node v has already been computed for some steps:
+            if (comp[v].steps) {
+                // If result points further and we need more steps than stored,
+                // extend it by recursing from the stored result.
+                if (comp[v].result != v) {
+                    comp[v].result =
+                        self(self, comp[v].result, steps - comp[v].steps);
+                }
+            } else {
+                // First time computing from v:
+                // One illustrated row: fill left segment, then right segment.
+                int nxt = fit(fit(v, gap_left), gap_right);
+
+                // If we actually advance (nxt != v), then consume one row (one step)
+                // and recurse for remaining steps-1.
+                comp[v].result = (nxt != v) ? self(self, nxt, steps - 1) : nxt;
+            }
+
+            // Record that comp[v].result is now valid for 'steps' steps.
+            comp[v].steps = steps;
+            return comp[v].result;
+        };
+
+        // Return a callable that hides the self-recursion boilerplate.
+        return [impl](int v, int steps) { return impl(impl, v, steps); };
+    };
+
+    // best[i] = best known (row, col) "cursor" position before placing word i.
+    // We want the minimal row primarily; the code uses pair comparison.
+    vector<pair<int, int>> best(n + 1, {n + r + 1, 0});
+
+    // Baseline answer: put illustration "irrelevantly" so text uses num_lines+1 rows,
+    // plus illustration rows etc. The code will minimize further.
+    int ans = num_lines + r + 1;
+
+    // Try all possible illustration left columns.
+    for (int col = 0; col + c <= w; col++) {
+        // Free widths to the left and right of the illustration.
+        auto path_compress = make_compress(col, w - col - c);
+
+        // For each base row j (in normal layout), pretend the illustration starts there.
+        // row_start[j] is the word index at the beginning of that row.
+        for (int j = 0; j <= num_lines; j++) {
+            // After passing R illustrated rows, what word index do we reach?
+            int end = path_compress(row_start[j], r);
+
+            // Store a candidate best "row count" reaching 'end'.
+            // The expression adjusts by (end==n) because if we finished all words
+            // exactly, the last illustrated row might not be counted as used by text.
+            best[end] = min(best[end], {j + r - (end == n), 0});
+        }
+    }
+
+    // Now propagate best positions through the remaining normal greedy layout:
+    // if we have a best cursor before word j, we can place word j+1 accordingly.
+    for (int j = 0; j < n; j++) {
+        best[j + 1] = min(best[j + 1], advance(j + 1, best[j]));
+    }
+
+    // best[n].first is last row index; +1 gives number of used rows.
+    ans = min(ans, best[n].first + 1);
+    cout << ans << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    cin >> T;
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(1_000_000)
+
+def solve_case(n, w, r, c, lens_input):
+    # lens[0..n-1] are real words; lens[n] is sentinel 0
+    lens = lens_input[:] + [0]
+
+    # Precompute len_next[v][space] for v in [0..n], space in [0..w]
+    # Only spaces up to (w - c) are needed for illustrated segments, but w is small enough.
+    len_next = [[n] * (w + 1) for _ in range(n + 1)]
+    max_seg = w - c
+
+    for v in range(n + 1):
+        nxt = min(n, v + 1)
+        lv = lens[v]
+        if lv <= w:
+            len_next[v][lv] = nxt
+
+        gap = 0
+        # Fill for k = lv+1 .. max_seg
+        for k in range(lv + 1, max_seg + 1):
+            gap += 1
+            if nxt < n and gap >= 1 + lens[nxt]:
+                nxt += 1
+                gap = 0
+            len_next[v][k] = nxt
+
+    def fit(v, space):
+        """Return first word index not fitting in a contiguous segment of length space."""
+        if v == n or space < lens[v]:
+            return v
+        return len_next[v][space]
+
+    def advance(v, prev):
+        """
+        Normal-layout greedy placement transition.
+        prev = (row, col_start_of_prev_word)
+        returns (row, col_start_of_word_v)
+        Words are 1-indexed in this transition, matching the C++ code style.
+        """
+        row, col_prev = prev
+        # Move to after previous word and one mandatory space (unless v == n sentinel-ish)
+        col = col_prev + lens[v - 1] + (1 if v < n else 0)
+        if col + lens[v] > w:
+            return (row + 1, 0)
+        return (row, col)
+
+    # Compute row_start for the base layout (no illustration)
+    row_start = [0] * (n + 1)
+    cur = (0, 0)
+    num_lines = 0
+    for j in range(1, n + 1):
+        cur = advance(j, cur)
+        if cur[1] == 0:
+            row_start[cur[0]] = j
+        if j == n - 1:
+            num_lines = cur[0]
+
+    # best[i] = best known (row, col) before placing word i
+    INF = n + r + 10
+    best = [(INF, 0)] * (n + 1)
+
+    # Per-column path compression structure
+    class Comp:
+        __slots__ = ("result", "steps")
+        def __init__(self):
+            self.result = 0
+            self.steps = 0
+
+    comp = [Comp() for _ in range(n + 1)]
+
+    def make_compress(gap_left, gap_right):
+        # Reset memo for this column
+        for i in range(n + 1):
+            comp[i].result = 0
+            comp[i].steps = 0
+
+        def jump(v, steps):
+            """Compute next^steps(v) with memoized compression."""
+            if v == n or steps == 0:
+                return v
+
+            if comp[v].steps != 0:
+                # Extend from stored result if needed
+                if comp[v].result != v:
+                    comp[v].result = jump(comp[v].result, steps - comp[v].steps)
+            else:
+                nxt = fit(fit(v, gap_left), gap_right)
+                comp[v].result = jump(nxt, steps - 1) if nxt != v else nxt
+
+            comp[v].steps = steps
+            return comp[v].result
+
+        return jump
+
+    # Try all illustration columns
+    for col in range(0, w - c + 1):
+        jump = make_compress(col, w - col - c)
+        for j in range(0, num_lines + 1):
+            end = jump(row_start[j], r)
+            candidate = (j + r - (1 if end == n else 0), 0)
+            if candidate < best[end]:
+                best[end] = candidate
+
+    # Propagate remaining words with normal greedy layout
+    for j in range(0, n):
+        cand = advance(j + 1, best[j])
+        if cand < best[j + 1]:
+            best[j + 1] = cand
+
+    return best[n][0] + 1  # row index + 1 => number of used rows
+
+
+def main():
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    t = data[0]
+    idx = 1
+    out = []
+    for _ in range(t):
+        n, w, r, c = data[idx:idx+4]
+        idx += 4
+        lens = data[idx:idx+n]
+        idx += n
+        out.append(str(solve_case(n, w, r, c, lens)))
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Precompute `fit(v, s)`: after placing as many words as possible starting from word `v` into a contiguous free segment of width `s`, return the next word index. Build a table `len_next[v][s]` in `O(NW)` using a sliding gap counter.
+- For a fixed illustration column `col`, each affected row has two free segments: `gap_left = col`, `gap_right = W-col-C`. One illustrated row maps `v -> next(v) = fit(fit(v, gap_left), gap_right)`.
+- If illustration spans `R` rows, we need `next^R(v)` for many `v` (row starts). Compute it fast using memoized path compression (store for each `v` the result after some number of steps).
+- Compute `row_start[j]` from the normal layout.
+- For each `col`, for each base row `j`, compute `end = next^R(row_start[j])` and update best known state for reaching `end`.
+- Finally, propagate `best` through normal greedy placement for the remaining words and output the minimum used rows.
