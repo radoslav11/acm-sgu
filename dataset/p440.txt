@@ -1,0 +1,801 @@
+## 1) Abridged problem statement
+
+You are given **N (3 ≤ N ≤ 800)** distinct points (holes) with integer coordinates.
+
+Choose **three distinct holes** and assign:
+- Shureg (the only one who sees) to one hole **P**,
+- the two other moles to holes **Q** and **R** (they are indistinguishable, but the holes are still chosen).
+
+Let **A = ∠QPR** be the angle at **P** between rays **PQ** and **PR** (in **degrees**). Shureg can see them iff:
+
+1) **A is acute** (0 < A < 90), and  
+2) \(\left\lfloor \dfrac{90}{A} \right\rfloor\) equals the **3rd digit after the decimal point** of \(\cos(A)\) (i.e. \(\big\lfloor 1000\cos(A)\big\rfloor \bmod 10\)).
+
+Count the number of valid ordered choices \((P,Q,R)\) with all holes distinct.
+
+Output the total number of ways.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key reformulation
+
+For a fixed triple \((P,Q,R)\), define vectors:
+- \( \vec{u} = Q - P\)
+- \( \vec{v} = R - P\)
+
+Let \(A\) be the angle between \(\vec{u}\) and \(\vec{v}\). Then:
+\[
+\cos(A) = \frac{\vec{u}\cdot \vec{v}}{\|\vec{u}\|\|\vec{v}\|}
+\]
+and “acute” means \(\vec{u}\cdot \vec{v} > 0\).
+
+The condition becomes:
+\[
+\left\lfloor \frac{90}{A} \right\rfloor \;=\; \Big(\left\lfloor 1000\cos(A)\right\rfloor \bmod 10\Big)
+\]
+with \(A\in(0,90)\).
+
+Let
+\[
+k = \left\lfloor \frac{90}{A} \right\rfloor
+\]
+For acute angles, \(A\in(0,90)\) implies \(k \in \{1,2,\dots, 89\}\), but in fact:
+- if \(A \in (0, 10]\), then \(k \ge 9\),
+- if \(A \in (10, 90)\), then \(k \le 8\).
+
+The provided solution focuses on \(k=1..9\) by slicing the angle domain into:
+\[
+A \in \left(\frac{90}{k+1}, \frac{90}{k}\right]
+\]
+For each such interval, \(k\) is constant.
+
+Also define
+\[
+d(A) = \left\lfloor 1000\cos(A)\right\rfloor \bmod 10
+\]
+We need \(k = d(A)\). Since \(k \in [1,9]\), only those angles where the 3rd decimal digit of \(\cos(A)\) equals \(k\) can work.
+
+### “Allowed angle intervals” are few
+
+For each \(k \in [1,9]\), consider the angle range:
+\[
+A \in \left(\frac{90}{k+1}, \frac{90}{k}\right]
+\]
+On this range, \(\cos(A)\) is monotone decreasing, hence \(1000\cos(A)\) sweeps a numeric interval. The constraint
+\[
+\left\lfloor 1000\cos(A)\right\rfloor \bmod 10 = k
+\]
+means:
+\[
+1000\cos(A) \in [10m + k,\; 10m + k + 1)
+\]
+for some integer \(m\).
+
+Intersecting these with the possible cosine range for that \(k\)-angle slice yields **a set of disjoint sub-intervals of angles** where the condition might hold.
+
+Crucial observation: across all \(k=1..9\), the total number of these sub-intervals is small (≈100). Call this number **K**.
+
+So we can:
+1) **Precompute** all “allowed” angle sub-intervals \([a_{lo}, a_{hi})\).
+2) For every point \(P\), efficiently count pairs \((Q,R)\) such that \(\angle QPR\) falls into any allowed interval, then **verify** the exact condition with robust arithmetic to avoid floating errors.
+
+### Counting angles around a pivot point
+
+Fix Shureg’s hole \(P\).
+
+Compute for every other point \(X\):
+- vector \(d = X-P\)
+- polar angle \(\theta = \text{atan2}(d_y, d_x)\)
+
+Sort all other points by \(\theta\). Then for a fixed \(Q\) (at angle \(\theta_Q\)), points \(R\) that make angle \(A\) with \(Q\) correspond to points whose angle \(\theta_R\) lies in:
+\[
+\theta_Q + [a_{lo}, a_{hi})
+\]
+where \([a_{lo}, a_{hi})\) is one of the allowed intervals.
+
+To handle wrap-around at \(2\pi\), duplicate the sorted angle array with each angle + \(2\pi\). Then each interval query becomes a contiguous range in this doubled array.
+
+For each allowed interval, maintain two moving pointers (`ptr_lo`, `ptr_hi`) that advance as \(\theta_Q\) increases, giving an overall linear sweep per interval. Complexity per pivot:
+- sorting: \(O(N\log N)\)
+- sweeping K intervals: \(O(NK)\)
+
+Total: \(O(N^2\log N + N^2K)\), feasible for \(N=800\) and small \(K\).
+
+### Exact verification (important!)
+
+The sweep is based on floating-point angles, and the “allowed” intervals are slightly relaxed. Thus we must **explicitly check** candidates at the boundaries to ensure we count only truly valid pairs.
+
+The C++ code does this cleverly:
+- For each candidate range \([L,R)\) in the doubled list, it advances `L` until `check(Q,R)` is true, and retreats `R` until `check(Q,R)` is true. After trimming, all remaining in \([L,R)\) are assumed valid because they lie inside an allowed interval (relaxed) and boundaries were corrected. (This works because the ranges are tiny and the relaxation is minimal; trimming corrects false positives near boundaries.)
+
+The `check` function:
+1) Ensures acute: dot > 0.
+2) Computes \(F = \lfloor 1000\cos(A)\rfloor\) robustly:
+   - start with a double approximation,
+   - then adjust with integer arithmetic using 128-bit to ensure correctness of the floor.
+3) rhs = \(F \bmod 10\).
+4) Computes lhs = \(\left\lfloor 90/A \right\rfloor\) without angles, using \(\cos^2(A)\):
+   - \(A \in (90/(k+1), 90/k]\)  ⇔  \(\cos(A)\in[\cos(90/k), \cos(90/(k+1)))\)
+   - compare \(\cos^2(A)\) against precomputed \(\cos^2(90/k)\) thresholds to find k.
+5) Returns lhs == rhs and lhs>0.
+
+Thus the final count is exact.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Helper stream operators for pairs/vectors.
+  (Not essential to the algorithm, just convenience.)
+*/
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+/*
+  2D point / vector structure. Uses double coordinates in this code.
+  We only need: subtraction, dot/cross, angle().
+*/
+using coord_t = double;
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product (u * v) and cross product (u ^ v)
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparison operators (mostly unused in solution)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const { return x != p.x ? x < p.x : y < p.y; }
+    bool operator>(const Point& p) const { return x != p.x ? x > p.x : y > p.y; }
+    bool operator<=(const Point& p) const { return x != p.x ? x < p.x : y <= p.y; }
+    bool operator>=(const Point& p) const { return x != p.x ? x > p.x : y >= p.y; }
+
+    // Squared length and length
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+
+    // Polar angle in radians
+    coord_t angle() const { return atan2(y, x); }
+
+    // Many geometry helpers below are unused by this particular solution,
+    // but left from a generic geometry template.
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+    Point perp() const { return Point(-y, x); }
+    Point unit() const { return *this / norm(); }
+    Point normal() const { return perp().unit(); }
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) return 0;
+        else if(v > 0) return 1;
+        else return -1;
+    }
+
+    friend bool point_on_segment(const Point& a, const Point& b, const Point& p) {
+        return ccw(a, b, p) == 0 &&
+               p.x >= min(a.x, b.x) - eps && p.x <= max(a.x, b.x) + eps &&
+               p.y >= min(a.y, b.y) - eps && p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(const Point& a, const Point& b, const Point& c, const Point& p) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(const Point& a1, const Point& b1,
+                                        const Point& a2, const Point& b2) {
+        return a1 + (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac);
+    }
+
+    friend coord_t arc_area(const Point& center, coord_t r, const Point& p1, const Point& p2) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) theta2 += 2 * PI;
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1))
+                     - r * cy * (cos(theta2) - cos(theta1))
+                     + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    friend vector<Point> intersect_circles(const Point& c1, coord_t r1,
+                                           const Point& c2, coord_t r2) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) return {};
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) return {};
+        if(h_sq < 0) h_sq = 0;
+        coord_t h = sqrt(h_sq);
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+        if(h < eps) return {mid};
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    friend optional<Point> intersect_ray_segment(const Point& ray_start, const Point& ray_through,
+                                                 const Point& seg_a, const Point& seg_b) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) return {};
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) return {};
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) return {};
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) return {};
+        return ray_start + ray_dir * t;
+    }
+};
+
+/*
+  Angle intervals [lo, hi] (in radians) where the weird condition
+  floor(90/A) == (floor(1000*cos(A)) % 10) *might* hold.
+*/
+struct Interval { double lo, hi; };
+vector<Interval> allowed;
+
+/*
+  Precompute all allowed sub-intervals.
+
+  For each k=1..9:
+    A must be in (90/(k+1), 90/k] so that floor(90/A)=k.
+
+  Additionally need: floor(1000*cos(A)) % 10 == k.
+  That means 1000*cos(A) is in [10m+k, 10m+k+1) for some integer m.
+
+  Since cos(A) is monotone on [0,pi/2], we can find intersections by scanning m.
+*/
+void precompute_intervals() {
+    static const double PI = acos(-1.0);
+    static const double DEG = PI / 180.0;
+
+    for(int k = 1; k <= 9; k++) {
+        // Angle slice where floor(90/A) == k
+        double a_lo_deg = 90.0 / (k + 1);
+        double a_hi_deg = 90.0 / k;
+
+        // Corresponding cosine range (note monotone decreasing):
+        // A in [a_lo, a_hi] => cos(A) in [cos(a_hi), cos(a_lo)]
+        double cos_hi = cos(a_lo_deg * DEG); // maximum cosine in slice
+        double cos_lo = cos(a_hi_deg * DEG); // minimum cosine in slice
+
+        // We need 1000*cos in [10m+k, 10m+k+1).
+        // Compute rough m range to check.
+        int m_min = (int)floor((cos_lo * 1000 - k) / 10) - 1;
+        int m_max = (int)ceil((cos_hi * 1000 - k) / 10) + 1;
+
+        for(int m = m_min; m <= m_max; m++) {
+            // Intersection of cosine constraints:
+            // cos in [ (10m+k)/1000, (10m+k+1)/1000 )
+            // plus within [cos_lo, cos_hi]
+            double c_lo = max((10 * m + k) / 1000.0, cos_lo);
+            double c_hi = min((10 * m + k + 1) / 1000.0, cos_hi);
+
+            if(c_lo >= c_hi) continue; // empty intersection
+
+            // Convert cosine range back to angle range.
+            // Since acos is decreasing:
+            // cos in [c_lo, c_hi] corresponds to
+            // A in [acos(c_hi), acos(c_lo)]
+            double a_int_lo = acos(min(c_hi, 1.0));
+            double a_int_hi = acos(max(c_lo, 0.0));
+
+            // Also clip by the original angle slice
+            a_int_lo = max(a_int_lo, a_lo_deg * DEG);
+            a_int_hi = min(a_int_hi, a_hi_deg * DEG);
+
+            if(a_int_lo >= a_int_hi) continue;
+
+            // Relax slightly to be safe with floating comparisons during sweeps.
+            allowed.push_back({a_int_lo - 1e-9, a_int_hi + 1e-9});
+        }
+    }
+}
+
+int n;
+vector<Point> pts;
+
+void read() {
+    cin >> n;
+    pts.resize(n);
+    for(auto& p: pts) cin >> p;
+}
+
+void solve() {
+    /*
+      Main idea:
+      For each pivot P:
+        - sort all other points by direction angle around P
+        - duplicate angles with +2π to handle wrap-around
+        - for each base direction (point Q) and each allowed interval:
+            find all R whose angle is within that interval from Q
+            trim endpoints with exact check()
+            add count
+    */
+
+    static const double PI = Point::PI;
+    static const double TWO_PI = 2.0 * PI;
+    int num_intervals = (int)allowed.size();
+
+    // Precompute cos^2(90/k) bounds to determine k = floor(90/A)
+    // using only cos(A) comparisons (avoids computing A directly).
+    static const double DEG = PI / 180.0;
+    double cos2_bound[11];
+    for(int k = 1; k <= 10; k++) {
+        double c = cos(90.0 / k * DEG);
+        cos2_bound[k] = c * c;
+    }
+
+    /*
+      Exact verifier for a pair of vectors dj, dk from pivot P:
+        L1, L2 = squared lengths (as int64)
+      Returns true iff the problem's condition holds for angle between them.
+
+      It computes:
+        rhs = floor(1000*cos(A)) % 10
+        lhs = floor(90/A)   (but derived from cos^2(A) ranges)
+    */
+    auto check = [&](const Point& dj, int64_t L1, const Point& dk, int64_t L2) -> bool {
+        // dot product; if <=0 then angle >=90 => not acute
+        int64_t dot = (int64_t)(dj.x * dk.x + dj.y * dk.y);
+        if(dot <= 0) return false;
+
+        using i128 = __int128;
+
+        // D = 1000*dot, D2 = (1000*dot)^2
+        // L1L2 = |dj|^2 * |dk|^2
+        i128 D = (i128)1000 * dot;
+        i128 D2 = D * D;
+        i128 L1L2 = (i128)L1 * L2;
+
+        // Approximate floor(1000*cos(A)) with double
+        int F = (int)floor(1000.0 * dot / sqrt((double)L1 * L2));
+
+        // Correct F downward if it was too high (because of floating errors)
+        while(F > 0 && (i128)F * F * L1L2 > D2) F--;
+
+        // Correct F upward if it was too low
+        while((i128)(F + 1) * (F + 1) * L1L2 <= D2) F++;
+
+        // cos(A) < 1 => 1000*cos(A) < 1000, so floor can't be >=1000
+        if(F >= 1000) return false;
+
+        int rhs = F % 10;
+
+        // Compute cos^2(A) in double for bucket selection of lhs
+        double cos2_a = (double)dot * dot / ((double)L1 * L2);
+
+        // Determine lhs = floor(90/A) by checking which interval A lies in.
+        // Using cos^2 thresholds:
+        // A in (90/(k+1), 90/k]  <=>  cos(A) in [cos(90/k), cos(90/(k+1)))
+        // Square preserves order for positive cos.
+        int lhs = 0;
+        for(int k = 9; k >= 1; k--) {
+            if(cos2_a >= cos2_bound[k] - 1e-12) {
+                if(cos2_a < cos2_bound[k + 1] + 1e-12) {
+                    lhs = k;
+                }
+                break;
+            }
+        }
+
+        return lhs > 0 && lhs == rhs;
+    };
+
+    int64_t answer = 0;
+
+    // Choose pivot P = pts[i]
+    for(int i = 0; i < n; i++) {
+        int m = n - 1; // number of other points
+
+        // For each other point, store:
+        //   angles[idx] = direction angle
+        //   norm2s[idx] = squared distance (integer-ish stored as int64)
+        //   deltas[idx] = vector from pivot
+        vector<int> idx_map(m);
+        vector<double> angles(m);
+        vector<int64_t> norm2s(m);
+        vector<Point> deltas(m);
+
+        int idx = 0;
+        for(int j = 0; j < n; j++) {
+            if(j == i) continue;
+            Point d = pts[j] - pts[i];
+            idx_map[idx] = j;
+            angles[idx] = d.angle();
+            norm2s[idx] = (int64_t)(d.x * d.x + d.y * d.y);
+            deltas[idx] = d;
+            idx++;
+        }
+
+        // Sort indices of other points by polar angle
+        vector<int> order(m);
+        iota(order.begin(), order.end(), 0);
+        sort(order.begin(), order.end(), [&](int a, int b) {
+            return angles[a] < angles[b];
+        });
+
+        // Build duplicated angle list ext[] of size 2m:
+        // ext[j] = angle, ext[j+m]=angle+2π
+        // ext_ord carries corresponding point index in [0..m)
+        vector<double> ext(2 * m);
+        vector<int> ext_ord(2 * m);
+        for(int j = 0; j < m; j++) {
+            ext[j] = angles[order[j]];
+            ext[j + m] = angles[order[j]] + TWO_PI;
+            ext_ord[j] = order[j];
+            ext_ord[j + m] = order[j];
+        }
+
+        // For each allowed interval, keep moving pointers (two-pointer sweep)
+        vector<int> ptr_lo(num_intervals, 0);
+        vector<int> ptr_hi(num_intervals, 0);
+
+        // For each base direction j (point Q), count matching R
+        for(int j = 0; j < m; j++) {
+            double base = ext[j];     // angle of Q
+            int oj = ext_ord[j];      // index of Q in deltas/norm2s
+
+            // For each allowed angle interval [lo, hi):
+            for(int k = 0; k < num_intervals; k++) {
+                double lo = base + allowed[k].lo;
+                double hi = base + allowed[k].hi;
+
+                // Advance pointers until ext[ptr] reaches lo/hi
+                while(ptr_lo[k] < 2 * m && ext[ptr_lo[k]] < lo) ptr_lo[k]++;
+                while(ptr_hi[k] < 2 * m && ext[ptr_hi[k]] < hi) ptr_hi[k]++;
+
+                int L = ptr_lo[k];
+                int R = ptr_hi[k];
+
+                // Trim left boundary: skip false positives caused by relaxed interval
+                while(L < R) {
+                    int op = ext_ord[L]; // candidate R
+                    if(check(deltas[oj], norm2s[oj], deltas[op], norm2s[op])) break;
+                    L++;
+                }
+
+                // Trim right boundary similarly
+                while(L < R) {
+                    int op = ext_ord[R - 1];
+                    if(check(deltas[oj], norm2s[oj], deltas[op], norm2s[op])) break;
+                    R--;
+                }
+
+                // After trimming, count all remaining candidates
+                if(L < R) answer += (R - L);
+            }
+        }
+    }
+
+    cout << answer << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Precompute allowed angle intervals once
+    precompute_intervals();
+
+    int T = 1;
+    // cin >> T; // (problem has single test)
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import math
+from bisect import bisect_left
+
+# ----------------------------
+# Precompute allowed intervals
+# ----------------------------
+
+def precompute_intervals():
+    """
+    Returns a list of (lo, hi) angle intervals in radians (slightly relaxed)
+    where the condition might hold.
+
+    For k = floor(90/A) in {1..9}, angles satisfy:
+        A in (90/(k+1), 90/k]
+    Additionally:
+        floor(1000*cos(A)) % 10 == k
+    i.e. 1000*cos(A) in [10m+k, 10m+k+1) for some integer m.
+    """
+    PI = math.acos(-1.0)
+    DEG = PI / 180.0
+    allowed = []
+
+    for k in range(1, 10):
+        a_lo_deg = 90.0 / (k + 1)
+        a_hi_deg = 90.0 / k
+
+        cos_hi = math.cos(a_lo_deg * DEG)  # max cosine in slice
+        cos_lo = math.cos(a_hi_deg * DEG)  # min cosine in slice
+
+        m_min = int(math.floor((cos_lo * 1000 - k) / 10.0)) - 1
+        m_max = int(math.ceil((cos_hi * 1000 - k) / 10.0)) + 1
+
+        for m in range(m_min, m_max + 1):
+            c_lo = max((10 * m + k) / 1000.0, cos_lo)
+            c_hi = min((10 * m + k + 1) / 1000.0, cos_hi)
+            if c_lo >= c_hi:
+                continue
+
+            # acos is decreasing
+            a_int_lo = math.acos(min(c_hi, 1.0))
+            a_int_hi = math.acos(max(c_lo, 0.0))
+
+            a_int_lo = max(a_int_lo, a_lo_deg * DEG)
+            a_int_hi = min(a_int_hi, a_hi_deg * DEG)
+            if a_int_lo >= a_int_hi:
+                continue
+
+            allowed.append((a_int_lo - 1e-9, a_int_hi + 1e-9))
+
+    return allowed
+
+
+ALLOWED = precompute_intervals()
+
+
+# ----------------------------
+# Exact checker
+# ----------------------------
+
+def build_cos2_bounds():
+    """cos2_bound[k] = cos^2(90/k degrees), for k=1..10."""
+    PI = math.acos(-1.0)
+    DEG = PI / 180.0
+    cos2 = [0.0] * 11
+    for k in range(1, 11):
+        c = math.cos(90.0 / k * DEG)
+        cos2[k] = c * c
+    return cos2
+
+
+COS2_BOUND = build_cos2_bounds()
+
+
+def check(dx1, dy1, L1, dx2, dy2, L2):
+    """
+    Returns True iff angle between vectors (dx1,dy1) and (dx2,dy2) satisfies:
+      - acute
+      - floor(90/A) == floor(1000*cos(A)) % 10
+
+    Uses integer arithmetic to compute floor(1000*cos(A)) robustly:
+        cos(A) = dot/sqrt(L1*L2)
+    """
+    dot = dx1 * dx2 + dy1 * dy2
+    if dot <= 0:
+        return False  # not acute
+
+    # Robust floor(1000*cos(A)) using integer comparisons:
+    # Need floor(1000*dot / sqrt(L1*L2))
+    # Let D = 1000*dot. Compare F^2 * (L1*L2) <= D^2.
+    D = 1000 * dot
+    D2 = D * D
+    L1L2 = L1 * L2
+
+    # Start with float approximation then correct
+    F = int(math.floor(1000.0 * dot / math.sqrt(L1L2)))
+
+    while F > 0 and (F * F) * L1L2 > D2:
+        F -= 1
+    while ((F + 1) * (F + 1)) * L1L2 <= D2:
+        F += 1
+    if F >= 1000:
+        return False
+
+    rhs = F % 10
+
+    # Determine lhs = floor(90/A) by cos^2(A) bucket.
+    cos2_a = (dot * dot) / float(L1L2)
+
+    lhs = 0
+    for k in range(9, 0, -1):
+        if cos2_a >= COS2_BOUND[k] - 1e-12:
+            if cos2_a < COS2_BOUND[k + 1] + 1e-12:
+                lhs = k
+            break
+
+    return lhs > 0 and lhs == rhs
+
+
+# ----------------------------
+# Main counting
+# ----------------------------
+
+def solve(points):
+    """
+    Implements the O(N^2 log N + N^2*K) sweep around each pivot.
+    Counts ordered triples (P,Q,R).
+    """
+    n = len(points)
+    PI = math.acos(-1.0)
+    TWO_PI = 2.0 * PI
+    K = len(ALLOWED)
+    ans = 0
+
+    for i in range(n):
+        px, py = points[i]
+
+        # Build arrays for other points relative to pivot i
+        vecs = []   # (angle, dx, dy, L)
+        for j in range(n):
+            if j == i:
+                continue
+            x, y = points[j]
+            dx = x - px
+            dy = y - py
+            ang = math.atan2(dy, dx)
+            L = dx * dx + dy * dy
+            vecs.append((ang, dx, dy, L))
+
+        vecs.sort(key=lambda t: t[0])
+        m = n - 1
+
+        # Duplicate for wrap-around
+        ext_ang = [0.0] * (2 * m)
+        ext_dx = [0] * (2 * m)
+        ext_dy = [0] * (2 * m)
+        ext_L = [0] * (2 * m)
+
+        for idx in range(m):
+            ang, dx, dy, L = vecs[idx]
+            ext_ang[idx] = ang
+            ext_dx[idx] = dx
+            ext_dy[idx] = dy
+            ext_L[idx] = L
+
+            ext_ang[idx + m] = ang + TWO_PI
+            ext_dx[idx + m] = dx
+            ext_dy[idx + m] = dy
+            ext_L[idx + m] = L
+
+        # Two pointers for each allowed interval
+        ptr_lo = [0] * K
+        ptr_hi = [0] * K
+
+        # Sweep base point Q over first m entries (original circle)
+        for j in range(m):
+            base = ext_ang[j]
+            qdx, qdy, qL = ext_dx[j], ext_dy[j], ext_L[j]
+
+            for t in range(K):
+                lo = base + ALLOWED[t][0]
+                hi = base + ALLOWED[t][1]
+
+                # Advance pointers monotonically
+                p = ptr_lo[t]
+                while p < 2 * m and ext_ang[p] < lo:
+                    p += 1
+                ptr_lo[t] = p
+
+                p = ptr_hi[t]
+                while p < 2 * m and ext_ang[p] < hi:
+                    p += 1
+                ptr_hi[t] = p
+
+                L = ptr_lo[t]
+                R = ptr_hi[t]
+
+                # Trim left boundary with exact check
+                while L < R:
+                    if check(qdx, qdy, qL, ext_dx[L], ext_dy[L], ext_L[L]):
+                        break
+                    L += 1
+
+                # Trim right boundary with exact check
+                while L < R:
+                    if check(qdx, qdy, qL, ext_dx[R - 1], ext_dy[R - 1], ext_L[R - 1]):
+                        break
+                    R -= 1
+
+                if L < R:
+                    ans += (R - L)
+
+    return ans
+
+
+# ----------------------------
+# I/O
+# ----------------------------
+
+if __name__ == "__main__":
+    import sys
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    pts = []
+    it = iter(data[1:])
+    for x, y in zip(it, it):
+        pts.append((int(x), int(y)))
+    print(solve(pts))
+```
+
+---
+
+## 5) Compressed editorial
+
+Precompute all angle sub-intervals \(A\in(0,90)\) where \(k=\lfloor 90/A\rfloor\in[1,9]\) and \(\lfloor 1000\cos A\rfloor\bmod 10=k\). For each \(k\), intersect the fixed angle slice \((90/(k+1),90/k]\) with cosine digit bands \(1000\cos A\in[10m+k,10m+k+1)\); convert back using acos. Total intervals \(K\) is small (~100).
+
+For each pivot point \(P\): compute directions to all other points, sort by polar angle, duplicate with +\(2\pi\). For each base point \(Q\) and each precomputed interval \([lo,hi)\), maintain two pointers to count points \(R\) with angle difference in that interval (linear sweep per interval). Because intervals are relaxed, trim range endpoints using an exact `check(u,v)`.
+
+Exact check: ensure acute (dot>0); compute \(F=\lfloor 1000\cos A\rfloor\) robustly by correcting a floating approximation using integer inequality \(F^2|u|^2|v|^2\le (1000\,u\cdot v)^2\). Then rhs \(=F\bmod 10\). Compute lhs \(=\lfloor 90/A\rfloor\) via comparing \(\cos^2A\) to precomputed \(\cos^2(90/k)\) thresholds. Count if lhs==rhs. Complexity \(O(N^2\log N + N^2K)\).

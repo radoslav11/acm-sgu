@@ -1,0 +1,385 @@
+## 1) Concise abridged problem statement
+
+You are given two **labeled trees** on the same vertex set `{1..N}`: Berland’s tree and Beerland’s tree (each has `N-1` undirected edges and is connected).
+
+In one month, you may choose **one** of the countries and perform one operation on its tree:
+
+- **Add** an edge `(a1, b1)` (this creates exactly one cycle),
+- Then **remove** an edge `(a2, b2)` from that cycle,
+
+so the graph remains a tree.
+
+Goal: make the two trees have **exactly the same set of labeled edges** using the **minimum** number of months, and output any optimal sequence of operations.
+
+Constraints: `1 ≤ N ≤ 2000`.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observations
+
+1. Both road networks are trees on the same labels. We need **edge-set equality**, not isomorphism.
+2. A single operation “add one edge, remove one edge on the created cycle” is exactly the classic way to transform a tree by an **edge swap** (also called a “basis exchange” in matroid terms).
+3. Let:
+   - `E1` be Berland edges,
+   - `E2` be Beerland edges.
+   We want `E1 == E2`.
+
+### Lower bound on answer
+
+Each operation can change the edge set of a chosen country by:
+- adding one edge (could be an edge from the other tree),
+- removing one edge (could be an “extra” edge not present in the other tree).
+
+So in the best case, one operation can reduce the symmetric difference `|E1 \ E2|` by 1 (or similarly on the other side). Therefore, at least `|E1 \ E2|` operations are needed (which equals `|E2 \ E1|` since both have size `N-1`).
+
+So optimum `Q = |E1 \ E2|`.
+
+### Constructive strategy (what the C++ code does)
+
+Instead of modifying both trees, we can modify **only Beerland** (tree 2) until it becomes identical to Berland:
+
+For every edge `(a, b)` that exists in Berland (`E1`) but not in Beerland (`E2`):
+
+1. **Add** edge `(a, b)` to Beerland.  
+   Since Beerland is a tree, adding it creates a **unique cycle**.
+2. To restore a tree, we must **remove one edge on that cycle**.
+
+Which edge on the cycle can we remove so we make progress?
+
+- Consider the unique path between `a` and `b` in the current Beerland tree (before adding `(a,b)`).
+- Adding `(a,b)` makes the cycle = that path + the new edge.
+- If *every* edge on that path also existed in Berland, then Berland would already contain a path from `a` to `b` plus the edge `(a,b)`, creating a cycle in Berland — impossible because Berland is a tree.
+- Therefore, **at least one edge on that Beerland path is not in Berland**.
+- Remove any such “bad” edge `(ra, rb)` from Beerland’s cycle.
+
+This:
+- inserts a missing Berland edge into Beerland,
+- deletes an edge that shouldn’t be there,
+- reduces `|E2 \ E1|` by 1 and increases the overlap.
+
+Repeat for all edges in `E1 \ E2`. After processing them all, Beerland becomes identical to Berland, using exactly `|E1 \ E2|` operations — which is optimal.
+
+### How to find the path and a removable edge efficiently
+
+Constraints are `N ≤ 2000`, so an `O(N^2)` solution is fine.
+
+Maintain for Beerland:
+
+- adjacency list `adj2` (to BFS and to delete edges),
+- adjacency boolean matrix `has2[u][v]` (to test edge existence in O(1)).
+
+Also store for Berland:
+
+- boolean matrix `has1[u][v]` to test whether an edge is in Berland.
+
+For each missing edge `(a,b)`:
+- BFS in `adj2` to get parent pointers and reconstruct the path between `a` and `b` (`O(N)`).
+- Scan consecutive vertices on the path to find an edge not in Berland (using `has1` in O(1)).
+- Perform the swap in Beerland:
+  - delete `(ra, rb)` from `adj2` and `has2`,
+  - add `(a, b)` to `adj2` and `has2`.
+
+Total operations ≤ `N-1`, each costs `O(N)` BFS + deletions (linear search in adjacency vectors; still within `O(N)`), so total `O(N^2)`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (not essential to the algorithm)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair (not essential to the algorithm)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector of items (not essential here)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector (not essential here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+};
+
+int n;
+
+// has1[u][v] = whether edge (u,v) exists in Berland tree (tree 1)
+vector<vector<bool>> has1;
+
+// has2[u][v] = whether edge (u,v) exists in Beerland tree (tree 2)
+// NOTE: Despite the name, this structure is updated during operations.
+vector<vector<bool>> has2;
+
+// Adjacency list representation of Beerland tree (tree 2), also updated
+vector<vector<int>> adj2;
+
+// Store original Berland edges so we can iterate them in solve()
+vector<pair<int, int>> input_edges1;
+
+void read() {
+    cin >> n;
+
+    // Initialize adjacency matrices (1-indexed vertices)
+    has1.assign(n + 1, vector<bool>(n + 1, false));
+    has2.assign(n + 1, vector<bool>(n + 1, false));
+
+    // Read Berland tree edges
+    for (int i = 0; i < n - 1; i++) {
+        int u, v;
+        cin >> u >> v;
+        has1[u][v] = has1[v][u] = true;   // undirected
+        input_edges1.emplace_back(u, v);  // remember for later processing
+    }
+
+    // Read Beerland tree edges
+    adj2.resize(n + 1);
+    for (int i = 0; i < n - 1; i++) {
+        int u, v;
+        cin >> u >> v;
+
+        has2[u][v] = has2[v][u] = true; // undirected edge exists in tree 2
+
+        // Build adjacency list for BFS/path finding and for modifications
+        adj2[u].push_back(v);
+        adj2[v].push_back(u);
+    }
+}
+
+// Find the unique simple path between start and end in the current Beerland tree.
+// Since it's a tree, BFS with parents recovers that path.
+vector<int> find_path(int start, int end) {
+    vector<int> par(n + 1, -1);   // par[v] = parent of v in BFS tree
+    par[start] = start;           // mark start as visited; parent of itself
+
+    queue<int> q;
+    q.push(start);
+
+    // Standard BFS over a tree
+    while (!q.empty()) {
+        int u = q.front();
+        q.pop();
+
+        if (u == end) break;      // we reached the destination
+
+        for (int v: adj2[u]) {
+            if (par[v] == -1) {   // not visited yet
+                par[v] = u;
+                q.push(v);
+            }
+        }
+    }
+
+    // Reconstruct path by walking parents from end back to start
+    vector<int> path;
+    for (int v = end; v != start; v = par[v]) {
+        path.push_back(v);
+    }
+    path.push_back(start);
+
+    reverse(path.begin(), path.end());
+    return path;
+}
+
+void solve() {
+    // ops will store the operations:
+    // tuple(p, a1, b1, a2, b2) as required by the statement.
+    // Here p is always 2 (we only modify Beerland).
+    vector<tuple<int, int, int, int, int>> ops;
+
+    // For each Berland edge (a,b) that Beerland is missing:
+    for (auto [a, b]: input_edges1) {
+        if (has2[a][b]) {
+            continue; // already present in Beerland; nothing to do
+        }
+
+        // Find the current Beerland path between a and b
+        auto path = find_path(a, b);
+
+        // We need to remove an edge on that path that does NOT belong to Berland,
+        // otherwise we'd introduce a cycle in Berland (impossible).
+        int ra = -1, rb = -1;
+        for (int i = 0; i + 1 < (int)path.size(); i++) {
+            // Edge on the Beerland path is (path[i], path[i+1]).
+            // If Berland does NOT have this edge, it's a candidate to remove.
+            if (!has1[path[i]][path[i + 1]]) {
+                ra = path[i];
+                rb = path[i + 1];
+                break;
+            }
+        }
+
+        // Remove the "bad" edge (ra,rb) from Beerland.
+
+        // Update adjacency matrix
+        has2[ra][rb] = has2[rb][ra] = false;
+
+        // Remove from adjacency lists (linear find + erase)
+        adj2[ra].erase(find(adj2[ra].begin(), adj2[ra].end(), rb));
+        adj2[rb].erase(find(adj2[rb].begin(), adj2[rb].end(), ra));
+
+        // Add the desired missing Berland edge (a,b) into Beerland.
+
+        // Update adjacency matrix
+        has2[a][b] = has2[b][a] = true;
+
+        // Update adjacency lists
+        adj2[a].push_back(b);
+        adj2[b].push_back(a);
+
+        // Record operation: modify country 2, add (a,b), remove (ra,rb)
+        ops.emplace_back(2, a, b, ra, rb);
+    }
+
+    // Output the optimal number of operations and the operations themselves
+    cout << ops.size() << "\n";
+    for (auto [p, a1, b1, a2, b2]: ops) {
+        cout << p << " " << a1 << " " << b1 << " " << a2 << " " << b2 << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // statement has single test
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+from collections import deque
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+
+    # has1[u][v] tells whether edge (u, v) is in Berland (tree 1)
+    # has2[u][v] tells whether edge (u, v) is in Beerland (tree 2), updated as we modify it.
+    # Using bytearray for memory efficiency: n<=2000 => matrix is ~4M booleans; ok in Python with bytearrays.
+    has1 = [bytearray(n + 1) for _ in range(n + 1)]
+    has2 = [bytearray(n + 1) for _ in range(n + 1)]
+
+    # Store Berland edges to iterate later
+    edges1 = []
+
+    # Read Berland edges
+    for _ in range(n - 1):
+        u = int(next(it)); v = int(next(it))
+        has1[u][v] = 1
+        has1[v][u] = 1
+        edges1.append((u, v))
+
+    # Read Beerland edges, build adjacency list
+    adj2 = [[] for _ in range(n + 1)]
+    for _ in range(n - 1):
+        u = int(next(it)); v = int(next(it))
+        has2[u][v] = 1
+        has2[v][u] = 1
+        adj2[u].append(v)
+        adj2[v].append(u)
+
+    def find_path(start: int, end: int):
+        """Return the unique path (as list of vertices) between start and end in current Beerland tree."""
+        par = [-1] * (n + 1)
+        par[start] = start
+        q = deque([start])
+
+        # BFS to set parents
+        while q:
+            u = q.popleft()
+            if u == end:
+                break
+            for v in adj2[u]:
+                if par[v] == -1:
+                    par[v] = u
+                    q.append(v)
+
+        # Reconstruct path end->start using parents
+        path = []
+        v = end
+        while v != start:
+            path.append(v)
+            v = par[v]
+        path.append(start)
+        path.reverse()
+        return path
+
+    ops = []  # list of (p, a1, b1, a2, b2)
+
+    for a, b in edges1:
+        # If Beerland already has this edge, no action needed
+        if has2[a][b]:
+            continue
+
+        # Find the path between a and b in Beerland
+        path = find_path(a, b)
+
+        # Choose an edge on the path that is NOT in Berland to remove.
+        ra = rb = -1
+        for i in range(len(path) - 1):
+            x = path[i]
+            y = path[i + 1]
+            if not has1[x][y]:
+                ra, rb = x, y
+                break
+
+        # Remove (ra, rb) from Beerland adjacency structures
+        has2[ra][rb] = 0
+        has2[rb][ra] = 0
+
+        # Remove from adjacency lists (O(deg) linear search)
+        adj2[ra].remove(rb)
+        adj2[rb].remove(ra)
+
+        # Add desired edge (a, b) to Beerland
+        has2[a][b] = 1
+        has2[b][a] = 1
+        adj2[a].append(b)
+        adj2[b].append(a)
+
+        # Record operation in the required format; we only modify country 2.
+        ops.append((2, a, b, ra, rb))
+
+    out_lines = [str(len(ops))]
+    out_lines += ["{} {} {} {} {}".format(*op) for op in ops]
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Let `E1` and `E2` be the two labeled trees’ edge sets. Minimum operations equal `|E1 \ E2|` because each operation can introduce at most one missing edge from the other tree.
+
+Constructively, modify only tree 2 (Beerland): for each edge `(a,b) ∈ E1` missing from `E2`, find the unique path between `a` and `b` in current tree 2 (BFS). Adding `(a,b)` forms a cycle consisting of that path plus `(a,b)`. On that path, there must exist an edge not in `E1`; otherwise `E1` would contain the whole path plus `(a,b)` and thus a cycle, contradicting that `E1` is a tree. Remove such an edge and add `(a,b)`. Repeat; after all missing edges are added, tree 2 becomes identical to tree 1 in exactly `|E1 \ E2|` steps (optimal). Complexity `O(N^2)` with `N≤2000`.

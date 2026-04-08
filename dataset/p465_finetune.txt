@@ -1,0 +1,333 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+465. Fire Station Building
+Time limit per test: 0.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+There is a country with N cities connected by M bidirectional roads, and you need to build a fire station somewhere. Of course, your problem would be too simple without the following restrictions:
+
+
+
+Firemen should be able to reach any city from fire station by roads only.
+
+You want to minimize expected distance from fire station to place of fire. For this purpose, probability of a fire is given to you for every city. Assume that firemen always choose the shortest way to fire.
+
+You can place fire station not only in cities but on the roads between them as well. Moreover, sanity regulations of the country forbid placement of a fire station closer than at a distance R from cities. Distances are measured on roads only, so you can place fire station on a road if its length is not less than 2R, and you should not worry about distances to cities not adjacent to the given road. In particular, R=0 means that you are allowed to place a fire station in cities.
+
+
+
+
+
+Example of a country with three cities and three roads. Places where you can build fire station are marked with bold line and bold dot.
+
+You are given a complete description of the country. Find the best place for a fire station in it.
+
+Input
+The first line of input file contains integer numbers N, M and R (1 ≤ N ≤ 100, 0 ≤ M ≤ N(N-1)/2, 0 ≤ R ≤ 104). Second line contains N integer numbers — probabilities of a fire in each city. Numbers are non-negative integers given in hundredths of percent (that is, sum to 104). Each of the next M lines contains description of one road, namely three integer numbers Ai, Bi and Li — endpoints of the road and its length in kilometers (1 ≤ Ai < Bi ≤ N, 1 ≤ Li ≤ 104). There can be at most one road between any two cities.
+
+Output
+Output only one number — expected length of a way to fire in kilometers assuming fire station is built optimally. This number should be precise up to 1 meter. If by some reason it is impossible to build fire station that fulfills all the requirements, write to the output file number -1 instead.
+
+Example(s)
+sample input
+sample output
+3 3 20
+3000 5000 2000
+1 2 40
+1 3 50
+2 3 30
+26.00000
+
+sample input
+sample output
+3 1 20
+3000 5000 2000
+1 3 50
+-1
+
+
+
+In the first example (which corresponds to the picture above) it is optimal to build fire station in the middle of the first road. In the second example it is impossible to build fire station satisfying all the requirements. In particular, any fire station on the map will violate requirement one (since the country is disconnected).
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given an undirected weighted graph with **N ≤ 100** cities and **M** roads. City `i` has fire probability `p[i]` (integers summing to **10000**, i.e. hundredths of percent). You must place **one fire station**:
+
+- If **R = 0**, you may place it **in a city**.
+- You may place it **on a road (u, v) of length L**, at a point whose distance to **each endpoint** is at least **R**. So it must satisfy `L ≥ 2R` and position `d ∈ [R, L−R]` from `u`.
+
+Firemen always use **shortest paths**. The station must be able to reach **every city**. Minimize the **expected distance** to the fire:
+\[
+\min \sum_{i=1}^N p_i \cdot \text{dist}(\text{station}, i)
+\]
+Output the minimum expected distance in km (accurate to 1 meter), or **-1** if impossible.
+
+---
+
+## 2) Key observations
+
+1. **If the graph is disconnected, answer is -1.**  
+   Requirement: station must reach *all* cities by roads. If any city is unreachable from another, no placement can fix that.
+
+2. With **N ≤ 100**, we can compute **all-pairs shortest paths** using **Floyd–Warshall** in \(O(N^3)\).
+
+3. If the station is placed on an edge `(u, v, L)` at distance `d` from `u`, then for any city `x` the shortest path from the station to `x` must go first to either endpoint:
+\[
+\text{dist}(\text{station}, x)=\min(d+\text{dist}[u][x],\ (L-d)+\text{dist}[v][x])
+\]
+
+4. For a fixed city `x`, the function  
+   \(\min(d + A,\ (L-d) + B)\) is **concave piecewise-linear** in `d` (min of an increasing and a decreasing line).  
+   Therefore their sum (the expectation) is also **concave** on the feasible interval `[R, L−R]`.
+
+5. **A concave function attains its minimum over a closed interval at an endpoint.**  
+   So for each road we only need to test:
+   - `d = R`
+   - `d = L − R`  
+   No continuous search / ternary search is needed.
+
+---
+
+## 3) Full solution approach
+
+1. **Read input**, store probabilities `p[i]`, store edges.
+2. Build `dist[i][j]` matrix:
+   - `dist[i][i] = 0`
+   - `dist[u][v] = dist[v][u] = L` for each edge
+   - `INF` otherwise
+3. Run **Floyd–Warshall** to compute all-pairs shortest paths.
+4. If any `dist[i][j]` remains `INF`, output **-1** (graph disconnected).
+5. Compute the best expected cost (in “probability-units × km”):
+   - If `R == 0`: try station at every city `c`:
+     \[
+     \sum_x p_x \cdot \text{dist}[c][x]
+     \]
+   - For every edge `(u, v, L)` with `L ≥ 2R`, evaluate the two endpoint placements:
+     - `d = R`
+     - `d = L − R`  
+     For each `d` compute:
+     \[
+     \sum_x p_x \cdot \min(d+\text{dist}[u][x],\ (L-d)+\text{dist}[v][x])
+     \]
+6. Let `best` be the minimum of all considered placements. Output `best / 10000.0` with 5 decimals.
+
+Complexity:  
+- Floyd: \(O(N^3)\)  
+- Edge evaluations: \(O(MN)\)  
+Total fits easily.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Fire Station Building (p465)
+
+  Approach:
+  1) Floyd–Warshall for all-pairs shortest paths (N<=100).
+  2) If disconnected => -1.
+  3) Evaluate expected distance for:
+     - each city (only if R==0)
+     - each edge at d=R and d=L-R (if L>=2R), by concavity argument.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    int R;
+    cin >> N >> M >> R;
+
+    vector<int> p(N);
+    for (int i = 0; i < N; i++) cin >> p[i];
+
+    // Distance matrix
+    const double INF = 1e18;
+    vector<vector<double>> dist(N, vector<double>(N, INF));
+    for (int i = 0; i < N; i++) dist[i][i] = 0.0;
+
+    // Store edges for later evaluation
+    struct Edge { int u, v, L; };
+    vector<Edge> edges;
+    edges.reserve(M);
+
+    for (int i = 0; i < M; i++) {
+        int a, b, L;
+        cin >> a >> b >> L;
+        --a; --b;
+        edges.push_back({a, b, L});
+        // Statement says at most one edge, but min() is harmless.
+        dist[a][b] = dist[b][a] = min(dist[a][b], (double)L);
+    }
+
+    // Floyd–Warshall: compute all-pairs shortest paths
+    for (int k = 0; k < N; k++) {
+        for (int i = 0; i < N; i++) {
+            if (dist[i][k] >= INF/2) continue;
+            for (int j = 0; j < N; j++) {
+                double nd = dist[i][k] + dist[k][j];
+                if (nd < dist[i][j]) dist[i][j] = nd;
+            }
+        }
+    }
+
+    // Check connectivity: if any pair is unreachable => impossible
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            if (dist[i][j] >= INF/2) {
+                cout << -1 << "\n";
+                return 0;
+            }
+        }
+    }
+
+    // best is measured in (probability units)*km, where sum(p)=10000
+    double best = INF;
+
+    // Case 1: station in a city (only allowed when R==0)
+    if (R == 0) {
+        for (int c = 0; c < N; c++) {
+            double cost = 0.0;
+            for (int x = 0; x < N; x++) {
+                cost += (double)p[x] * dist[c][x];
+            }
+            best = min(best, cost);
+        }
+    }
+
+    // Case 2: station on an edge (u,v,L), position d from u.
+    // Feasible only if d in [R, L-R] => need L >= 2R.
+    // By concavity, minimum occurs at endpoints d=R or d=L-R.
+    for (const auto &e : edges) {
+        int u = e.u, v = e.v, L = e.L;
+        if (L < 2 * R) continue;
+
+        for (double d : { (double)R, (double)(L - R) }) {
+            double cost = 0.0;
+            for (int x = 0; x < N; x++) {
+                double viaU = d + dist[u][x];
+                double viaV = (L - d) + dist[v][x];
+                cost += (double)p[x] * min(viaU, viaV);
+            }
+            best = min(best, cost);
+        }
+    }
+
+    // If best was never updated (shouldn't happen if connected, but safe):
+    if (best >= INF/2) {
+        cout << -1 << "\n";
+        return 0;
+    }
+
+    // Convert from prob-units to expectation by dividing by 10000
+    cout << fixed << setprecision(5) << (best / 10000.0) << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+from math import inf
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    N = int(next(it))
+    M = int(next(it))
+    R = int(next(it))
+
+    # p[i] are integers in hundredths of percent, sum to 10000
+    p = [int(next(it)) for _ in range(N)]
+
+    # dist[i][j] = shortest distance between cities i and j
+    dist = [[inf] * N for _ in range(N)]
+    for i in range(N):
+        dist[i][i] = 0.0
+
+    edges = []
+    for _ in range(M):
+        a = int(next(it)) - 1
+        b = int(next(it)) - 1
+        L = int(next(it))
+        edges.append((a, b, L))
+        if L < dist[a][b]:
+            dist[a][b] = dist[b][a] = float(L)
+
+    # Floyd–Warshall (N<=100 => OK)
+    for k in range(N):
+        dk = dist[k]
+        for i in range(N):
+            dik = dist[i][k]
+            if dik == inf:
+                continue
+            di = dist[i]
+            for j in range(N):
+                nd = dik + dk[j]
+                if nd < di[j]:
+                    di[j] = nd
+
+    # If disconnected => impossible
+    for i in range(N):
+        for j in range(N):
+            if dist[i][j] == inf:
+                print(-1)
+                return
+
+    best = inf  # in (probability units)*km
+
+    # Station in a city only if R==0
+    if R == 0:
+        for c in range(N):
+            cost = 0.0
+            dc = dist[c]
+            for x in range(N):
+                cost += p[x] * dc[x]
+            if cost < best:
+                best = cost
+
+    # Station on edges: only need to test d=R and d=L-R if L>=2R
+    for u, v, L in edges:
+        if L < 2 * R:
+            continue
+        du = dist[u]
+        dv = dist[v]
+        for d in (float(R), float(L - R)):
+            cost = 0.0
+            for x in range(N):
+                via_u = d + du[x]
+                via_v = (L - d) + dv[x]
+                cost += p[x] * (via_u if via_u < via_v else via_v)
+            if cost < best:
+                best = cost
+
+    if best == inf:
+        print(-1)
+    else:
+        # Divide by 10000 to get km expectation; print with 5 decimals
+        print(f"{best / 10000.0:.5f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also provide a short proof sketch of the “concave ⇒ minimum at endpoints” fact tailored to this specific min-of-two-lines form.

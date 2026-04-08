@@ -1,0 +1,337 @@
+## 1) Abridged problem statement
+
+You have **N discs** (radii 1..N) initially stacked on **peg 1** (largest at bottom). There are **M pegs** (4 ≤ M ≤ 65). A move takes the **top** disc from one peg and places it on another peg, **never putting a larger disc on top of a smaller disc**.
+
+Output:
+1. The minimum (or intended) number of moves **L** to move the whole stack from **peg 1** to **peg M**.
+2. A valid sequence of **L** moves. Each move must be printed as  
+   - `move d from a to b` (if peg b was empty), or  
+   - `move d from a to b atop x` (if the moved disc lands on disc x).
+
+Constraints: 1 ≤ N ≤ 64, 4 ≤ M ≤ 65.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key idea: split the stack (Frame–Stewart style DP)
+
+With more than 3 pegs, the classic Hanoi recurrence `2^N - 1` no longer applies. A widely used approach is the **Frame–Stewart recurrence**:
+
+To move `n` discs from `from` to `to` using `m` pegs:
+
+1. Choose some `k` (1 ≤ k < n).
+2. Move the **top k discs** from `from` to some auxiliary peg using **all m pegs**.
+3. Move the remaining **n − k discs** from `from` to `to` using only **m − 1 pegs**  
+   (because the peg holding the k-stack is “occupied” and effectively unavailable).
+4. Move the **k discs** from the auxiliary peg onto `to` using **all m pegs** again.
+
+So the number of moves is:
+
+\[
+dp[n][m] = \min_{1 \le k < n} \left( 2 \cdot dp[k][m] + dp[n-k][m-1] \right)
+\]
+
+This leads to a DP over `n ≤ 64` and `m ≤ 65`, which is tiny.
+
+### DP initialization
+
+- `dp[0][m] = 0` (moving nothing takes 0 moves)
+- `dp[1][m] = 1` for any `m ≥ 2` (move the single disc directly)
+
+Then compute:
+- For each `n = 2..N`
+- For each `m = 3..M` (needs at least 3 pegs for meaningful recursion)
+- Try all splits `k = 1..n-1`
+
+### Reconstructing and printing moves
+
+The DP only gives the move count. We must print an explicit sequence.
+
+We simulate the pegs with stacks (`pegs[i]` holds discs on peg i). Initially, peg 1 contains `N..1` (top is 1).
+
+We implement a recursive function:
+
+`rec(cnt, num_pegs, from, to)`:
+
+- Base cases:
+  - `cnt == 0`: nothing to do
+  - `cnt == 1`: perform one legal move `from -> to`
+- Otherwise:
+  - Find a split `k` such that  
+    `2*dp[k][num_pegs] + dp[cnt-k][num_pegs-1] == dp[cnt][num_pegs]`
+  - Choose an auxiliary peg `j` (not `from` and not `to`) where placing the current top disc is legal:
+    - peg `j` empty, or top disc on `j` is larger than the disc to be moved
+  - Perform:
+    1. `rec(k, num_pegs, from, j)`
+    2. `rec(cnt-k, num_pegs-1, from, to)`
+    3. `rec(k, num_pegs, j, to)`
+
+Each actual move prints exactly in the required format, including `"atop X"` if the destination peg is non-empty.
+
+### Complexity
+
+- DP: \(O(N \cdot M \cdot N)\) ≤ \(64 \cdot 65 \cdot 64 \approx 266k\) operations.
+- Reconstruction: prints `dp[N][M]` moves (for worst relevant case, still manageable per problem constraints/time).
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Pulls in virtually all standard headers (GNU extension)
+
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                 // iterate by reference so we can assign into the vector
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector elements separated by spaces (not used in this solution)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                              // n = number of discs, m = number of pegs
+vector<vector<int>> dp;                // dp[i][j] = computed minimal moves for i discs and j pegs
+stack<int> pegs[66];                   // simulate each peg as a stack of disc radii (1..N), max M=65
+
+// Move the top disc from peg "from" to peg "to", print in required format, update stacks.
+void move_disc(int from, int to) {
+    // Top disc radius at source
+    cout << "move " << pegs[from].top() << " from " << from << " to " << to;
+
+    // If destination is not empty, we must print "atop <top disc on destination>"
+    if(!pegs[to].empty()) {
+        cout << " atop " << pegs[to].top();
+    }
+    cout << "\n";
+
+    // Actually perform the stack move
+    pegs[to].push(pegs[from].top());
+    pegs[from].pop();
+}
+
+// Recursive reconstruction: move "cnt" top discs from peg "from" to peg "to"
+// using "num_pegs" pegs (pegs are globally 1..m).
+void rec(int cnt, int num_pegs, int from, int to) {
+    if(cnt == 0) {                     // nothing to move
+        return;
+    }
+    if(cnt == 1) {                     // single disc: direct move
+        move_disc(from, to);
+        return;
+    }
+
+    // Try all possible splits k and find one that matches the dp optimal value.
+    for(int k = 1; k < cnt; k++) {
+        // Check if choosing k satisfies the DP equality for the optimal value:
+        // dp[cnt][num_pegs] = 2*dp[k][num_pegs] + dp[cnt-k][num_pegs-1]
+        if(2 * dp[k][num_pegs] + dp[cnt - k][num_pegs - 1] ==
+           dp[cnt][num_pegs]) {
+
+            // We need to pick an auxiliary peg j (not from, not to) where we can move the k-stack.
+            int top = pegs[from].top();  // disc that would be moved first (smallest among the cnt stack)
+
+            for(int j = 1; j <= m; j++) {
+                // Choose peg j that is distinct and can legally accept "top"
+                if(j != from && j != to &&
+                   (pegs[j].empty() || pegs[j].top() > top)) {
+
+                    // 1) Move top k discs from "from" to auxiliary peg j using num_pegs pegs
+                    rec(k, num_pegs, from, j);
+
+                    // 2) Move remaining cnt-k discs from "from" to "to"
+                    //    using only num_pegs-1 pegs (peg j is now occupied by the k-stack)
+                    rec(cnt - k, num_pegs - 1, from, to);
+
+                    // 3) Move the k discs from auxiliary peg j onto destination "to"
+                    rec(k, num_pegs, j, to);
+                    return;             // done for this (cnt,num_pegs,from,to)
+                }
+            }
+        }
+    }
+}
+
+void read() { cin >> n >> m; }         // input N and M
+
+void solve() {
+    // Allocate dp with "infinite" initial values
+    dp.assign(n + 1, vector<int>(m + 1, 1e8));
+
+    // Base case: 0 discs => 0 moves for any number of pegs
+    for(int j = 1; j <= m; j++) {
+        dp[0][j] = 0;
+    }
+
+    // Base case: 1 disc => 1 move if at least 2 pegs exist
+    for(int j = 2; j <= m; j++) {
+        dp[1][j] = 1;
+    }
+
+    // Fill DP for disc counts 2..n
+    for(int i = 2; i <= n; i++) {
+        // For reconstruction logic they start pegs from 3 here;
+        // m>=4 in constraints anyway.
+        for(int j = 3; j <= m; j++) {
+            // Try splitting into k and i-k
+            for(int k = 1; k < i; k++) {
+                dp[i][j] = min(dp[i][j], 2 * dp[k][j] + dp[i - k][j - 1]);
+            }
+        }
+    }
+
+    // Print number of moves
+    cout << dp[n][m] << "\n";
+
+    // Initialize peg 1 with discs n..1 (top is 1)
+    for(int i = n; i >= 1; i--) {
+        pegs[1].push(i);
+    }
+
+    // Reconstruct moves from peg 1 to peg m using m pegs
+    rec(n, m, 1, m);
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);  // faster I/O
+    cin.tie(nullptr);                 // untie cin from cout
+
+    int T = 1;                        // only one test case
+    // cin >> T;                       // unused
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    m = int(data[1])
+
+    INF = 10**18
+
+    # dp[i][j] = minimal moves to move i discs using j pegs
+    dp = [[INF] * (m + 1) for _ in range(n + 1)]
+
+    # 0 discs: 0 moves regardless of pegs
+    for j in range(1, m + 1):
+        dp[0][j] = 0
+
+    # 1 disc: 1 move if j >= 2
+    for j in range(2, m + 1):
+        dp[1][j] = 1
+
+    # Frame–Stewart recurrence:
+    # dp[i][j] = min_{1<=k<i} (2*dp[k][j] + dp[i-k][j-1])
+    for i in range(2, n + 1):
+        for j in range(3, m + 1):
+            best = INF
+            for k in range(1, i):
+                cand = 2 * dp[k][j] + dp[i - k][j - 1]
+                if cand < best:
+                    best = cand
+            dp[i][j] = best
+
+    # Simulate pegs as lists used like stacks (append/pop from end).
+    pegs = [[] for _ in range(m + 1)]
+    for disc in range(n, 0, -1):
+        pegs[1].append(disc)
+
+    out_lines = []
+    def move_disc(frm: int, to: int) -> None:
+        """Move the top disc from peg frm to peg to, printing with 'atop' if needed."""
+        disc = pegs[frm][-1]
+        if pegs[to]:
+            out_lines.append(f"move {disc} from {frm} to {to} atop {pegs[to][-1]}")
+        else:
+            out_lines.append(f"move {disc} from {frm} to {to}")
+        pegs[frm].pop()
+        pegs[to].append(disc)
+
+    def rec(cnt: int, num_pegs: int, frm: int, to: int) -> None:
+        """Reconstruct one optimal solution using dp, moving cnt discs from frm to to."""
+        if cnt == 0:
+            return
+        if cnt == 1:
+            move_disc(frm, to)
+            return
+
+        # Find a split k consistent with dp optimal value.
+        for k in range(1, cnt):
+            if 2 * dp[k][num_pegs] + dp[cnt - k][num_pegs - 1] == dp[cnt][num_pegs]:
+                # Choose an auxiliary peg j not equal to frm or to, where the next disc can be placed.
+                top_disc = pegs[frm][-1]
+                for j in range(1, m + 1):
+                    if j == frm or j == to:
+                        continue
+                    if (not pegs[j]) or pegs[j][-1] > top_disc:
+                        # 1) move k discs to j using all num_pegs pegs
+                        rec(k, num_pegs, frm, j)
+                        # 2) move remaining cnt-k discs to destination using num_pegs-1 pegs
+                        rec(cnt - k, num_pegs - 1, frm, to)
+                        # 3) move k discs from j to destination using all num_pegs pegs
+                        rec(k, num_pegs, j, to)
+                        return
+
+        # If dp is correct, we should never reach here.
+        raise RuntimeError("No valid reconstruction split found")
+
+    # Print number of moves, then the moves
+    rec(n, m, 1, m)
+    sys.stdout.write(str(dp[n][m]) + "\n")
+    sys.stdout.write("\n".join(out_lines) + ("\n" if out_lines else ""))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Use Frame–Stewart DP:  
+`dp[0][*]=0`, `dp[1][*]=1`, and for `n≥2, m≥3`:
+
+\[
+dp[n][m]=\min_{1\le k<n}\left(2\cdot dp[k][m] + dp[n-k][m-1]\right)
+\]
+
+Interpretation: move top `k` discs aside using `m` pegs, move remaining `n-k` using `m-1` pegs (one peg occupied), then move `k` onto destination.
+
+To output moves, simulate pegs as stacks and recursively reconstruct: find `k` achieving the dp value, pick a legal auxiliary peg `j`, then do:
+`rec(k,m,from,j)`, `rec(n-k,m-1,from,to)`, `rec(k,m,j,to)`, printing each disc move with `"atop"` when destination isn’t empty.

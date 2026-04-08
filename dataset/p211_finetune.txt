@@ -1,0 +1,341 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+211. Strange Counter
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+The new secret counter invented in one theoretical computer science lab is the great breakthrough in the computer microschemes design. This counter consists of N registers numbered from 0 to N-1, each of which contains 0, 1 or 2. If the number in the i-th register is Ai, the number stored in the counter is
+
+
+AN-1 * 2N-1 + AN-2 * 2N-2 + ... + A1 * 2 + A0
+
+
+One can see that the same number can be stored in the counter in several different ways. For example, the number 5 can be stored in a 3-register counter as (1, 0, 1) or as (0, 2, 1).
+
+The main feature of the counter is that it can add numbers that are powers of two to the number stored in the counter, only changing the value of a small number of registers. Namely, the scientists of the lab developed the scheme that allowed adding such number changing no more than four registers!
+
+Unfortunately after the recent experiments in the neighbouring physics lab, involving the creation of the artificial black hole, the theoretical computer science laboratory was accidently destroyed. However, the supercomputer project that the counter was designed for is still on, so you were asked to reinvent the counter.
+
+Input
+
+The first line of the input file contains N — the number of registers in the counter (1 ≤ N ≤ 1 000). Initially all registers contain zeroes. The second line contains M — the number of additions you have to make (1 ≤ M ≤ 10 000). The third line contains M integer numbers ranging from 0 to N-1. Number i means that you must add 2i to the number in the counter. There sum of all numbers added to the counter does not exceed 2N - 1.
+
+Output
+
+Output file must contain M lines. Each line must contain the changes made adding the corresponding number to the counter.
+
+The first number in each line must be K — the number of registers changed (1 ≤ K ≤ 4). K pairs must follow — for each changed register first output its number and then the new value.
+
+Sample test(s)
+
+Input
+5
+6
+0 0 0 1 0 0
+
+Output
+1 0 1
+1 0 2
+2 0 1 1 1
+1 1 2
+1 0 2
+3 0 1 1 1 2 1
+Author:	Andrew Stankevich
+Resource:	Petrozavodsk Summer Trainings 2003
+Date:	2003-08-30
+
+<|response|>
+## 1) Abridged problem statement
+
+You have a counter with `N` registers `A[0..N-1]`, each digit is in `{0,1,2}` and represents the value
+
+\[
+\sum_{i=0}^{N-1} A_i \cdot 2^i
+\]
+
+Initially all digits are `0`. You must perform `M` operations; operation `p` means **add \(2^p\)**.  
+After each operation you must output **how you changed the registers**:  
+`K (index1 newValue1) ... (indexK newValueK)`, with `1 ≤ K ≤ 4`.  
+It’s guaranteed that the total sum added never exceeds \(2^N - 1\).
+
+Goal: implement the additions so that **each operation changes ≤ 4 registers**.
+
+---
+
+## 2) Key observations
+
+1. **Redundant binary**: digits are `{0,1,2}` instead of `{0,1}`. Many representations exist for the same number (e.g., `5 = (1,0,1) = (0,2,1)`), which can be exploited to avoid long carry chains.
+
+2. If we add \(2^p\) naively, we might need to propagate carries across many positions, changing too many registers. We need an invariant that prevents long carry propagation.
+
+3. Useful invariant:
+
+   **Invariant:** *Between any two positions containing digit `2`, there is at least one position containing digit `0`.*
+
+   This “breaks” long carry chains: you can always resolve the effect of adding \(2^p\) using a constant number of local digit edits.
+
+4. To implement updates fast, for a given `p` we need to quickly find:
+   - `next_two`: the nearest position `> p` where digit is `2`
+   - `prev_zero`: the nearest position `< next_two` where digit is `0`
+
+   Maintaining ordered sets of positions for each digit value (`0`, `1`, `2`) allows these queries in `O(log N)`.
+
+---
+
+## 3) Full solution approach
+
+### Data maintained
+- Array `reg[i]` for digits, kept in `{0,1,2}`.
+- Three ordered sets:
+  - `S0` = positions with digit `0`
+  - `S1` = positions with digit `1`
+  - `S2` = positions with digit `2`
+
+Additionally, add a **sentinel**:
+- Put a fictitious `2` at position `N+1` (never printed).  
+  This guarantees `next_two` always exists (`upper_bound(p)` in `S2` always works).
+
+Also allocate `reg` up to at least `N+1` because sometimes we do `p+1` or `next_two+1`.
+
+### How to add \(2^p\) with ≤ 3 changes
+
+Let:
+- `next_two = smallest index > p with reg[index] == 2`
+- `prev_zero = largest index < next_two with reg[index] == 0`
+
+We handle 3 cases:
+
+#### Case 1: “danger zone”: no zero between `p` and `next_two`
+Condition: `next_two <= N` and `p >= prev_zero`.
+
+Then we perform **3 changes**:
+- `reg[p] += 1`
+- `reg[next_two] -= 2` (turns `2 -> 0`)
+- `reg[next_two + 1] += 1`
+
+**Why correct numerically?**
+\[
+(+1)\cdot 2^p + (-2)\cdot 2^{next\_two} + (+1)\cdot 2^{next\_two+1}
+= 2^p
+\]
+So the net increment is exactly \(2^p\).
+
+The invariant ensures these increments won’t make a digit exceed `2`, and turning `next_two` into `0` preserves the “separator zero” property.
+
+#### Case 2: there exists a zero separator above `p`, and `reg[p] != 0`
+Condition: (not Case 1) and `reg[p] != 0`.
+
+Perform **2 changes**:
+- `reg[p] -= 1`
+- `reg[p+1] += 1`
+
+Numerically:
+\[
+(-1)\cdot 2^p + (+1)\cdot 2^{p+1} = +2^p
+\]
+
+This “shifts” one unit upward and avoids a long carry.
+
+#### Case 3: `reg[p] == 0`
+Perform **1 change**:
+- `reg[p] += 1`
+
+Trivial and safe.
+
+### Output requirement
+For each operation, output the number of changed registers and for each changed register output `(index, newValue)`.
+
+### Complexity
+Each operation changes at most **3** registers, each change updates sets in `O(log N)`.  
+Total: `O(M log N)` with small constants; easily fits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Strange Counter (P211)
+
+  Maintain digits reg[i] in {0,1,2} such that:
+  Invariant: between any two '2' digits there is at least one '0'.
+
+  For each add(2^p), do at most 3 local edits as described in the solution.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int N, M;
+    cin >> N;
+    cin >> M;
+    vector<int> q(M);
+    for (int i = 0; i < M; i++) cin >> q[i];
+
+    // We may touch indices up to N+1:
+    // - p+1 when p = N-1 gives N
+    // - next_two+1 might become N+1
+    vector<int> reg(N + 2, 0);
+
+    // sets of positions having each value 0,1,2
+    set<int> pos[3];
+
+    // initially reg[0..N] are zeros (include N as buffer position)
+    for (int i = 0; i <= N; i++) pos[0].insert(i);
+
+    // sentinel "2" at N+1 so next_two always exists
+    // (we do not need reg[N+1]=2 for correctness, but it can help reasoning;
+    // we never output a change for index N+1 in valid inputs.)
+    pos[2].insert(N + 1);
+    reg[N + 1] = 2;
+
+    // Apply reg[idx] += delta, keep sets consistent, and print " idx newValue"
+    auto apply = [&](int idx, int delta) {
+        // remove from old set
+        pos[reg[idx]].erase(idx);
+
+        // update digit
+        reg[idx] += delta;
+
+        // insert into new set
+        pos[reg[idx]].insert(idx);
+
+        // print this modification in required format
+        cout << ' ' << idx << ' ' << reg[idx];
+    };
+
+    for (int p : q) {
+        // next_two = nearest index > p with digit 2
+        int next_two = *pos[2].upper_bound(p);
+
+        // prev_zero = greatest index < next_two with digit 0
+        // lower_bound(next_two) gives first >= next_two; prev(...) is < next_two
+        int prev_zero = *prev(pos[0].lower_bound(next_two));
+
+        // Case 1: a real '2' at/below N, and no zero between p and next_two
+        if (next_two <= N && p >= prev_zero) {
+            cout << 3;
+            apply(p, +1);             // reg[p]++
+            apply(next_two, -2);      // 2 -> 0
+            apply(next_two + 1, +1);  // reg[next_two+1]++
+        }
+        // Case 2: safe to "push" upward if reg[p] is not zero
+        else if (reg[p] != 0) {
+            cout << 2;
+            apply(p, -1);     // reg[p]--
+            apply(p + 1, +1); // reg[p+1]++
+        }
+        // Case 3: reg[p] == 0
+        else {
+            cout << 1;
+            apply(p, +1);     // reg[p]++
+        }
+
+        cout << '\n';
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Python has no built-in balanced BST like C++ `set` with `upper_bound`.  
+Here `N ≤ 1000`, so we can implement the needed “next element” queries with **sorted lists + bisect**, and updates by `insort`/`pop` (which is `O(N)` per digit change). Since each operation changes ≤ 3 digits, worst-case work is still small enough here.
+
+```python
+import sys
+from bisect import bisect_left, bisect_right, insort
+
+def solve():
+    data = list(map(int, sys.stdin.read().split()))
+    if not data:
+        return
+    it = iter(data)
+    N = next(it)
+    M = next(it)
+    queries = [next(it) for _ in range(M)]
+
+    # We may touch up to N+1 (sentinel)
+    reg = [0] * (N + 2)
+    reg[N + 1] = 2  # sentinel digit
+
+    # Positions for each digit value as sorted lists.
+    # Because N is small (<=1000), list operations are fine.
+    pos = [[], [], []]
+
+    # Initially 0..N are zeros
+    pos[0] = list(range(0, N + 1))
+    pos[1] = []
+    pos[2] = [N + 1]  # sentinel '2'
+
+    def remove_from_sorted_list(a, x):
+        """Remove x from sorted list a (x is guaranteed to exist)."""
+        i = bisect_left(a, x)
+        a.pop(i)
+
+    def apply(changes, idx, delta):
+        """Update reg[idx] += delta, keep pos lists consistent, record output."""
+        old = reg[idx]
+        new = old + delta
+
+        # move idx from pos[old] to pos[new]
+        remove_from_sorted_list(pos[old], idx)
+        insort(pos[new], idx)
+        reg[idx] = new
+
+        changes.append((idx, new))
+
+    out_lines = []
+
+    for p in queries:
+        # next_two = first index > p in pos[2]
+        j = bisect_right(pos[2], p)
+        next_two = pos[2][j]
+
+        # prev_zero = last index < next_two in pos[0]
+        k = bisect_left(pos[0], next_two) - 1
+        prev_zero = pos[0][k]
+
+        changes = []
+
+        # Case 1
+        if next_two <= N and p >= prev_zero:
+            apply(changes, p, +1)
+            apply(changes, next_two, -2)
+            apply(changes, next_two + 1, +1)
+
+        # Case 2
+        elif reg[p] != 0:
+            apply(changes, p, -1)
+            apply(changes, p + 1, +1)
+
+        # Case 3
+        else:
+            apply(changes, p, +1)
+
+        # format: K idx1 val1 idx2 val2 ...
+        parts = [str(len(changes))]
+        for idx, val in changes:
+            parts.append(str(idx))
+            parts.append(str(val))
+        out_lines.append(" ".join(parts))
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want a Python version with guaranteed `O(M log N)` using a true ordered set, I can provide one using `sortedcontainers` (third-party) or implement a small Fenwick/next-pointer approach specialized to `N ≤ 1000`.

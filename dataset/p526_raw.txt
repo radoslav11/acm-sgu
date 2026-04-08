@@ -1,0 +1,297 @@
+p526.ans1
+======================
+2
+-5.000000000000000000 1.000000000000000000
+5.000000000000000000 8.000000000000000000 
+
+=================
+p526.in1
+======================
+5 35 2 -5 6 1 5 35 9 
+
+=================
+p526.cpp
+======================
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+struct Stone {
+    int x1, x2, t;
+};
+
+int v, g, n;
+vector<Stone> stones;
+
+void read() {
+    cin >> v >> g >> n;
+    stones.resize(n);
+    for(auto& [x1, x2, t]: stones) {
+        cin >> x1 >> x2 >> t;
+    }
+}
+
+void solve() {
+    // The hardest part in this problem is all the details. Apart from that,
+    // the key observation is that at each stone landing time, the set of
+    // reachable positions forms a union of O(N) closed intervals, and that we
+    // only care about O(N) important times (stone landings). Also, Aladdin will
+    // move with either 0 (stay) or v speed at any moment. Any route can be
+    // represented by only these two states. To transition from t[i] to t[i+1],
+    // we expand each interval by v*dt in both directions (Aladdin can move at
+    // up to speed v), merge overlapping intervals, then subtract the open
+    // interiors (x1, x2) of stones landing at t[i+1]: endpoints are safe. At
+    // each layer we check whether G can be reached before the next stone: from
+    // interval [l, r] the candidate is t[i] + dist(G, [l,r]) / v, valid when
+    // dist(G, [l,r]) <= v * (t[i+1] - t[i]). For reconstruction we store all
+    // layers and trace back, finding a valid position within v*dt of the next
+    // waypoint. Overall O(N^2) time and space.
+
+    using Intervals = vector<pair<long long, long long>>;
+
+    vector<int> times = {0};
+    for(auto& [x1, x2, t]: stones) {
+        times.push_back(t);
+    }
+    sort(times.begin(), times.end());
+    times.erase(unique(times.begin(), times.end()), times.end());
+    int p = (int)times.size();
+
+    map<int, int> time_idx;
+    for(int i = 0; i < p; i++) {
+        time_idx[times[i]] = i;
+    }
+
+    vector<vector<pair<long long, long long>>> blocked(p);
+    for(auto& [x1, x2, t]: stones) {
+        if(x1 < x2) {
+            blocked[time_idx[t]].emplace_back(x1, x2);
+        }
+    }
+    for(auto& bl: blocked) {
+        sort(bl.begin(), bl.end());
+        Intervals merged;
+        for(auto& [l, r]: bl) {
+            if(!merged.empty() && l < merged.back().second) {
+                merged.back().second = max(merged.back().second, r);
+            } else {
+                merged.emplace_back(l, r);
+            }
+        }
+        bl = merged;
+    }
+
+    auto subtract = [](const Intervals& reach,
+                       const Intervals& bl) -> Intervals {
+        Intervals result;
+        int bi = 0, nb = (int)bl.size();
+        for(auto [l, r]: reach) {
+            long long cl = l;
+            while(bi < nb && bl[bi].second <= cl) {
+                bi++;
+            }
+            while(bi < nb && bl[bi].first < r) {
+                if(bl[bi].second <= cl) {
+                    bi++;
+                    continue;
+                }
+                if(bl[bi].first >= cl) {
+                    result.emplace_back(cl, bl[bi].first);
+                }
+                cl = max(cl, bl[bi].second);
+                if(bl[bi].second <= r) {
+                    bi++;
+                } else {
+                    break;
+                }
+                if(cl >= r) {
+                    break;
+                }
+            }
+            if(cl <= r) {
+                result.emplace_back(cl, r);
+            }
+        }
+        return result;
+    };
+
+    vector<Intervals> layers(p);
+    Intervals cur = {{0, 0}};
+    layers[0] = cur;
+
+    double best_time = 1e18;
+    int best_layer = -1;
+    double best_x = 0;
+
+    auto check = [&](int layer, const Intervals& intervals) {
+        for(auto& [l, r]: intervals) {
+            long long dist;
+            double x;
+            if(g >= l && g <= r) {
+                dist = 0;
+                x = g;
+            } else if(g < l) {
+                dist = l - g;
+                x = l;
+            } else {
+                dist = g - r;
+                x = r;
+            }
+            double arrival = times[layer] + (double)dist / v;
+            bool valid =
+                (layer + 1 >= p) ||
+                (dist <= (long long)v * (times[layer + 1] - times[layer]));
+            if(valid && arrival < best_time - 1e-12) {
+                best_time = arrival;
+                best_layer = layer;
+                best_x = x;
+            }
+        }
+    };
+
+    check(0, cur);
+
+    for(int i = 0; i + 1 < p; i++) {
+        long long D = (long long)v * (times[i + 1] - times[i]);
+
+        Intervals expanded;
+        for(auto& [l, r]: cur) {
+            expanded.emplace_back(l - D, r + D);
+        }
+
+        Intervals merged;
+        for(auto& [l, r]: expanded) {
+            if(!merged.empty() && l <= merged.back().second) {
+                merged.back().second = max(merged.back().second, r);
+            } else {
+                merged.emplace_back(l, r);
+            }
+        }
+
+        cur = subtract(merged, blocked[i + 1]);
+        layers[i + 1] = cur;
+
+        check(i + 1, cur);
+    }
+
+    if(best_layer == -1) {
+        cout << -1 << '\n';
+        return;
+    }
+
+    vector<double> path(best_layer + 1);
+    path[best_layer] = best_x;
+    for(int i = best_layer - 1; i >= 0; i--) {
+        long long D = (long long)v * (times[i + 1] - times[i]);
+        double target = path[i + 1];
+        for(auto& [l, r]: layers[i]) {
+            double cl = max((double)l, target - D);
+            double cr = min((double)r, target + D);
+            if(cl <= cr + 1e-9) {
+                path[i] = clamp(target, cl, cr);
+                break;
+            }
+        }
+    }
+
+    vector<pair<double, double>> instructions;
+    for(int i = 0; i < best_layer; i++) {
+        double dt = times[i + 1] - times[i];
+        double dx = path[i + 1] - path[i];
+        instructions.emplace_back(dx / dt, dt);
+    }
+
+    double final_dx = g - path[best_layer];
+    if(abs(final_dx) > 1e-12) {
+        double speed = final_dx > 0 ? (double)v : (double)-v;
+        instructions.emplace_back(speed, abs(final_dx) / v);
+    }
+
+    cout << (int)instructions.size() << '\n';
+    cout << fixed << setprecision(15);
+    for(auto& [w, t]: instructions) {
+        cout << w << ' ' << t << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+statement.txt
+======================
+526. Running Hero
+Time limit per test: 0.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Aladdin is running through a long cave. He is very fast and can move with a speed of at most v meters per second, but falling stones prevent him from running always at maximum speed.
+
+Now imagine a 2-dimensional world with Aladdin being a point moving in the positive or negative direction of the X-axis, and stones, falling down on the Al's head, being segments parallel to the X-axis. Another point in this world is princess Jasmin. She is waiting for Al at the point (G, 0). Aladdin starts his way at the point (0, 0). A stone kills Aladdin if he is located strictly between the endpoints of the stone when the stone reaches the ground. As Jasmin is in a fortified trench, the stones can't hurt her even if they fall down on her head.
+
+You are given Aladdin's maximum speed, Jasmin's position and information about times and places of falling stones. Your task is to find the whether it is possible for Aladdin to to reach Jasmin. If it's possible, you also have to find the sequence of actions which gets Aladdin to Jasmin in the minimum amount of time possible.
+
+Input
+The first line of the input contains three integers v, G and n (1 ≤ v ≤ 105, 0 < |G| ≤ 105, 0 ≤ n ≤ 3000) — Aladdin's maximum speed, Jasmin's x-coordinate and the number of stones. Each of the following n lines contains three integers x1,i, x2,i and ti (-105 ≤ x1,i ≤ x2,i ≤ 105, 1 ≤ ti ≤ 105) — left and right endpoints of the i-th stone, and time when the i-th stone reaches the ground.
+
+Output
+If there is no solution, the output should contain a single integer -1.
+
+Otherwise the first line of the output should contain one integer k — the number of instructions for Aladdin. Each of the following k lines should contain a pair of space-separated real numbers — speed w and time t. A pair (w, t) means that Aladdin should run t seconds at speed w. Speed w should be negative, if Aladdin should move in the negative direction of the X-axis and non-negative otherwise. Value t should always be positive. The value w=0 means that Aladdin doesn't move for time t.
+
+If there are many solutions, you may output any of them. All real values should be printed with at least 9 digits after the decimal point. The number of instructions k in your output must not exceed 10000.
+
+Example(s)
+sample input
+sample output
+5 35 2 -5 6 1 5 35 9 
+2
+-5.000000000000000000 1.000000000000000000
+5.000000000000000000 8.000000000000000000 
+
+
+
+Note
+Aladdin can change his speed instantly. If some stone falls down on Al's head at the moment of or after his meeting with Jasmin, it can't prevent the two from kissing each other and can't change anything.
+
+=================

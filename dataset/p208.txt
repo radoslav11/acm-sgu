@@ -1,0 +1,436 @@
+## 1) Concise abridged problem statement
+
+You have an \(N \times M\) grid whose cells are colored black/white (2-coloring). The grid is glued into a torus in a specific way (inner/outer sides are distinguishable, so mirror flips are **not** allowed). Because the seam is invisible, two different marked sheets may yield the same visible torus, and the same marked sheet may look the same after rotating/shift-gluing.
+
+Compute the number of **distinct** 2-colorings of an \(N \times M\) torus **up to orientation-preserving symmetries** of the torus induced by the gluing.  
+Constraints: \(1 \le N,M \le 20\). Output can be as large as \(2^{400}\).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### A. What are “the same tickets” after gluing?
+After gluing, there is no marked seam, so you can:
+- shift the sheet before gluing (cyclic shifts along rows/columns), and/or
+- rotate the already formed torus in 3D **without turning it inside out** (since inner/outer are distinguishable).
+
+These operations form a finite symmetry group \(G\) acting on the \(N \cdot M\) cells.
+
+Two colorings represent the same ticket iff one can be transformed into the other by some symmetry in \(G\). So the number of distinct tickets is the number of orbits of all \(2^{NM}\) colorings under \(G\).
+
+This is exactly what **Burnside’s lemma** counts.
+
+---
+
+### B. Burnside’s lemma
+Let \(X\) be the set of all colorings (\(|X| = 2^{NM}\)), and \(G\) the symmetry group. Then the number of distinct tickets is
+
+\[
+\frac{1}{|G|} \sum_{g \in G} |\text{Fix}(g)|
+\]
+
+where \(\text{Fix}(g)\) = colorings unchanged by symmetry \(g\).
+
+So we need:
+1) list all symmetries \(g\),  
+2) compute how many colorings are fixed by each \(g\),  
+3) sum, divide by \(|G|\).
+
+---
+
+### C. What is the symmetry group \(G\)?
+Model the torus cells as coordinates \((r,c)\) with:
+- \(r \in \mathbb{Z}_N\)
+- \(c \in \mathbb{Z}_M\)
+
+**1) Translations** (always valid):
+\[
+(r,c) \mapsto (r+a,\, c+b)
+\]
+for \(a=0..N-1\), \(b=0..M-1\).  
+Count: \(N M\).
+
+**2) 180° rotation (turning torus around) + translation** (always orientation-preserving on the torus surface):
+\[
+(r,c) \mapsto (-r+a,\,-c+b)
+\]
+Count: \(N M\).
+
+So if \(N \ne M\):  
+\(|G| = 2NM\).
+
+**3) If \(N=M\)** (square sheet), there are additional rotations swapping the two directions:
+- 90°:
+\[
+(r,c)\mapsto (c+a,\,-r+b)
+\]
+- 270°:
+\[
+(r,c)\mapsto (-c+a,\,r+b)
+\]
+Each composed with all translations \((a,b)\).  
+Count: \(2N^2\).
+
+So if \(N=M\):  
+\(|G| = 4N^2\).
+
+No reflections are included because inner/outer sides are distinguishable (a reflection would effectively flip the surface).
+
+---
+
+### D. Counting \(|\text{Fix}(g)|\) using cycles (orbits)
+A symmetry \(g\) permutes the \(N\!M\) cells. A coloring is fixed by \(g\) iff every cell has the same color as its image, i.e. all cells in the same permutation cycle must share one color.
+
+If \(g\) has \(k\) cycles in its decomposition, then:
+- each cycle can be colored either all-black or all-white independently,
+- thus \(|\text{Fix}(g)| = 2^k\).
+
+So the task reduces to computing **the number of cycles** of the permutation induced by \(g\) on the grid cells.
+
+Because \(N,M \le 20\), we can do this by simulation:
+- Maintain a visited \(N \times M\) boolean array.
+- For each unvisited cell, follow \(g\) repeatedly until returning to a visited cell; that is one cycle.
+- Total time per symmetry: \(O(NM)\).
+- Total symmetries: at most \(4N^2 \le 1600\). Very fast.
+
+---
+
+### E. Big integers
+The answer can be as large as \(2^{400}\), which does not fit in 64-bit.
+The C++ solution implements a simple big integer:
+- base \(10^9\) digits in a vector
+- supports addition and division by small int (needed for dividing by \(|G|\)).
+
+Also precomputes:
+\[
+\text{pw2}[i] = 2^i
+\]
+as big integers for \(i \le NM\).
+
+---
+
+### F. Putting it together
+Algorithm:
+1) Read \(N,M\).
+2) Precompute \(2^i\) for \(i=0..NM\).
+3) Enumerate all group elements \(g\) (as described in C).
+4) For each \(g\):
+   - compute cycles \(k\) via visited-walk
+   - add \(2^k\) to total
+5) Divide total by \(|G|\) (Burnside).
+6) Output.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience: read a pair "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Convenience: read an entire vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Convenience: print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// Big integer base: each "digit" stores 0..BASE-1
+const int64_t BASE = 1000000000LL;
+
+// Minimal big integer supporting:
+// - construction from int64
+// - addition with another big_int
+// - division by small int64
+// - output
+struct big_int {
+    vector<int64_t> d; // digits in base BASE, little-endian (d[0] is least significant)
+
+    // Construct from non-negative int64
+    big_int(int64_t v = 0) {
+        if (v == 0) {
+            d.push_back(0); // represent zero as [0]
+            return;
+        }
+        while (v > 0) {
+            d.push_back(v % BASE); // take low BASE digit
+            v /= BASE;             // shift right by base
+        }
+    }
+
+    // Addition assignment: this += o
+    big_int& operator+=(const big_int& o) {
+        // Ensure enough digits to add + possible carry
+        d.resize(max(d.size(), o.d.size()) + 1, 0);
+
+        // Add corresponding digits
+        for (size_t i = 0; i < o.d.size(); i++) {
+            d[i] += o.d[i];
+        }
+
+        // Normalize carries
+        for (size_t i = 0; i + 1 < d.size(); i++) {
+            d[i + 1] += d[i] / BASE;
+            d[i] %= BASE;
+        }
+
+        // Remove leading zeros
+        while (d.size() > 1 && d.back() == 0) {
+            d.pop_back();
+        }
+        return *this;
+    }
+
+    // Division assignment by a small positive integer v: this /= v
+    big_int& operator/=(int64_t v) {
+        int64_t carry = 0; // remainder carried from higher digits
+        // Process from most significant digit to least
+        for (int i = (int)d.size() - 1; i >= 0; i--) {
+            // Current value is carry * BASE + d[i]
+            int64_t cur = d[i] + carry * BASE;
+            d[i] = cur / v;    // quotient digit
+            carry = cur % v;   // new remainder
+        }
+
+        // Remove leading zeros
+        while (d.size() > 1 && d.back() == 0) {
+            d.pop_back();
+        }
+        return *this;
+    }
+
+    // Print big_int in normal decimal form
+    friend ostream& operator<<(ostream& out, const big_int& b) {
+        // Print most significant digit without leading zeros
+        out << b.d.back();
+        // Print remaining digits padded to 9 digits (since BASE=1e9)
+        for (int i = (int)b.d.size() - 2; i >= 0; i--) {
+            out << setfill('0') << setw(9) << b.d[i];
+        }
+        return out;
+    }
+};
+
+int n, m;
+
+// Precomputed powers of two as big integers: pw2[i] = 2^i (up to 400)
+big_int pw2[401];
+
+void read() { cin >> n >> m; }
+
+// Count number of cycles in the permutation of cells induced by "perm".
+// perm(r,c) returns the next cell (nr,nc) that (r,c) maps to.
+template<typename F>
+int count_cycles(F&& perm) {
+    // visited array for each cell
+    vector<vector<bool>> vis(n, vector<bool>(m, false));
+    int cnt = 0;
+
+    // For each cell, if not visited, start following perm until cycle closes
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < m; c++) {
+            if (!vis[r][c]) {
+                cnt++; // new cycle discovered
+                int cr = r, cc = c;
+
+                // Walk along the permutation until we revisit a cell
+                while (!vis[cr][cc]) {
+                    vis[cr][cc] = true;
+                    auto [nr, nc] = perm(cr, cc);
+                    cr = nr;
+                    cc = nc;
+                }
+            }
+        }
+    }
+    return cnt; // number of disjoint cycles
+}
+
+void solve() {
+    // Precompute powers of two: pw2[i] = 2^i for i=0..n*m
+    pw2[0] = big_int(1);
+    for (int i = 1; i <= n * m; i++) {
+        pw2[i] = pw2[i - 1];  // copy 2^(i-1)
+        pw2[i] += pw2[i - 1]; // add again => 2^i
+    }
+
+    // Group size:
+    // - if n!=m: translations (NM) + 180-rot+translation (NM) => 2NM
+    // - if n==m: plus 90/270-rot+translations (2N^2) => 4N^2
+    int group_size = (n == m) ? 4 * n * m : 2 * n * m;
+
+    big_int total(0); // sum of |Fix(g)| over all g
+
+    // Enumerate all translations (a,b) and 180-degree rotations with translations
+    for (int a = 0; a < n; a++) {
+        for (int b = 0; b < m; b++) {
+
+            // Translation: (r,c) -> (r+a, c+b)
+            total += pw2[count_cycles([&](int r, int c) -> pair<int, int> {
+                return {(r + a) % n, (c + b) % m};
+            })];
+
+            // 180-degree rotation + translation: (r,c) -> (-r+a, -c+b)
+            // Implemented as (n-r+a)%n etc. (since coordinates are 0..n-1)
+            total += pw2[count_cycles([&](int r, int c) -> pair<int, int> {
+                return {(n - r + a) % n, (m - c + b) % m};
+            })];
+        }
+    }
+
+    // If square, also include 90-degree and 270-degree rotations + translations
+    if (n == m) {
+        for (int a = 0; a < n; a++) {
+            for (int b = 0; b < n; b++) {
+
+                // 90-degree: (r,c) -> (c+a, -r+b)
+                total += pw2[count_cycles([&](int r, int c) -> pair<int, int> {
+                    return {(c + a) % n, (n - r + b) % n};
+                })];
+
+                // 270-degree: (r,c) -> (-c+a, r+b)
+                total += pw2[count_cycles([&](int r, int c) -> pair<int, int> {
+                    return {(n - c + a) % n, (r + b) % n};
+                })];
+            }
+        }
+    }
+
+    // Burnside: answer = total / |G|
+    total /= group_size;
+
+    cout << total << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Single test case (T reading is commented out)
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+# ---------- Big integer ----------
+# Python already has arbitrary-precision integers, so we do not need a custom big-int.
+# That makes the implementation much shorter.
+
+def count_cycles(n, m, perm):
+    """
+    Count cycles in the permutation of an n x m grid defined by perm(r, c).
+    perm returns (nr, nc).
+    """
+    vis = [[False] * m for _ in range(n)]
+    cycles = 0
+
+    for r in range(n):
+        for c in range(m):
+            if not vis[r][c]:
+                cycles += 1
+                cr, cc = r, c
+                # Follow the permutation until the cycle closes
+                while not vis[cr][cc]:
+                    vis[cr][cc] = True
+                    cr, cc = perm(cr, cc)
+
+    return cycles
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    n, m = map(int, data[:2])
+
+    nm = n * m
+
+    # Precompute powers of two: pw2[k] = 2^k for k=0..nm
+    # (This is optional in Python since pow(2,k) is fast, but mirrors the C++ logic.)
+    pw2 = [1] * (nm + 1)
+    for i in range(1, nm + 1):
+        pw2[i] = pw2[i - 1] * 2
+
+    # Group size depending on whether square
+    group_size = 4 * n * m if n == m else 2 * n * m
+
+    total = 0  # sum of fixed colorings over all group elements
+
+    # 1) Translations and 180-degree rotations (both exist for any n,m)
+    for a in range(n):
+        for b in range(m):
+            # Translation: (r,c) -> (r+a, c+b)
+            k = count_cycles(n, m, lambda r, c: ((r + a) % n, (c + b) % m))
+            total += pw2[k]
+
+            # 180-degree rotation + translation: (r,c) -> (-r+a, -c+b)
+            # Using modular form: (-r) mod n == (n-r) mod n (for r in 0..n-1)
+            k = count_cycles(n, m, lambda r, c: ((n - r + a) % n, (m - c + b) % m))
+            total += pw2[k]
+
+    # 2) If square, add 90 and 270 degree rotations + translations
+    if n == m:
+        for a in range(n):
+            for b in range(n):
+                # 90-degree: (r,c) -> (c+a, -r+b)
+                k = count_cycles(n, n, lambda r, c: ((c + a) % n, (n - r + b) % n))
+                total += pw2[k]
+
+                # 270-degree: (r,c) -> (-c+a, r+b)
+                k = count_cycles(n, n, lambda r, c: ((n - c + a) % n, (r + b) % n))
+                total += pw2[k]
+
+    # Burnside average
+    ans = total // group_size
+    print(ans)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+We count distinct \(N \times M\) black/white patterns on a torus up to orientation-preserving symmetries (no reflections). The symmetry group consists of:
+- all translations \((r,c)\to(r+a,c+b)\) (\(NM\) elements),
+- all 180° rotations with translations \((r,c)\to(-r+a,-c+b)\) (another \(NM\)),
+- and if \(N=M\), also 90°/270° rotations with translations (another \(2N^2\)).
+So \(|G|=2NM\) if \(N\ne M\), else \(|G|=4N^2\).
+
+By Burnside’s lemma, answer \(=\frac{1}{|G|}\sum_{g\in G}|\text{Fix}(g)|\).  
+Each symmetry \(g\) permutes the \(NM\) cells; a coloring is fixed iff all cells in the same cycle share one color, so \(|\text{Fix}(g)|=2^{\#\text{cycles}(g)}\).  
+Compute cycles by visiting all cells and following the mapping until cycles close; \(O(NM)\) per group element, at most 1600 elements. Use big integers since values reach \(2^{400}\) (Python int or custom base \(10^9\) in C++).

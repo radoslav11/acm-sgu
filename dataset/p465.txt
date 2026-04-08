@@ -1,0 +1,358 @@
+## 1) Abridged problem statement
+
+You have an undirected weighted graph with **N (≤ 100)** cities and **M** roads. City *i* has a given fire probability \(p_i\) (integers summing to 10000, i.e., hundredths of percent). You must place **one fire station**:
+
+- Either **in a city** (allowed only if \(R=0\)), or
+- **On a road** \((u,v)\) at a point whose distance to **each endpoint city** is at least **R**. So on a road of length \(L\), placement is allowed only if \(L \ge 2R\), and the station position is at distance \(d \in [R, L-R]\) from \(u\).
+
+Firemen always travel by **shortest paths**. The station must be able to reach **every city** (graph must be connected with respect to shortest paths).
+
+Goal: **minimize expected travel distance** to a fire:
+\[
+\min \sum_i p_i \cdot \text{dist}(\text{station}, i)
+\]
+Output the minimum expected distance in km with **precision up to 1 meter** (i.e., 0.001 km, but they print 5 decimals), or **-1** if impossible.
+
+---
+
+## 2) Detailed editorial (explaining the solution)
+
+### Step A — Shortest paths between all cities
+Because \(N \le 100\), we can compute all-pairs shortest paths using **Floyd–Warshall** in \(O(N^3)\). Let:
+
+- `dist[a][b]` = shortest road distance from city `a` to city `b`.
+
+If after Floyd there exists any pair \((i,j)\) with `dist[i][j] = INF`, then the graph is disconnected, hence **no station location can reach all cities**, so answer is **-1**.
+
+This exactly matches requirement 1.
+
+---
+
+### Step B — Expected cost if the station is inside a city (only when R = 0)
+If \(R=0\), placing the station in any city is allowed. For each candidate city `c`:
+
+\[
+E(c)=\sum_{x=1}^{N} p_x \cdot dist[c][x]
+\]
+
+Take the minimum over all cities.
+
+---
+
+### Step C — Expected cost if the station is on a road
+Consider a road (edge) between cities \(u\) and \(v\) with length \(L\).
+A station location on this road is determined by a scalar \(d\):
+
+- \(d\) = distance from \(u\) along the road to the station.
+- Then distance from \(v\) to the station along that same road is \(L-d\).
+
+Due to regulations, we require:
+\[
+d \in [R, L-R]
+\]
+So this road is usable only if \(L \ge 2R\).
+
+Now, for any city \(x\), the shortest path from the station to \(x\) must go first to either endpoint \(u\) or endpoint \(v\) (because the station lies on that edge). Thus:
+
+\[
+\text{dist}(\text{station}, x) = \min\left(d + dist[u][x],\ (L-d) + dist[v][x]\right)
+\]
+
+Therefore expected cost as a function of \(d\) is:
+
+\[
+E(d)=\sum_{x} p_x \cdot \min\left(d + dist[u][x],\ (L-d) + dist[v][x]\right)
+\]
+
+---
+
+### Key observation — The optimum on an edge is at an endpoint of the allowed interval
+For a fixed city \(x\), define:
+- \(f_x(d)= d + dist[u][x]\) (linear increasing in \(d\))
+- \(g_x(d)= (L-d) + dist[v][x]\) (linear decreasing in \(d\))
+
+Then the contribution of city \(x\) is:
+\[
+h_x(d)=\min(f_x(d), g_x(d))
+\]
+This is a **concave, piecewise-linear** function (a “∧” shape).
+
+- The **sum of concave functions** is concave.
+So \(E(d)\) is concave on the interval \([R, L-R]\).
+
+A fundamental property:
+- A concave function on a closed interval achieves its **minimum at an endpoint**.
+
+Therefore, for each road, we only need to test:
+- \(d = R\)
+- \(d = L - R\)
+
+That collapses the “continuous placement” search on each edge to just **two checks**.
+
+---
+
+### Complexity
+- Floyd–Warshall: \(O(N^3)\)
+- For each edge, compute cost at two positions: \(O(M \cdot N)\)
+- Total: \(O(N^3 + MN)\), easily fine for \(N=100\).
+
+---
+
+### Output scaling
+Probabilities sum to 10000, so the computed weighted sum is in “(probability units) × km”. Divide final minimum by **10000.0** to get km.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper output for pair (not actually used in final printing here)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper input for pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (not used for final answer)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m, r;                                // number of cities, roads, and forbidden radius R
+vector<int> prob;                           // probabilities p_i in units summing to 10000
+vector<tuple<int, int, int>> edges;         // roads: (a, b, length)
+vector<vector<double>> dist;                // all-pairs shortest path distances
+
+void read() {
+    cin >> n >> m >> r;                     // read N, M, R
+
+    prob.resize(n);
+    for(auto& p: prob) {                    // read probabilities for each city
+        cin >> p;
+    }
+
+    edges.resize(m);
+
+    // Initialize distance matrix with "infinity"
+    dist.assign(n, vector<double>(n, 1e18));
+
+    // Distance from a node to itself is zero
+    for(int i = 0; i < n; i++) {
+        dist[i][i] = 0;
+    }
+
+    // Read each edge and set dist for its endpoints
+    for(auto& [a, b, l]: edges) {
+        cin >> a >> b >> l;                 // endpoints are 1-based in input
+        a--;
+        b--;
+        // In case of duplicates, keep the smallest length (though statement says at most one)
+        dist[a][b] = dist[b][a] = min(dist[a][b], (double)l);
+    }
+}
+
+void solve() {
+    // Compute all-pairs shortest paths (Floyd–Warshall)
+    for(int k = 0; k < n; k++) {
+        for(int i = 0; i < n; i++) {
+            for(int j = 0; j < n; j++) {
+                dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j]);
+            }
+        }
+    }
+
+    // If any pair is unreachable, the graph is disconnected => impossible
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            if(dist[i][j] > 1e17) {         // still effectively INF
+                cout << -1 << endl;
+                return;
+            }
+        }
+    }
+
+    double best = 1e18;                     // best expected cost in (prob units)*km
+
+    // If R == 0, stations may be placed directly in cities.
+    if(r == 0) {
+        for(int c = 0; c < n; c++) {        // try each city as station location
+            double cost = 0;
+            for(int x = 0; x < n; x++) {
+                cost += prob[x] * dist[c][x];
+            }
+            best = min(best, cost);
+        }
+    }
+
+    // Try placing station on each road where it's allowed (length >= 2R)
+    for(auto& [a, b, l]: edges) {
+        if(l < 2 * r) {                     // cannot keep distance >= R from both endpoints
+            continue;
+        }
+
+        // By concavity argument, only need to test the interval endpoints: d=R and d=L-R
+        for(double d: {(double)r, (double)(l - r)}) {
+            double cost = 0;
+            for(int x = 0; x < n; x++) {
+                // Distance from station (at position d from a) to city x:
+                // min(go via a, go via b)
+                cost += prob[x] * min(d + dist[a][x], (double)l - d + dist[b][x]);
+            }
+            best = min(best, cost);
+        }
+    }
+
+    // If best never updated (shouldn't happen if connected and some placement exists), print -1
+    if(best > 1e17) {
+        cout << -1 << endl;
+    } else {
+        // Convert from prob-units to true expectation by dividing by 10000
+        cout << fixed << setprecision(5) << best / 10000.0 << endl;
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;                            // single test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, with detailed comments)
+
+```python
+import sys
+from math import inf
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+    r = int(next(it))
+
+    # Probabilities p_i are integers summing to 10000 (hundredths of percent)
+    prob = [int(next(it)) for _ in range(n)]
+
+    # dist[i][j] will hold all-pairs shortest path distances
+    dist = [[inf] * n for _ in range(n)]
+    for i in range(n):
+        dist[i][i] = 0.0
+
+    edges = []
+    for _ in range(m):
+        a = int(next(it)) - 1
+        b = int(next(it)) - 1
+        L = int(next(it))
+        edges.append((a, b, L))
+        # Keep minimal length if repeated (usually unnecessary)
+        if L < dist[a][b]:
+            dist[a][b] = dist[b][a] = float(L)
+
+    # Floyd–Warshall: O(n^3), fine for n<=100
+    for k in range(n):
+        dk = dist[k]
+        for i in range(n):
+            dik = dist[i][k]
+            if dik == inf:
+                continue
+            di = dist[i]
+            # Relax j via k
+            for j in range(n):
+                nd = dik + dk[j]
+                if nd < di[j]:
+                    di[j] = nd
+
+    # If graph disconnected, impossible to reach all cities from any station
+    for i in range(n):
+        for j in range(n):
+            if dist[i][j] == inf:
+                print(-1)
+                return
+
+    best = inf  # best expected cost in (probability units) * km
+
+    # If R=0, station can be built in a city
+    if r == 0:
+        for c in range(n):
+            cost = 0.0
+            dc = dist[c]
+            for x in range(n):
+                cost += prob[x] * dc[x]
+            if cost < best:
+                best = cost
+
+    # Station can also be built on roads, at distance d from one endpoint.
+    # For each edge, only need to test d=R and d=L-R (concavity argument).
+    for a, b, L in edges:
+        if L < 2 * r:
+            continue  # no feasible point on this road
+        for d in (float(r), float(L - r)):
+            cost = 0.0
+            da = dist[a]
+            db = dist[b]
+            for x in range(n):
+                # dist(station, x) = min(d + dist[a][x], (L-d) + dist[b][x])
+                via_a = d + da[x]
+                via_b = (L - d) + db[x]
+                cost += prob[x] * (via_a if via_a < via_b else via_b)
+            if cost < best:
+                best = cost
+
+    if best == inf:
+        print(-1)
+    else:
+        # Divide by 10000 to convert from integer probability units to expectation.
+        # Print with 5 decimals as in the reference solution/output.
+        print(f"{best / 10000.0:.5f}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+1. Run **Floyd–Warshall** to compute shortest distances between all cities. If any pair is unreachable, output **-1**.
+2. If **R = 0**, consider placing the station in each city `c` and compute \(\sum p_x \cdot dist[c][x]\).
+3. For each road \((u,v)\) of length \(L\) with \(L \ge 2R\), a station position is \(d \in [R, L-R]\). For city \(x\),
+   \[
+   dist(\text{station},x)=\min(d+dist[u][x], (L-d)+dist[v][x]).
+   \]
+   The expected cost as a function of \(d\) is **concave**, hence its minimum on \([R, L-R]\) occurs at an endpoint. So test only **\(d=R\)** and **\(d=L-R\)**.
+4. Take the minimum over all tested placements; divide by **10000** and print with 5 decimals.

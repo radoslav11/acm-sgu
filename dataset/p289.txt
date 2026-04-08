@@ -1,0 +1,441 @@
+## 1) Abridged problem statement
+
+You are given multiple Tic-Tac-Toe (3×3) board positions. Player **Qc** uses **X** and moves first; player **He** uses **0** and moves second. Players alternate turns and play perfectly.  
+For each position, output one of:
+
+- `X wins.`
+- `0 wins.`
+- `Game is a draw.`
+- `Illegal position.` (if the position cannot occur in any valid game sequence)
+
+Input ends with a line containing only `Qc`.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key idea
+Tic-Tac-Toe has a very small state space: each of 9 cells can be `{empty, X, 0}` → `3^9 = 19683` possible boards.  
+We can precompute, for every *reachable* board position, the game outcome under perfect play using **minimax DP**.
+
+### State encoding (base-3)
+Represent a board as an integer `state` in base 3 with 9 digits:
+
+- digit 0 → empty (`.`)
+- digit 1 → X
+- digit 2 → 0
+
+Cell index `i` (0..8) corresponds to row `i//3`, col `i%3`.
+
+So:
+- `get_cell(state, i)` extracts the i-th base-3 digit.
+- `set_cell(state, i, v)` adds `v * 3^i` to set that digit (only used when currently 0).
+
+### Win detection
+There are 8 winning lines (3 rows, 3 cols, 2 diagonals).  
+`check_winner(state)` returns:
+- `1` if X has 3-in-a-row
+- `2` if 0 has 3-in-a-row
+- `0` otherwise
+
+### Whose turn?
+Count placed marks: `cnt = number of non-empty cells`.
+
+- If `cnt` is even → X to move (player = 1)
+- If `cnt` is odd → 0 to move (player = 2)
+
+This matches “X moves first” and strict alternation.
+
+### DP meaning
+Let `dp[state]` be the game result from this position with perfect play:
+
+- `dp = 1`  → X will win
+- `dp = -1` → 0 will win
+- `dp = 0`  → draw
+
+### Minimax recursion
+From a state:
+1. If someone already won → terminal:
+   - winner X → `dp = 1`
+   - winner 0 → `dp = -1`
+2. Else if board full → `dp = 0`
+3. Else:
+   - determine current player (X or 0)
+   - generate all moves to empty cells
+   - if X to move: choose move maximizing `dp[next]`
+   - if 0 to move: choose move minimizing `dp[next]`
+
+### Detecting illegal positions (reachability)
+Many of the 19683 base-3 boards are impossible in real play (wrong counts, moves after a win, etc.).  
+Instead of checking legality via rules, the code **marks states reachable from the empty board** by playing legal moves in order.
+
+- Start with `reachable[0] = true`
+- DFS from state 0:
+  - stop expanding a state if it is already a win (game ends immediately)
+  - otherwise try placing the correct next player’s mark in any empty cell, and recurse
+- Any input state not marked reachable is **illegal**.
+
+This is robust and simple.
+
+### Answering queries
+For each board:
+1. Encode into `state`.
+2. If `reachable[state] == false` → `Illegal position.`
+3. Else print based on `dp[state]`.
+
+Complexity:
+- Precompute explores only reachable states (≈ a few thousand).
+- Each query is O(9) to encode + O(1) lookup.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Include almost all standard C++ headers
+using namespace std;
+
+// Overload output operator for pair (not essential for this problem).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pair (not essential for this problem).
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vector (not essential for this problem).
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) {                // Read each element of the vector
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output operator for vector (not essential for this problem).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) {                 // Print each element followed by a space
+        out << x << ' ';
+    }
+    return out;
+};
+
+const int STATES = 19683;             // 3^9 possible boards (each cell in {0,1,2})
+
+// All 8 winning lines (indices in a flat 0..8 board).
+const int lines[8][3] = {
+    {0, 1, 2}, {3, 4, 5}, {6, 7, 8},  // 3 rows
+    {0, 3, 6}, {1, 4, 7}, {2, 5, 8},  // 3 columns
+    {0, 4, 8}, {2, 4, 6}              // 2 diagonals
+};
+
+int dp[STATES];                       // dp[state] ∈ {1,0,-1} = X win / draw / 0 win
+bool reachable[STATES];               // reachable[state] == true if legal from empty board
+
+// Extract the value in cell i from base-3 encoded state.
+// Returns 0 for empty, 1 for X, 2 for 0.
+int get_cell(int state, int i) {
+    for (int j = 0; j < i; j++) {     // Divide by 3^i
+        state /= 3;
+    }
+    return state % 3;                 // Take digit in base 3
+}
+
+// Set cell i to value v by adding v * 3^i.
+// Assumes the cell was previously 0 (empty).
+int set_cell(int state, int i, int v) {
+    int pw = 1;
+    for (int j = 0; j < i; j++) {     // Compute 3^i
+        pw *= 3;
+    }
+    return state + v * pw;            // Add digit contribution
+}
+
+// Check whether there is a winner in this state.
+// Returns 1 if X wins, 2 if 0 wins, 0 otherwise.
+int check_winner(int state) {
+    for (auto& line: lines) {         // For every winning triple
+        int a = get_cell(state, line[0]);
+        int b = get_cell(state, line[1]);
+        int c = get_cell(state, line[2]);
+        if (a && a == b && b == c) {  // Non-empty and all equal => winner
+            return a;
+        }
+    }
+    return 0;                         // No winner
+}
+
+// Count how many marks (X or 0) are placed on the board.
+int count_pieces(int state) {
+    int cnt = 0;
+    for (int i = 0; i < 9; i++) {
+        if (get_cell(state, i)) {     // Non-zero means occupied
+            cnt++;
+        }
+    }
+    return cnt;
+}
+
+// Precompute dp[] and reachable[] for all states reachable via legal play.
+void precompute() {
+    memset(reachable, false, sizeof(reachable)); // Initially, nothing is reachable
+    reachable[0] = true;                         // Empty board is reachable
+
+    // DFS that computes dp[state] using minimax and also marks reachability.
+    function<void(int)> dfs = [&](int state) {
+        int w = check_winner(state);             // If game already won...
+        if (w) {
+            dp[state] = (w == 1) ? 1 : -1;       // X win => 1, 0 win => -1
+            return;                              // Terminal: don't expand further
+        }
+
+        int cnt = count_pieces(state);
+        if (cnt == 9) {                          // Board full => draw
+            dp[state] = 0;
+            return;
+        }
+
+        // Determine whose turn: X (1) if even count, else 0 (2).
+        int player = (cnt % 2 == 0) ? 1 : 2;
+
+        bool maximizing = (player == 1);         // X maximizes dp, 0 minimizes dp
+
+        // Initialize dp to an "impossible extreme" so first move updates it.
+        dp[state] = maximizing ? -2 : 2;
+
+        // Try placing current player's mark in every empty cell.
+        for (int i = 0; i < 9; i++) {
+            if (get_cell(state, i) == 0) {       // If empty
+                int nxt = set_cell(state, i, player);
+
+                // Mark next state reachable; compute it once.
+                if (!reachable[nxt]) {
+                    reachable[nxt] = true;
+                    dfs(nxt);
+                }
+
+                // Minimax update: X chooses max outcome, 0 chooses min outcome.
+                if (maximizing) {
+                    dp[state] = max(dp[state], dp[nxt]);
+                } else {
+                    dp[state] = min(dp[state], dp[nxt]);
+                }
+            }
+        }
+    };
+
+    dfs(0);                                      // Start DFS from empty board
+}
+
+string board[3];                                 // Input board lines
+
+void solve() {
+    // Encode the 3x3 board into base-3 state integer.
+    int state = 0;
+    for (int i = 0; i < 9; i++) {
+        char c = board[i / 3][i % 3];            // Map flat index to (row,col)
+        if (c == 'X') {
+            state = set_cell(state, i, 1);       // X -> 1
+        } else if (c == '0') {
+            state = set_cell(state, i, 2);       // 0 -> 2
+        }
+        // '.' leaves digit at 0
+    }
+
+    // If state isn't reachable from empty board by legal play => illegal.
+    if (!reachable[state]) {
+        cout << "Illegal position.\n";
+    } else if (dp[state] == 1) {                 // X wins under perfect play
+        cout << "X wins.\n";
+    } else if (dp[state] == -1) {                // 0 wins under perfect play
+        cout << "0 wins.\n";
+    } else {                                     // Draw
+        cout << "Game is a draw.\n";
+    }
+}
+
+// Read one test case. Return false at termination token "Qc".
+bool read() {
+    cin >> board[0];                             // Read first line
+    if (board[0] == "Qc") {                      // Termination condition
+        return false;
+    }
+    cin >> board[1] >> board[2];                 // Read remaining 2 lines
+    return true;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);            // Fast I/O
+    cin.tie(nullptr);
+
+    precompute();                                // Precompute minimax outcomes
+
+    while (read()) {                             // For each test case
+        solve();                                 // Answer it
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+sys.setrecursionlimit(1000000)
+
+STATES = 3 ** 9  # 19683
+
+# Winning triples in flattened 0..8 indexing
+LINES = [
+    (0, 1, 2), (3, 4, 5), (6, 7, 8),  # rows
+    (0, 3, 6), (1, 4, 7), (2, 5, 8),  # cols
+    (0, 4, 8), (2, 4, 6)              # diagonals
+]
+
+# dp[state] = 1  (X wins), 0 (draw), -1 (0 wins)
+dp = [0] * STATES
+
+# reachable[state] = whether this state can occur from empty board via legal play
+reachable = [False] * STATES
+
+# Precompute powers of 3 for fast digit operations
+pow3 = [1] * 9
+for i in range(1, 9):
+    pow3[i] = pow3[i - 1] * 3
+
+def get_cell(state: int, i: int) -> int:
+    """Return base-3 digit at position i: 0 empty, 1 X, 2 0."""
+    return (state // pow3[i]) % 3
+
+def set_cell(state: int, i: int, v: int) -> int:
+    """
+    Return new state with digit i set to v by adding v * 3^i.
+    Assumes digit i is currently 0.
+    """
+    return state + v * pow3[i]
+
+def check_winner(state: int) -> int:
+    """Return 1 if X wins, 2 if 0 wins, 0 otherwise."""
+    for a, b, c in LINES:
+        va = get_cell(state, a)
+        if va != 0 and va == get_cell(state, b) and va == get_cell(state, c):
+            return va
+    return 0
+
+def count_pieces(state: int) -> int:
+    """Count number of non-empty cells."""
+    cnt = 0
+    for i in range(9):
+        if get_cell(state, i) != 0:
+            cnt += 1
+    return cnt
+
+def precompute():
+    """DFS from empty board to mark reachable states and compute minimax dp."""
+    reachable[0] = True
+
+    def dfs(state: int):
+        w = check_winner(state)
+        if w != 0:
+            # Terminal: someone already won
+            dp[state] = 1 if w == 1 else -1
+            return
+
+        cnt = count_pieces(state)
+        if cnt == 9:
+            # Terminal: full board => draw
+            dp[state] = 0
+            return
+
+        # Determine player to move by parity of pieces
+        player = 1 if (cnt % 2 == 0) else 2  # 1=X, 2=0
+
+        if player == 1:
+            # X chooses the move with maximum dp outcome
+            best = -2
+            for i in range(9):
+                if get_cell(state, i) == 0:
+                    nxt = set_cell(state, i, 1)
+                    if not reachable[nxt]:
+                        reachable[nxt] = True
+                        dfs(nxt)
+                    best = max(best, dp[nxt])
+            dp[state] = best
+        else:
+            # 0 chooses the move with minimum dp outcome
+            best = 2
+            for i in range(9):
+                if get_cell(state, i) == 0:
+                    nxt = set_cell(state, i, 2)
+                    if not reachable[nxt]:
+                        reachable[nxt] = True
+                        dfs(nxt)
+                    best = min(best, dp[nxt])
+            dp[state] = best
+
+    dfs(0)
+
+def encode_board(rows) -> int:
+    """Convert 3 strings of length 3 into base-3 encoded state."""
+    state = 0
+    for i in range(9):
+        ch = rows[i // 3][i % 3]
+        if ch == 'X':
+            state = set_cell(state, i, 1)
+        elif ch == '0':
+            state = set_cell(state, i, 2)
+    return state
+
+def main():
+    precompute()
+
+    data = sys.stdin.read().splitlines()
+    out = []
+    i = 0
+    while i < len(data):
+        line = data[i].strip()
+        i += 1
+
+        if line == "Qc":
+            break
+
+        # Each test case: 3 lines of board, then an empty line (may be absent at EOF)
+        row0 = line
+        row1 = data[i].strip(); i += 1
+        row2 = data[i].strip(); i += 1
+
+        # Optional empty line separator
+        if i < len(data) and data[i].strip() == "":
+            i += 1
+
+        state = encode_board([row0, row1, row2])
+
+        if not reachable[state]:
+            out.append("Illegal position.")
+        else:
+            if dp[state] == 1:
+                out.append("X wins.")
+            elif dp[state] == -1:
+                out.append("0 wins.")
+            else:
+                out.append("Game is a draw.")
+
+    sys.stdout.write("\n".join(out))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Encode the board as a base-3 integer (`3^9` states). Precompute with DFS from the empty board only, alternately placing X then 0; stop expanding after a win. Mark visited states as `reachable` (legal positions). Compute minimax `dp[state]` where X maximizes and 0 minimizes among children; terminal values are `1/-1/0` for X win / 0 win / draw. For each query, encode the input board; if not `reachable` print `Illegal position.`, else print result from `dp`.

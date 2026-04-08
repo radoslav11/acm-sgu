@@ -1,0 +1,239 @@
+## 1) Concise abridged problem statement
+
+There is initially one empty stand labeled **A** or **B** (given). Repeatedly, a company may choose any empty stand labeled with its own letter and perform one of two operations:
+
+1. **Fill it** with the competitor’s product (A-labeled empty becomes a filled **B**, and vice versa).
+2. **Expand it** into two new stands inserted to the **left** of that position: first a filled stand of its own product, and immediately to its right an empty stand labeled with the competitor. (The original chosen empty stand remains as an empty stand labeled with the same company.)
+
+By the start of the exhibition, **all stands must be filled**.  
+Given the initial label and the final left-to-right string of filled stands (only `A`/`B`), determine if this final arrangement is achievable.  
+`|s| ≤ 30000`.
+
+---
+
+## 2) Detailed editorial (explaining the solution)
+
+### Key observation: this is a context-free grammar
+Consider an **empty stand labeled X** as a nonterminal symbol `S_X` where `X ∈ {A, B}`.
+
+When we choose an empty stand labeled `A`, the rules say:
+
+- Operation 1: fill it with competitor `B`  
+  ⇒ `S_A -> 'B'`
+- Operation 2: put to the left a filled `A`, then an empty stand labeled `B`, while the chosen empty `A` stays at the original place  
+  Reading left-to-right, this creates: `'A'` then `S_B` then `S_A`  
+  ⇒ `S_A -> 'A' S_B S_A`
+
+Similarly for `B`:
+
+- `S_B -> 'A'`
+- `S_B -> 'B' S_A S_B`
+
+So the grammar is:
+
+- `S_A -> 'B' | 'A' S_B S_A`
+- `S_B -> 'A' | 'B' S_A S_B`
+
+We start from `S_init` where `init` is the first line input. We must check whether the given final string `s` is in the language of this grammar.
+
+### Why parsing is easy (LL(1) behavior)
+Look at `S_A`:
+
+- If the next character to produce is `'B'`, we must use `S_A -> 'B'`.
+- If the next character is `'A'`, we must use `S_A -> 'A' S_B S_A`.
+
+So **the next terminal uniquely determines the production**. Same for `S_B`. This means we can do deterministic predictive parsing with a stack.
+
+### Stack simulation (predictive parsing)
+Maintain a stack of “pending empty stands” (nonterminals), initially `[init]`.
+
+Process the desired output string from left to right, for each character `c`:
+
+1. If the stack is empty: we have produced too many terminals already ⇒ **NO**.
+2. Pop top nonterminal `top` (`A` meaning `S_A`, `B` meaning `S_B`).
+3. Two cases:
+   - If `c` is the **opponent** of `top`, then we match the terminal rule:
+     - `S_A -> 'B'` or `S_B -> 'A'`
+     - consume `c`, push nothing.
+   - If `c == top`, we must match the expanding rule:
+     - `S_A -> 'A' S_B S_A`
+     - `S_B -> 'B' S_A S_B`
+     We consumed the leading terminal `c` already, so we must now parse the remaining suffix `S_opponent(top) S_top`.
+     Since we use a stack (LIFO), we push in reverse order:
+     - push `top` then `opponent(top)`  
+     so that `opponent(top)` is processed next.
+
+After consuming all characters, the stack must be empty to ensure all stands are filled exactly ⇒ **YES** iff stack empty.
+
+### Correctness sketch
+- Determinism: at each step, the next output char forces the unique valid production for the top nonterminal, if any.
+- The stack exactly represents the sequence of empty stands that still need to be expanded/filled to generate the remaining suffix.
+- If we ever need a nonterminal but stack is empty ⇒ impossible.
+- If stack non-empty after consuming all output ⇒ would require more terminals ⇒ impossible.
+
+### Complexity
+Each output character causes O(1) stack operations.  
+Time: **O(n)**, Space: **O(n)**, with `n ≤ 30000`.
+
+---
+
+## 3) Provided C++ solution with detailed comments (line-by-line)
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard C++ headers
+using namespace std;
+
+// Output operator for pair (not used in this solution, but included as template utility)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pair (not used here)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vector (not used here)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {           // Read each element
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vector (not used here)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {            // Print each element followed by a space
+        out << x << ' ';
+    }
+    return out;
+};
+
+char init;                        // Initial empty stand label: 'A' or 'B'
+string s;                         // Final row of filled stands (letters A/B)
+
+// Reads input: first line a char, second line a string
+void read() { cin >> init >> s; }
+
+void solve() {
+    // The comments in the original solution explain converting the process
+    // into a grammar with two nonterminals S_A and S_B.
+    //
+    // We then do LL(1)-style predictive parsing using a stack:
+    // stack holds pending nonterminals (represented just by 'A' or 'B').
+    //
+    // If next char c equals the nonterminal label, we expand:
+    //   S_A -> 'A' S_B S_A   => push A then B
+    //   S_B -> 'B' S_A S_B   => push B then A
+    // If c is the opponent, we match terminal production and push nothing.
+
+    // Helper lambda: opponent('A') = 'B', opponent('B') = 'A'
+    auto opponent = [](char c) { return c == 'A' ? 'B' : 'A'; };
+
+    vector<char> stack = {init};  // Stack initialized with starting nonterminal
+    for (char c : s) {            // Process the final string left-to-right
+        if (stack.empty()) {      // No nonterminal to generate this character => impossible
+            cout << "NO" << endl;
+            return;
+        }
+
+        char top = stack.back();  // Get top pending nonterminal
+        stack.pop_back();         // Remove it (we will "expand" or "match" it now)
+
+        if (c == top) {           // Need expanding production (starts with same letter)
+            stack.push_back(top);             // Push S_top (will be processed later)
+            stack.push_back(opponent(top));   // Push S_opponent on top (processed next)
+            // Note: if c != top, then c must be opponent(top) and we match terminal;
+            // in that case we push nothing.
+        }
+    }
+
+    // After consuming all characters, we must have no pending nonterminals
+    cout << (stack.empty() ? "YES" : "NO") << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast IO
+    cin.tie(nullptr);                 // Untie cin/cout for speed
+
+    int T = 1;                        // Single test case
+    // cin >> T;                      // Multi-test disabled in this problem
+    for (int test = 1; test <= T; test++) {
+        read();                       // Read input
+        solve();                      // Solve and print answer
+    }
+
+    return 0;                         // Successful exit
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+
+def opponent(c: str) -> str:
+    """Return the competitor letter."""
+    return 'B' if c == 'A' else 'A'
+
+def main() -> None:
+    # Read input lines; they may contain trailing newlines/spaces.
+    data = [line.strip() for line in sys.stdin if line.strip() != ""]
+    init = data[0]          # 'A' or 'B'
+    s = data[1]             # final filled stands string
+
+    # Stack of pending nonterminals (empty stands to be resolved).
+    # We represent S_A as 'A' and S_B as 'B'.
+    stack = [init]
+
+    # Predictive parsing / simulation:
+    for ch in s:
+        # If there is no pending empty stand to produce the next filled stand,
+        # the string cannot be generated.
+        if not stack:
+            print("NO")
+            return
+
+        top = stack.pop()  # Get the nonterminal we must expand/match now
+
+        if ch == top:
+            # Expand:
+            # S_A -> 'A' S_B S_A
+            # S_B -> 'B' S_A S_B
+            #
+            # We already consumed the leading terminal (ch),
+            # so we must still generate: S_opponent(top) then S_top.
+            # Using a stack, push in reverse order so opponent is processed first.
+            stack.append(top)
+            stack.append(opponent(top))
+        else:
+            # Must be the terminal production:
+            # S_A -> 'B'  or  S_B -> 'A'
+            # We consume ch and push nothing.
+            # If ch is neither top nor opponent(top), it would be invalid,
+            # but since alphabet is only A/B, it's implicitly handled.
+            pass
+
+    # After producing all characters, all nonterminals must be resolved.
+    print("YES" if not stack else "NO")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model an empty stand labeled `X` as nonterminal `S_X`. Operations imply grammar:
+
+- `S_A -> 'B' | 'A' S_B S_A`
+- `S_B -> 'A' | 'B' S_A S_B`
+
+This grammar is deterministic by next character: when expanding `S_X`, if next char is `opponent(X)` use terminal rule; if next char is `X` use expanding rule. So parse `s` left-to-right with a stack of pending nonterminals initialized with `init`. For each char `c`, pop `top`. If `c==top`, push `top` then `opponent(top)`; otherwise match terminal and push nothing. If stack empty too early ⇒ NO. After processing all chars, stack must be empty ⇒ YES else NO. Time O(n), space O(n).

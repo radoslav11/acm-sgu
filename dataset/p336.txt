@@ -1,0 +1,445 @@
+## 1) Abridged problem statement
+
+There are **N** initial parties (1…N). Directed edges `(a -> b)` mean *a has discrediting information about b*.  
+We process **Q** queries:
+
+- **`1 a b`**: output **YES/NO** — does entity `a` (party or previously created block) know something about entity `b`?
+- **`2 a b`**: **merge** entities `a` and `b` into a **new block** with a new id (N+1, N+2, …).  
+  The new block:
+  - keeps **all outgoing info** of both (`a`’s and `b`’s outgoing edges become outgoing from the new block),
+  - and all **incoming info** to either `a` or `b` now points to the new block (edges into `a` or `b` become edges into the new block).
+  - Self-information is allowed.
+
+All queries refer only to currently existing parties/blocks.
+
+Constraints: `N ≤ 1e5, M ≤ 2e5, Q ≤ 2e5`.
+
+---
+
+## 2) Detailed editorial (how the given solution works)
+
+### Model as a dynamic directed graph of “current entities”
+At any time we have some active entities (initial parties plus blocks created so far). A merge replaces two active nodes `u` and `v` by a new block `k`.
+
+We must support:
+- **Edge existence query**: is there an edge `u -> v`?
+- **Merge operation**: redirect all edges incident to `u` or `v` to point to `k`, and union their outgoing sets.
+
+A naive merge that scans all nodes to redirect edges is too slow.
+
+### Key idea: small-to-large (DSU-style) on adjacency maintenance
+Maintain for each **active representative id**:
+- `know[x]`: list of outgoing neighbors (edges `x -> y`)
+- `appears[x]`: list of incoming sources (edges `y -> x`), i.e., reverse adjacency
+
+When merging `u` and `v`, we choose to **keep** the “bigger” structure and move the smaller one into it:
+- pick `u` as the “large” node, `v` as “small”
+- move all outgoing edges of `v` into `u`
+- move all incoming edges of `v` into `u` by updating those sources’ outgoing edges
+
+This reduces total moved elements over all merges: each edge endpoint participates in moves only `O(log N)` times amortized.
+
+The size metric used in code is:
+```
+know[x].size() + appears[x].size()
+```
+which approximates total incident edges stored for that node.
+
+### Fast edge queries with a global hash set
+Checking “does `u` know `v`?” should be `O(1)` average.
+
+The solution keeps a hash table `edges` containing all currently known directed edges as keys:
+```
+key(u,v) = u * MOD + v
+MOD = n + 1  (n = initial N; safe because u,v ≤ N+Q and MOD > max initial index? Actually MOD is used only as base to make pairs unique given u,v < MOD; here MOD = n+1, and u can exceed n, but u*MOD+v is still collision-free as long as we treat it as a pair encoding with base MOD only if v < MOD. In this solution, ids used inside edges are *representative ids in [0..n-1]*, so it stays safe.
+```
+Important subtlety: the code never creates a new representative id for a merged block; it **reuses** one of the two reps (the chosen `u`). The “new block number” from the statement is handled by `id[]` mapping (explained next), not by creating a fresh graph node.
+
+### Handling new block identifiers: the `id[]` indirection trick
+Queries refer to block numbers N+1, N+2, … which are new “names”. Internally, the algorithm wants to keep only a small set of representatives.
+
+So it maintains:
+- `id[x]` = internal representative of external entity number `x` (0-indexed)
+
+Initially, `id[i] = i` for parties.
+
+When a merge happens and we decide representative is `u`, we must create a new external id for the new block. The code does:
+```
+id.push_back(u)
+```
+Thus, the new external number maps to representative `u`.  
+The old representative `v` is marked inactive and its lists are cleared.
+
+So external entities are just aliases that point to the current internal representative.
+
+### How merge updates are done
+Merge `u` (keep) and `v` (absorb), both are internal representatives.
+
+We must ensure semantics:
+- Outgoing of new block = outgoing(u) ∪ outgoing(v)
+- Incoming of new block = incoming(u) ∪ incoming(v)
+- Any edge involving v should now involve u
+
+The code performs two loops:
+
+1) For each outgoing edge `v -> x` (x from `know[v]`):
+- if `x` inactive, skip (stale)
+- if `x == v`, it becomes `u -> u` (self-loop remapped)
+- add edge `u -> target` into:
+  - `know[u]`
+  - `appears[target]` (reverse link)
+  - `edges` hash table
+
+2) For each incoming edge `x -> v` (x from `appears[v]`):
+- if `x` inactive, skip
+- if `x == v`, it becomes `u -> u`
+- add edge `source -> u` into:
+  - `know[source]`
+  - `appears[u]`
+  - `edges`
+
+Then it clears `know[v]`, `appears[v]`, sets `active[v]=false`.
+
+#### Why are stale entries okay?
+When we “add” edges during merges, we never remove old edges from `edges` or adjacency lists; that would be expensive.
+
+Instead:
+- inactive nodes are ignored during merges (`if !active[x] continue`)
+- query uses current representatives `pa=id[a], pb=id[b]`; representatives are always active
+- `edges` contains all edges ever created between representatives, and because representatives are reused, the relevant ones remain valid for the current rep graph.
+
+This is a common “lazy” approach: don’t delete, only add, and ignore dead nodes.
+
+### Complexity
+Let `S(x)=|know[x]|+|appears[x]|` for active reps.
+
+By small-to-large, every time an element from lists moves, it moves into a structure at least twice as big, so each element moves `O(log N)` times amortized.
+
+Total work over all merges: `O((M + number_of_added_links) log N)` average with hashing.  
+Queries type 1: `O(1)` average each.
+
+Fits the constraints.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+#include <ext/pb_ds/assoc_container.hpp>
+#include <ext/pb_ds/tree_policy.hpp>
+
+// Standard namespaces
+using namespace std;
+using namespace __gnu_pbds;
+
+// Aggressive compiler optimizations (common in CF for tight TL)
+#pragma GCC optimize("O3")
+#pragma GCC target("avx2")
+#pragma GCC optimize("unroll-loops")
+
+// Helper: print a pair "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper: read a pair
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper: read a whole vector
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Helper: print a whole vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+}
+
+// Custom hash to protect against hacky inputs that break unordered_hash
+// (splitmix64 is a standard robust hash).
+struct custom_hash {
+    static uint64_t splitmix64(uint64_t x) {
+        x += 0x9e3779b97f4a7c15;
+        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9;
+        x = (x ^ (x >> 27)) * 0x94d049bb133111eb;
+        return x ^ (x >> 31);
+    }
+    size_t operator()(uint64_t x) const {
+        static const uint64_t FIXED_RANDOM =
+            chrono::steady_clock::now().time_since_epoch().count();
+        return splitmix64(x + FIXED_RANDOM);
+    }
+};
+
+int n, m, q;
+
+// know[u] stores outgoing adjacency list of u: edges u -> v
+vector<vector<int>> know;
+
+void read() {
+    cin >> n >> m;
+    know.assign(n, {});          // allocate n lists, initially empty
+
+    for(int i = 0; i < m; i++) {
+        int a, b;
+        cin >> a >> b;
+        a--;                     // convert to 0-based
+        b--;
+        know[a].push_back(b);    // edge a -> b
+    }
+    cin >> q;
+}
+
+void solve() {
+    // id[x] maps external entity number x (0-based, includes created blocks)
+    // to an internal representative node (also 0-based).
+    vector<int> id(n);
+    iota(id.begin(), id.end(), 0);   // initial parties map to themselves
+
+    // active[u] tells whether internal representative u is still alive
+    vector<bool> active(n, true);
+
+    // appears[v] stores "incoming adjacency list" for v:
+    // all nodes u such that u -> v exists (reverse graph).
+    vector<vector<int>> appears(n);
+
+    // Build reverse adjacency from initial know lists.
+    for(int i = 0; i < n; i++) {
+        for(int j: know[i]) {
+            appears[j].push_back(i);
+        }
+    }
+
+    // Hash table of all directed edges currently considered present.
+    // key = u*MOD + v.
+    gp_hash_table<int64_t, null_type, custom_hash> edges;
+
+    // Base for encoding a pair into one integer.
+    // Here it works because internal representatives always stay within [0..n-1].
+    int64_t MOD = n + 1LL;
+
+    // Insert all initial edges into the hash set.
+    for(int i = 0; i < n; i++) {
+        for(int j: know[i]) {
+            edges.insert(i * MOD + j);
+        }
+    }
+
+    // Process queries in order
+    for(int qi = 0; qi < q; qi++) {
+        int type, a, b;
+        cin >> type >> a >> b;
+        a--; b--; // 0-based external ids
+
+        if(type == 1) {
+            // Query: does a know b?
+            // Convert external ids -> internal representatives
+            int pa = id[a];
+            int pb = id[b];
+
+            // Answer by checking existence in the hash set
+            cout << (edges.find(pa * MOD + pb) != edges.end() ? "YES" : "NO")
+                 << "\n";
+        } else {
+            // Merge query: create a new block from a and b
+
+            // Convert to internal representatives
+            int u = id[a], v = id[b];
+
+            // If they already point to the same rep, nothing changes
+            if(u == v) {
+                continue;
+            }
+
+            // Small-to-large: ensure u is the "larger" structure
+            if(know[u].size() + appears[u].size() <
+               know[v].size() + appears[v].size()) {
+                swap(u, v);
+            }
+
+            // Move all outgoing edges of v into u:
+            // For each v -> x, add u -> x (with remap if x==v).
+            for(int x: know[v]) {
+                if(!active[x]) {          // ignore edges to dead reps
+                    continue;
+                }
+                int target = (x == v ? u : x);  // v becomes u after merge
+                know[u].push_back(target);      // store outgoing
+                appears[target].push_back(u);   // store reverse link
+                edges.insert(u * MOD + target); // store in hash set
+            }
+
+            // Move all incoming edges into v into u:
+            // For each x -> v, add x -> u (with remap if x==v).
+            for(int x: appears[v]) {
+                if(!active[x]) {          // ignore edges from dead reps
+                    continue;
+                }
+                int source = (x == v ? u : x);  // self-loop remap
+                know[source].push_back(u);      // x now points to u
+                appears[u].push_back(source);   // u has incoming from x
+                edges.insert(source * MOD + u); // record edge existence
+            }
+
+            // v is now absorbed; clear its lists to save memory/time later
+            know[v].clear();
+            appears[v].clear();
+            active[v] = false;
+
+            // Create a new external entity id for the new block.
+            // It maps to the kept representative u.
+            id.push_back(u);
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    sys.setrecursionlimit(1_000_000)
+    input = sys.stdin.readline
+
+    n, m = map(int, input().split())
+
+    # know[u] = outgoing adjacency list (representatives are 0..n-1 only)
+    know = [[] for _ in range(n)]
+    for _ in range(m):
+        a, b = map(int, input().split())
+        a -= 1; b -= 1
+        know[a].append(b)
+
+    q = int(input())
+
+    # id maps external entity index -> internal representative
+    # external indices start with 0..n-1 and we append for each merge
+    id_map = list(range(n))
+
+    # active reps: only original reps exist, some will be "killed" by merges
+    active = [True] * n
+
+    # appears[v] = list of sources u such that u -> v exists (reverse edges)
+    appears = [[] for _ in range(n)]
+    for u in range(n):
+        for v in know[u]:
+            appears[v].append(u)
+
+    # We need fast edge existence queries between representatives.
+    # Representants are in [0..n-1], so we can encode (u,v) as u*MOD + v
+    MOD = n + 1
+    edges = set()
+    for u in range(n):
+        for v in know[u]:
+            edges.add(u * MOD + v)
+
+    out_lines = []
+
+    for _ in range(q):
+        t, a, b = map(int, input().split())
+        a -= 1; b -= 1
+
+        if t == 1:
+            ra = id_map[a]
+            rb = id_map[b]
+            out_lines.append("YES" if (ra * MOD + rb) in edges else "NO")
+        else:
+            u = id_map[a]
+            v = id_map[b]
+            if u == v:
+                # still must create a new block in statement?
+                # Actually queries guarantee a!=b for type 2; but could map to same rep.
+                # In that case, no structural change, but a new external id would still exist.
+                # The C++ code 'continue's (does not push new id).
+                # We mimic C++ exactly:
+                continue
+
+            # Small-to-large heuristic: keep u as larger
+            if len(know[u]) + len(appears[u]) < len(know[v]) + len(appears[v]):
+                u, v = v, u
+
+            # Move outgoing edges v -> x into u -> x (with v remapped to u)
+            for x in know[v]:
+                if not active[x]:
+                    continue
+                target = u if x == v else x
+                know[u].append(target)
+                appears[target].append(u)
+                edges.add(u * MOD + target)
+
+            # Move incoming edges x -> v into x -> u (with v remapped to u)
+            for x in appears[v]:
+                if not active[x]:
+                    continue
+                source = u if x == v else x
+                know[source].append(u)
+                appears[u].append(source)
+                edges.add(source * MOD + u)
+
+            # Kill v
+            know[v].clear()
+            appears[v].clear()
+            active[v] = False
+
+            # New external block id points to representative u
+            id_map.append(u)
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+Note: This mirrors the provided C++ behavior (including not appending a new external id if `u==v` after mapping). If you want to follow the statement literally (always creating a new block id), you’d append `u` even in that case; but the C++ solution doesn’t, and apparently relies on the input structure / accepted interpretation.
+
+---
+
+## 5) Compressed editorial
+
+Maintain the graph between **internal representatives** (initial parties only). Each external block id stores a pointer `id[x]` to a representative.
+
+Keep:
+- `know[u]`: outgoing neighbors
+- `appears[u]`: incoming neighbors
+- global hash set `edges` for O(1) edge existence queries.
+
+For merge `2 a b`:
+- map to reps `u=id[a]`, `v=id[b]`
+- small-to-large: keep the rep with larger `|know|+|appears|`
+- add all outgoing `v->x` as `u->x` (remap `v` to `u`)
+- add all incoming `x->v` as `x->u` (remap `v` to `u`)
+- mark `v` inactive, clear its lists
+- append new external id: `id.push_back(u)`
+
+Query `1 a b`: check whether `edges` contains `(id[a], id[b])`.
+
+Amortized `O((M+Q) log N)` list moves with O(1) hashing per inserted edge; fits limits.

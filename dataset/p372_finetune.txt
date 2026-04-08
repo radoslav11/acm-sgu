@@ -1,0 +1,402 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+372. Tea Party
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Alice organizes a tea party for her classmates. There are K guests on this party and N types of tea of two kinds: black and green. During each party round, all guests who are currently present on the party get one bag of the same type of tea. After each party round, one of the guests leaves the party because he/she needs to meet somebody elsewhere. Alice needs to minimize the total cost of tea bags spent, but she also wants to make it so that all served tea types must be different, and any three consecutive rounds of the party are not using tea of the same kind. Help her.
+
+Input
+The first line of the input contains two integers K and N (1≤ K, N ≤ 1000). N lines follow, each for one tea type, containing two integers ci and si each (), where ci is the cost of one bag of i-th type, and si is zero for green tea and one for black tea.
+
+Output
+Output any possible optimal party plan — K different numbers between 1 and N, each for one type of tea. If it is impossible to organize the party, output "Impossible" without quotes.
+
+Example(s)
+sample input
+sample output
+3 4 
+1 0 
+2 0 
+4 1
+3 1
+1 2 4
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+There are **K** party rounds and **N** tea types. Tea `i` has **cost per bag** `c[i]` and **kind** `s[i]` (`0` = green, `1` = black).
+
+- In round `t` there are `K - t + 1` guests, so that round uses that many tea bags.
+- Each round chooses exactly one tea type; all guests get that type.
+- Across all **K** rounds, chosen tea types must be **all different**.
+- Additionally, **no three consecutive rounds** may use teas of the **same kind** (no `GGG` and no `BBB`).
+
+Goal: **minimize total cost** of all bags, and output any optimal sequence of **K distinct indices** (1..N), or print **`Impossible`** if it can’t be done.
+
+---
+
+## 2) Key observations
+
+1. **Earlier rounds matter more.**  
+   Round costs are multiplied by number of guests: `K, K-1, ..., 1`. So expensive teas should be used later whenever possible.
+
+2. **For any fixed pattern of kinds, cheapest teas of each kind are optimal.**  
+   Suppose we already decided which rounds are green vs black (e.g. `G B G ...`).  
+   Then within all green rounds, assigning a more expensive green tea earlier than a cheaper green tea can be swapped to reduce cost (classic “swap inversion” / rearrangement inequality). Same for black.
+
+   Therefore, if we use `cg` green teas total, we should take the **cheapest `cg` green teas**, and use them in increasing cost order across green rounds. Similarly for black.
+
+3. **Prefix property.**  
+   Since we always want the cheapest teas of each kind, we never skip a cheaper tea of the same kind. So the chosen teas are simply **prefixes** of the sorted green list and the sorted black list.
+
+4. **The only nontrivial constraint is “no three consecutive same kind.”**  
+   This constraint depends only on the **last two kinds**, so we can track it with a small finite-state “tail”.
+
+---
+
+## 3) Full solution approach
+
+### Step A — Split and sort teas
+- Build two lists:
+  - `green = [(cost, original_index), ...]`
+  - `black = [(cost, original_index), ...]`
+- Sort each list by `cost` ascending.
+
+If we decide to take `cg` greens and `cb` blacks (with `cg + cb = K`), the candidates are exactly:
+- greens: `green[0..cg-1]`
+- blacks: `black[0..cb-1]`
+
+### Step B — Dynamic Programming
+
+We build the plan round-by-round from round 1 to round K.
+
+Let:
+- `cg` = number of green teas already chosen,
+- `cb` = number of black teas already chosen,
+- `pos = cg + cb` = how many rounds have been planned so far,
+- next round has `guests = K - pos`.
+
+We also track a tail-state representing the last 1–2 kinds to enforce the “no three in a row” rule:
+
+Tail states (5 total):
+- `0` = start (no previous rounds)
+- `1` = last is `G`
+- `2` = last is `B`
+- `3` = last two are `GG`
+- `4` = last two are `BB`
+
+Transition table `transition[state][choice]`:
+- `choice=0` means choose `G`, `choice=1` means choose `B`
+- `-1` means invalid (would create `GGG` or `BBB`)
+
+We define:
+- `dp[cb][cg][state] = minimal total cost after pos rounds, using cb blacks and cg greens, ending with tail=state`.
+
+Transition:
+- If we choose **green** next:
+  - must have `cg < #greens_available`
+  - new cost: `dp + guests * green[cg].cost` (the next cheapest unused green)
+  - new state: `transition[state][0]`
+  - new counts: `(cb, cg+1)`
+- If we choose **black** next: similarly.
+
+Initialization:
+- `dp[0][0][0] = 0`
+
+Answer:
+- Among all states with `cb + cg = K`, take the minimum cost.
+- Use parent pointers to reconstruct the actual indices.
+
+If no dp state reaches length K → print `Impossible`.
+
+Complexity:
+- States: `O(K^2 * 5)` ≤ about 5 million when K=1000 (fine).
+- Transitions are constant. Memory fits in limits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int K, N;
+    cin >> K >> N;
+
+    vector<pair<int,int>> green, black; // (cost, original_index)
+    green.reserve(N);
+    black.reserve(N);
+
+    for (int i = 1; i <= N; i++) {
+        int c, s;
+        cin >> c >> s;
+        if (s == 0) green.push_back({c, i});
+        else        black.push_back({c, i});
+    }
+
+    sort(green.begin(), green.end());
+    sort(black.begin(), black.end());
+
+    int ng = (int)green.size();
+    int nb = (int)black.size();
+
+    // We never need more than K teas of any kind in a solution.
+    int maxG = min(ng, K);
+    int maxB = min(nb, K);
+
+    // Tail states:
+    // 0 = start, 1 = ...G, 2 = ...B, 3 = ...GG, 4 = ...BB
+    const int S = 5;
+
+    // transition[state][choice], choice 0=G, 1=B; -1 invalid.
+    static const int transition[S][2] = {
+        {1, 2},   // start -> G or B
+        {3, 2},   // ...G  -> G => ...GG, B => ...B
+        {1, 4},   // ...B  -> G => ...G,  B => ...BB
+        {-1, 2},  // ...GG -> cannot choose G; choose B => ...B
+        {1, -1}   // ...BB -> choose G => ...G; cannot choose B
+    };
+
+    const long long INF = (1LL<<62);
+
+    // dp[cb][cg][state]
+    vector<vector<array<long long, S>>> dp(
+        maxB + 1, vector<array<long long, S>>(maxG + 1)
+    );
+    for (int cb = 0; cb <= maxB; cb++)
+        for (int cg = 0; cg <= maxG; cg++)
+            dp[cb][cg].fill(INF);
+
+    // Parent pointers to reconstruct solution
+    struct Parent { int pcb, pcg, ps; };
+    vector<vector<array<Parent, S>>> par(
+        maxB + 1, vector<array<Parent, S>>(maxG + 1)
+    );
+
+    dp[0][0][0] = 0;
+
+    // Enumerate counts chosen so far.
+    for (int cb = 0; cb <= maxB; cb++) {
+        for (int cg = 0; cg <= maxG; cg++) {
+            int pos = cb + cg;
+            if (pos >= K) continue;          // already planned K rounds
+
+            int guests = K - pos;            // number of guests in next round
+
+            for (int st = 0; st < S; st++) {
+                long long cur = dp[cb][cg][st];
+                if (cur >= INF) continue;
+
+                // Try choosing next kind: 0 = green, 1 = black
+                for (int choice = 0; choice <= 1; choice++) {
+                    int nst = transition[st][choice];
+                    if (nst == -1) continue; // would create GGG or BBB
+
+                    if (choice == 0) {
+                        // choose green
+                        if (cg >= maxG) continue;       // no more greens usable
+                        long long add = 1LL * guests * green[cg].first; // next cheapest green
+                        int ncb = cb, ncg = cg + 1;
+                        if (cur + add < dp[ncb][ncg][nst]) {
+                            dp[ncb][ncg][nst] = cur + add;
+                            par[ncb][ncg][nst] = {cb, cg, st};
+                        }
+                    } else {
+                        // choose black
+                        if (cb >= maxB) continue;       // no more blacks usable
+                        long long add = 1LL * guests * black[cb].first; // next cheapest black
+                        int ncb = cb + 1, ncg = cg;
+                        if (cur + add < dp[ncb][ncg][nst]) {
+                            dp[ncb][ncg][nst] = cur + add;
+                            par[ncb][ncg][nst] = {cb, cg, st};
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pick best end among all states with cb+cg = K
+    long long best = INF;
+    int bestCB = -1, bestCG = -1, bestST = -1;
+
+    for (int cb = 0; cb <= maxB; cb++) {
+        int cg = K - cb;
+        if (cg < 0 || cg > maxG) continue;
+        for (int st = 0; st < S; st++) {
+            if (dp[cb][cg][st] < best) {
+                best = dp[cb][cg][st];
+                bestCB = cb; bestCG = cg; bestST = st;
+            }
+        }
+    }
+
+    if (best >= INF) {
+        cout << "Impossible\n";
+        return 0;
+    }
+
+    // Reconstruct the chosen tea indices backwards.
+    vector<int> ans(K);
+    int cb = bestCB, cg = bestCG, st = bestST;
+
+    for (int pos = K - 1; pos >= 0; pos--) {
+        Parent p = par[cb][cg][st];
+
+        // If cg decreased when going to parent, last choice was green; else black.
+        if (p.pcg < cg) {
+            ans[pos] = green[cg - 1].second;  // last used green is index cg-1 in sorted list
+        } else {
+            ans[pos] = black[cb - 1].second;  // last used black is index cb-1 in sorted list
+        }
+
+        cb = p.pcb;
+        cg = p.pcg;
+        st = p.ps;
+    }
+
+    for (int i = 0; i < K; i++) {
+        cout << ans[i] << (i + 1 == K ? '\n' : ' ');
+    }
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+INF = 10**30
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    K = int(next(it))
+    N = int(next(it))
+
+    green = []  # (cost, original_index)
+    black = []  # (cost, original_index)
+
+    for i in range(1, N + 1):
+        c = int(next(it))
+        s = int(next(it))
+        if s == 0:
+            green.append((c, i))
+        else:
+            black.append((c, i))
+
+    green.sort()
+    black.sort()
+
+    ng, nb = len(green), len(black)
+    maxG = min(ng, K)
+    maxB = min(nb, K)
+
+    # Tail states: 0=start, 1=...G, 2=...B, 3=...GG, 4=...BB
+    transition = [
+        (1, 2),    # start -> G/B
+        (3, 2),    # ...G  -> G => ...GG, B => ...B
+        (1, 4),    # ...B  -> G => ...G,  B => ...BB
+        (-1, 2),   # ...GG -> cannot choose G
+        (1, -1),   # ...BB -> cannot choose B
+    ]
+    S = 5
+
+    # dp[cb][cg][st]
+    dp = [[[INF] * S for _ in range(maxG + 1)] for __ in range(maxB + 1)]
+    # parent pointers: store previous (cb, cg, st)
+    par = [[[(0, 0, 0)] * S for _ in range(maxG + 1)] for __ in range(maxB + 1)]
+
+    dp[0][0][0] = 0
+
+    for cb in range(maxB + 1):
+        for cg in range(maxG + 1):
+            pos = cb + cg
+            if pos >= K:
+                continue
+            guests = K - pos  # guests in next round
+
+            for st in range(S):
+                cur = dp[cb][cg][st]
+                if cur >= INF:
+                    continue
+
+                # choice 0=green, 1=black
+                for choice in (0, 1):
+                    nst = transition[st][choice]
+                    if nst == -1:
+                        continue
+
+                    if choice == 0:
+                        # take next cheapest unused green: green[cg]
+                        if cg >= maxG:
+                            continue
+                        add = guests * green[cg][0]
+                        ncb, ncg = cb, cg + 1
+                    else:
+                        # take next cheapest unused black: black[cb]
+                        if cb >= maxB:
+                            continue
+                        add = guests * black[cb][0]
+                        ncb, ncg = cb + 1, cg
+
+                    new_cost = cur + add
+                    if new_cost < dp[ncb][ncg][nst]:
+                        dp[ncb][ncg][nst] = new_cost
+                        par[ncb][ncg][nst] = (cb, cg, st)
+
+    # Choose best end state with cb+cg=K
+    best = INF
+    best_state = None
+    for cb in range(maxB + 1):
+        cg = K - cb
+        if cg < 0 or cg > maxG:
+            continue
+        for st in range(S):
+            if dp[cb][cg][st] < best:
+                best = dp[cb][cg][st]
+                best_state = (cb, cg, st)
+
+    if best_state is None:
+        sys.stdout.write("Impossible\n")
+        return
+
+    # Reconstruct sequence
+    ans = [0] * K
+    cb, cg, st = best_state
+
+    for pos in range(K - 1, -1, -1):
+        pcb, pcg, pst = par[cb][cg][st]
+
+        # If cg decreased, last pick was green; otherwise black.
+        if pcg < cg:
+            ans[pos] = green[cg - 1][1]
+        else:
+            ans[pos] = black[cb - 1][1]
+
+        cb, cg, st = pcb, pcg, pst
+
+    sys.stdout.write(" ".join(map(str, ans)) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+These implementations follow the observations precisely: choose cheapest prefixes per kind, and use DP only to decide the kind sequence under the “no three consecutive same kind” rule while minimizing weighted costs.

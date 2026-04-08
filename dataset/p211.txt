@@ -1,0 +1,368 @@
+## 1) Concise, abridged problem statement
+
+You have a counter with `N` registers (positions `0..N-1`). Each register stores a digit `Ai ∈ {0,1,2}` and represents the value:
+
+\[
+\sum_{i=0}^{N-1} A_i \cdot 2^i
+\]
+
+Initially all `Ai = 0`. You must perform `M` operations; operation `p` means “add \(2^p\)” to the stored value. After each operation, output a description of the update as:
+
+- `K` (number of changed registers, `1 ≤ K ≤ 4`)
+- followed by `K` pairs `(index, new_value)` describing the registers you changed and their new values.
+
+It’s guaranteed the total sum added never exceeds \(2^N - 1\). You must ensure each operation changes at most 4 registers.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key idea: redundant binary representation
+Digits are in `{0,1,2}`, so the same number can have multiple representations (e.g. `5 = (1,0,1) = (0,2,1)`). This redundancy lets us avoid long carry chains.
+
+If we naïvely add \(2^p\) like standard binary, we may need to propagate carry through many consecutive `2`s / `1`s, changing many registers—disallowed.
+
+So we maintain an **invariant** that prevents long carry chains.
+
+---
+
+### Invariant maintained
+**Between any two positions containing digit `2`, there is at least one position containing digit `0`.**
+
+Equivalently: you never have `...2 xxx 2...` with all `xxx` being only `1`s (or `2`s); there must be a `0` somewhere between.
+
+This invariant ensures that “carry-like effects” can always be resolved locally with a small bounded number of digit changes.
+
+---
+
+### Data structure to support fast local decisions
+We need, for a given `p`, to quickly find:
+
+- `next_two`: the smallest index `> p` such that `reg[index] == 2` (if none exists among `0..N`, we treat a sentinel at `N+1` as a `2`)
+- `prev_zero`: the greatest index `< next_two` such that `reg[index] == 0`
+
+The solution maintains three sets:
+
+- `pos_for_val[0]`: indices where digit is `0`
+- `pos_for_val[1]`: indices where digit is `1`
+- `pos_for_val[2]`: indices where digit is `2`
+
+Each update changes only a few positions, so we can update sets in `O(log N)` per changed digit.
+
+A sentinel `2` at position `N+1` guarantees `next_two` always exists; we never actually “output” changes for it unless needed (the code may touch `N+1`, but constraints on sum prevent overflow past `N` in valid runs; still, the array is sized safely).
+
+---
+
+### How to add \(2^p\) in ≤ 3 digit changes
+For each query position `p`:
+
+Let:
+- `next_two = first index > p with digit 2` (via set upper_bound)
+- `prev_zero = last index < next_two with digit 0` (via set lower_bound / prev)
+
+We consider three cases:
+
+---
+
+#### Case 1: no zero separator between `p` and `next_two`
+Condition: `next_two <= N` **and** `p >= prev_zero`.
+
+Interpretation: from `(prev_zero+1 .. next_two-1)` there are **no zeros**, meaning the segment from `p` up to `next_two` is “dangerous” for carries. The invariant says there can’t be two `2`s without a `0` between, so this configuration is tightly constrained and can be fixed with a local “carry reroute”.
+
+Perform 3 changes:
+1. `reg[p] += 1`
+2. `reg[next_two] -= 2` (so a `2` becomes `0`)
+3. `reg[next_two + 1] += 1`
+
+Why is it correct numerically?
+
+\[
++2^p \;+\; (-2)\cdot 2^{next\_two} \;+\; 1\cdot 2^{next\_two+1}
+= 2^p - 2^{next\_two+1} + 2^{next\_two+1}
+= 2^p
+\]
+
+So the represented number increases by exactly \(2^p\).
+
+Why digits stay in `{0,1,2}` and invariant holds:
+- `reg[next_two]` was `2`, becomes `0`.
+- `reg[p]` and `reg[next_two+1]` can’t jump beyond `2` under the invariant’s structure; the editorial comment in the code explains the subtle reasoning.
+
+---
+
+#### Case 2: there *is* a zero separator above `p`, and `reg[p] != 0`
+Condition: `next_two > N` or `p < prev_zero` (so there exists a zero between `p` and next_two), and also `reg[p]` is `1` or `2`.
+
+Then we can do a 2-change local rewrite:
+1. `reg[p] -= 1`
+2. `reg[p+1] += 1`
+
+Numerically:
+
+\[
+-2^p + 2^{p+1} = +2^p
+\]
+
+So it’s equivalent to adding \(2^p\), but done by shifting one unit of weight upward.
+
+---
+
+#### Case 3: `reg[p] == 0`
+Just increment it:
+
+1 change:
+- `reg[p] += 1`
+
+This directly adds \(2^p\) with no carries.
+
+---
+
+### Complexity
+Each operation does a constant number (≤ 3) of set insert/erase operations, each `O(log N)`. With `N ≤ 1000`, `M ≤ 10000`, this is easily fast enough.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Helper: print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Helper: read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Helper: read a whole vector (assumes correct size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) {
+        in >> x;
+    }
+    return in;
+}
+
+// Helper: print a vector (unused in final output format, but kept)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;
+vector<int> queries;
+
+// Read input: N, M, then M query positions
+void read() {
+    cin >> n >> m;
+    queries.resize(m);
+    cin >> queries;
+}
+
+void solve() {
+    // reg[i] is the digit at position i (weight 2^i).
+    // We allocate n+2 so that indices up to n+1 are safe:
+    // - position n might be touched by "p+1" when p = n-1
+    // - sentinel at n+1 is used as an always-present '2' in the set
+    vector<int> reg(n + 2, 0);
+
+    // pos_for_val[v] stores all indices i such that reg[i] == v.
+    // We keep 3 sets for v = 0,1,2.
+    set<int> pos_for_val[3];
+
+    // Initially, reg[0..n] are all 0 (note: includes index n as a buffer).
+    for (int i = 0; i <= n; i++) {
+        pos_for_val[0].insert(i);
+    }
+
+    // Insert sentinel: pretend reg[n+1] == 2 so "next_two" always exists.
+    pos_for_val[2].insert(n + 1);
+
+    // Apply a change reg[pos] += delta, maintaining sets and printing the update
+    auto apply = [&](int pos, int delta) {
+        // Remove pos from the set corresponding to its current value
+        pos_for_val[reg[pos]].erase(pos);
+
+        // Update the digit
+        reg[pos] += delta;
+
+        // Insert pos into the set corresponding to the new value
+        pos_for_val[reg[pos]].insert(pos);
+
+        // Output this change as " index new_value"
+        cout << ' ' << pos << ' ' << reg[pos];
+    };
+
+    // Process each query "add 2^p"
+    for (int p : queries) {
+        // next_two = smallest index > p where reg[index] == 2
+        int next_two = *pos_for_val[2].upper_bound(p);
+
+        // prev_zero = largest index < next_two where reg[index] == 0
+        // lower_bound(next_two) gives first >= next_two, so prev() gives < next_two
+        int prev_zero = *prev(pos_for_val[0].lower_bound(next_two));
+
+        // Case 1: next_two is a real 2 within [0..n] and there is no 0 between p and next_two
+        if (next_two <= n && p >= prev_zero) {
+            // We will do 3 register changes
+            cout << 3;
+
+            // reg[p]++
+            apply(p, 1);
+
+            // reg[next_two] -= 2  (turn 2 into 0)
+            apply(next_two, -2);
+
+            // reg[next_two+1]++
+            apply(next_two + 1, 1);
+        }
+        // Case 2: there exists a zero separator before next_two, and reg[p] is not 0
+        else if (reg[p] != 0) {
+            // 2 changes: reg[p]--, reg[p+1]++
+            cout << 2;
+            apply(p, -1);
+            apply(p + 1, 1);
+        }
+        // Case 3: reg[p] is 0, just increment it
+        else {
+            cout << 1;
+            apply(p, 1);
+        }
+
+        // End the line for this operation
+        cout << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // Problem has only one test case; T is kept for template style.
+    // cin >> T;
+
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from bisect import bisect_left, bisect_right
+from sortedcontainers import SortedSet
+
+def solve():
+    data = list(map(int, sys.stdin.read().strip().split()))
+    if not data:
+        return
+    it = iter(data)
+    n = next(it)
+    m = next(it)
+    queries = [next(it) for _ in range(m)]
+
+    # reg[i] is digit at position i, digits are always in {0,1,2}
+    # size n+2 to safely use positions up to n+1 (sentinel at n+1)
+    reg = [0] * (n + 2)
+
+    # Keep positions for each digit value in a sorted set.
+    # Using SortedSet (from sortedcontainers) provides:
+    # - O(log N) add/remove
+    # - O(log N) bisect-based successor/predecessor queries
+    pos = [SortedSet() for _ in range(3)]
+
+    # Initially reg[0..n] are 0 (include n as buffer), insert them.
+    for i in range(0, n + 1):
+        pos[0].add(i)
+
+    # Sentinel "2" at n+1 so a 'next_two' always exists.
+    pos[2].add(n + 1)
+    reg[n + 1] = 2  # keep internal consistency (never printed)
+
+    out_lines = []
+
+    def apply(changes, idx, delta):
+        """Update reg[idx] += delta, maintain pos sets, and record the change."""
+        old = reg[idx]
+        pos[old].remove(idx)          # remove from old value's set
+        reg[idx] = old + delta        # update digit
+        pos[reg[idx]].add(idx)        # add to new value's set
+        changes.append((idx, reg[idx]))
+
+    for p in queries:
+        # next_two: smallest index > p with digit 2
+        j = pos[2].bisect_right(p)
+        next_two = pos[2][j]
+
+        # prev_zero: largest index < next_two with digit 0
+        k = pos[0].bisect_left(next_two) - 1
+        prev_zero = pos[0][k]
+
+        changes = []
+
+        # Case 1
+        if next_two <= n and p >= prev_zero:
+            apply(changes, p, +1)
+            apply(changes, next_two, -2)
+            apply(changes, next_two + 1, +1)
+
+        # Case 2
+        elif reg[p] != 0:
+            apply(changes, p, -1)
+            apply(changes, p + 1, +1)
+
+        # Case 3
+        else:
+            apply(changes, p, +1)
+
+        # Format output: K followed by K pairs
+        parts = [str(len(changes))]
+        for idx, val in changes:
+            parts.append(str(idx))
+            parts.append(str(val))
+        out_lines.append(" ".join(parts))
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+**Note:** This uses `sortedcontainers` (third-party). If you need pure standard-library Python, tell me and I’ll provide a version using a balanced-tree alternative strategy (given `N ≤ 1000`, we can also do it with `bisect` over maintained sorted lists and accept `O(N)` updates, which is still fine here).
+
+---
+
+## 5) Compressed editorial
+
+Maintain digits `reg[i] ∈ {0,1,2}` with invariant: **between any two `2`s there is a `0`**. Store positions of each value in ordered sets.
+
+To add \(2^p\), find:
+- `next_two`: nearest index `> p` with digit `2` (sentinel `2` at `n+1`)
+- `prev_zero`: nearest index `< next_two` with digit `0`
+
+Cases:
+1. If `next_two ≤ n` and `p ≥ prev_zero` (no zero between `p` and that `2`): do 3 changes  
+   `reg[p]++`, `reg[next_two]-=2` (2→0), `reg[next_two+1]++`. Net effect = \(2^p\).
+2. Else if `reg[p] != 0`: do 2 changes  
+   `reg[p]--`, `reg[p+1]++`. Net effect = \(2^p\).
+3. Else: do 1 change  
+   `reg[p]++`.
+
+All operations change ≤ 3 registers (≤ 4 required), preserve digits in `{0,1,2}`, and preserve the invariant. Each update costs `O(log N)` using sets.

@@ -1,0 +1,572 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+526. Running Hero
+Time limit per test: 0.5 second(s)
+Memory limit: 262144 kilobytes
+input: standard
+output: standard
+
+
+
+Aladdin is running through a long cave. He is very fast and can move with a speed of at most v meters per second, but falling stones prevent him from running always at maximum speed.
+
+Now imagine a 2-dimensional world with Aladdin being a point moving in the positive or negative direction of the X-axis, and stones, falling down on the Al's head, being segments parallel to the X-axis. Another point in this world is princess Jasmin. She is waiting for Al at the point (G, 0). Aladdin starts his way at the point (0, 0). A stone kills Aladdin if he is located strictly between the endpoints of the stone when the stone reaches the ground. As Jasmin is in a fortified trench, the stones can't hurt her even if they fall down on her head.
+
+You are given Aladdin's maximum speed, Jasmin's position and information about times and places of falling stones. Your task is to find the whether it is possible for Aladdin to to reach Jasmin. If it's possible, you also have to find the sequence of actions which gets Aladdin to Jasmin in the minimum amount of time possible.
+
+Input
+The first line of the input contains three integers v, G and n (1 ≤ v ≤ 105, 0 < |G| ≤ 105, 0 ≤ n ≤ 3000) — Aladdin's maximum speed, Jasmin's x-coordinate and the number of stones. Each of the following n lines contains three integers x1,i, x2,i and ti (-105 ≤ x1,i ≤ x2,i ≤ 105, 1 ≤ ti ≤ 105) — left and right endpoints of the i-th stone, and time when the i-th stone reaches the ground.
+
+Output
+If there is no solution, the output should contain a single integer -1.
+
+Otherwise the first line of the output should contain one integer k — the number of instructions for Aladdin. Each of the following k lines should contain a pair of space-separated real numbers — speed w and time t. A pair (w, t) means that Aladdin should run t seconds at speed w. Speed w should be negative, if Aladdin should move in the negative direction of the X-axis and non-negative otherwise. Value t should always be positive. The value w=0 means that Aladdin doesn't move for time t.
+
+If there are many solutions, you may output any of them. All real values should be printed with at least 9 digits after the decimal point. The number of instructions k in your output must not exceed 10000.
+
+Example(s)
+sample input
+sample output
+5 35 2 -5 6 1 5 35 9 
+2
+-5.000000000000000000 1.000000000000000000
+5.000000000000000000 8.000000000000000000 
+
+
+
+Note
+Aladdin can change his speed instantly. If some stone falls down on Al's head at the moment of or after his meeting with Jasmin, it can't prevent the two from kissing each other and can't change anything.
+
+<|response|>
+## 1) Abridged problem statement
+
+Aladdin starts at position \(x=0\) at time \(t=0\) on the X-axis. He can instantly change his speed, but at all times must satisfy \(|w(t)| \le v\). Jasmine is at \(x=G\).
+
+There are \(n\) stones. Stone \(i\) hits the ground at time \(t_i\) and “covers” the open interval \((x_{1,i}, x_{2,i})\). If at time \(t_i\) Aladdin’s position is **strictly inside** that interval, he dies. Being exactly at \(x_{1,i}\) or \(x_{2,i}\) is safe. Jasmine is always safe.
+
+Task:
+- Decide if Aladdin can reach \(x=G\) alive.
+- If yes, output a sequence of instructions \((w, t)\): run at constant speed \(w\) for duration \(t>0\), that reaches \(G\) in **minimum possible time**.
+
+Constraints: \(n \le 3000\).
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Only discrete times matter (stone landing times).**  
+   Aladdin can only die exactly at times \(t_i\). Between those times, there are no obstacles.
+
+2. **Reachable positions at a fixed time form a union of closed intervals.**  
+   If at time \(T\) the reachable set is a union of closed intervals, then after \(\Delta t\) seconds (no checks inside), the reachable set expands by \(D=v\Delta t\) on both sides:
+   \[
+   [l,r] \to [l-D, r+D]
+   \]
+   After expansion, overlapping/touching intervals merge.
+
+3. **A stone removes an open interval at its time.**  
+   At time \(t\), all positions in \((x_1,x_2)\) are forbidden, but endpoints are allowed. So we subtract **open** intervals from the reachable **closed** intervals, keeping endpoints.
+
+4. **Optimal finishing time can be detected at some layer.**  
+   Suppose at time \(T\) Aladdin can be anywhere in an interval \([l,r]\). The closest point in \([l,r]\) to \(G\) gives minimum additional time \(\mathrm{dist}(G,[l,r])/v\).  
+   This finish is valid if it happens before the *next* stone time (unless there is no next time).
+
+5. **Reconstruction is possible by backtracking through layers.**  
+   If we store all reachable interval unions per time layer, we can choose a target point at the best layer and go backwards, picking any point that can reach the next target within the speed limit.
+
+---
+
+## 3) Full solution approach based on the observations
+
+### Step A — Compress time into layers
+Collect all relevant times:
+- \(0\)
+- all \(t_i\)
+
+Sort and unique them: `times[0..p-1]`.
+
+Group stones by their landing time index.
+
+### Step B — Preprocess blocked intervals per time
+For each time layer, we have a set of stone segments \([x_1,x_2]\) that block the **open** interior \((x_1,x_2)\). If \(x_1=x_2\), it blocks nothing (empty open interval).
+
+Merge blocked intervals at the same time with **open-interval semantics**:
+- merge if the next starts **strictly before** the previous ends (`l < last.r`)
+- if they just touch at an endpoint, do **not** merge (because open interiors don’t include endpoints)
+
+### Step C — Forward propagate reachable sets
+Maintain `cur`: union of reachable **closed** intervals at current time `times[i]`.
+
+Initialization:
+- `cur = {[0,0]}` at time 0.
+
+Transition from layer `i` to `i+1`:
+1. Expand each reachable interval by \(D = v\cdot (times[i+1]-times[i])\).
+2. Merge expanded intervals using closed-interval merging (`l <= last.r`).
+3. Subtract the blocked open intervals at `times[i+1]`.
+
+Store the resulting union in `layers[i+1]` for reconstruction.
+
+### Step D — Track the best (earliest) arrival at \(G\)
+At every layer `i`, for each reachable interval \([l,r]\):
+- nearest point to \(G\) is:
+  - \(G\) if \(G\in[l,r]\)
+  - \(l\) if \(G<l\)
+  - \(r\) if \(G>r\)
+- distance \(d = \mathrm{dist}(G,[l,r])\)
+- earliest arrival time candidate: `times[i] + d / v`
+
+Validity:
+- if there is a next layer at time `times[i+1]`, must satisfy `d <= v * (times[i+1]-times[i])`
+- otherwise always valid (no more stones to worry about)
+
+Pick the best (minimal arrival time). Record:
+- `best_layer`
+- `best_x` (the chosen nearest point in the interval)
+
+If no valid candidate exists => output `-1`.
+
+### Step E — Reconstruct a safe trajectory (waypoints)
+Let `path[i]` be chosen position at time `times[i]`, for all `i <= best_layer`.
+
+Set:
+- `path[best_layer] = best_x`
+
+Backtrack for `i = best_layer-1 .. 0`:
+- let \(D = v\cdot (times[i+1]-times[i])\)
+- we need `path[i]` in some reachable interval of `layers[i]` such that
+  \[
+  |path[i+1] - path[i]| \le D
+  \]
+- equivalently: pick any point in intersection:
+  \[
+  layers[i] \cap [path[i+1]-D, path[i+1]+D]
+  \]
+
+### Step F — Convert waypoints into output instructions
+Between consecutive layer times, move at constant speed:
+\[
+w = \frac{path[i+1]-path[i]}{times[i+1]-times[i]}
+\]
+Finally, run from `path[best_layer]` to \(G\) at speed \(+v\) or \(-v\) (or do nothing if already at \(G\)).
+
+This yields \(\le p+1 \le n+2\) instructions, well under 10000.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+struct Stone {
+    int x1, x2, t;
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int v, G, n;
+    cin >> v >> G >> n;
+    vector<Stone> stones(n);
+    for (auto &s : stones) cin >> s.x1 >> s.x2 >> s.t;
+
+    // We store unions of CLOSED intervals as [l, r] with l <= r.
+    // Use long long because expansions can be up to v * dt (1e5 * 1e5 = 1e10).
+    using Intervals = vector<pair<long long,long long>>;
+
+    // ---- Step A: time compression ----
+    vector<int> times;
+    times.reserve(n + 1);
+    times.push_back(0);
+    for (auto &s : stones) times.push_back(s.t);
+    sort(times.begin(), times.end());
+    times.erase(unique(times.begin(), times.end()), times.end());
+    int p = (int)times.size();
+
+    unordered_map<int,int> idx;
+    idx.reserve(p * 2);
+    for (int i = 0; i < p; i++) idx[times[i]] = i;
+
+    // blocked[i] contains OPEN blocked intervals (x1, x2) at times[i],
+    // stored by their boundary endpoints (x1, x2).
+    vector<Intervals> blocked(p);
+
+    for (auto &s : stones) {
+        if (s.x1 < s.x2) { // open interval (x1,x2) is empty if x1==x2
+            blocked[idx[s.t]].push_back({s.x1, s.x2});
+        }
+    }
+
+    // ---- Step B: merge blocked intervals with open-interval semantics ----
+    // For open intervals, (a,b) and (b,c) do not overlap, so we merge only if l < last.r.
+    for (auto &bl : blocked) {
+        sort(bl.begin(), bl.end());
+        Intervals merged;
+        for (auto [l, r] : bl) {
+            if (!merged.empty() && l < merged.back().second) {
+                merged.back().second = max(merged.back().second, r);
+            } else {
+                merged.push_back({l, r});
+            }
+        }
+        bl.swap(merged);
+    }
+
+    // Subtract union of OPEN intervals 'bl' from union of CLOSED intervals 'reach'.
+    // Endpoints are safe; only strict interior is removed.
+    auto subtract_open_from_closed = [&](const Intervals &reach, const Intervals &bl) {
+        Intervals res;
+        int bi = 0, nb = (int)bl.size();
+
+        for (auto [l, r] : reach) {
+            long long curL = l;
+
+            // Move bi past blocked intervals fully to the left (b <= curL).
+            while (bi < nb && bl[bi].second <= curL) bi++;
+
+            // Process blocked intervals that start before r.
+            while (bi < nb && bl[bi].first < r) {
+                long long a = bl[bi].first, b = bl[bi].second;
+
+                if (b <= curL) { bi++; continue; }
+
+                // Keep [curL, a] (maybe a point, which is fine).
+                if (a >= curL) res.push_back({curL, a});
+
+                // Jump over the forbidden interior to endpoint b (safe).
+                curL = max(curL, b);
+
+                if (b <= r) bi++;
+                else break;
+
+                if (curL >= r) break;
+            }
+
+            // Remaining tail is safe.
+            if (curL <= r) res.push_back({curL, r});
+        }
+        return res;
+    };
+
+    // layers[i] = reachable CLOSED intervals at time times[i]
+    vector<Intervals> layers(p);
+
+    // ---- Step C: forward propagation ----
+    Intervals cur = {{0, 0}};
+    layers[0] = cur;
+
+    // ---- Step D: track best finish ----
+    double bestTime = 1e100;
+    int bestLayer = -1;
+    double bestX = 0.0;
+
+    auto try_finish_from_layer = [&](int layer, const Intervals &ints) {
+        for (auto [l, r] : ints) {
+            long long dist;
+            double x0;
+            if (G >= l && G <= r) {
+                dist = 0;
+                x0 = (double)G;
+            } else if (G < l) {
+                dist = (long long)l - (long long)G;
+                x0 = (double)l;
+            } else {
+                dist = (long long)G - (long long)r;
+                x0 = (double)r;
+            }
+
+            double arrival = (double)times[layer] + (double)dist / (double)v;
+
+            bool valid;
+            if (layer + 1 >= p) {
+                valid = true; // no more stones
+            } else {
+                long long maxDist = 1LL * v * (times[layer + 1] - times[layer]);
+                valid = (dist <= maxDist);
+            }
+
+            if (valid && arrival < bestTime - 1e-12) {
+                bestTime = arrival;
+                bestLayer = layer;
+                bestX = x0;
+            }
+        }
+    };
+
+    try_finish_from_layer(0, cur);
+
+    for (int i = 0; i + 1 < p; i++) {
+        long long D = 1LL * v * (times[i + 1] - times[i]);
+
+        // Expand by D.
+        Intervals expanded;
+        expanded.reserve(cur.size());
+        for (auto [l, r] : cur) expanded.push_back({l - D, r + D});
+
+        // Merge expanded CLOSED intervals (touching => merge).
+        sort(expanded.begin(), expanded.end());
+        Intervals merged;
+        for (auto [l, r] : expanded) {
+            if (!merged.empty() && l <= merged.back().second) {
+                merged.back().second = max(merged.back().second, r);
+            } else merged.push_back({l, r});
+        }
+
+        // Subtract stones at next time.
+        cur = subtract_open_from_closed(merged, blocked[i + 1]);
+        layers[i + 1] = cur;
+
+        try_finish_from_layer(i + 1, cur);
+    }
+
+    if (bestLayer == -1) {
+        cout << -1 << "\n";
+        return 0;
+    }
+
+    // ---- Step E: reconstruct waypoints ----
+    vector<double> path(bestLayer + 1);
+    path[bestLayer] = bestX;
+
+    for (int i = bestLayer - 1; i >= 0; i--) {
+        long long D = 1LL * v * (times[i + 1] - times[i]);
+        double target = path[i + 1];
+
+        // Find any interval in layers[i] intersecting [target-D, target+D].
+        for (auto [l, r] : layers[i]) {
+            double L = max((double)l, target - (double)D);
+            double R = min((double)r, target + (double)D);
+            if (L <= R + 1e-9) {
+                // Choose point closest to target within [L,R].
+                if (target < L) path[i] = L;
+                else if (target > R) path[i] = R;
+                else path[i] = target;
+                break;
+            }
+        }
+    }
+
+    // ---- Step F: emit instructions ----
+    vector<pair<double,double>> instr;
+    instr.reserve(bestLayer + 2);
+
+    for (int i = 0; i < bestLayer; i++) {
+        double dt = (double)(times[i + 1] - times[i]);
+        double dx = path[i + 1] - path[i];
+        instr.push_back({dx / dt, dt});
+    }
+
+    // Final run to G at speed +/-v.
+    double finalDx = (double)G - path[bestLayer];
+    if (fabs(finalDx) > 1e-12) {
+        double speed = (finalDx > 0 ? (double)v : -(double)v);
+        instr.push_back({speed, fabs(finalDx) / (double)v});
+    }
+
+    cout << instr.size() << "\n";
+    cout << fixed << setprecision(15);
+    for (auto [w, t] : instr) cout << w << " " << t << "\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+
+def merge_open(intervals):
+    """
+    Merge intervals that represent OPEN interiors (a,b).
+    (a,b) and (b,c) do NOT overlap as open intervals, so merge only if l < last_r.
+    """
+    if not intervals:
+        return []
+    intervals.sort()
+    res = [list(intervals[0])]
+    for l, r in intervals[1:]:
+        if l < res[-1][1]:
+            if r > res[-1][1]:
+                res[-1][1] = r
+        else:
+            res.append([l, r])
+    return [tuple(x) for x in res]
+
+def merge_closed(intervals):
+    """Merge CLOSED intervals [l,r]; touching merges (l <= last_r)."""
+    if not intervals:
+        return []
+    intervals.sort()
+    res = [list(intervals[0])]
+    for l, r in intervals[1:]:
+        if l <= res[-1][1]:
+            if r > res[-1][1]:
+                res[-1][1] = r
+        else:
+            res.append([l, r])
+    return [tuple(x) for x in res]
+
+def subtract_open_from_closed(reach, blocked):
+    """
+    reach: list of CLOSED intervals [l,r]
+    blocked: list of OPEN intervals (a,b) stored as (a,b)
+    Return CLOSED intervals after removing interiors, keeping endpoints.
+    """
+    res = []
+    bi = 0
+    nb = len(blocked)
+
+    for l, r in reach:
+        curL = l
+
+        while bi < nb and blocked[bi][1] <= curL:
+            bi += 1
+
+        while bi < nb and blocked[bi][0] < r:
+            a, b = blocked[bi]
+            if b <= curL:
+                bi += 1
+                continue
+
+            if a >= curL:
+                res.append((curL, a))
+
+            curL = max(curL, b)
+
+            if b <= r:
+                bi += 1
+            else:
+                break
+
+            if curL >= r:
+                break
+
+        if curL <= r:
+            res.append((curL, r))
+
+    return res
+
+def clamp(x, a, b):
+    if x < a: return a
+    if x > b: return b
+    return x
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    v = int(next(it))
+    G = int(next(it))
+    n = int(next(it))
+
+    stones = []
+    times = [0]
+    for _ in range(n):
+        x1 = int(next(it)); x2 = int(next(it)); t = int(next(it))
+        stones.append((x1, x2, t))
+        times.append(t)
+
+    times = sorted(set(times))
+    p = len(times)
+    time_to_idx = {t:i for i,t in enumerate(times)}
+
+    blocked = [[] for _ in range(p)]
+    for x1, x2, t in stones:
+        if x1 < x2:
+            blocked[time_to_idx[t]].append((x1, x2))
+
+    for i in range(p):
+        blocked[i] = merge_open(blocked[i])
+
+    layers = [[] for _ in range(p)]
+    cur = [(0, 0)]
+    layers[0] = cur
+
+    best_time = 1e100
+    best_layer = -1
+    best_x = 0.0
+
+    def check(layer, intervals):
+        nonlocal best_time, best_layer, best_x
+        t0 = times[layer]
+        dt_next = None if layer + 1 >= p else (times[layer+1] - t0)
+
+        for l, r in intervals:
+            if l <= G <= r:
+                dist = 0
+                x0 = float(G)
+            elif G < l:
+                dist = l - G
+                x0 = float(l)
+            else:
+                dist = G - r
+                x0 = float(r)
+
+            arrival = t0 + dist / v
+            valid = (dt_next is None) or (dist <= v * dt_next)
+
+            if valid and arrival < best_time - 1e-12:
+                best_time = arrival
+                best_layer = layer
+                best_x = x0
+
+    check(0, cur)
+
+    for i in range(p - 1):
+        D = v * (times[i+1] - times[i])
+
+        expanded = [(l - D, r + D) for (l, r) in cur]
+        merged = merge_closed(expanded)
+
+        cur = subtract_open_from_closed(merged, blocked[i+1])
+        layers[i+1] = cur
+
+        check(i+1, cur)
+
+    if best_layer == -1:
+        sys.stdout.write("-1\n")
+        return
+
+    # Reconstruct waypoints
+    path = [0.0] * (best_layer + 1)
+    path[best_layer] = best_x
+
+    for i in range(best_layer - 1, -1, -1):
+        D = v * (times[i+1] - times[i])
+        target = path[i+1]
+        for l, r in layers[i]:
+            L = max(l, target - D)
+            R = min(r, target + D)
+            if L <= R + 1e-9:
+                path[i] = clamp(target, L, R)
+                break
+
+    # Build instructions
+    instr = []
+    for i in range(best_layer):
+        dt = times[i+1] - times[i]
+        dx = path[i+1] - path[i]
+        instr.append((dx / dt, float(dt)))
+
+    final_dx = G - path[best_layer]
+    if abs(final_dx) > 1e-12:
+        w = float(v) if final_dx > 0 else float(-v)
+        instr.append((w, abs(final_dx) / v))
+
+    out = [str(len(instr))]
+    for w, t in instr:
+        out.append(f"{w:.15f} {t:.15f}")
+    sys.stdout.write("\n".join(out) + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
