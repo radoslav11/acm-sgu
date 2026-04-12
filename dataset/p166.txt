@@ -1,0 +1,404 @@
+## 1) Concise abridged problem statement
+
+You must simulate a simple text editor starting from an empty file (one empty line) with a cursor at line 0, column 0.  
+Input is a single line of commands (max 20480 chars). Commands are:
+
+- `a`–`z` or space: insert that character at the cursor position (shifting text right), then move cursor right.
+- `L`: move cursor left within the line (not below 0).
+- `R`: move cursor right (may go past end-of-line).
+- `U` / `D`: move cursor up/down one line (staying within file).
+- `N`: split line at cursor into two lines; tail goes to new line; cursor goes to start of new line.
+- `E`: move cursor to end of current line.
+- `H`: move cursor to start of current line.
+- `X`: delete character at cursor; if cursor is past end-of-line, pad with spaces up to cursor and then merge next line into current (if exists).
+- `B`: backspace (delete before cursor). If at col>0 delete previous; if at start of line, merge with previous line.
+- `Q`: stop processing (ignore anything after).
+
+Output the final text exactly: lines separated by newline, with **no extra newline after the last line**.
+
+Constraints guarantee each line length ≤ 1000 at all times.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Data model
+We store the file as:
+- `vector<string> lines` — all lines of the editor.
+- cursor position: `(row, col)` where:
+  - `row` is index into `lines`
+  - `col` is a cursor column that is allowed to be **greater** than `lines[row].size()` (cursor can be “after end-of-line”).
+
+Initially:
+- `lines = [""]`
+- `row = 0`, `col = 0`
+
+### Key helper: padding a line
+Some operations require the line to exist up to the cursor column (notably inserting at `col` when `col > len`, and `X` when `col > len` and we need to merge lines).
+So we use:
+
+`pad_line(r, c)`:
+- if `c > lines[r].size()`, resize the string to length `c` filling with spaces.
+
+This matches the statement’s rule “additional spaces must be added” when editing beyond end-of-line.
+
+### Processing commands
+We scan the command string left to right, stopping at `Q`.
+
+#### Inserting a lowercase letter or space
+- Ensure the line has length at least `col` via `pad_line(row, col)`
+- Insert character at position `col` (shifts right)
+- `col++`
+
+#### Cursor movement
+- `L`: `col = max(0, col-1)`
+- `R`: `col++` (allowed beyond end)
+- `U`: if `row>0` then `row--`
+- `D`: if `row+1 < lines.size()` then `row++`
+No automatic column clamping occurs on vertical movement; that’s consistent with implementation and typical editor behavior. (Only `N` clamps before split.)
+
+#### `N` (new line / split)
+Before splitting, if cursor is beyond end-of-line, clamp it to end-of-line:
+- `col = min(col, len)`
+
+Then:
+- `tail = line.substr(col)`
+- current line becomes `line.substr(0, col)`
+- insert `tail` as a new line after current
+- move cursor to start of new line: `row++`, `col = 0`
+
+#### `E` and `H`
+- `E`: `col = lines[row].size()`
+- `H`: `col = 0`
+
+#### `X` (delete at cursor)
+Case 1: `col < len`  
+Delete that character: `erase(begin()+col)`
+
+Case 2: `col >= len`
+- If there is a next line (`row+1 < lines.size()`):
+  - First pad current line to length `col` (adds spaces if needed)
+  - Append next line contents to current line
+  - Remove the next line from `lines`
+- Else (last line): do nothing
+
+This implements: deleting “current symbol” beyond end-of-line effectively joins the next line at the cursor position, but if cursor is beyond end you must insert spaces first.
+
+#### `B` (backspace)
+Case 1: `col > 0`
+- If `col <= len`, delete character at `col-1` (normal backspace within text)
+- If `col > len`, there is no character to delete (cursor is in virtual space), but the statement says cursor shifts left one position; the code does that by skipping erase and still doing `col--`.
+- Finally `col--` always (when `col>0`)
+
+Case 2: `col == 0`
+- If `row > 0`, merge current line into previous:
+  - remember `prev_len = lines[row-1].size()`
+  - `lines[row-1] += lines[row]`
+  - erase current line
+  - `row--`, `col = prev_len` (cursor ends where the join occurred)
+- If `row == 0`, do nothing
+
+### Correctness argument (high level)
+- Each command is implemented exactly per its definition, distinguishing cursor-inside-text vs cursor-beyond-end situations.
+- `pad_line` ensures “additional spaces” are created precisely when required by insert and the special `X` join operation.
+- Line splits and merges preserve all characters and relative order (split uses substrings; merge uses concatenation).
+- Cursor updates match the spec: insert advances, `N` moves to new line start, joins place cursor correctly, etc.
+
+### Complexity
+Let `C` be number of commands (≤ 20480) and line lengths ≤ 1000.
+Operations like `insert`/`erase` on `std::string` are O(length of line) due to shifting, but bounded by 1000, so worst-case time is about `O(C * 1000)` which fits easily.
+Memory: total text size is bounded (lines lengths ≤ 1000, number of lines limited by operations), fits in 4MB.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard headers (GCC extension)
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input: "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector: reads each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {             // iterate by reference so we can assign
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector with spaces after each element
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {              // iterate by value (fine for small types)
+        out << x << ' ';
+    }
+    return out;
+};
+
+string commands;                  // the whole command line
+
+// Read the command line (may contain spaces), so use getline
+void read() { getline(cin, commands); }
+
+void solve() {
+    // The hard part about this question is to understand what exactly the input
+    // and output format is, otherwise it's just implementation.
+
+    vector<string> lines = {""};  // start with a blank file: one empty line
+    int row = 0, col = 0;         // cursor position: (line index, column index)
+
+    // Helper: ensure lines[r] has length at least c (pad with spaces).
+    // Needed when we insert or join lines while cursor is past the end.
+    auto pad_line = [&](int r, int c) {
+        if(c > (int)lines[r].size()) {     // if cursor is beyond current line length
+            lines[r].resize(c, ' ');       // extend with spaces up to exactly c
+        }
+    };
+
+    // Process each command character until 'Q'
+    for(int i = 0; i < (int)commands.size(); i++) {
+        char c = commands[i];
+
+        if(c == 'Q') {
+            break;                          // stop processing immediately
+        } else if(c >= 'a' && c <= 'z' || c == ' ') {
+            // Insert a lowercase letter or space at cursor position.
+            pad_line(row, col);            // make sure we can insert at index col
+            lines[row].insert(lines[row].begin() + col, c); // shift right and insert
+            col++;                         // cursor moves right after insertion
+        } else if(c == 'L') {
+            // Move left, but not before column 0
+            if(col > 0) {
+                col--;
+            }
+        } else if(c == 'R') {
+            // Move right; allowed to go beyond end-of-line
+            col++;
+        } else if(c == 'U') {
+            // Move one line up if possible
+            if(row > 0) {
+                row--;
+            }
+        } else if(c == 'D') {
+            // Move one line down if possible
+            if(row + 1 < (int)lines.size()) {
+                row++;
+            }
+        } else if(c == 'N') {
+            // Create a new line after current by splitting at cursor position.
+
+            // If cursor is beyond end, clamp it to the end before splitting.
+            if(col > (int)lines[row].size()) {
+                col = lines[row].size();
+            }
+
+            // Tail part becomes the new line.
+            string tail = lines[row].substr(col);     // everything after cursor
+            lines[row] = lines[row].substr(0, col);   // keep prefix on current line
+
+            // Insert tail as a new line right after current.
+            lines.insert(lines.begin() + row + 1, tail);
+
+            row++;                         // cursor moves to the new line
+            col = 0;                       // cursor goes to start of the new line
+        } else if(c == 'E') {
+            // Move cursor to end of the current line
+            col = lines[row].size();
+        } else if(c == 'H') {
+            // Move cursor to start of the current line
+            col = 0;
+        } else if(c == 'X') {
+            // Delete "current symbol" (at cursor), or merge lines if beyond end.
+
+            if(col < (int)lines[row].size()) {
+                // Normal delete inside the line: remove character at position col
+                lines[row].erase(lines[row].begin() + col);
+            } else if(row + 1 < (int)lines.size()) {
+                // Cursor is at/after end-of-line, and there is a next line:
+                // pad with spaces up to cursor, then attach next line.
+                pad_line(row, col);                // ensure current line length >= col
+                lines[row] += lines[row + 1];      // append next line contents
+                lines.erase(lines.begin() + row + 1); // remove the next line
+            }
+            // If cursor is beyond end of the last line: do nothing.
+        } else if(c == 'B') {
+            // Backspace: delete symbol before cursor, or merge with previous line.
+
+            if(col > 0) {
+                // If cursor is within the current line text, delete char at col-1.
+                if(col <= (int)lines[row].size()) {
+                    lines[row].erase(lines[row].begin() + col - 1);
+                }
+                // In any case, cursor moves left by one.
+                col--;
+            } else if(row > 0) {
+                // At column 0: merge current line into previous line.
+                int prev_len = lines[row - 1].size(); // position where merge occurs
+                lines[row - 1] += lines[row];         // append current to previous
+                lines.erase(lines.begin() + row);     // delete current line entry
+                row--;                                // cursor goes to previous line
+                col = prev_len;                       // at the join point
+            }
+            // If at start of first line: do nothing.
+        }
+    }
+
+    // Output resulting lines, separated by '\n' but NOT after the last line.
+    for(int i = 0; i < (int)lines.size(); i++) {
+        if(i > 0) {
+            cout << "\n";
+        }
+        cout << lines[i];
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // faster I/O
+    cin.tie(nullptr);                 // untie cin from cout for speed
+
+    int T = 1;                        // only one test case
+    // cin >> T;                      // (not used)
+    for(int test = 1; test <= T; test++) {
+        read();                       // read the single command line
+        solve();                      // simulate and print result
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same behavior) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    # Read the entire command line including spaces, without the trailing newline.
+    commands = sys.stdin.readline()
+    if commands.endswith("\n"):
+        commands = commands[:-1]
+
+    # Editor state: list of lines and cursor (row, col).
+    lines = [""]          # start with one empty line
+    row, col = 0, 0
+
+    def pad_line(r: int, c: int) -> None:
+        """
+        Ensure lines[r] has length at least c by padding with spaces.
+        (Cursor column c is allowed to be beyond end-of-line.)
+        """
+        s = lines[r]
+        if c > len(s):
+            lines[r] = s + (" " * (c - len(s)))
+
+    for ch in commands:
+        if ch == "Q":
+            break
+
+        # Insert lowercase letters or spaces
+        if ("a" <= ch <= "z") or ch == " ":
+            pad_line(row, col)
+            # Insert at position col: s[:col] + ch + s[col:]
+            s = lines[row]
+            lines[row] = s[:col] + ch + s[col:]
+            col += 1
+
+        elif ch == "L":
+            if col > 0:
+                col -= 1
+
+        elif ch == "R":
+            col += 1
+
+        elif ch == "U":
+            if row > 0:
+                row -= 1
+
+        elif ch == "D":
+            if row + 1 < len(lines):
+                row += 1
+
+        elif ch == "N":
+            # Clamp col to end-of-line before splitting (matches the C++ code).
+            if col > len(lines[row]):
+                col = len(lines[row])
+
+            s = lines[row]
+            head = s[:col]
+            tail = s[col:]
+            lines[row] = head
+            lines.insert(row + 1, tail)
+            row += 1
+            col = 0
+
+        elif ch == "E":
+            col = len(lines[row])
+
+        elif ch == "H":
+            col = 0
+
+        elif ch == "X":
+            s = lines[row]
+            if col < len(s):
+                # Delete character at cursor.
+                lines[row] = s[:col] + s[col + 1:]
+            elif row + 1 < len(lines):
+                # Beyond end-of-line: pad with spaces up to col, then merge next line.
+                pad_line(row, col)
+                lines[row] = lines[row] + lines[row + 1]
+                del lines[row + 1]
+            # Else: beyond end of last line => do nothing.
+
+        elif ch == "B":
+            if col > 0:
+                s = lines[row]
+                # If cursor is within the real text, delete the character before cursor.
+                if col <= len(s):
+                    lines[row] = s[:col - 1] + s[col:]
+                # Cursor always moves left by one if col > 0.
+                col -= 1
+            elif row > 0:
+                # Merge with previous line.
+                prev_len = len(lines[row - 1])
+                lines[row - 1] += lines[row]
+                del lines[row]
+                row -= 1
+                col = prev_len
+            # Else at (0,0): do nothing.
+
+    # Output: newline between lines, but not after the last one.
+    sys.stdout.write("\n".join(lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Simulate editor with `lines: list[str]` and cursor `(row,col)`; `col` may exceed current line length. Use `pad_line(row,col)` to extend a line with spaces to length `col` when needed.
+
+Process commands until `Q`:
+- insert letter/space: `pad_line`, insert at `col`, `col++`
+- `L/R/U/D`: move cursor with bounds on `L/U/D`
+- `H/E`: `col=0` / `col=len(line)`
+- `N`: clamp `col` to end, split line into prefix+suffix, insert new line with suffix, go to `(row+1,0)`
+- `X`: if `col<len` erase char; else if next line exists: `pad_line` then concatenate next line and remove it
+- `B`: if `col>0` erase at `col-1` only if within text, then `col--`; else if `row>0` merge with previous and set `col` to previous length
+
+Finally print all lines separated by `\n` without trailing newline. Complexity: O(commands * max_line_len) ≤ ~2e7 char ops, OK under constraints.

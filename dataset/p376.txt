@@ -1,0 +1,320 @@
+## 1) Concise abridged problem statement
+
+There are **N** participants and **K** horse-riding stages after an initial swimming stage.
+
+- Participant *i* has swimming skill **Wi**, riding skill **Ri**, and strength **Pi** (all **Pi** are distinct).
+- Swimming time: `Tswim(i) = 2·10^7 − Wi`.
+- On each riding stage, there are **N horses** available at that stage’s start, and **each horse can be used at most once total** (so across all stages, each stage “consumes” all N horses in some order—equivalently, at each stage participants take horses in order of arrival).
+- If multiple participants reach a stage simultaneously, the higher **Pi** chooses first.
+- The participant who chooses first takes the remaining horse with **maximum ridingness Sj**.
+- Riding time for participant *i* using a horse with ridingness **Sj**:
+  `Tride(i, j) = 2·10^7 − Ri − Sj`.
+
+Horse ridingness values are not given directly: for stage `s` (1..K) and horse index `j` (1..N):
+`Sj = f(s, j) = 3·A_s^2 + 5·A_s·B_j + 2·B_j^2`,
+where arrays **A** (length K) and **B** (length N) are given.
+
+Output the **finish order** (participant IDs 1..N), sorting by total time ascending; ties are broken by higher strength **Pi**.
+
+Constraints: `1 ≤ N, K ≤ 1000`.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+1. **Swimming just sets initial arrival times.**
+   After swimming, participant *i* arrives to stage 1 at:
+   `arrival[i] = 2·10^7 − Wi`.
+
+2. **At each riding stage, horse assignment depends only on arrival order and strengths.**
+   The process “who gets the best remaining horse” is exactly:
+   - Sort participants by `(arrival time asc, strength desc)`.
+   - The first in that order takes the best horse, second takes the second-best, etc.
+
+   Because strengths are distinct, this ordering is strict even when arrival times tie.
+
+3. **Within a stage, the horses can be pre-sorted by ridingness.**
+   For a fixed stage `s`, we can compute all N values:
+   `horse[s][j] = 3*A_s^2 + 5*A_s*B_j + 2*B_j^2`
+   then sort them descending. Then the participant at position `pos` in the sorted arrival list receives `horse_sorted[pos]`.
+
+4. **Update arrival times stage by stage.**
+   If participant `p` gets horse value `H`, then stage riding time is:
+   `Tride = (2·10^7 − Rp) − H`.
+   So new arrival at end of stage is:
+   `arrival_new[p] = arrival[p] + Tride`.
+
+5. **After K stages, total time is the final arrival time.**
+   Then sort participants by `(total_time asc, strength desc)` and output IDs.
+
+### Complexity
+
+- Horse computation: for each stage, compute N values and sort:
+  `K * (N + N log N)` → `O(K N log N)`  
+- For each stage, sort participants by arrival:
+  `K * (N log N)` → `O(K N log N)`  
+Overall: `O(K N log N)` which is fine for `N, K ≤ 1000`.
+
+### Correctness sketch
+
+- At each stage, the rules state: earliest arrivals pick first; among ties, higher strength picks first; each picker takes the best remaining horse. Sorting participants by the rule and giving them horses in descending order exactly simulates this greedy selection.
+- Because all participants proceed immediately and there are no pauses, arrival times fully determine the next stage’s picking order.
+- Repeating the above for all K stages yields exact final times and thus correct finish order.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Pulls in essentially all standard headers (competitive programming style)
+
+using namespace std;
+
+// Pretty-print a pair: outputs "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element in order
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output a vector with spaces after each element (note: trailing space)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Structure holding participant information
+struct participant {
+    int id;                 // 1-based participant id for output
+    int64_t swim;           // time to finish swimming stage: 2e7 - Wi
+    int64_t ride;           // base riding time part: 2e7 - Ri (horse value will be subtracted)
+    int64_t strength;       // Pi (used to break ties)
+    int64_t total_time = 0; // current total time after last completed stage
+};
+
+int n, k;                   // N participants, K riding stages
+vector<participant> parts;  // participants array
+vector<int> a, b;           // A (size K), B (size N)
+
+void read() {
+    cin >> n >> k;          // read N and K
+
+    parts.resize(n);        // allocate participants
+    for(int i = 0; i < n; i++) {
+        int w, r, p;
+        cin >> w >> r >> p;             // Wi, Ri, Pi
+        parts[i].id = i + 1;            // store 1-based id
+        parts[i].swim = 20000000 - w;   // swim time formula
+        parts[i].ride = 20000000 - r;   // riding time base (horse subtracts later)
+        parts[i].strength = p;          // strength
+    }
+
+    a.resize(k);
+    cin >> a;               // read A array (K numbers)
+    b.resize(n);
+    cin >> b;               // read B array (N numbers)
+}
+
+void solve() {
+    // Precompute and sort horses for each stage.
+    // stage_horses[stage][pos] will be the pos-th best horse (descending) for that stage.
+    vector<vector<int64_t>> stage_horses(k, vector<int64_t>(n));
+    for(int i = 0; i < k; i++) {
+        for(int j = 0; j < n; j++) {
+            int64_t ai = a[i];                    // A for this stage
+            int64_t bj = b[j];                    // B for this horse index
+            stage_horses[i][j] = 3 * ai * ai      // 3*A^2
+                               + 5 * ai * bj      // 5*A*B
+                               + 2 * bj * bj;     // 2*B^2
+        }
+        sort(stage_horses[i].rbegin(), stage_horses[i].rend()); // sort descending (best first)
+    }
+
+    // arrival[i] = time when participant i reaches the start of the current stage.
+    vector<int64_t> arrival(n);
+    for(int i = 0; i < n; i++) {
+        arrival[i] = parts[i].swim;           // after swimming, they "arrive" at stage 1
+        parts[i].total_time = parts[i].swim;  // total time so far
+    }
+
+    // Simulate each riding stage
+    for(int stage = 0; stage < k; stage++) {
+        vector<int> order(n);
+        iota(order.begin(), order.end(), 0);  // order = [0,1,2,...,n-1] indices of participants
+
+        // Sort participants by arrival time, then by strength (higher first) to break ties.
+        sort(order.begin(), order.end(), [&](int x, int y) {
+            if(arrival[x] != arrival[y]) {
+                return arrival[x] < arrival[y];            // earlier arrives first
+            }
+            return parts[x].strength > parts[y].strength;  // tie: stronger chooses first
+        });
+
+        vector<int64_t> new_arrival(n); // will store finish times of this stage for each participant
+
+        // Assign horses in that sorted order:
+        // participant at position pos gets the pos-th best horse of this stage.
+        for(int pos = 0; pos < n; pos++) {
+            int p = order[pos];                         // participant index
+            int64_t horse = stage_horses[stage][pos];   // pos-th best horse
+
+            // riding stage time = (2e7 - Ri) - horse_value
+            int64_t ride_time = parts[p].ride - horse;
+
+            // finish time of this stage = arrival + ride_time
+            int64_t finish_this_stage = arrival[p] + ride_time;
+
+            new_arrival[p] = finish_this_stage;         // store for next stage ordering
+            parts[p].total_time = finish_this_stage;    // update total time
+        }
+
+        arrival = new_arrival; // proceed to next stage with updated arrival times
+    }
+
+    // After all stages, sort by total time then by strength for final ranking.
+    vector<int> final_order(n);
+    iota(final_order.begin(), final_order.end(), 0);
+
+    sort(final_order.begin(), final_order.end(), [&](int x, int y) {
+        if(parts[x].total_time != parts[y].total_time) {
+            return parts[x].total_time < parts[y].total_time;   // smaller time is better
+        }
+        return parts[x].strength > parts[y].strength;           // tie: stronger wins
+    });
+
+    // Output participant IDs in final ranking order.
+    for(int i = 0; i < n; i++) {
+        if(i > 0) {
+            cout << " ";
+        }
+        cout << parts[final_order[i]].id;
+    }
+    cout << endl;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // fast I/O
+    cin.tie(nullptr);                 // untie cin/cout for speed
+
+    int T = 1;                        // single test case
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();                       // read input
+        solve();                      // solve and print answer
+    }
+
+    return 0;                         // done
+}
+```
+
+---
+
+## 4) Python solution (same algorithm) with detailed comments
+
+```python
+import sys
+
+def solve() -> None:
+    data = list(map(int, sys.stdin.buffer.read().split()))
+    it = iter(data)
+
+    n = next(it)
+    k = next(it)
+
+    # Store participant fields in parallel arrays for speed.
+    # id is 1..n
+    swim = [0] * n        # swim time = 2e7 - Wi
+    ride_base = [0] * n   # ride base = 2e7 - Ri (horse value is subtracted)
+    strength = [0] * n    # Pi
+    total = [0] * n       # total time so far
+
+    for i in range(n):
+        w = next(it)
+        r = next(it)
+        p = next(it)
+        swim[i] = 20_000_000 - w
+        ride_base[i] = 20_000_000 - r
+        strength[i] = p
+        total[i] = swim[i]
+
+    # Read arrays A (size K) and B (size N)
+    A = [next(it) for _ in range(k)]
+    B = [next(it) for _ in range(n)]
+
+    # Precompute sorted horse values per stage (descending).
+    # stage_horses[s][pos] = pos-th best horse value at stage s.
+    stage_horses = []
+    for s in range(k):
+        a = A[s]
+        horses = []
+        # Compute f(s, j) for all j
+        for bj in B:
+            horses.append(3*a*a + 5*a*bj + 2*bj*bj)
+        horses.sort(reverse=True)
+        stage_horses.append(horses)
+
+    # arrival time at current stage start (initially after swim)
+    arrival = swim[:]
+
+    # Simulate each riding stage
+    for s in range(k):
+        # Order participants by arrival asc, strength desc
+        order = list(range(n))
+        order.sort(key=lambda i: (arrival[i], -strength[i]))
+
+        new_arrival = [0] * n
+        horses = stage_horses[s]
+
+        # Assign pos-th horse to pos-th participant in that order
+        for pos, pi in enumerate(order):
+            horse_val = horses[pos]
+            ride_time = ride_base[pi] - horse_val
+            finish = arrival[pi] + ride_time
+            new_arrival[pi] = finish
+            total[pi] = finish
+
+        arrival = new_arrival
+
+    # Final ranking: total time asc, strength desc
+    final_order = list(range(n))
+    final_order.sort(key=lambda i: (total[i], -strength[i]))
+
+    # Output participant IDs (1-based)
+    ans = [str(i + 1) for i in final_order]
+    sys.stdout.write(" ".join(ans))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Compute each participant’s initial time after swim: `arrival[i]=2e7−Wi`.
+- For each stage `s`, compute all horse values `f(s,j)=3A_s^2+5A_sB_j+2B_j^2`, sort them descending.
+- For stage `s`:
+  - Sort participants by `(arrival asc, strength desc)`.
+  - Give the `pos`-th participant the `pos`-th best horse.
+  - Update `arrival[i] += (2e7−Ri) − horse_value`.
+- After K stages, sort participants by `(total_time asc, strength desc)` and output their IDs.
+- Complexity: `O(KN log N)` using sorting per stage.

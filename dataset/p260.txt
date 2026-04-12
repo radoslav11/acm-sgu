@@ -1,0 +1,434 @@
+## 1) Concise abridged problem statement
+
+There are \(N\) cells ( \(1 \le N \le 200\) ), each colored 0/1 (white/black).  
+For each cell \(i\), you are given a set \(S_i\) of cells whose colors are toggled (XOR with 1) when you click \(i\). You may click any cell any number of times (clicking twice cancels out).
+
+Find any sequence of clicks that makes **all cells the same color** (all 0 or all 1).  
+If impossible, print `-1`. Otherwise print the number of clicks \(L\) and the list of clicked cell indices.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key observation: clicks are XOR / linear over GF(2)
+
+Each cell’s color is a bit (0/1). Clicking a cell toggles some set of cells, i.e. adds 1 mod 2 to those positions. Therefore the entire process is linear over the field GF(2).
+
+Because toggling twice cancels, for each cell \(i\) we only care whether we click it **0 or 1 times**.  
+Let:
+- \(x_i \in \{0,1\}\) = whether we click cell \(i\).
+- \(a_j \in \{0,1\}\) = initial color of cell \(j\).
+
+Let \(S_i\) be the set of cells toggled by clicking \(i\). Then the final color of cell \(j\) is:
+\[
+a_j \oplus \bigoplus_{i: j \in S_i} x_i
+\]
+(where \(\oplus\) is XOR).
+
+We want all final colors equal to some target \(t \in \{0,1\}\):
+\[
+a_j \oplus \bigoplus_{i: j \in S_i} x_i = t \quad \forall j
+\]
+Rearrange:
+\[
+\bigoplus_{i: j \in S_i} x_i = a_j \oplus t
+\]
+
+This is a system of \(N\) linear equations in \(N\) unknowns over GF(2).
+
+### Solve twice: target all-0 or all-1
+
+We don’t know \(t\). Try both:
+- \(t=0\) (make everything white)
+- \(t=1\) (make everything black)
+
+For each target, build and solve the linear system; if solvable, output any solution.
+
+### Building the matrix
+
+Define an \(N\times N\) matrix \(M\) over GF(2) such that:
+- \(M_{j,i} = 1\) iff \(j \in S_i\) (click \(i\) affects cell \(j\)).
+Then equations are:
+\[
+M x = b
+\]
+where \(b_j = a_j \oplus t\).
+
+### Gaussian elimination over GF(2) with bitsets
+
+\(N \le 200\). Gaussian elimination is \(O(N^3)\), which is fine, but the time limit is tight (0.25s). Using `bitset` makes row XOR very fast (word-parallel), giving about \(O(N^3 / w)\).
+
+Algorithm:
+1. Each equation row is a bitset of length \(N+1\): \(N\) coefficients plus 1 RHS bit.
+2. For each column, find a pivot row with a 1, swap it into position, then XOR it into all other rows that have a 1 in that column (to zero them).
+3. After elimination, if a row has all-zero coefficients but RHS = 1, the system is inconsistent.
+
+### Extracting a solution
+
+This implementation produces a reduced form where each pivot column has its pivot row and other rows cleared in that column. A valid assignment is:
+- Set all free variables to 0.
+- For each pivot variable, its value is simply the RHS of its pivot row (since free vars are 0).
+
+This gives “any solution”, which is acceptable.
+
+### Output
+
+Collect all indices \(i\) where \(x_i = 1\). Output count and list.
+
+If neither target works, output `-1`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>              // Includes almost all standard headers (GCC extension)
+
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read all elements of a vector<T> from input
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                // iterate by reference so we can assign into vector
+        in >> x;
+    }
+    return in;
+};
+
+// Print all elements of a vector<T>, each followed by a space
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Gaussian elimination over GF(2) using bitsets.
+// N is a compile-time maximum number of variables (here used as 200).
+template<size_t N>
+class GaussBitset {
+  public:
+    int n_var;                        // actual number of variables (<= N)
+    vector<bitset<N + 1>> rows;       // each row: N coeff bits + 1 RHS bit at index n_var
+    vector<int> where;                // where[col] = row index used as pivot for that variable, or -1
+    bool solvable = false;            // becomes true after elimination if system is consistent
+
+    GaussBitset(int n_var_) : n_var(n_var_) {}   // constructor
+
+    // Add one equation: sum(coeffs[i]*x_i) = rhs (mod 2)
+    void add_equation(const vector<int>& coeffs, int rhs) {
+        bitset<N + 1> row;            // bitset initialized to all zeros
+        for(int i = 0; i < n_var; i++) {
+            if(coeffs[i] % 2) {       // in GF(2), we only care about parity
+                row[i] = 1;           // set coefficient bit
+            }
+        }
+        row[n_var] = rhs % 2;         // RHS stored in the last used position
+        rows.push_back(row);          // append to matrix
+    }
+
+    // Perform Gauss-Jordan elimination over GF(2)
+    void eliminate() {
+        int n_eq = (int)rows.size();  // number of equations
+        where.assign(n_var, -1);      // initially no pivot for any variable
+        int row = 0;                  // current pivot row
+
+        // iterate over columns (variables)
+        for(int col = 0; col < n_var && row < n_eq; col++) {
+            int sel = -1;             // row selected as pivot
+            // find a row >= current pivot row that has 1 in this column
+            for(int i = row; i < n_eq; i++) {
+                if(rows[i][col]) {
+                    sel = i;
+                    break;
+                }
+            }
+            if(sel == -1) {           // no pivot in this column => free variable
+                continue;
+            }
+
+            swap(rows[sel], rows[row]);   // move pivot row into position
+            where[col] = row;             // record pivot location for this variable
+
+            // eliminate this column from all other rows (Gauss-Jordan style)
+            for(int i = 0; i < n_eq; i++) {
+                if(i != row && rows[i][col]) {
+                    rows[i] ^= rows[row]; // XOR rows => subtract in GF(2)
+                }
+            }
+            row++;                        // advance to next pivot row
+        }
+
+        // After elimination, check for inconsistency: 0 = 1 rows
+        solvable = true;
+        for(int i = row; i < n_eq; i++) { // rows without pivots
+            if(rows[i][n_var]) {          // RHS is 1 but LHS is all zeros
+                solvable = false;
+                break;
+            }
+        }
+    }
+
+    bool has_solution() const { return solvable; }
+
+    // Return indices of variables that are free (not used as pivots)
+    vector<int> free_variables() const {
+        vector<int> fv;
+        for(int v = 0; v < n_var; v++) {
+            if(where[v] == -1) {
+                fv.push_back(v);
+            }
+        }
+        return fv;
+    }
+
+    // Produce one solution by setting all free vars = 0 and reading pivot vars from RHS.
+    vector<int> any_solution() const {
+        vector<int> x(n_var, 0);          // default all zeros
+        for(int v = 0; v < n_var; v++) {
+            if(where[v] != -1) {          // pivot variable
+                x[v] = rows[where[v]][n_var]; // equals RHS when free vars are 0
+            }
+        }
+        return x;
+    }
+};
+
+int n;                                   // number of cells/variables
+vector<vector<int>> groups;              // groups[i] = list of cells toggled by clicking i
+vector<int> initial;                     // initial colors
+
+void read() {
+    cin >> n;
+    groups.assign(n, {});
+    for(int i = 0; i < n; i++) {
+        int k;
+        cin >> k;                        // size of set for click i
+        groups[i].resize(k);
+        for(auto& x: groups[i]) {
+            cin >> x;                    // read 1-based cell index
+            x--;                         // convert to 0-based
+        }
+    }
+    initial.assign(n, 0);
+    for(auto& x: initial) {
+        cin >> x;                        // read initial colors (0/1)
+    }
+}
+
+void solve() {
+    // We try both targets: make all cells color 1 (black), or all 0 (white).
+    // Build a linear system over GF(2):
+    //   For each cell c: XOR of x[i] for which clicking i toggles c  = initial[c] XOR target.
+
+    for(int target: {1, 0}) {            // attempt target = 1 first, then 0
+        // Build coefficient matrix mat[c][i] = 1 iff clicking i affects cell c.
+        vector<vector<int>> mat(n, vector<int>(n, 0));
+        for(int i = 0; i < n; i++) {     // for each click i
+            for(int c: groups[i]) {      // for each cell c toggled by click i
+                mat[c][i] = 1;           // coefficient of variable x_i in equation for cell c
+            }
+        }
+
+        GaussBitset<200> g(n);           // solver with max size 200, actual vars n
+
+        // Add N equations, one per cell c
+        for(int c = 0; c < n; c++) {
+            // RHS is initial[c] XOR target (since we want final[c] == target)
+            g.add_equation(mat[c], initial[c] ^ target);
+        }
+
+        g.eliminate();                   // perform elimination
+        if(!g.has_solution()) {          // no solution for this target color
+            continue;
+        }
+
+        auto sol = g.any_solution();     // extract some solution
+        vector<int> clicks;
+        for(int i = 0; i < n; i++) {
+            if(sol[i]) {                 // if x_i = 1, click i
+                clicks.push_back(i + 1); // convert back to 1-based
+            }
+        }
+
+        // Output solution
+        cout << clicks.size() << '\n';
+        for(size_t i = 0; i < clicks.size(); i++) {
+            cout << clicks[i] << " \n"[i + 1 == clicks.size()]; // space or newline at end
+        }
+        if(clicks.empty()) {             // matches expected formatting (blank line after 0)
+            cout << '\n';
+        }
+        return;                          // stop after finding any valid target
+    }
+
+    // Neither all-1 nor all-0 reachable
+    cout << -1 << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);    // fast I/O
+    cin.tie(nullptr);
+
+    int T = 1;                           // single test case
+    // cin >> T;                         // (not used)
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+# Solve linear system over GF(2) using integer bitmasks.
+# Since N <= 200, we can store each row as an int with (N+1) bits:
+# bits [0..N-1] are coefficients, bit N is RHS.
+def gauss_xor(rows, n):
+    """
+    rows: list[int], each is bitmask of length n+1 (coeffs + rhs at bit n)
+    n: number of variables
+    returns: (solvable: bool, where: list[int], rows: list[int])
+             where[col] = pivot row index or -1 if free
+             rows is transformed in-place to reduced form
+    """
+    where = [-1] * n
+    r = 0  # current pivot row
+    m = len(rows)
+
+    for c in range(n):
+        if r >= m:
+            break
+
+        # Find pivot row with coefficient 1 in column c
+        pivot = -1
+        mask = 1 << c
+        for i in range(r, m):
+            if rows[i] & mask:
+                pivot = i
+                break
+        if pivot == -1:
+            continue  # free variable
+
+        # Swap pivot into position r
+        rows[r], rows[pivot] = rows[pivot], rows[r]
+        where[c] = r
+
+        # Eliminate column c from all other rows (Gauss-Jordan)
+        for i in range(m):
+            if i != r and (rows[i] & mask):
+                rows[i] ^= rows[r]
+
+        r += 1
+
+    # Check inconsistency: 0 coefficients but RHS = 1
+    rhs_bit = 1 << n
+    for i in range(r, m):
+        coeffs = rows[i] & (rhs_bit - 1)  # lower n bits
+        rhs = (rows[i] >> n) & 1
+        if coeffs == 0 and rhs == 1:
+            return False, where, rows
+
+    return True, where, rows
+
+
+def any_solution(where, rows, n):
+    """
+    With Gauss-Jordan form and free variables = 0, pivot variable equals RHS of its row.
+    """
+    x = [0] * n
+    for var in range(n):
+        pr = where[var]
+        if pr != -1:
+            x[var] = (rows[pr] >> n) & 1
+    return x
+
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+
+    groups = []
+    for _ in range(n):
+        k = int(next(it))
+        cur = []
+        for _ in range(k):
+            cur.append(int(next(it)) - 1)  # to 0-based
+        groups.append(cur)
+
+    initial = [int(next(it)) for _ in range(n)]
+
+    # Build coefficient matrix in bit form: equation per cell c:
+    # XOR of x[i] where c in S_i equals initial[c] XOR target
+    #
+    # We'll first build for each cell c a bitmask of which variables affect it.
+    coeff_mask = [0] * n
+    for i in range(n):
+        for c in groups[i]:
+            coeff_mask[c] |= (1 << i)
+
+    for target in (1, 0):
+        rows = []
+        for c in range(n):
+            rhs = initial[c] ^ target
+            row = coeff_mask[c] | (rhs << n)
+            rows.append(row)
+
+        solvable, where, reduced = gauss_xor(rows, n)
+        if not solvable:
+            continue
+
+        x = any_solution(where, reduced, n)
+        clicks = [str(i + 1) for i, v in enumerate(x) if v == 1]
+
+        sys.stdout.write(str(len(clicks)) + "\n")
+        if clicks:
+            sys.stdout.write(" ".join(clicks) + "\n")
+        else:
+            # match the C++ behavior: extra blank line after 0
+            sys.stdout.write("\n")
+        return
+
+    sys.stdout.write("-1\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Model each click \(i\) as a binary variable \(x_i\) (clicked or not). Clicking toggles colors, so final color of cell \(c\) is:
+\[
+a_c \oplus \bigoplus_{i: c \in S_i} x_i
+\]
+We need all final colors equal to a target \(t\in\{0,1\}\), giving \(N\) linear equations over GF(2):
+\[
+\bigoplus_{i: c \in S_i} x_i = a_c \oplus t
+\]
+Try \(t=1\) and \(t=0\). For each, solve \(Mx=b\) via Gaussian elimination mod 2 (bitset/bitmask optimization for speed). If consistent, set free vars to 0 and read pivot vars from RHS to obtain a valid solution; output indices with \(x_i=1\). If neither target is solvable, print `-1`.

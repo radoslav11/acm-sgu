@@ -1,0 +1,482 @@
+## 1) Abridged problem statement
+
+You are given a small Perl-like program operating on **string variables** and the function `substr`.  
+Variables not initialized are empty strings.
+
+`substr(s, offset[, count])`:
+- `offset >= 0`: start at index `offset` from the beginning (0-based).
+- `offset < 0`: start at `len(s) + offset` (counting from the end).
+- If `count` is omitted: take to the end of the string.
+- If `count >= 0`: take `count` characters.
+- If `count < 0`: take everything **except** the last `-count` characters (i.e., end at `len(s)+count`).
+
+The program lines can:
+- `print(name);`
+- `print(substr(...));`
+- Assign variables: `name1 = name2;` or `name1 = substr(...);`
+- Replace a substring: `substr(name1, ...) = name2;` or `= substr(...);`
+
+All offsets/counts are guaranteed to describe a valid non-empty substring.  
+Output exactly what each `print` prints, one line per print.
+
+---
+
+## 2) Detailed editorial (solution idea)
+
+### Key observations
+- The task is **simulation**: maintain a mapping `vars[name] -> string`.
+- Only a few syntactic forms exist (6 types). After removing spaces, they become easy to distinguish by prefixes:
+  - `print(...)`
+  - `substr(...)=...`
+  - `name=...`
+- The main complexity is correctly implementing Perl-like `substr` semantics, including:
+  - negative offsets,
+  - omitted `count`,
+  - negative `count`,
+  - replacement where the new string length may differ.
+
+### Parsing strategy
+The provided solution uses a robust simplification:
+1. **Read all non-blank lines** (ignoring lines that contain only whitespace).
+2. The first `N` non-blank lines are initializations, the next `M` are program lines.
+3. For each program line, **remove all spaces** (`' '`) to normalize it:
+   - Note: this works because the program grammar guarantees no spaces inside variable names or keywords, and string literals appear only in initialization lines (handled separately).
+
+### Data model
+Use `map<string,string> vars`.
+- Uninitialized variables default to `""`. In C++ `vars[name]` creates an empty string if missing, so it matches the statement.
+
+### Implementing `substr`
+Define helper:
+`get_substr(str, offset, count, has_count)`:
+
+Let `len = str.size()` and:
+- `start = offset >= 0 ? offset : len + offset`
+- Compute `end`:
+  - if `!has_count`: `end = len`
+  - else if `count >= 0`: `end = start + count`
+  - else (count < 0): `end = len + count`  (leaves `-count` chars off the end)
+Return `str.substr(start, end-start)`.
+
+This exactly matches the statement’s definition.
+
+### Replacing via `substr(...) = newstring`
+For `substr(name1, ...) = rhs`:
+1. Compute `start` and `end` for the substring in `vars[name1]` using the same logic as above.
+2. Compute `new_value`:
+   - If rhs is `substr(...)`, extract that substring.
+   - Else rhs is a variable name; use `vars[rhs]`.
+3. Replace:
+   ```
+   str = str[0:start] + new_value + str[end:len]
+   ```
+This handles different lengths automatically.
+
+### Handling each statement type
+After space stripping:
+- **Print**
+  - If argument begins with `substr(`: parse inner arguments and print substring.
+  - Else print variable value.
+- **Substring assignment** starts with `substr(`:
+  - Parse LHS substring spec up to `)`.
+  - Parse RHS (variable or substring).
+  - Replace in-place.
+- **Normal assignment** otherwise:
+  - Split at `=`.
+  - RHS can be `substr(` or variable; assign accordingly.
+
+### Complexity
+- At most 300 program lines; each string length ≤ 1000 during execution.
+- Each operation is O(L) due to substring concatenations.
+- Well within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Pulls in essentially all standard headers (ICPC-style)
+using namespace std;
+
+// Debug-style output for pair (not used by the solution logic)
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Debug-style input for pair (not used by the solution logic)
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Debug-style input for vector (not used by the solution logic)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Debug-style output for vector (not used by the solution logic)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                         // N init lines, M program lines
+vector<string> init_lines, prog_lines; // Stores the lines after filtering blank lines
+map<string, string> vars;         // Variable table: name -> current string value
+
+// Reads input, filters out blank/whitespace-only lines, then splits into init/program parts
+void read() {
+    cin >> n >> m;                // Read counts
+    cin.ignore();                 // Consume the remaining newline after m
+
+    vector<string> all_lines;     // Will contain all non-blank lines in order
+    string line;
+    while(getline(cin, line)) {   // Read the rest of the file line by line
+        bool blank = true;
+        for(char c: line) {       // Check if line has any non-whitespace character
+            if(c != ' ' && c != '\t' && c != '\r') {
+                blank = false;
+                break;
+            }
+        }
+        if(!blank) {              // Keep only non-blank lines
+            all_lines.push_back(line);
+        }
+    }
+
+    // First n lines are initialization statements
+    init_lines.assign(all_lines.begin(), all_lines.begin() + n);
+    // Next m lines are program statements
+    prog_lines.assign(all_lines.begin() + n, all_lines.begin() + n + m);
+}
+
+// Structure to hold parsed arguments of substr(name, offset[, count])
+struct substr_args {
+    string name;                  // variable name
+    int offset;                   // offset argument
+    int count;                    // count argument (meaningful only if has_count == true)
+    bool has_count;               // whether count was present
+};
+
+// Parses the inside of substr(...): "name,offset" or "name,offset,count"
+// Input is expected without spaces (they strip spaces before calling this)
+substr_args parse_substr_args(const string& s) {
+    int comma1 = s.find(',');             // first comma separates name from offset
+    string name = s.substr(0, comma1);    // variable name
+    string rest = s.substr(comma1 + 1);   // the remaining "offset" or "offset,count"
+    int comma2 = rest.find(',');          // optional comma before count
+    if(comma2 == (int)string::npos) {     // no count provided
+        return {name, stoi(rest), 0, false};
+    }
+    // count provided
+    return {
+        name,
+        stoi(rest.substr(0, comma2)),     // offset
+        stoi(rest.substr(comma2 + 1)),    // count
+        true
+    };
+}
+
+// Implements Perl-like substring extraction according to the statement
+string get_substr(const string& str, int offset, int count, bool has_count) {
+    int len = (int)str.size();
+    // start index: from beginning if offset>=0, from end if offset<0
+    int start = offset >= 0 ? offset : len + offset;
+
+    int end; // end is exclusive
+    if(!has_count) {              // substr(str, offset) -> to end
+        end = len;
+    } else if(count >= 0) {       // substr(str, offset, count) -> fixed length
+        end = start + count;
+    } else {                      // count < 0 -> leave -count characters off the end
+        end = len + count;
+    }
+
+    // Standard C++ substring with (pos, length)
+    return str.substr(start, end - start);
+}
+
+// Removes spaces ' ' from a string (note: does not remove tabs, but input uses spaces)
+string strip_spaces(const string& s) {
+    string result;
+    for(char c: s) {
+        if(c != ' ') {            // remove only normal spaces
+            result += c;
+        }
+    }
+    return result;
+}
+
+void solve() {
+    // Parse initialization lines: $name = "value";
+    for(auto& line: init_lines) {
+        int dollar = (int)line.find('$'); // variables start with '$'
+        int i = dollar;
+        string name;
+
+        // Read variable name: alnum, '$', or '_' (as per statement)
+        while(i < (int)line.size() &&
+              (isalnum((unsigned char)line[i]) || line[i] == '$' || line[i] == '_')) {
+            name += line[i++];
+        }
+
+        // Extract quoted value
+        int q1 = (int)line.find('"');     // first quote
+        int q2 = (int)line.rfind('"');    // last quote
+        vars[name] = line.substr(q1 + 1, q2 - q1 - 1); // store value without quotes
+    }
+
+    // Execute each program line
+    for(auto& raw_line: prog_lines) {
+        string line = strip_spaces(raw_line); // normalize by removing spaces
+        if(line.empty() || line == ";") {     // ignore empty/degenerate lines
+            continue;
+        }
+
+        // Case 1 & 2: print(...)
+        if(line.substr(0, 6) == "print(") {
+            // Extract content between "print(" and ");"
+            string content = line.substr(6, line.size() - 8);
+
+            // print(substr(...))
+            if(content.substr(0, 7) == "substr(") {
+                string inner = content.substr(7, content.size() - 8); // inside substr(...)
+                auto [name, offset, count, has_count] = parse_substr_args(inner);
+                cout << get_substr(vars[name], offset, count, has_count) << "\n";
+            } else {
+                // print(variable)
+                cout << vars[content] << "\n";
+            }
+
+        // Case 5 & 6: substr(name1, ...)=...
+        } else if(line.substr(0, 7) == "substr(") {
+            int close_paren = (int)line.find(')'); // end of LHS substr(...)
+            string lhs_inner = line.substr(7, close_paren - 7); // inside LHS substr(...)
+
+            // RHS begins after ")=" and ends before ';'
+            string rhs = line.substr(close_paren + 2, line.size() - close_paren - 3);
+
+            // Parse LHS substring spec
+            auto [name1, offset1, count1, has_count1] = parse_substr_args(lhs_inner);
+
+            // Compute RHS value (either variable or substring)
+            string new_value;
+            if(rhs.substr(0, 7) == "substr(") {
+                string rhs_inner = rhs.substr(7, rhs.size() - 8);
+                auto [name2, offset2, count2, has_count2] = parse_substr_args(rhs_inner);
+                new_value = get_substr(vars[name2], offset2, count2, has_count2);
+            } else {
+                new_value = vars[rhs];
+            }
+
+            // Perform replacement in vars[name1]
+            string& str = vars[name1];        // reference so we modify in-place
+            int len = (int)str.size();
+            int start = offset1 >= 0 ? offset1 : len + offset1;
+
+            int end; // exclusive
+            if(!has_count1) {
+                end = len;
+            } else if(count1 >= 0) {
+                end = start + count1;
+            } else {
+                end = len + count1;
+            }
+
+            // Replace substring [start, end) with new_value
+            str = str.substr(0, start) + new_value + str.substr(end);
+
+        // Case 3 & 4: name1=...
+        } else {
+            int eq = (int)line.find('=');
+            string lhs = line.substr(0, eq);                         // left variable name
+            string rhs = line.substr(eq + 1, line.size() - eq - 2);  // right side without ';'
+
+            // name1 = substr(...)
+            if(rhs.substr(0, 7) == "substr(") {
+                string rhs_inner = rhs.substr(7, rhs.size() - 8);
+                auto [name2, offset2, count2, has_count2] = parse_substr_args(rhs_inner);
+                vars[lhs] = get_substr(vars[name2], offset2, count2, has_count2);
+            } else {
+                // name1 = name2
+                vars[lhs] = vars[rhs];
+            }
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // fast IO
+    cin.tie(nullptr);                // untie cin/cout
+
+    int T = 1;                       // single test
+    // cin >> T;                      // (not used)
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import sys
+
+def strip_spaces(s: str) -> str:
+    # Match the C++ behavior: remove only normal spaces, not tabs.
+    return s.replace(" ", "")
+
+def parse_substr_args(s: str):
+    # s is inside substr(...), with spaces already removed:
+    # "name,offset" or "name,offset,count"
+    comma1 = s.find(",")
+    name = s[:comma1]
+    rest = s[comma1 + 1:]
+
+    comma2 = rest.find(",")
+    if comma2 == -1:
+        return name, int(rest), 0, False
+    offset = int(rest[:comma2])
+    count = int(rest[comma2 + 1:])
+    return name, offset, count, True
+
+def get_substr(st: str, offset: int, count: int, has_count: bool) -> str:
+    # Implements the statement's substring semantics
+    n = len(st)
+    start = offset if offset >= 0 else n + offset
+
+    if not has_count:
+        end = n
+    elif count >= 0:
+        end = start + count
+    else:
+        end = n + count  # leave -count chars off the end
+
+    return st[start:end]
+
+def main():
+    data = sys.stdin.read().splitlines()
+    if not data:
+        return
+
+    # First line: N M
+    first = data[0].split()
+    n = int(first[0])
+    m = int(first[1])
+
+    # Collect all non-blank lines after the first line (blank = only whitespace)
+    all_lines = []
+    for line in data[1:]:
+        if any(c not in " \t\r" for c in line):
+            all_lines.append(line)
+
+    init_lines = all_lines[:n]
+    prog_lines = all_lines[n:n+m]
+
+    # Variable table; missing variables are empty strings
+    vars = {}
+
+    # Parse initializations: $name = "value";
+    for line in init_lines:
+        # Find variable name starting at '$'
+        d = line.find("$")
+        i = d
+        name_chars = []
+        while i < len(line) and (line[i].isalnum() or line[i] in "$_"):
+            name_chars.append(line[i])
+            i += 1
+        name = "".join(name_chars)
+
+        # Extract text between the first and last double quote
+        q1 = line.find('"')
+        q2 = line.rfind('"')
+        vars[name] = line[q1 + 1:q2]
+
+    out_lines = []
+
+    for raw in prog_lines:
+        line = strip_spaces(raw)
+        if not line or line == ";":
+            continue
+
+        if line.startswith("print("):
+            # content between print( and );
+            content = line[6:-2]
+
+            if content.startswith("substr("):
+                inner = content[7:-1]
+                name, offset, count, has_count = parse_substr_args(inner)
+                st = vars.get(name, "")
+                out_lines.append(get_substr(st, offset, count, has_count))
+            else:
+                out_lines.append(vars.get(content, ""))
+
+        elif line.startswith("substr("):
+            # LHS: substr(...)=...
+            close = line.find(")")
+            lhs_inner = line[7:close]                 # inside lhs substr(...)
+            rhs = line[close + 2:-1]                  # after ")=" up to ';'
+
+            name1, offset1, count1, has_count1 = parse_substr_args(lhs_inner)
+
+            # Evaluate RHS expression to a string
+            if rhs.startswith("substr("):
+                rhs_inner = rhs[7:-1]
+                name2, offset2, count2, has_count2 = parse_substr_args(rhs_inner)
+                new_value = get_substr(vars.get(name2, ""), offset2, count2, has_count2)
+            else:
+                new_value = vars.get(rhs, "")
+
+            # Replace substring in vars[name1]
+            st = vars.get(name1, "")
+            nlen = len(st)
+            start = offset1 if offset1 >= 0 else nlen + offset1
+
+            if not has_count1:
+                end = nlen
+            elif count1 >= 0:
+                end = start + count1
+            else:
+                end = nlen + count1
+
+            vars[name1] = st[:start] + new_value + st[end:]
+
+        else:
+            # Assignment: name1=...
+            eq = line.find("=")
+            lhs = line[:eq]
+            rhs = line[eq + 1:-1]  # strip trailing ';'
+
+            if rhs.startswith("substr("):
+                rhs_inner = rhs[7:-1]
+                name2, offset2, count2, has_count2 = parse_substr_args(rhs_inner)
+                vars[lhs] = get_substr(vars.get(name2, ""), offset2, count2, has_count2)
+            else:
+                vars[lhs] = vars.get(rhs, "")
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Normalize each program line by removing spaces, then simulate execution with a `name -> string` map.  
+Implement `substr(s, o[,c])` by converting `o` to `start` (`o>=0 ? o : len+o`) and computing `end` as: to end if `c` missing, `start+c` if `c>=0`, else `len+c`. Extraction is `s[start:end]`.  
+For replacement `substr(x,...)=y`, compute `[start,end)` in `x` and set `x = x[:start] + value(y) + x[end:]`, where `value(y)` is either a variable’s string or a `substr(...)` result.  
+Handle three top-level forms: `print(...)`, `substr(...)=...`, and `name=...`. Output on each `print`.

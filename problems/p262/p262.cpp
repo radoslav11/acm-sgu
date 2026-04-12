@@ -57,8 +57,8 @@ void solve() {
     // position <= n*m is the current pixel we are considering. We have two
     // options - either include the pixel at the current position, meaning that
     // some of the relationships will become "1", or skip it, keeping the
-    // current mask. Note that we can precompute for each positino, the mask it
-    // will "or" / "|", so that each transition is in O(1). Overall, thstringe
+    // current mask. Note that we can precompute for each position, the mask it
+    // will "or" / "|", so that each transition is in O(1). Overall, the time
     // complexity would be O(n * m * 2^C(k, 2)) which comfortably passes the
     // given constraints.
 
