@@ -1,0 +1,370 @@
+## 1) Abridged problem statement
+
+Three creditors **P, O, S** are owed **P, O, S** burcrystals respectively. The professor has **N** crystals.  
+Each creditor independently labels each crystal as **Big (B)** worth **2** burcrystals *to that creditor* or **Small (S)** worth **1**.
+
+For each crystal you must choose exactly one recipient (P/O/S). A recipient’s received value is the sum of that creditor’s valuations of the crystals assigned to them. Overpaying is allowed.  
+Output a string of length **N** of letters `P`, `O`, `S` describing an assignment that makes each creditor receive value **≥ debt**, or output `no solution`.
+
+Constraints up to `1e5`.
+
+---
+
+## 2) Detailed editorial (explaining the given solution idea)
+
+### Key observation: only 8 crystal “types”
+Each crystal is described by 3 letters (Popov, Parkin, Studnev). There are only `2^3 = 8` possible patterns, e.g. `SSS, SSB, ..., BBB`.
+
+Encode a crystal type as a 3-bit mask `t`:
+- bit 0 = Popov says **B**
+- bit 1 = Parkin says **B**
+- bit 2 = Studnev says **B**
+
+Then if a crystal of type `t` is given to person `person` (0=P,1=O,2=S), its value is:
+- `2` if bit `person` is 1
+- else `1`
+
+So the input reduces to:
+- debts: `debt[3]`
+- counts of each type: `count[8]`
+
+We must decide how many crystals of each type go to each person so all debts are met.
+
+### Why a greedy can work if we try all priority orders
+A direct optimal algorithm is not obvious because each crystal can satisfy different people differently, and decisions interact.
+
+However, the search space of *behaviors* of a greedy algorithm is small:
+- There are only **8 types**, so an ordering of which types to use first is one of `8! = 40320`.
+- There are only **3 people**, so an ordering of which person to satisfy first is one of `3! = 6`.
+
+Total combinations: `8! * 3! = 241,920`, which is feasible in time in C++ given the work per combination is tiny (loops over 3×8).
+
+For each pair of permutations:
+- Fix an order of people (who gets satisfied first).
+- Fix an order of crystal types (which types are “spent” first).
+
+Then run a greedy filling:
+1. For the current person, iterate crystal types in priority order.
+2. For each type, take as many crystals as possible **without overshooting too much**:
+   - If value is `v` (1 or 2), you can take `min(available, debt // v)` crystals to reduce debt while staying non-negative.
+3. After that, if debt is still positive, take additional crystals one by one (still in type priority) to cover the remainder, possibly overshooting (allowed).
+4. If you run out of crystals for a person before their debt is covered, this permutation fails.
+
+If some permutation succeeds, we have counts assigned to each person per type. Finally, reconstruct an assignment for the original N crystals by scanning input in order and “spending” from these per-type quotas.
+
+### Why reconstruction is easy
+We only computed “how many of type t go to P/O/S”. The crystals of the same type are interchangeable.  
+So we iterate the original list; for crystal `i` of type `t`, give it to any person whose remaining quota for `t` is positive, decrement quota, and output that letter.
+
+### Complexity
+- Counting types: `O(N)`
+- For each of at most `8!*3! ≈ 2.4e5` permutations, greedy work is `O(3*8)` plus small overhead.
+- Reconstruction: `O(N)` once.
+
+This passes because `3*8` is extremely small; most time is in iterating permutations, still fine in 0.25s in optimized C++ in contest setting, especially since there is only one test.
+
+---
+
+## 3) The provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Pulls in almost all standard C++ headers.
+using namespace std;
+
+// Convenience output for pair (not used by the core logic).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience input for pair (not used by the core logic).
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Convenience input for vector: reads all elements (not used here).
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Convenience output for vector (not used here).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int p_debt, o_debt, s_debt;       // Debts for Popov, Parkin, Studnev.
+int n;                            // Number of crystals.
+vector<int> crystal_type;         // Encoded type (0..7) for each crystal in input order.
+
+// Read input and encode each crystal as a 3-bit mask.
+void read() {
+    cin >> p_debt >> o_debt >> s_debt;  // Debts.
+    cin >> n;                           // Number of crystals.
+    crystal_type.assign(n, 0);          // Allocate and fill with zeros.
+
+    for(int i = 0; i < n; i++) {
+        string s;
+        cin >> s;                       // String of length 3: (P,O,S) each 'B' or 'S'.
+        int t = 0;                      // Will become a mask in [0..7].
+
+        for(int j = 0; j < 3; j++) {
+            if(s[j] == 'B') {           // If creditor j says Big...
+                t |= (1 << j);          // ...set bit j (means value 2 for that creditor).
+            }
+        }
+        crystal_type[i] = t;            // Store encoded type.
+    }
+}
+
+void solve() {
+    // Count how many crystals of each of the 8 types we have.
+    array<int, 8> counts{};
+    for(int t: crystal_type) {
+        counts[t]++;                    // Increment count for that type.
+    }
+
+    // Debts as an array in person-index order: 0=P,1=O,2=S.
+    array<int, 3> debts = {p_debt, o_debt, s_debt};
+
+    // type_perm will hold a permutation of types [0..7] representing greedy priority.
+    array<int, 8> type_perm;
+    iota(type_perm.begin(), type_perm.end(), 0);  // Fill with 0,1,2,...,7.
+
+    // people_perm will hold a permutation of people [0..2] representing processing order.
+    array<int, 3> people_perm = {0, 1, 2};
+
+    // Map person index to output character.
+    const char names[] = {'P', 'O', 'S'};
+
+    // Try all 3! permutations of people order.
+    do {
+        // Try all 8! permutations of type priority.
+        do {
+            auto rem = counts;          // Remaining available crystals per type for this attempt.
+
+            // assign[person][type] = how many crystals of this type we give to this person.
+            array<array<int, 8>, 3> assign{};
+
+            bool ok = true;             // Whether this attempt can satisfy all debts.
+
+            // Greedily satisfy people in the chosen people_perm order.
+            for(int pi = 0; pi < 3; pi++) {
+                int person = people_perm[pi]; // Which person index we are currently satisfying.
+                int debt = debts[person];     // Remaining debt for that person.
+
+                // Phase 1: take as many as possible without making debt negative,
+                // using debt/value (integer division).
+                for(int ti = 0; ti < 8; ti++) {
+                    int t = type_perm[ti];    // Consider types in chosen priority order.
+                    if(rem[t] == 0 || debt <= 0) {
+                        continue;             // No crystals of this type or already satisfied.
+                    }
+
+                    // Value of type t for this person: 2 if bit set, else 1.
+                    int value = ((t >> person) & 1) ? 2 : 1;
+
+                    // Take as many crystals of this type as possible while keeping debt >= 0.
+                    int take = min(rem[t], debt / value);
+
+                    assign[person][t] += take; // Record assignment.
+                    rem[t] -= take;            // Decrease availability.
+                    debt -= take * value;      // Reduce debt.
+                }
+
+                // Phase 2: if debt is still positive, take extra crystals one by one
+                // (overpay allowed) until debt <= 0 or we run out.
+                for(int ti = 0; ti < 8 && debt > 0; ti++) {
+                    int t = type_perm[ti];
+                    if(rem[t] == 0) continue;
+
+                    int value = ((t >> person) & 1) ? 2 : 1;
+
+                    assign[person][t]++;  // Give one more crystal of this type.
+                    rem[t]--;
+                    debt -= value;        // Might go negative; that's fine (overpay).
+                }
+
+                // If still positive, we couldn't satisfy this person with remaining crystals.
+                if(debt > 0) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            // If this greedy attempt worked, reconstruct and print an actual per-crystal assignment.
+            if(ok) {
+                string result(n, 'P');   // Output string, placeholder initial value.
+
+                // For each original crystal, choose the first person that still needs one of its type.
+                for(int i = 0; i < n; i++) {
+                    int t = crystal_type[i];
+                    for(int p = 0; p < 3; p++) {
+                        if(assign[p][t] > 0) {
+                            assign[p][t]--;     // Consume quota.
+                            result[i] = names[p]; // Set recipient.
+                            break;
+                        }
+                    }
+                }
+
+                cout << result << '\n';  // Print assignment string.
+                return;                  // Done.
+            }
+
+        } while(next_permutation(type_perm.begin(), type_perm.end())); // Next type priority.
+    } while(next_permutation(people_perm.begin(), people_perm.end())); // Next people order.
+
+    // If no permutation leads to success:
+    cout << "no solution\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);   // Faster I/O.
+    cin.tie(nullptr);                   // Untie cin/cout for speed.
+
+    int T = 1;
+    // cin >> T;                        // Problem appears to have only one test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+from itertools import permutations
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    # Debts
+    P = int(next(it))
+    O = int(next(it))
+    S = int(next(it))
+    debts = [P, O, S]  # person index: 0=P, 1=O, 2=S
+
+    n = int(next(it))
+
+    # Encode each crystal as a 3-bit mask t in [0..7]:
+    # bit j = 1 if creditor j marks it as Big (value 2), else Small (value 1)
+    crystal_type = []
+    counts = [0] * 8
+    for _ in range(n):
+        s = next(it)           # like "BBS"
+        t = 0
+        if s[0] == 'B': t |= 1 << 0
+        if s[1] == 'B': t |= 1 << 1
+        if s[2] == 'B': t |= 1 << 2
+        crystal_type.append(t)
+        counts[t] += 1
+
+    names = ['P', 'O', 'S']
+
+    # Try all orders of satisfying people (3!) and of spending crystal types (8!)
+    for people_perm in permutations([0, 1, 2]):
+        for type_perm in permutations(range(8)):
+            rem = counts[:]  # remaining crystals per type
+
+            # assign[person][type] = how many crystals of this type are given to that person
+            assign = [[0] * 8 for _ in range(3)]
+
+            ok = True
+            for person in people_perm:
+                debt = debts[person]
+
+                # Phase 1: take as many as possible without overshooting (debt/value)
+                for t in type_perm:
+                    if debt <= 0:
+                        break
+                    if rem[t] == 0:
+                        continue
+
+                    # Value is 2 if this person's bit is set; otherwise 1
+                    value = 2 if ((t >> person) & 1) else 1
+
+                    take = min(rem[t], debt // value)
+                    if take:
+                        assign[person][t] += take
+                        rem[t] -= take
+                        debt -= take * value
+
+                # Phase 2: if still not covered, take single crystals (overpay allowed)
+                if debt > 0:
+                    for t in type_perm:
+                        if debt <= 0:
+                            break
+                        if rem[t] == 0:
+                            continue
+                        value = 2 if ((t >> person) & 1) else 1
+                        assign[person][t] += 1
+                        rem[t] -= 1
+                        debt -= value
+
+                if debt > 0:
+                    ok = False
+                    break
+
+            if not ok:
+                continue
+
+            # Reconstruct an assignment for each crystal in input order
+            out = []
+            for t in crystal_type:
+                # Give this crystal to any person who still has quota for this type.
+                # (Order P,O,S is fine; quotas guarantee feasibility.)
+                if assign[0][t] > 0:
+                    assign[0][t] -= 1
+                    out.append('P')
+                elif assign[1][t] > 0:
+                    assign[1][t] -= 1
+                    out.append('O')
+                else:
+                    # Must go to S if solution is consistent
+                    assign[2][t] -= 1
+                    out.append('S')
+
+            sys.stdout.write("".join(out) + "\n")
+            return
+
+    sys.stdout.write("no solution\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes:
+- This is a direct port of the C++ logic.
+- In Python, `8!` permutations are only 40320, but nested in 6 people permutations gives 241k; still typically okay, but may be tight in very strict time limits. (C++ is safer for this particular TL.)
+
+---
+
+## 5) Compressed editorial
+
+- Encode each crystal as a 3-bit mask (P/O/S says Big?) → 8 types.
+- Count occurrences `cnt[8]`. Debts `d[3]`.
+- Try all `3!` orders of satisfying people and all `8!` type-priority orders.
+- For a fixed pair of permutations, greedy-fill each person:
+  - Take `min(rem[type], debt // value)` where value is 1 or 2 for that person.
+  - If still positive, take extra single crystals (overpay allowed).
+  - Fail if debt still positive after exhausting types.
+- If success, reconstruct output string by distributing each input crystal according to computed per-(person,type) quotas.
+- If no permutation works, print `no solution`.

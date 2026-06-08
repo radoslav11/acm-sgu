@@ -1,0 +1,1063 @@
+## 1. Abridged problem statement
+
+There are `N ≤ 5` lanes. At time `t`, lane `i` has speed
+
+\[
+v_i(t)=b_i+a_i\sin(t+\delta_i),
+\]
+
+where `b_i > a_i`, so all speeds are positive. You start at time `0` in lane `1` and need to travel distance `d`. You may change from lane `x` to lane `y`; this takes `c * |x-y|` time, during which you do not move forward.
+
+Output the minimum travel time and a chronological list of lane changes achieving it, with floating-point accuracy about `1e-6`.
+
+---
+
+## 2. Detailed editorial
+
+### Distance traveled in one lane
+
+If we stay in lane `L` from time `t` to `t + Δt`, the traveled distance is
+
+\[
+\int_t^{t+\Delta t} \left(b_L+a_L\sin(s+\delta_L)\right) ds.
+\]
+
+This integrates exactly to
+
+\[
+b_L\Delta t-a_L\left(\cos(t+\Delta t+\delta_L)-\cos(t+\delta_L)\right).
+\]
+
+So, given a starting time `t` and a distance `dx`, we can find the required driving time `Δt` by solving
+
+\[
+b_L\Delta t-a_L\left(\cos(t+\Delta t+\delta_L)-\cos(t+\delta_L)\right)=dx.
+\]
+
+Because `b_i > a_i`, speed is always positive, so the left side is strictly increasing in `Δt`. Therefore the equation has a unique solution.
+
+---
+
+### Discretizing distance
+
+The provided solution uses a fine position grid:
+
+```cpp
+M = 200000
+step = d / M
+```
+
+State:
+
+```cpp
+time_arr[i][L]
+```
+
+means: minimum known time to reach distance `i * step` and be in lane `L`.
+
+Initial state:
+
+```cpp
+time_arr[0][0] = 0
+```
+
+because we start in lane `1`, internally stored as lane `0`.
+
+---
+
+### Transitions
+
+At every distance grid point `i`, two types of transitions are considered.
+
+#### 1. Lane changes at fixed position
+
+Changing from lane `lp` to lane `L` costs
+
+\[
+c \cdot |L-lp|.
+\]
+
+No distance is traveled during a lane change.
+
+For each pair of lanes:
+
+```cpp
+time_arr[i][L] = min(time_arr[i][L],
+                     time_arr[i][lp] + c * abs(L - lp));
+```
+
+The code uses a snapshot `drive_arrival` of the times before lane-change relaxation. This is enough because `c * |x-y|` is a metric on lane indices, so chaining multiple lane changes at the same position is never better than directly changing to the final lane.
+
+#### 2. Driving one distance step
+
+From state `(i, L)`, drive `step` distance in the same lane:
+
+```cpp
+dt = drive_time(L, time_arr[i][L], step)
+time_arr[i + 1][L] = time_arr[i][L] + dt
+```
+
+The function `drive_time` solves the integral equation using Newton iterations.
+
+Because `step ≤ 1000 / 200000 = 0.005`, `dt` is small, so the solution avoids expensive `sin`/`cos` calls inside Newton by using Taylor expansions for `sin(dt)` and `cos(dt)`.
+
+---
+
+### Parent reconstruction
+
+For every state, `par[i][L]` stores how it was reached:
+
+- `-1`: start state,
+- `L`: arrived by driving from position `i - 1`,
+- another lane `lp`: arrived by switching from lane `lp`.
+
+After the DP finishes, the best final lane is chosen among all lanes at distance `d`.
+
+Then the parent pointers are followed backwards to recover:
+
+- the sequence of lanes,
+- approximate switch times.
+
+---
+
+### Why refinement is needed
+
+The DP only allows lane changes at grid positions. The optimal lane-change position is continuous, not necessarily exactly on a grid point. A single switch may be off by a tiny amount, but with many switches the accumulated error can exceed `1e-6`.
+
+So the solution refines switch times locally.
+
+Suppose a switch goes from lane `A` to lane `B`, and the switch duration is
+
+\[
+c_k = c \cdot |A-B|.
+\]
+
+If the switch starts at time `t`, then the car arrives in lane `B` at time `t + c_k`.
+
+At the local optimum, delaying or advancing the switch slightly should not improve the final answer. This gives the condition:
+
+\[
+v_A(t)=v_B(t+c_k).
+\]
+
+That is,
+
+\[
+b_A+a_A\sin(t+\delta_A)
+=
+b_B+a_B\sin(t+c_k+\delta_B).
+\]
+
+Each switch time is refined by Newton’s method using this equation.
+
+The Newton step is clamped to `[-0.3, 0.3]` to avoid jumping to the wrong periodic root.
+
+---
+
+### Exact final evaluation
+
+After refinement, the solution recomputes the actual traveled distance along the schedule.
+
+If the target distance is reached before some planned switch, the remaining switches are ignored.
+
+For the final partial segment, the exact driving time is found by bisection using the exact integral formula, because the remaining time may be large and Taylor approximations are no longer reliable.
+
+The solution evaluates both:
+
+1. the original DP schedule,
+2. the refined schedule,
+
+and outputs the better one.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include almost all standard C++ headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output helper for pairs, unused in the core algorithm.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input helper for pairs, unused in the core algorithm.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input helper for vectors, unused in the core algorithm.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Read every element.
+        in >> x;
+    }
+    return in;
+};
+
+// Output helper for vectors, unused in the core algorithm.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Print every element followed by a space.
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of lanes.
+int n;
+
+// Total distance to travel, and lane-change coefficient.
+double dist_total, c_change;
+
+// Parameters of lane speed:
+// v_i(t) = b_i + a_i * sin(t + delta_i).
+double a_arr[5], b_arr[5], delta_arr[5];
+
+// Reads input.
+void read() {
+    cin >> n >> dist_total >> c_change; // Read N, d, c.
+    for(int i = 0; i < n; i++) { // Read each lane's parameters.
+        cin >> a_arr[i] >> b_arr[i] >> delta_arr[i];
+    }
+}
+
+// Exact solver for driving dx distance in one lane, starting at time t_start.
+// Uses bisection on the exact integral equation.
+double drive_time_exact(int lane, double t_start, double dx) {
+    // Extract lane parameters.
+    double a = a_arr[lane], b = b_arr[lane], d = delta_arr[lane],
+
+           // cos(t_start + delta), used in the integral formula.
+           cos_t0 = cos(t_start + d),
+
+           // Lower bound on time: use maximum possible speed b + a.
+           lo = (dx <= 0) ? 0.0 : dx / (b + a),
+
+           // Upper bound on time: use minimum possible speed b - a.
+           hi = (a > 0 && dx > 0) ? dx / (b - a) : lo;
+
+    // Safety: ensure upper bound is not below lower bound.
+    if(hi < lo) {
+        hi = lo;
+    }
+
+    // Bisection iterations; 100 is far more than enough for double precision.
+    for(int it = 0; it < 100; it++) {
+        // Middle candidate time.
+        double mid = 0.5 * (lo + hi),
+
+               // Distance(mid) - dx.
+               // Integral from t_start to t_start + mid:
+               // b * mid - a * (cos(t_start + mid + d) - cos(t_start + d)).
+               f = b * mid - a * (cos(t_start + mid + d) - cos_t0) - dx;
+
+        // If traveled distance is too large, mid is too high.
+        if(f > 0) {
+            hi = mid;
+        } else {
+            // Otherwise mid is too small.
+            lo = mid;
+        }
+    }
+
+    // Return final midpoint.
+    return 0.5 * (lo + hi);
+}
+
+// Fast approximate solver for a very small driving distance dx.
+// Used inside the large DP, where dx = dist_total / 200000 <= 0.005.
+// Uses Newton iterations and Taylor expansions for sin(dt), cos(dt).
+double drive_time(int lane, double t_start, double dx) {
+    // Extract lane parameters.
+    double a = a_arr[lane], b = b_arr[lane], d = delta_arr[lane],
+
+           // Precompute cos and sin at starting phase.
+           cos_t = cos(t_start + d),
+           sin_t = sin(t_start + d),
+
+           // Initial estimate: distance / instantaneous speed.
+           dt = dx / (b + a * sin_t);
+
+    // A few Newton iterations are enough because dt is tiny.
+    for(int it = 0; it < 4; it++) {
+        // dt squared.
+        double dt2 = dt * dt,
+
+               // Taylor approximation for cos(dt), high enough order.
+               cos_dt = 1.0 -
+                        dt2 * 0.5 *
+                            (1.0 - dt2 / 12.0 *
+                                       (1.0 - dt2 / 30.0 * (1.0 - dt2 / 56.0))),
+
+               // Taylor approximation for sin(dt), high enough order.
+               sin_dt =
+                   dt * (1.0 - dt2 / 6.0 *
+                                   (1.0 - dt2 / 20.0 *
+                                              (1.0 - dt2 / 42.0 *
+                                                         (1.0 - dt2 / 72.0)))),
+
+               // cos(t_start + dt + delta), using angle addition.
+               cos_a = cos_t * cos_dt - sin_t * sin_dt,
+
+               // sin(t_start + dt + delta), using angle addition.
+               sin_a = sin_t * cos_dt + cos_t * sin_dt,
+
+               // Function value:
+               // traveled_distance(dt) - dx.
+               f = b * dt - a * (cos_a - cos_t) - dx,
+
+               // Derivative of traveled distance wrt dt is final speed.
+               fp = b + a * sin_a;
+
+        // Newton correction.
+        dt -= f / fp;
+    }
+
+    // Return computed small driving time.
+    return dt;
+}
+
+// Number of distance grid intervals.
+const int M = 200000;
+
+// DP time table:
+// time_arr[i][L] = best time to reach grid position i in lane L.
+double time_arr[M + 1][5];
+
+// Parent table for reconstruction.
+int par[M + 1][5];
+
+void solve() {
+    /*
+       Main idea:
+
+       1. Run a dynamic program over discretized distance.
+          State: grid position i and lane L.
+
+       2. At every grid point, allow lane changes.
+
+       3. Then drive one distance step forward in the same lane.
+
+       4. Reconstruct the switch sequence.
+
+       5. Refine switch times using the local optimality condition
+          v_previous(t) = v_next(t + switch_duration).
+
+       6. Exactly evaluate the resulting schedule and output it.
+    */
+
+    // Length of one distance step.
+    double step = dist_total / M;
+
+    // Initialize DP arrays.
+    for(int L = 0; L < n; L++) {
+        for(int i = 0; i <= M; i++) {
+            time_arr[i][L] = 1e18; // Infinity.
+            par[i][L] = -1;        // Unknown parent.
+        }
+    }
+
+    // Start at distance 0, lane 0, time 0.
+    time_arr[0][0] = 0;
+
+    // Precompute lane-change costs.
+    double switch_cost[5][5];
+    for(int L = 0; L < n; L++) {
+        for(int lp = 0; lp < n; lp++) {
+            switch_cost[L][lp] = c_change * abs(L - lp);
+        }
+    }
+
+    // DP over all distance grid points.
+    for(int i = 0; i <= M; i++) {
+        // Snapshot of arrival times before lane changes at this grid point.
+        double drive_arrival[5];
+        for(int L = 0; L < n; L++) {
+            drive_arrival[L] = time_arr[i][L];
+        }
+
+        // Relax lane-change transitions at the same distance.
+        for(int L = 0; L < n; L++) {
+            for(int lp = 0; lp < n; lp++) {
+                if(lp == L) {
+                    continue; // No need to switch to the same lane.
+                }
+
+                // Candidate: be in lp, then change to L.
+                double cand = drive_arrival[lp] + switch_cost[L][lp];
+
+                // If better, update.
+                if(cand < time_arr[i][L]) {
+                    time_arr[i][L] = cand;
+                    par[i][L] = lp; // Parent lane before switch.
+                }
+            }
+        }
+
+        // Drive from grid point i to i + 1.
+        if(i < M) {
+            for(int L = 0; L < n; L++) {
+                // Current best time at position i, lane L.
+                double t = time_arr[i][L];
+
+                // Time needed to drive one small distance step.
+                double dt = drive_time(L, t, step);
+
+                // Store arrival at next grid point in the same lane.
+                time_arr[i + 1][L] = t + dt;
+
+                // Parent is the same lane, meaning this was a driving move.
+                par[i + 1][L] = L;
+            }
+        }
+    }
+
+    // Find best final lane after reaching full distance.
+    int best_lane = 0;
+    for(int L = 1; L < n; L++) {
+        if(time_arr[M][L] < time_arr[M][best_lane]) {
+            best_lane = L;
+        }
+    }
+
+    // Reconstruct lane sequence backwards.
+    vector<int> lane_seq{best_lane};
+
+    // Approximate switch start times from DP.
+    vector<double> switch_times;
+
+    // Current reconstruction state.
+    int cur_l = best_lane, cur_i = M;
+
+    // Follow parents until the start.
+    while(true) {
+        int p = par[cur_i][cur_l]; // Parent of current state.
+
+        if(p == -1) {
+            break; // Reached start.
+        }
+
+        if(p == cur_l) {
+            // Parent is same lane, so this was a driving step.
+            cur_i--;
+        } else {
+            // Parent is another lane, so this was a lane change.
+            // The switch started when we were in parent lane p.
+            switch_times.push_back(time_arr[cur_i][p]);
+
+            // Move to parent lane.
+            cur_l = p;
+
+            // Add lane to sequence.
+            lane_seq.push_back(cur_l);
+        }
+    }
+
+    // Reconstruction was backwards, so reverse it.
+    reverse(lane_seq.begin(), lane_seq.end());
+    reverse(switch_times.begin(), switch_times.end());
+
+    // Save original DP switch times as a fallback.
+    vector<double> dp_times = switch_times;
+
+    // Refine every switch independently.
+    for(size_t i = 0; i < switch_times.size(); i++) {
+        // Previous and next lanes.
+        int prev = lane_seq[i], next = lane_seq[i + 1];
+
+        // Duration of this lane change.
+        double c_dur = c_change * abs(next - prev),
+
+               // Previous lane parameters.
+               a_p = a_arr[prev],
+               b_p = b_arr[prev],
+               d_p = delta_arr[prev],
+
+               // Next lane parameters.
+               a_n = a_arr[next],
+               b_n = b_arr[next],
+               d_n = delta_arr[next],
+
+               // DP estimate.
+               t_dp = switch_times[i],
+
+               // Current Newton variable.
+               t = t_dp;
+
+        // Newton iterations for:
+        // v_prev(t) = v_next(t + c_dur).
+        for(int it = 0; it < 60; it++) {
+            // f = speed_prev(t) - speed_next(t + c_dur).
+            double f = (b_p + a_p * sin(t + d_p)) -
+                       (b_n + a_n * sin(t + c_dur + d_n)),
+
+                   // Derivative of f.
+                   fp = a_p * cos(t + d_p) - a_n * cos(t + c_dur + d_n);
+
+            // Avoid division by almost zero.
+            if(fabs(fp) < 1e-13) {
+                break;
+            }
+
+            // Clamp Newton step so we do not jump to a wrong periodic root.
+            double step_t = max(-0.3, min(0.3, f / fp));
+
+            // Apply Newton update.
+            t -= step_t;
+
+            // Stop if update is tiny.
+            if(fabs(step_t) < 1e-16) {
+                break;
+            }
+        }
+
+        // If derivative is nonnegative, this may correspond to a bad stationary
+        // point, so revert to DP estimate.
+        if(a_p * cos(t + d_p) - a_n * cos(t + c_dur + d_n) >= 0) {
+            t = t_dp;
+        }
+
+        // Ensure switches do not overlap and time remains chronological.
+        double min_t = (i == 0)
+                           ? 0.0
+                           : switch_times[i - 1] +
+                                 c_change * abs(lane_seq[i] - lane_seq[i - 1]);
+
+        // Store refined time, clamped to be feasible.
+        switch_times[i] = max(t, min_t);
+    }
+
+    // Function to exactly evaluate a schedule.
+    auto compute = [&](const vector<double>& times) {
+        // Accumulated traveled distance.
+        double total_dist = 0;
+
+        // Current time, including already performed switches.
+        double cur_time = 0;
+
+        // Number of switches actually used before reaching distance d.
+        size_t len = times.size();
+
+        // Simulate each driving segment before a switch.
+        for(size_t i = 0; i < times.size(); i++) {
+            // Lane before and after the switch.
+            int prev = lane_seq[i], next = lane_seq[i + 1];
+
+            // Switch start time.
+            double t_sw = times[i],
+
+                   // Lane parameters.
+                   a = a_arr[prev],
+                   b = b_arr[prev],
+                   d = delta_arr[prev],
+
+                   // Distance driven from cur_time to t_sw in lane prev.
+                   seg = b * (t_sw - cur_time) -
+                         a * (cos(t_sw + d) - cos(cur_time + d));
+
+            // If target is reached before this switch, ignore this and later switches.
+            if(total_dist + seg >= dist_total) {
+                len = i;
+                break;
+            }
+
+            // Add segment distance.
+            total_dist += seg;
+
+            // Advance time past the lane change.
+            cur_time = t_sw + c_change * abs(next - prev);
+        }
+
+        // Remaining distance after all used full segments.
+        double rem = max(0.0, dist_total - total_dist);
+
+        // Finish by driving exactly the remaining distance in current lane.
+        double t = cur_time + drive_time_exact(lane_seq[len], cur_time, rem);
+
+        // Return final time and number of switches used.
+        return make_pair(t, len);
+    };
+
+    // Evaluate refined schedule.
+    auto [t_refined, len_refined] = compute(switch_times);
+
+    // Evaluate original DP schedule.
+    auto [t_dp, len_dp] = compute(dp_times);
+
+    // Choose better schedule.
+    const vector<double>& chosen = (t_dp < t_refined) ? dp_times : switch_times;
+
+    // Best final time.
+    double t_end = min(t_refined, t_dp);
+
+    // Number of switches actually needed before finish.
+    size_t schedule_len = (t_dp < t_refined) ? len_dp : len_refined;
+
+    // Print with high precision.
+    cout << fixed << setprecision(17);
+
+    // Print minimal time.
+    cout << t_end << "\n";
+
+    // Print number of lane changes.
+    cout << schedule_len << "\n";
+
+    // Print each lane change.
+    for(size_t i = 0; i < schedule_len; i++) {
+        // Convert lane index from 0-based to 1-based.
+        cout << (lane_seq[i + 1] + 1) << " " << chosen[i] << "\n";
+    }
+}
+
+int main() {
+    // Fast C++ I/O.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // The original problem has one test case.
+    int T = 1;
+
+    // Process test cases.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import math
+from array import array
+
+
+def solve() -> None:
+    # Read all input tokens.
+    data = sys.stdin.read().strip().split()
+
+    # Empty input guard.
+    if not data:
+        return
+
+    # Parse first line.
+    n = int(data[0])
+    dist_total = float(data[1])
+    c_change = float(data[2])
+
+    # Arrays for lane parameters.
+    a_arr = [0.0] * n
+    b_arr = [0.0] * n
+    delta_arr = [0.0] * n
+
+    # Parse lane descriptions.
+    ptr = 3
+    for i in range(n):
+        a_arr[i] = float(data[ptr])
+        b_arr[i] = float(data[ptr + 1])
+        delta_arr[i] = float(data[ptr + 2])
+        ptr += 3
+
+    # Number of distance grid steps.
+    M = 200000
+
+    # Size of one distance step.
+    step_dist = dist_total / M
+
+    # Flat indexing helper for DP arrays.
+    #
+    # State (i, lane) is stored at:
+    #     index = i * n + lane
+    def idx(i: int, lane: int) -> int:
+        return i * n + lane
+
+    # Exact driving-time solver using bisection.
+    #
+    # It solves:
+    #   b * dt - a * (cos(t_start + dt + delta)
+    #                 - cos(t_start + delta)) = dx
+    def drive_time_exact(lane: int, t_start: float, dx: float) -> float:
+        # No distance means no driving time.
+        if dx <= 0.0:
+            return 0.0
+
+        # Lane parameters.
+        a = a_arr[lane]
+        b = b_arr[lane]
+        d = delta_arr[lane]
+
+        # Cosine at starting phase.
+        cos_t0 = math.cos(t_start + d)
+
+        # Lower bound: pretend speed is maximum b + a.
+        lo = dx / (b + a)
+
+        # Upper bound: pretend speed is minimum b - a.
+        # Since b > a, this is positive.
+        hi = dx / (b - a) if a > 0.0 else lo
+
+        # Safety.
+        if hi < lo:
+            hi = lo
+
+        # Bisection. 100 iterations is enough for double precision.
+        for _ in range(100):
+            mid = 0.5 * (lo + hi)
+
+            # Traveled distance with time mid minus requested dx.
+            f = b * mid - a * (math.cos(t_start + mid + d) - cos_t0) - dx
+
+            # Too much distance: time is too large.
+            if f > 0.0:
+                hi = mid
+            else:
+                lo = mid
+
+        # Return midpoint.
+        return 0.5 * (lo + hi)
+
+    # Fast Newton solver for one tiny grid distance.
+    def drive_time(lane: int, t_start: float, dx: float) -> float:
+        # Lane parameters.
+        a = a_arr[lane]
+        b = b_arr[lane]
+        d = delta_arr[lane]
+
+        # Starting phase sin/cos.
+        phase = t_start + d
+        cos_t = math.cos(phase)
+        sin_t = math.sin(phase)
+
+        # Initial estimate using instantaneous speed.
+        dt = dx / (b + a * sin_t)
+
+        # Four Newton iterations.
+        for _ in range(4):
+            dt2 = dt * dt
+
+            # Taylor approximation of cos(dt).
+            cos_dt = (
+                1.0
+                - dt2
+                * 0.5
+                * (
+                    1.0
+                    - dt2
+                    / 12.0
+                    * (1.0 - dt2 / 30.0 * (1.0 - dt2 / 56.0))
+                )
+            )
+
+            # Taylor approximation of sin(dt).
+            sin_dt = dt * (
+                1.0
+                - dt2
+                / 6.0
+                * (
+                    1.0
+                    - dt2
+                    / 20.0
+                    * (
+                        1.0
+                        - dt2
+                        / 42.0
+                        * (1.0 - dt2 / 72.0)
+                    )
+                )
+            )
+
+            # cos(t_start + dt + delta).
+            cos_a = cos_t * cos_dt - sin_t * sin_dt
+
+            # sin(t_start + dt + delta).
+            sin_a = sin_t * cos_dt + cos_t * sin_dt
+
+            # Function value: distance(dt) - dx.
+            f = b * dt - a * (cos_a - cos_t) - dx
+
+            # Derivative equals final speed.
+            fp = b + a * sin_a
+
+            # Newton update.
+            dt -= f / fp
+
+        return dt
+
+    # Infinity value for DP.
+    INF = 1.0e100
+
+    # Total number of DP states.
+    total_states = (M + 1) * n
+
+    # DP time array, stored flat for memory efficiency.
+    time_arr = array("d", [INF]) * total_states
+
+    # Parent array:
+    #   -1 means start/unset,
+    #    same lane means driving parent,
+    #    different lane means lane-change parent.
+    #
+    # Signed char is enough because lane indices are 0..4 and -1 is needed.
+    par = array("b", [-1]) * total_states
+
+    # Start state: distance 0, lane 0, time 0.
+    time_arr[idx(0, 0)] = 0.0
+
+    # Precompute switch costs.
+    switch_cost = [[0.0] * n for _ in range(n)]
+    for lane in range(n):
+        for prev_lane in range(n):
+            switch_cost[lane][prev_lane] = c_change * abs(lane - prev_lane)
+
+    # Main DP.
+    for i in range(M + 1):
+        base = i * n
+
+        # Snapshot before lane-change relaxation at this distance.
+        drive_arrival = [time_arr[base + lane] for lane in range(n)]
+
+        # Try all single lane changes at the same position.
+        for lane in range(n):
+            best = time_arr[base + lane]
+            best_parent = par[base + lane]
+
+            for prev_lane in range(n):
+                if prev_lane == lane:
+                    continue
+
+                cand = drive_arrival[prev_lane] + switch_cost[lane][prev_lane]
+
+                if cand < best:
+                    best = cand
+                    best_parent = prev_lane
+
+            time_arr[base + lane] = best
+            par[base + lane] = best_parent
+
+        # Drive to the next grid position.
+        if i < M:
+            next_base = (i + 1) * n
+
+            for lane in range(n):
+                t = time_arr[base + lane]
+                dt = drive_time(lane, t, step_dist)
+
+                time_arr[next_base + lane] = t + dt
+                par[next_base + lane] = lane
+
+    # Choose best final lane.
+    best_lane = 0
+    final_base = M * n
+    for lane in range(1, n):
+        if time_arr[final_base + lane] < time_arr[final_base + best_lane]:
+            best_lane = lane
+
+    # Reconstruct lane sequence and switch times.
+    lane_seq = [best_lane]
+    switch_times = []
+
+    cur_i = M
+    cur_lane = best_lane
+
+    while True:
+        p = par[idx(cur_i, cur_lane)]
+
+        # Reached the start.
+        if p == -1:
+            break
+
+        if p == cur_lane:
+            # Driving step.
+            cur_i -= 1
+        else:
+            # Lane change from p to cur_lane.
+            switch_times.append(time_arr[idx(cur_i, p)])
+
+            # Continue reconstruction in parent lane.
+            cur_lane = p
+            lane_seq.append(cur_lane)
+
+    # Reverse because reconstruction was backwards.
+    lane_seq.reverse()
+    switch_times.reverse()
+
+    # Store original DP switch times as fallback.
+    dp_times = switch_times[:]
+
+    # Refine switch times using local optimality.
+    for i in range(len(switch_times)):
+        prev_lane = lane_seq[i]
+        next_lane = lane_seq[i + 1]
+
+        # Duration of this lane change.
+        c_dur = c_change * abs(next_lane - prev_lane)
+
+        # Lane parameters.
+        a_p = a_arr[prev_lane]
+        b_p = b_arr[prev_lane]
+        d_p = delta_arr[prev_lane]
+
+        a_n = a_arr[next_lane]
+        b_n = b_arr[next_lane]
+        d_n = delta_arr[next_lane]
+
+        # Start from DP estimate.
+        t_dp = switch_times[i]
+        t = t_dp
+
+        # Newton solve:
+        #   v_prev(t) - v_next(t + c_dur) = 0
+        for _ in range(60):
+            f = (
+                b_p
+                + a_p * math.sin(t + d_p)
+                - b_n
+                - a_n * math.sin(t + c_dur + d_n)
+            )
+
+            fp = (
+                a_p * math.cos(t + d_p)
+                - a_n * math.cos(t + c_dur + d_n)
+            )
+
+            # Avoid unstable division.
+            if abs(fp) < 1e-13:
+                break
+
+            # Clamp Newton step.
+            step_t = f / fp
+            if step_t < -0.3:
+                step_t = -0.3
+            elif step_t > 0.3:
+                step_t = 0.3
+
+            t -= step_t
+
+            if abs(step_t) < 1e-16:
+                break
+
+        # Reject suspicious stationary point.
+        derivative = (
+            a_p * math.cos(t + d_p)
+            - a_n * math.cos(t + c_dur + d_n)
+        )
+
+        if derivative >= 0.0:
+            t = t_dp
+
+        # Ensure chronological feasibility.
+        if i == 0:
+            min_t = 0.0
+        else:
+            min_t = (
+                switch_times[i - 1]
+                + c_change * abs(lane_seq[i] - lane_seq[i - 1])
+            )
+
+        switch_times[i] = max(t, min_t)
+
+    # Exact schedule evaluation.
+    def compute(times):
+        total_dist = 0.0
+        cur_time = 0.0
+
+        # By default, all switches are used.
+        used_switches = len(times)
+
+        for i, t_sw in enumerate(times):
+            prev_lane = lane_seq[i]
+            next_lane = lane_seq[i + 1]
+
+            a = a_arr[prev_lane]
+            b = b_arr[prev_lane]
+            d = delta_arr[prev_lane]
+
+            # Distance driven before this switch.
+            seg = (
+                b * (t_sw - cur_time)
+                - a * (math.cos(t_sw + d) - math.cos(cur_time + d))
+            )
+
+            # If target is reached before this switch, stop here.
+            if total_dist + seg >= dist_total:
+                used_switches = i
+                break
+
+            total_dist += seg
+
+            # Add switch duration.
+            cur_time = t_sw + c_change * abs(next_lane - prev_lane)
+
+        # Remaining distance to finish.
+        rem = max(0.0, dist_total - total_dist)
+
+        # Current lane is lane_seq[used_switches].
+        finish_lane = lane_seq[used_switches]
+
+        # Drive remaining distance exactly.
+        t_end = cur_time + drive_time_exact(finish_lane, cur_time, rem)
+
+        return t_end, used_switches
+
+    # Compare refined and unrefined schedules.
+    t_refined, len_refined = compute(switch_times)
+    t_dp, len_dp = compute(dp_times)
+
+    if t_dp < t_refined:
+        chosen_times = dp_times
+        t_end = t_dp
+        schedule_len = len_dp
+    else:
+        chosen_times = switch_times
+        t_end = t_refined
+        schedule_len = len_refined
+
+    # Output result.
+    out = []
+    out.append(f"{t_end:.17f}")
+    out.append(str(schedule_len))
+
+    for i in range(schedule_len):
+        # Convert lane index to 1-based.
+        out.append(f"{lane_seq[i + 1] + 1} {chosen_times[i]:.17f}")
+
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Use the exact integral
+
+\[
+\text{dist}=b\Delta t-a(\cos(t+\Delta t+\delta)-\cos(t+\delta)).
+\]
+
+Discretize distance into `M = 200000` steps. Let `dp[i][lane]` be the earliest time to reach distance `i*d/M` in that lane. At each grid point, relax all lane changes with cost `c*abs(x-y)`, then drive one grid step in the same lane by solving the integral equation with Newton’s method.
+
+Store parents to reconstruct the lane sequence and approximate switch times.
+
+Because switches are restricted to grid points, refine every reconstructed switch. For a switch from lane `A` to lane `B` of duration `s`, the local optimality condition is
+
+\[
+v_A(t)=v_B(t+s).
+\]
+
+Solve this equation by Newton’s method near the DP switch time, with clamped steps.
+
+Finally, exactly recompute the schedule distance using the closed-form integral. If the destination is reached before some planned switch, discard later switches. Solve the final partial segment by bisection. Compare refined and original DP schedules and output the better one.

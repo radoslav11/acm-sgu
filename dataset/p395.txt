@@ -1,0 +1,802 @@
+## 1. Abridged problem statement
+
+We are given an incomplete chronological log of a club. Each existing record is one of:
+
+- `+ name`: person enters;
+- `- name`: person leaves;
+- `= k`: exactly `k` people are inside at that moment.
+
+Initially the club is empty. Some records are missing, but the given records must stay in the same relative order.
+
+We must insert as few records as possible so that the final log is physically valid:
+
+- nobody can leave before entering;
+- nobody can enter twice without leaving in between;
+- each `= k` must match the actual current number of visitors.
+
+Output the minimum possible final log length and one valid completed log.
+
+Constraints: `1 <= N <= 200`, `0 <= k <= 100`.
+
+---
+
+## 2. Detailed editorial
+
+### Key idea
+
+We process the given log from left to right and maintain a plausible current state of the club.
+
+The obvious state would be the exact set of people inside. However, many people may never appear again in the remaining original log. Their identities do not matter anymore — they only contribute to the total count. The solution uses this observation heavily.
+
+We distinguish two kinds of people currently inside:
+
+1. **Named people**: people whose names may appear again later in the original log.
+2. **Anonymous people**: people whose names will never appear again, or freshly generated people. We only need to know their names so we can output a matching `- name` later if needed.
+
+We maintain:
+
+- `present[x]`: whether original name `x` is currently inside as a named person;
+- `anon`: stack of anonymous names currently inside;
+- `cnt`: total number of people inside.
+
+---
+
+### Preprocessing
+
+Compress all names from the input into integer IDs.
+
+For each name, store all positions where it appears in `+` or `-` records. This lets us answer:
+
+> What is the next original occurrence of this name after the current position?
+
+Also store `last_at[x]`, the last position where name `x` appears.
+
+If we process `+ x` and this is the last occurrence of `x` in the input, then after this point the name `x` will never matter again. We can put this person into the anonymous stack instead of keeping them as a named active visitor.
+
+---
+
+### Processing `+ x`
+
+If `x` is already inside, then the original `+ x` is impossible directly: a person cannot enter twice.
+
+So we must insert:
+
+```text
+- x
+```
+
+before it.
+
+Then we process the original `+ x`.
+
+If this is the last occurrence of `x`, we add `x` as anonymous. Otherwise, we mark `x` as named-present.
+
+This is forced and therefore optimal.
+
+---
+
+### Processing `- x`
+
+If `x` is currently inside, we simply output the original `- x` and mark `x` absent.
+
+If `x` is not inside, then this leave record is impossible unless we insert a matching enter immediately before it:
+
+```text
++ x
+- x
+```
+
+This is also forced and optimal.
+
+---
+
+### Processing `= k`
+
+This is the only interesting case.
+
+At this point the current number of guests is `cnt`.
+
+If `cnt == k`, we simply output `= k`.
+
+If `cnt < k`, we need to insert exactly `k - cnt` enter records before `= k`.
+
+If `cnt > k`, we need to insert exactly `cnt - k` leave records before `= k`.
+
+The number of inserted records here is forced, but we can choose *which names* to insert/close in a smart way to reduce future insertions.
+
+---
+
+### Case 1: `cnt < k`
+
+We must add visitors.
+
+The best people to add are absent names whose next occurrence is `- x`.
+
+Why?
+
+If the next original record involving `x` is `- x`, then by inserting `+ x` now, that future `- x` becomes valid for free.
+
+So one inserted record now may save one inserted record later.
+
+Among such candidates, choose those whose next `- x` happens earliest.
+
+If we still need more people, generate fresh unused names and add them as anonymous guests.
+
+---
+
+### Case 2: `cnt > k`
+
+We must remove visitors.
+
+There are three categories of current visitors.
+
+#### 1. Named people whose next event is `+ x`
+
+If `x` is currently inside and the next original event is `+ x`, then eventually we must remove `x` before that `+ x` anyway.
+
+So closing such people now is beneficial: the inserted `- x` simultaneously satisfies the current `= k` and prepares for the future `+ x`.
+
+We close these first, ordered by earliest next `+ x`.
+
+#### 2. Anonymous people
+
+They have no future obligations. Closing one costs exactly one inserted record and has no future penalty.
+
+We close these after the previous category.
+
+#### 3. Named people whose next event is `- x`
+
+These are useful to keep, because their future `- x` can happen naturally.
+
+If we close such a person now, then when the future `- x` appears, we will have to insert a new `+ x` before it.
+
+So this is the worst category to close.
+
+If we must close some of them, close the one whose future `- x` is latest, because it is the least urgent/useful one.
+
+---
+
+### Why greedy is optimal
+
+For `+ x` and `- x`, the necessary insertions are forced.
+
+For `= k`, the number of immediate insertions is forced: exactly `|cnt - k|`.
+
+The only question is the identity of inserted/removed people.
+
+The chosen priorities are based on local exchange arguments:
+
+- When increasing count, adding someone whose next event is `- x` can only help, because it makes that future leave valid.
+- Earlier future leaves are more valuable because they are used sooner.
+- When decreasing count, closing someone whose next event is `+ x` can only help, because we would have needed to close them before that future enter anyway.
+- Anonymous guests have no future value.
+- People whose next event is `- x` should be preserved as much as possible, because they already have a useful future leave.
+
+Thus the greedy choice always leaves a state at least as good as any alternative for the unprocessed suffix.
+
+Complexity is small: at most `O(N * D log D)`, where `D <= N` is the number of distinct names.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h>          // Include all standard C++ library headers.
+
+using namespace std;              // Avoid writing std:: everywhere.
+
+// Output operator for pairs. Not essential for the algorithm, but convenient.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair elements separated by space.
+}
+
+// Input operator for pairs. Also not essential here.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read pair elements.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {               // Iterate over all elements by reference.
+        in >> x;                    // Read each element.
+    }
+    return in;                      // Return stream for chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {                // Iterate over all elements.
+        out << x << ' ';            // Print each followed by a space.
+    }
+    return out;                     // Return stream for chaining.
+};
+
+int n;                              // Number of original records.
+vector<int> rec_type;               // Record type: 0 = '+', 1 = '-', 2 = '='.
+vector<int> rec_arg;                // For '+/-': name id. For '=': required count.
+vector<string> names;               // names[id] = original string name.
+
+// Reads and compresses the input.
+void read() {
+    cin >> n;                       // Read number of records.
+
+    rec_type.assign(n, 0);          // Allocate record type array.
+    rec_arg.assign(n, 0);           // Allocate record argument array.
+
+    map<string, int> id;            // Maps each seen name to its integer id.
+
+    for(int i = 0; i < n; i++) {    // Read all records.
+        char c;                     // First character: '+', '-', or '='.
+        cin >> c;
+
+        if(c == '=') {              // Count-check record.
+            rec_type[i] = 2;        // Type 2 means '='.
+            cin >> rec_arg[i];      // Store required count.
+        } else {                    // Enter or leave record.
+            rec_type[i] = (c == '+') ? 0 : 1; // Type 0 for '+', type 1 for '-'.
+
+            string nm;              // Name in this record.
+            cin >> nm;
+
+            auto it = id.find(nm);  // Check whether the name already has an id.
+
+            if(it == id.end()) {    // New name.
+                int k = names.size(); // Next available id.
+                id[nm] = k;          // Store id in map.
+                names.push_back(nm); // Store string in names array.
+                rec_arg[i] = k;      // Store id as argument of this record.
+            } else {                 // Existing name.
+                rec_arg[i] = it->second; // Reuse old id.
+            }
+        }
+    }
+}
+
+void solve() {
+    int d = names.size();           // Number of distinct names from the original log.
+
+    vector<vector<int>> occ(d);     // occ[x] = positions where name x appears.
+
+    for(int i = 0; i < n; i++) {    // Scan all original records.
+        if(rec_type[i] != 2) {      // Only '+/-' records contain names.
+            occ[rec_arg[i]].push_back(i); // Save occurrence position.
+        }
+    }
+
+    vector<int> last_at(d, -1);     // last_at[x] = last occurrence position of name x.
+
+    for(int x = 0; x < d; x++) {    // For every name.
+        if(!occ[x].empty()) {       // If it appears at least once.
+            last_at[x] = occ[x].back(); // Last occurrence is the last stored position.
+        }
+    }
+
+    // Returns the first occurrence position of name x at or after position from.
+    auto next_occ = [&](int x, int from) {
+        auto& v = occ[x];           // Occurrence list of name x.
+        auto it = lower_bound(v.begin(), v.end(), from); // First occurrence >= from.
+        return it == v.end() ? INT_MAX : *it; // INT_MAX means no future occurrence.
+    };
+
+    set<string> used_names(names.begin(), names.end()); // Original names cannot be reused as fresh names.
+
+    vector<int> digits(1, 0);       // Base-26 counter for generating names: a, b, ..., z, aa, ...
+
+    // Generates a lowercase name not present in the original log.
+    auto next_fresh = [&]() {
+        while(true) {               // Keep trying until an unused name is found.
+            string s;               // Candidate fresh name.
+
+            for(int v: digits) {    // Convert base-26 digits to letters.
+                s.push_back((char)('a' + v));
+            }
+
+            int p = (int)digits.size() - 1; // Start incrementing from last digit.
+
+            while(p >= 0 && digits[p] == 25) { // Carry over trailing 'z' digits.
+                digits[p] = 0;      // Reset this digit to 'a'.
+                p--;                // Carry to previous digit.
+            }
+
+            if(p < 0) {             // Overflow, e.g. z -> aa.
+                digits.assign(digits.size() + 1, 0); // Increase length, all 'a'.
+            } else {
+                digits[p]++;        // Increment current digit.
+            }
+
+            if(!used_names.count(s)) { // If candidate is not an original name.
+                return s;           // Use it.
+            }
+        }
+    };
+
+    vector<char> present(d, 0);     // present[x] = whether original name x is inside as a named guest.
+    vector<string> anon;            // Stack of anonymous guests' names currently inside.
+    int cnt = 0;                    // Total number of people currently inside.
+    vector<string> out;             // Final polished log.
+
+    // Add a named guest x to the club.
+    auto open_named = [&](int x) {
+        out.push_back("+ " + names[x]); // Output enter record.
+        present[x] = 1;                 // Mark x as inside.
+        cnt++;                          // Increase total count.
+    };
+
+    // Remove a named guest x from the club.
+    auto close_named = [&](int x) {
+        out.push_back("- " + names[x]); // Output leave record.
+        present[x] = 0;                 // Mark x as outside.
+        cnt--;                          // Decrease total count.
+    };
+
+    // Add an anonymous guest with name nm.
+    auto open_anon = [&](const string& nm) {
+        out.push_back("+ " + nm);        // Output enter record.
+        anon.push_back(nm);              // Remember name so we can close it later.
+        cnt++;                           // Increase total count.
+    };
+
+    // Remove the most recently added anonymous guest.
+    auto close_anon = [&]() {
+        out.push_back("- " + anon.back()); // Output leave record for top anonymous guest.
+        anon.pop_back();                   // Remove it from stack.
+        cnt--;                             // Decrease total count.
+    };
+
+    for(int i = 0; i < n; i++) {     // Process original records left to right.
+        int t = rec_type[i], a = rec_arg[i]; // Current record type and argument.
+
+        if(t == 0) {                 // Original record is '+ name'.
+            if(present[a]) {         // If this person is already inside.
+                close_named(a);      // Insert '- name' before '+ name'.
+            }
+
+            if(last_at[a] == i) {    // If this is the last original occurrence of this name.
+                open_anon(names[a]); // After this, the exact identity no longer matters.
+            } else {
+                open_named(a);       // Otherwise keep them as a named active guest.
+            }
+
+        } else if(t == 1) {          // Original record is '- name'.
+            if(present[a]) {         // If the person is inside.
+                close_named(a);      // The record is valid, output it.
+            } else {                 // Person is not inside.
+                out.push_back("+ " + names[a]); // Insert matching enter.
+                out.push_back("- " + names[a]); // Then output/perform leave.
+                // Count does not change overall.
+            }
+
+        } else {                     // Original record is '= k'.
+            int k = a;               // Required number of people inside.
+
+            if(cnt < k) {            // Need to add people.
+                int need = k - cnt;  // Number of enter records required.
+
+                vector<pair<int, int>> cand; // Candidates: {next occurrence position, name id}.
+
+                for(int x = 0; x < d; x++) { // Check all original names.
+                    if(!present[x]) {        // Only absent names can be opened.
+                        int nx = next_occ(x, i); // Next occurrence of x.
+                        if(nx != INT_MAX && rec_type[nx] == 1) {
+                            // If the next occurrence is '- x', opening x now helps later.
+                            cand.push_back({nx, x});
+                        }
+                    }
+                }
+
+                sort(cand.begin(), cand.end()); // Prefer earliest future '- x'.
+
+                int done = 0;        // Number of people already added.
+
+                for(auto& pr: cand) { // Use good candidates first.
+                    if(done >= need) {
+                        break;       // Enough people added.
+                    }
+                    open_named(pr.second); // Insert '+ name'.
+                    done++;
+                }
+
+                while(done < need) { // If still not enough people.
+                    open_anon(next_fresh()); // Add fresh anonymous guest.
+                    done++;
+                }
+
+            } else if(cnt > k) {     // Need to remove people.
+                int need = cnt - k;  // Number of leave records required.
+
+                vector<pair<int, int>> liab, useful;
+                // liab: present people whose next record is '+ x';
+                // useful: present people whose next record is '- x'.
+
+                for(int x = 0; x < d; x++) { // Check all named present people.
+                    if(present[x]) {
+                        int nx = next_occ(x, i); // Next occurrence of this name.
+
+                        if(nx != INT_MAX && rec_type[nx] == 0) {
+                            // If next record is '+ x', x must be closed before it anyway.
+                            liab.push_back({nx, x});
+                        } else {
+                            // Otherwise x is useful to keep, usually for a future '- x'.
+                            useful.push_back({nx, x});
+                        }
+                    }
+                }
+
+                sort(liab.begin(), liab.end()); // Close liabilities with earliest '+ x' first.
+
+                sort(useful.begin(), useful.end(), greater<>());
+                // If forced to close useful people, close those with latest future '- x' first.
+
+                int rem = need;      // Remaining people to remove.
+
+                for(auto& pr: liab) { // First close liabilities.
+                    if(rem == 0) {
+                        break;
+                    }
+                    close_named(pr.second);
+                    rem--;
+                }
+
+                while(rem > 0 && !anon.empty()) {
+                    // Then close anonymous people, since they have no future value.
+                    close_anon();
+                    rem--;
+                }
+
+                for(auto& pr: useful) { // Finally close useful named people if unavoidable.
+                    if(rem == 0) {
+                        break;
+                    }
+                    close_named(pr.second);
+                    rem--;
+                }
+            }
+
+            out.push_back("= " + to_string(k)); // Output the original equality record.
+        }
+    }
+
+    cout << out.size() << '\n';      // Output final log length.
+
+    for(auto& line: out) {           // Output every record of the polished log.
+        cout << line << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast input/output.
+    cin.tie(nullptr);                 // Do not flush cout before cin.
+
+    int T = 1;                        // Single test case.
+    // cin >> T;                      // Multiple tests are not used in this problem.
+
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read input.
+        solve();                      // Solve and output answer.
+    }
+
+    return 0;                         // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from bisect import bisect_left
+
+
+def main():
+    # Read all input lines.
+    data = sys.stdin.read().strip().splitlines()
+
+    # Number of existing records.
+    n = int(data[0])
+
+    # rec_type[i]:
+    #   0 means '+'
+    #   1 means '-'
+    #   2 means '='
+    rec_type = [0] * n
+
+    # rec_arg[i]:
+    #   for '+/-': compressed name id
+    #   for '=': required count
+    rec_arg = [0] * n
+
+    # Mapping from name string to integer id.
+    name_id = {}
+
+    # names[id] = original name string.
+    names = []
+
+    # Parse all records.
+    for i in range(n):
+        parts = data[i + 1].split()
+        op = parts[0]
+
+        if op == "=":
+            # Equality record.
+            rec_type[i] = 2
+            rec_arg[i] = int(parts[1])
+        else:
+            # Enter or leave record.
+            nm = parts[1]
+
+            # Assign id to name if first time seen.
+            if nm not in name_id:
+                name_id[nm] = len(names)
+                names.append(nm)
+
+            rec_type[i] = 0 if op == "+" else 1
+            rec_arg[i] = name_id[nm]
+
+    # Number of distinct original names.
+    d = len(names)
+
+    # occ[x] stores all positions where name x appears in '+/-' records.
+    occ = [[] for _ in range(d)]
+
+    for i in range(n):
+        if rec_type[i] != 2:
+            occ[rec_arg[i]].append(i)
+
+    # last_at[x] stores last occurrence of name x.
+    last_at = [-1] * d
+
+    for x in range(d):
+        if occ[x]:
+            last_at[x] = occ[x][-1]
+
+    def next_occ(x, pos):
+        """
+        Return first occurrence position of name x at or after pos.
+        If it does not exist, return a large value.
+        """
+        arr = occ[x]
+        j = bisect_left(arr, pos)
+        if j == len(arr):
+            return 10**9
+        return arr[j]
+
+    # Original names should not be used as fresh generated names.
+    used_original = set(names)
+
+    # Base-26 counter for generating fresh names:
+    # [0] -> 'a', [1] -> 'b', ..., [25] -> 'z', [0,0] -> 'aa', etc.
+    digits = [0]
+
+    def next_fresh():
+        """
+        Generate a lowercase name that does not occur in the original log.
+        The generator itself never goes backwards, so generated names are unique.
+        """
+        nonlocal digits
+
+        while True:
+            # Convert digits to a string.
+            s = "".join(chr(ord("a") + v) for v in digits)
+
+            # Increment base-26 counter.
+            p = len(digits) - 1
+
+            # Carry through trailing 25s.
+            while p >= 0 and digits[p] == 25:
+                digits[p] = 0
+                p -= 1
+
+            if p < 0:
+                # z -> aa, zz -> aaa, etc.
+                digits = [0] * (len(digits) + 1)
+            else:
+                digits[p] += 1
+
+            # Skip names already present in original input.
+            if s not in used_original:
+                return s
+
+    # present[x] is True if original name x is currently inside as a named guest.
+    present = [False] * d
+
+    # Anonymous guests currently inside.
+    # We keep their names so we can output valid leave records.
+    anon = []
+
+    # Total number of guests currently inside.
+    cnt = 0
+
+    # Output polished log.
+    out = []
+
+    def open_named(x):
+        """Output '+ name' and mark original name x as inside."""
+        nonlocal cnt
+        out.append("+ " + names[x])
+        present[x] = True
+        cnt += 1
+
+    def close_named(x):
+        """Output '- name' and mark original name x as outside."""
+        nonlocal cnt
+        out.append("- " + names[x])
+        present[x] = False
+        cnt -= 1
+
+    def open_anon(nm):
+        """Output '+ nm' and remember this anonymous guest."""
+        nonlocal cnt
+        out.append("+ " + nm)
+        anon.append(nm)
+        cnt += 1
+
+    def close_anon():
+        """Close the most recently opened anonymous guest."""
+        nonlocal cnt
+        nm = anon.pop()
+        out.append("- " + nm)
+        cnt -= 1
+
+    # Process original records in order.
+    for i in range(n):
+        t = rec_type[i]
+        a = rec_arg[i]
+
+        if t == 0:
+            # Original record: '+ name'
+
+            if present[a]:
+                # Cannot enter twice, so insert '- name' first.
+                close_named(a)
+
+            if last_at[a] == i:
+                # If this name never appears again, we do not need to track it by id.
+                open_anon(names[a])
+            else:
+                # Otherwise keep it as a named active visitor.
+                open_named(a)
+
+        elif t == 1:
+            # Original record: '- name'
+
+            if present[a]:
+                # Valid leave.
+                close_named(a)
+            else:
+                # Person is not inside, so insert a matching enter immediately before.
+                out.append("+ " + names[a])
+                out.append("- " + names[a])
+                # cnt does not change overall.
+
+        else:
+            # Original record: '= k'
+            k = a
+
+            if cnt < k:
+                # Need to insert enter records.
+                need = k - cnt
+
+                candidates = []
+
+                for x in range(d):
+                    if not present[x]:
+                        nx = next_occ(x, i)
+
+                        # Best candidates are absent people whose next event is '- x'.
+                        if nx != 10**9 and rec_type[nx] == 1:
+                            candidates.append((nx, x))
+
+                # Prefer the earliest future '- x'.
+                candidates.sort()
+
+                done = 0
+
+                # Open useful candidates first.
+                for _, x in candidates:
+                    if done == need:
+                        break
+                    open_named(x)
+                    done += 1
+
+                # Fill remaining slots with fresh anonymous people.
+                while done < need:
+                    open_anon(next_fresh())
+                    done += 1
+
+            elif cnt > k:
+                # Need to insert leave records.
+                need = cnt - k
+
+                liabilities = []
+                useful = []
+
+                for x in range(d):
+                    if present[x]:
+                        nx = next_occ(x, i)
+
+                        if nx != 10**9 and rec_type[nx] == 0:
+                            # If next event is '+ x', x must be closed before it anyway.
+                            liabilities.append((nx, x))
+                        else:
+                            # Usually next event is '- x', so keeping x is useful.
+                            useful.append((nx, x))
+
+                # Close liabilities with earliest future '+ x' first.
+                liabilities.sort()
+
+                # If forced to close useful people, close those with latest future '- x' first.
+                useful.sort(reverse=True)
+
+                rem = need
+
+                # First close liabilities.
+                for _, x in liabilities:
+                    if rem == 0:
+                        break
+                    close_named(x)
+                    rem -= 1
+
+                # Then close anonymous people.
+                while rem > 0 and anon:
+                    close_anon()
+                    rem -= 1
+
+                # Finally close useful named people if still necessary.
+                for _, x in useful:
+                    if rem == 0:
+                        break
+                    close_named(x)
+                    rem -= 1
+
+            # Now the count is exactly k, so output original equality record.
+            out.append("= " + str(k))
+
+    # Print final log length and records.
+    print(len(out))
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+Scan the log from left to right.
+
+Maintain:
+
+- currently present original names;
+- a stack of anonymous people;
+- total count.
+
+For `+ x`:
+
+- if `x` is already inside, insert `- x`;
+- then process `+ x`;
+- if this is the last occurrence of `x`, store it as anonymous.
+
+For `- x`:
+
+- if `x` is inside, process it;
+- otherwise insert `+ x` immediately before it.
+
+For `= k`:
+
+- if current count is smaller, insert `k - cnt` enters.
+  Prefer absent names whose next original event is `- x`, earliest such event first. They will make future leaves valid.
+  Fill the rest with fresh anonymous names.
+
+- if current count is larger, insert `cnt - k` leaves.
+  First close present names whose next original event is `+ x`, earliest first, because they must be closed before that future enter anyway.
+  Then close anonymous people.
+  Finally, if necessary, close names whose next event is `- x`, latest first.
+
+The immediate number of insertions around each `= k` is forced, and the greedy identity choices maximize usefulness for future records. Therefore the final log length is minimal.

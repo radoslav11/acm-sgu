@@ -1,0 +1,892 @@
+## 1. Abridged problem statement
+
+During an ICPC-style contest, standings are frozen after minute 240. You are given the frozen standings table, the total number of balloons given during the last hour, and your team name.
+
+A balloon corresponds to a problem accepted during minutes 241–300. For a problem accepted in the last hour, the earliest possible accept time is minute 241. Penalty for an accepted problem is:
+
+```text
+accept minute + 20 * number_of_previous_wrong_submissions_on_that_problem
+```
+
+Frozen standings show, for each team and problem, whether it was solved, unsolved with some rejects, or never submitted.
+
+Given only the frozen standings and total last-hour balloons, determine the best possible final rank and worst possible final rank of your team.
+
+Ranks are determined by:
+
+1. More solved problems is better.
+2. If solved counts are equal, smaller penalty is better.
+3. Equal solved and penalty means teams share the same rank.
+
+
+
+---
+
+## 2. Detailed editorial
+
+### Observations
+
+The standings are frozen after minute 240. Any accepted submission during the last hour can be assumed to happen at minute `241` if we want to minimize penalty.
+
+For an unsolved problem with `x` previous rejected submissions, if it is solved during the last hour, the minimum additional penalty is:
+
+```text
+241 + 20 * x
+```
+
+Extra wrong submissions during the last hour can only increase penalty, so:
+
+- For the best possible rank, our team should avoid extra wrong submissions.
+- For the worst possible rank, teams trying to overtake us should also avoid extra wrong submissions.
+
+The input table is tricky because team names may contain spaces, and result columns may be adjacent to numbers, such as:
+
+```text
+30. +
+```
+
+Therefore the parser reads each team row from the right side, where the problem result columns are located.
+
+
+
+---
+
+### Best possible rank
+
+To get the best rank for our team:
+
+1. Give as many last-hour accepted problems as possible to our team.
+2. Each time, choose the unsolved problem with the fewest previous rejects, because that minimizes added penalty.
+3. If balloons remain after our team solves all possible problems, assign them to other teams in a way that does not hurt us, if possible.
+4. If no other team can absorb those balloons without changing our rank, they may be forced to increase our penalty. The given solution handles that edge case.
+
+After updating our team, we compare it with teams above it in the frozen standings.
+
+Because standings are sorted, we scan upward from our team’s original position. For every team above us that no longer beats us, our rank improves by one. Once we find a team that still beats us, all teams above it also beat us, so we can stop.
+
+
+
+---
+
+### Worst possible rank
+
+For the worst rank:
+
+1. Keep our team unchanged.
+2. Try to use balloons to make teams below us overtake us.
+3. Teams already tied with us in frozen standings share the same rank. To maximize damage, we conceptually move our team to the first position inside its equal-rank block, so all tied teams can be considered as potential overtakers below us.
+4. Process teams below us grouped by their current number of solved problems.
+
+Suppose our team solved `S_my` problems and a lower group solved `S_other`.
+
+Let:
+
+```text
+det = S_my - S_other
+```
+
+A team from this group needs at least `det` accepted problems to reach our solved count.
+
+There are two ways such a team can overtake us:
+
+#### Case 1: Overtake with exactly `det` balloons
+
+After solving `det` more problems, the team has the same solved count as us. It overtakes us only if its penalty becomes smaller than ours.
+
+To maximize its chance, we solve its cheapest unsolved problems first.
+
+#### Case 2: Overtake with `det + 1` balloons
+
+If it solves one more problem than us, it definitely beats us, regardless of penalty.
+
+So if it still has another unsolved problem, it can overtake us with `det + 1` balloons.
+
+The algorithm greedily processes cheaper overtakes first:
+
+1. Teams that can overtake with `det` balloons.
+2. Then teams that can overtake with `det + 1` balloons.
+
+Since groups are processed in descending solved count, `det` is nondecreasing, so this greedy order maximizes the number of teams overtaking us.
+
+
+
+---
+
+### Complexity
+
+Let:
+
+- `T <= 100` be the number of teams.
+- `P <= 26` be the number of problems.
+
+Each simulated accept chooses the minimum rejected count among at most `P` problems.
+
+The complexity is easily small enough:
+
+```text
+O(T * P^2)
+```
+
+in the worst case.
+
+
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all vector elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return the stream.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {       // Iterate over all vector elements.
+        out << x << ' ';   // Print each element followed by a space.
+    }
+    return out;            // Return the stream.
+};
+
+// Stores all relevant information about one team.
+struct team_info {
+    string name;                    // Team name.
+    int solved;                     // Number of solved problems in frozen standings.
+    long long penalty;              // Frozen penalty.
+    int rank;                       // Frozen rank.
+    vector<int> rejects_unsolved;   // For each unsolved problem: previous wrong submissions.
+};
+
+int n_problems;              // Number of problems in the contest.
+vector<team_info> teams;     // List of teams in frozen standing order.
+int balloons;                // Number of accepted problems during the last hour.
+string my_team;              // Name of our team.
+
+// Reads the next non-empty line from input.
+// Empty or whitespace-only lines are skipped.
+bool read_nonempty_line(string& line) {
+    while(getline(cin, line)) { // Read lines until EOF.
+        for(char c: line) {    // Check whether the line has a non-space character.
+            if(!isspace((unsigned char)c)) {
+                return true;   // Found a non-empty line.
+            }
+        }
+    }
+    return false;              // EOF reached.
+}
+
+// Determines whether a line is a team row.
+// Team result columns contain '.', '+', or '-'.
+bool is_team_row(const string& line) {
+    for(char c: line) {
+        if(c == '.' || c == '+' || c == '-') {
+            return true;       // A problem result symbol was found.
+        }
+    }
+    return false;              // No result symbol, so probably balloon count line.
+}
+
+// Parses one row of the standings table.
+// Because team names may contain spaces, parsing is done mostly from the right.
+team_info parse_team_row(const string& line) {
+    team_info t; // Resulting team structure.
+
+    int last = (int)line.size() - 1; // Start from the last character.
+
+    // Ignore trailing whitespace.
+    while(last >= 0 && isspace((unsigned char)line[last])) {
+        last--;
+    }
+
+    // Helper function to skip ordinary spaces while moving left.
+    auto skip_spaces = [&]() {
+        while(last >= 0 && line[last] == ' ') {
+            last--;
+        }
+    };
+
+    // Helper function to read a nonnegative integer backwards.
+    auto read_digits_back = [&]() {
+        long long val = 0;   // Parsed value.
+        long long base = 1;  // Current decimal base: 1, 10, 100, ...
+        while(last >= 0 && isdigit((unsigned char)line[last])) {
+            val += base * (line[last] - '0'); // Add current digit.
+            base *= 10;                       // Move to next decimal position.
+            last--;                           // Move left.
+        }
+        return val; // Return the parsed integer.
+    };
+
+    // Parse problem result columns from right to left.
+    for(int p = 0; p < n_problems; p++) {
+        skip_spaces();                    // Skip spaces after the result token.
+        long long num = read_digits_back(); // Read the optional number after sign.
+        skip_spaces();                    // Skip spaces before the sign.
+        char sign = line[last--];         // Read '.', '+', or '-'.
+
+        // If the problem is not already solved, store its previous rejects.
+        // For '.', num is usually 0. For '-x', num is x.
+        if(sign != '+') {
+            t.rejects_unsolved.push_back((int)num);
+        }
+    }
+
+    skip_spaces();                     // Move before problem columns.
+    t.penalty = read_digits_back();    // Read frozen penalty.
+
+    skip_spaces();                     // Move before penalty.
+    t.solved = (int)read_digits_back();// Read frozen solved count.
+
+    int s = 0;                         // Start scanning from the left.
+
+    // Skip leading spaces.
+    while(s < (int)line.size() && line[s] == ' ') {
+        s++;
+    }
+
+    int rank = 0;                      // Parsed rank.
+
+    // Read rank from the beginning.
+    while(s < (int)line.size() && isdigit((unsigned char)line[s])) {
+        rank = rank * 10 + (line[s] - '0');
+        s++;
+    }
+
+    // Skip spaces after the rank.
+    while(s < (int)line.size() && line[s] == ' ') {
+        s++;
+    }
+
+    // Trim spaces after the team name.
+    while(last >= s && line[last] == ' ') {
+        last--;
+    }
+
+    t.rank = rank;                         // Store rank.
+    t.name = line.substr(s, last - s + 1); // Everything between rank and solved count is name.
+
+    return t; // Return parsed team.
+}
+
+// Reads one complete test case.
+bool read() {
+    string line; // Current input line.
+
+    // Read table header.
+    if(!read_nonempty_line(line)) {
+        return false; // No more test cases.
+    }
+
+    {
+        istringstream iss(line); // Tokenize header.
+        string tok;
+
+        // Header starts with four tokens: Rank Team = Penalty.
+        iss >> tok >> tok >> tok >> tok;
+
+        n_problems = 0; // Count remaining tokens as problem identifiers.
+
+        while(iss >> tok) {
+            n_problems++;
+        }
+    }
+
+    teams.clear(); // Clear previous test case teams.
+
+    // Read team rows until the balloon count line.
+    while(true) {
+        if(!read_nonempty_line(line)) {
+            return false; // Unexpected EOF.
+        }
+
+        if(!is_team_row(line)) {       // No result symbols means balloon count.
+            balloons = stoi(line);     // Parse number of last-hour balloons.
+            break;
+        }
+
+        teams.push_back(parse_team_row(line)); // Parse and store team row.
+    }
+
+    // Read our team name.
+    if(!read_nonempty_line(line)) {
+        return false; // Unexpected EOF.
+    }
+
+    int s = 0; // Left trim index.
+
+    // Skip leading whitespace.
+    while(s < (int)line.size() && isspace((unsigned char)line[s])) {
+        s++;
+    }
+
+    int e = (int)line.size(); // Right trim index.
+
+    // Skip trailing whitespace.
+    while(e > s && isspace((unsigned char)line[e - 1])) {
+        e--;
+    }
+
+    my_team = line.substr(s, e - s); // Store trimmed team name.
+
+    return true; // Successfully read one test case.
+}
+
+// Returns true if team a is strictly better than team b.
+bool better_than(const team_info& a, const team_info& b) {
+    if(a.solved != b.solved) {
+        return a.solved > b.solved; // More solved problems is better.
+    }
+    return a.penalty < b.penalty;   // With same solved count, lower penalty is better.
+}
+
+// Simulates one accepted problem for team t in the last hour.
+// Chooses the unsolved problem with the fewest previous rejects.
+void accept_one(team_info& t) {
+    auto it = min_element(t.rejects_unsolved.begin(), t.rejects_unsolved.end());
+
+    t.solved++;                         // One more solved problem.
+    t.penalty += 241 + 20LL * (*it);    // Earliest accept time plus previous rejects penalty.
+
+    t.rejects_unsolved.erase(it);       // This problem is no longer unsolved.
+}
+
+// Computes the best possible, i.e. smallest, final rank.
+int high_pos(vector<team_info> ts, int my_idx, int balloons_left) {
+    team_info& me = ts[my_idx]; // Reference to our copied team.
+
+    // Give our team as many accepts as possible, choosing cheapest problems first.
+    while(balloons_left > 0 && !me.rejects_unsolved.empty()) {
+        accept_one(me);    // Our team solves one more problem.
+        balloons_left--;   // One balloon has been used.
+    }
+
+    int n = (int)ts.size(); // Number of teams.
+
+    bool absorbed_elsewhere; // Whether remaining balloons can be assigned harmlessly.
+
+    if(my_idx != n - 1) {
+        absorbed_elsewhere = true; // There are teams below us that can absorb balloons.
+    } else if(my_idx == 0) {
+        absorbed_elsewhere = true; // We are also first; no one can hurt our rank.
+    } else {
+        // If the team just above us has not solved all problems,
+        // remaining balloons can be assigned there if necessary.
+        absorbed_elsewhere = ts[my_idx - 1].solved < n_problems;
+    }
+
+    // If remaining balloons can be harmlessly assigned, ignore them for our rank.
+    if(absorbed_elsewhere) {
+        balloons_left = 0;
+    }
+
+    // Edge handling: forced additional wrong submissions can only increase our penalty.
+    if(balloons_left > 0) {
+        me.penalty += 20LL * balloons_left;
+    }
+
+    int rank = my_idx + 1; // Initially, assume all teams above us still beat us.
+
+    // Move upward while teams above us no longer strictly beat us.
+    for(int i = my_idx - 1; i >= 0 && !better_than(ts[i], me); i--) {
+        rank--; // Each such team is no longer counted before us.
+    }
+
+    return rank; // Best possible rank.
+}
+
+// Computes the worst possible, i.e. largest, final rank.
+int low_pos(vector<team_info> ts, int my_idx, int balloons_left) {
+    int n = (int)ts.size(); // Number of teams.
+
+    // If there are teams tied with us above, swap us to the first position of the tie block.
+    // Since tied teams have equal solved and penalty, this does not change standings,
+    // but it lets us count all tied teams as potential overtakers below us.
+    for(int i = my_idx - 1; i >= 0 && ts[i].rank == ts[my_idx].rank; i--) {
+        if(i == 0 || ts[i - 1].rank != ts[my_idx].rank) {
+            swap(ts[i], ts[my_idx]); // Put our team at the beginning of the tie block.
+            my_idx = i;              // Update our index.
+            break;
+        }
+    }
+
+    team_info& me = ts[my_idx]; // Reference to our copied team.
+
+    int rank = me.rank; // Start from current rank.
+
+    int i = my_idx + 1; // Start checking teams below us.
+
+    // Process lower teams while we still have balloons.
+    while(balloons_left > 0 && i < n) {
+        int j = i; // Start of group with same solved count.
+
+        // Find the end of this equal-solved group.
+        while(i < n && ts[i].solved == ts[j].solved) {
+            i++;
+        }
+
+        // Number of accepts each team in this group needs to reach our solved count.
+        int det = me.solved - ts[j].solved;
+
+        // If even reaching our solved count is too expensive, lower groups are impossible too.
+        if(balloons_left < det) {
+            break;
+        }
+
+        // For every team in the group, simulate the cheapest det accepted problems.
+        // This gives the best possible penalty if they merely tie our solved count.
+        for(int l = j; l < i; l++) {
+            for(int k = 0; k < det; k++) {
+                accept_one(ts[l]);
+            }
+        }
+
+        // First count teams that can overtake us with exactly det balloons.
+        for(int l = j; balloons_left >= det && l < i; l++) {
+            if(better_than(ts[l], me)) {
+                balloons_left -= det; // Spend det balloons.
+                rank++;               // One more team is now above us.
+            }
+        }
+
+        // Then count teams that need one additional solve, i.e. det + 1 balloons.
+        for(int l = j; balloons_left >= det + 1 && l < i; l++) {
+            // If not already better, but still has an unsolved problem,
+            // one more accepted problem makes it strictly better by solved count.
+            if(!better_than(ts[l], me) && !ts[l].rejects_unsolved.empty()) {
+                balloons_left -= (det + 1); // Spend det + 1 balloons.
+                accept_one(ts[l]);          // Simulate the extra solve.
+                rank++;                     // One more team overtakes us.
+            }
+        }
+    }
+
+    return rank; // Worst possible rank.
+}
+
+// Solves the current test case.
+void solve() {
+    int my_idx = -1; // Index of our team in standings.
+
+    // Find our team by name.
+    for(int i = 0; i < (int)teams.size(); i++) {
+        if(teams[i].name == my_team) {
+            my_idx = i;
+            break;
+        }
+    }
+
+    int hp = high_pos(teams, my_idx, balloons); // Best possible rank.
+    int lp = low_pos(teams, my_idx, balloons);  // Worst possible rank.
+
+    cout << hp << ' ' << lp << '\n'; // Output answer.
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Faster I/O.
+    cin.tie(nullptr);                 // Do not flush cout before cin.
+
+    // Read and solve all test cases until EOF.
+    while(read()) {
+        solve();
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Team:
+    # Team name.
+    name: str
+
+    # Number of solved problems in the frozen standings.
+    solved: int
+
+    # Frozen penalty.
+    penalty: int
+
+    # Frozen rank.
+    rank: int
+
+    # For every unsolved problem, store the number of previous wrong submissions.
+    rejects_unsolved: List[int]
+
+
+def better_than(a: Team, b: Team) -> bool:
+    """
+    Return True if team a is strictly better than team b.
+    """
+    if a.solved != b.solved:
+        return a.solved > b.solved
+    return a.penalty < b.penalty
+
+
+def clone_teams(teams: List[Team]) -> List[Team]:
+    """
+    Make a deep-enough copy of teams.
+    The only mutable field is rejects_unsolved, so copy that list.
+    """
+    return [
+        Team(t.name, t.solved, t.penalty, t.rank, t.rejects_unsolved[:])
+        for t in teams
+    ]
+
+
+def accept_one(t: Team) -> None:
+    """
+    Simulate one accepted problem for team t during the last hour.
+
+    To minimize penalty, choose the currently unsolved problem with the fewest
+    previous rejected submissions.
+    """
+    # Find index of cheapest unsolved problem.
+    idx = min(range(len(t.rejects_unsolved)), key=lambda i: t.rejects_unsolved[i])
+
+    # Number of previous rejected submissions on this problem.
+    rejects = t.rejects_unsolved[idx]
+
+    # One more solved problem.
+    t.solved += 1
+
+    # Earliest possible accepted submission is at minute 241.
+    t.penalty += 241 + 20 * rejects
+
+    # Remove this problem from the unsolved list.
+    t.rejects_unsolved.pop(idx)
+
+
+def parse_team_row(line: str, n_problems: int) -> Team:
+    """
+    Parse one standings row.
+
+    Since team names may contain spaces, parsing is done from the right:
+    problem results, penalty, solved count are all at the right side.
+    """
+    last = len(line) - 1
+
+    # Skip trailing whitespace.
+    while last >= 0 and line[last].isspace():
+        last -= 1
+
+    def skip_spaces():
+        """
+        Move last left over whitespace.
+        Python closure uses nonlocal to modify last.
+        """
+        nonlocal last
+        while last >= 0 and line[last].isspace():
+            last -= 1
+
+    def read_digits_back() -> int:
+        """
+        Read a nonnegative integer while moving from right to left.
+        """
+        nonlocal last
+        value = 0
+        base = 1
+
+        while last >= 0 and line[last].isdigit():
+            value += base * int(line[last])
+            base *= 10
+            last -= 1
+
+        return value
+
+    rejects_unsolved = []
+
+    # Parse all problem result columns from right to left.
+    for _ in range(n_problems):
+        skip_spaces()
+
+        # Optional number attached to '+' or '-' result.
+        # For '.', this will usually be 0.
+        num = read_digits_back()
+
+        skip_spaces()
+
+        # Result marker: '+', '-', or '.'
+        sign = line[last]
+        last -= 1
+
+        # If the problem was not solved before freeze, it may be solved later.
+        if sign != '+':
+            rejects_unsolved.append(num)
+
+    skip_spaces()
+
+    # Parse frozen penalty.
+    penalty = read_digits_back()
+
+    skip_spaces()
+
+    # Parse frozen solved count.
+    solved = read_digits_back()
+
+    # Now parse rank from the left.
+    s = 0
+
+    # Skip leading whitespace.
+    while s < len(line) and line[s].isspace():
+        s += 1
+
+    rank = 0
+
+    # Rank is the first integer in the row.
+    while s < len(line) and line[s].isdigit():
+        rank = rank * 10 + int(line[s])
+        s += 1
+
+    # Skip spaces after rank.
+    while s < len(line) and line[s].isspace():
+        s += 1
+
+    # Trim trailing spaces before solved count.
+    while last >= s and line[last].isspace():
+        last -= 1
+
+    # Everything between rank and solved-count area is the team name.
+    name = line[s:last + 1]
+
+    return Team(name, solved, penalty, rank, rejects_unsolved)
+
+
+def is_team_row(line: str) -> bool:
+    """
+    A team row contains problem result symbols.
+    The balloon-count line does not.
+    """
+    return any(c in ".+-" for c in line)
+
+
+def high_pos(original_teams: List[Team], my_idx: int, balloons: int, n_problems: int) -> int:
+    """
+    Compute best possible rank for our team.
+    """
+    teams = clone_teams(original_teams)
+
+    me = teams[my_idx]
+    balloons_left = balloons
+
+    # Give our team as many accepted problems as possible.
+    while balloons_left > 0 and me.rejects_unsolved:
+        accept_one(me)
+        balloons_left -= 1
+
+    n = len(teams)
+
+    # Decide whether leftover balloons can be assigned elsewhere harmlessly.
+    if my_idx != n - 1:
+        absorbed_elsewhere = True
+    elif my_idx == 0:
+        absorbed_elsewhere = True
+    else:
+        absorbed_elsewhere = teams[my_idx - 1].solved < n_problems
+
+    # If yes, they do not affect our rank.
+    if absorbed_elsewhere:
+        balloons_left = 0
+
+    # Edge handling: unavoidable extra penalty.
+    if balloons_left > 0:
+        me.penalty += 20 * balloons_left
+
+    # Initially assume every team above us still beats us.
+    rank = my_idx + 1
+
+    # Move up while teams above no longer beat us.
+    i = my_idx - 1
+    while i >= 0 and not better_than(teams[i], me):
+        rank -= 1
+        i -= 1
+
+    return rank
+
+
+def low_pos(original_teams: List[Team], my_idx: int, balloons: int) -> int:
+    """
+    Compute worst possible rank for our team.
+    """
+    teams = clone_teams(original_teams)
+    n = len(teams)
+
+    # Put our team at the beginning of its equal-rank block.
+    # Tied teams have equal solved and penalty, so swapping is harmless.
+    i = my_idx - 1
+    while i >= 0 and teams[i].rank == teams[my_idx].rank:
+        if i == 0 or teams[i - 1].rank != teams[my_idx].rank:
+            teams[i], teams[my_idx] = teams[my_idx], teams[i]
+            my_idx = i
+            break
+        i -= 1
+
+    me = teams[my_idx]
+
+    # Start from frozen rank.
+    rank = me.rank
+
+    balloons_left = balloons
+
+    # Start processing teams below us.
+    i = my_idx + 1
+
+    while balloons_left > 0 and i < n:
+        j = i
+
+        # Find a group with the same solved count.
+        while i < n and teams[i].solved == teams[j].solved:
+            i += 1
+
+        # This group needs det solves to reach our solved count.
+        det = me.solved - teams[j].solved
+
+        # If not enough balloons to let even one team reach us, stop.
+        if balloons_left < det:
+            break
+
+        # Simulate cheapest det solves for every team in this group.
+        for l in range(j, i):
+            for _ in range(det):
+                accept_one(teams[l])
+
+        # First, teams that beat us after exactly det solves.
+        for l in range(j, i):
+            if balloons_left >= det and better_than(teams[l], me):
+                balloons_left -= det
+                rank += 1
+
+        # Then, teams that need one extra solve to beat us by solved count.
+        for l in range(j, i):
+            if balloons_left >= det + 1:
+                if not better_than(teams[l], me) and teams[l].rejects_unsolved:
+                    balloons_left -= det + 1
+                    accept_one(teams[l])
+                    rank += 1
+
+    return rank
+
+
+def solve_all() -> None:
+    """
+    Read all test cases and print answers.
+    """
+    lines = sys.stdin.read().splitlines()
+    ptr = 0
+    out = []
+
+    def read_nonempty_line():
+        """
+        Return next non-empty line, skipping blank lines.
+        """
+        nonlocal ptr
+
+        while ptr < len(lines):
+            line = lines[ptr]
+            ptr += 1
+
+            if any(not c.isspace() for c in line):
+                return line
+
+        return None
+
+    while True:
+        # Read header.
+        header = read_nonempty_line()
+
+        if header is None:
+            break
+
+        tokens = header.split()
+
+        # Header has four fixed tokens before problem identifiers:
+        # Rank Team = Penalty
+        n_problems = len(tokens) - 4
+
+        teams = []
+
+        # Read team rows until balloon count.
+        while True:
+            line = read_nonempty_line()
+
+            if line is None:
+                return
+
+            if not is_team_row(line):
+                balloons = int(line.strip())
+                break
+
+            teams.append(parse_team_row(line, n_problems))
+
+        # Read our team name.
+        my_team = read_nonempty_line()
+
+        if my_team is None:
+            return
+
+        my_team = my_team.strip()
+
+        # Find our team.
+        my_idx = -1
+
+        for idx, team in enumerate(teams):
+            if team.name == my_team:
+                my_idx = idx
+                break
+
+        # Compute best and worst ranks.
+        best = high_pos(teams, my_idx, balloons, n_problems)
+        worst = low_pos(teams, my_idx, balloons)
+
+        out.append(f"{best} {worst}")
+
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve_all()
+```
+
+
+
+---
+
+## 5. Compressed editorial
+
+Parse each standings row from the right, because team names may contain spaces. For every team, store solved count, penalty, rank, and for each unsolved problem the number of previous rejects.
+
+For the best rank, give our team as many last-hour accepts as possible. Each accept should solve the unsolved problem with the fewest previous rejects, adding `241 + 20 * rejects` penalty. Then scan upward through teams above us and count how many no longer beat us.
+
+For the worst rank, keep our team unchanged. Move it to the beginning of its tie-rank block. Then process teams below us by groups with equal solved count. If a group has `det` fewer solved problems than us, each team needs `det` balloons to tie our solved count, possibly overtaking by penalty, or `det + 1` balloons to overtake by solved count. Greedily count cheaper overtakes first. The resulting rank is the maximum possible.

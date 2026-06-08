@@ -1,0 +1,720 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+243. Broken Chessboard
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+Chessboard with length of a side N was broken into K pieces, each of them is presented as a connected area (in this case connected area means such subset of chessboard cells, that there is a path of rook from any of them to any other).
+These pieces were scattered all over the table (maybe rotated by 90, 180 or 270 degrees). Your task is to reconstruct chessboard again (position of black and white cells doesn't matter).
+It is guaranteed that it is possible to construct square with side N from pieces given to you using all pieces.
+
+Input
+First line contains only one natural number N (1<=N<=5) - length of a side of the chessboard (in cells). Following 20 lines contain initial table description, each of these lines contains 20 characters. Empty place at the table is coded as "." character, and cells occupied by i-th piece of the chessboard are coded as i-th alphabet capital Latin letter.
+
+Output
+You must output N lines of N characters - constructed square chessboard with side N. Areas presented by i-th piece must be filled i-th in order of alphabet capital Latin letter and correspond to source image of pieces (maybe rotated by 90, 180, or 270 degrees). If there are several solutions, print any one of them.
+
+Sample test(s)
+
+Input
+3
+....................
+....................
+....................
+....................
+........A...........
+....................
+...............C....
+....................
+..........B.........
+....................
+....................
+....................
+....................
+............D.......
+...........DDD......
+............D.......
+....................
+....................
+.................E..
+....................
+
+Output
+ADB
+DDD
+CDE
+Author:	Dmitry Filippov
+Resource:	SPbETU Training. DEF's contest
+Date:	November, 2003
+
+<|response|>
+## 1. Abridged problem statement
+
+We are given an integer `N`, `1 ≤ N ≤ 5`, and a `20 × 20` table containing scattered connected chessboard pieces.
+
+Each piece is marked by one uppercase letter, empty cells are marked with `.`. Pieces may have been rotated by `0°`, `90°`, `180°`, or `270°`, but not reflected.
+
+We must reconstruct any valid `N × N` square using all pieces exactly once and output the letters in the reconstructed board.
+
+A solution is guaranteed to exist.
+
+---
+
+## 2. Key observations
+
+### Small board size
+
+The final board has at most:
+
+```text
+5 × 5 = 25 cells
+```
+
+So an exact-cover style backtracking solution is feasible.
+
+---
+
+### Shape representation
+
+A piece can be represented as a set of coordinates.
+
+For example, if a piece occupies:
+
+```text
+(13, 12), (14, 11), (14, 12), (14, 13), (15, 12)
+```
+
+we normalize it by shifting it so that the smallest row and column become `0`:
+
+```text
+(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)
+```
+
+Then we sort the coordinates. This gives a canonical representation of a shape in one orientation.
+
+---
+
+### Rotations
+
+A `90°` rotation can be computed as:
+
+```text
+(r, c) -> (c, -r)
+```
+
+After rotation, normalize the shape again.
+
+For each piece, we generate up to four unique rotations.
+
+---
+
+### First empty cell trick
+
+During backtracking, always find the first empty cell in row-major order.
+
+Suppose this cell is `(r, c)`. In any valid placement, the next piece that covers `(r, c)` cannot also cover any earlier cell, because those earlier cells are already filled.
+
+Therefore, the lexicographically first cell of the placed piece must be aligned exactly with `(r, c)`.
+
+This means for each piece orientation we only need to test one translation, not all possible translations.
+
+---
+
+### Identical pieces are interchangeable
+
+If multiple pieces have the same shape up to rotation, they are interchangeable.
+
+For example, if `A`, `B`, and `C` are all single-cell pieces, we should not try all permutations separately.
+
+We can group identical shapes together and store the remaining letters in that group.
+
+This greatly reduces backtracking.
+
+---
+
+## 3. Full solution approach
+
+### Step 1: Read all pieces
+
+Scan the `20 × 20` input table.
+
+For every uppercase letter, collect all cells containing that letter.
+
+Example:
+
+```cpp
+map<char, vector<pair<int, int>>> piece_cells;
+```
+
+---
+
+### Step 2: Normalize shapes
+
+Define a function `normalize(cells)`:
+
+1. Find minimum row and minimum column.
+2. Subtract them from every coordinate.
+3. Sort the cells.
+
+This allows comparing shapes easily.
+
+---
+
+### Step 3: Generate rotations
+
+For every piece:
+
+1. Normalize the original shape.
+2. Repeatedly rotate it by `90°`.
+3. Normalize after each rotation.
+4. Store only distinct rotations.
+
+Each piece has at most four orientations.
+
+---
+
+### Step 4: Group equal shapes
+
+For each piece, compute all its orientations.
+
+The canonical key of a piece is the lexicographically smallest orientation among its rotations.
+
+Pieces with the same key belong to the same group.
+
+Each group stores:
+
+```text
+- all possible orientations of that shape
+- letters of pieces belonging to that shape
+```
+
+---
+
+### Step 5: Backtracking
+
+Maintain an `N × N` board initialized with `.`.
+
+Recursive search:
+
+1. Find the first empty board cell.
+2. Try every remaining shape group.
+3. Try every orientation of that shape.
+4. Align the first cell of the orientation with the first empty board cell.
+5. Check whether all cells are inside the board and empty.
+6. If valid:
+   - place the piece using one available letter from the group,
+   - recurse,
+   - undo if it fails.
+
+Since a valid solution is guaranteed, the search will eventually find one.
+
+---
+
+## 4. C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int N;
+vector<string> table_grid;
+
+/*
+    Normalize a shape.
+
+    Given absolute or relative coordinates, shift the whole shape so that
+    its minimum row and minimum column become zero.
+
+    The returned vector is sorted, so it can be compared lexicographically
+    and used as a key in std::map.
+*/
+vector<pair<int, int>> normalize(vector<pair<int, int>> cells) {
+    int min_r = INT_MAX;
+    int min_c = INT_MAX;
+
+    for (auto [r, c] : cells) {
+        min_r = min(min_r, r);
+        min_c = min(min_c, c);
+    }
+
+    for (auto &cell : cells) {
+        cell.first -= min_r;
+        cell.second -= min_c;
+    }
+
+    sort(cells.begin(), cells.end());
+    return cells;
+}
+
+/*
+    Rotate a shape by 90 degrees.
+
+    Formula:
+        (r, c) -> (c, -r)
+
+    After rotation, coordinates may be negative, so we normalize again.
+*/
+vector<pair<int, int>> rotate90(const vector<pair<int, int>> &cells) {
+    vector<pair<int, int>> rotated;
+
+    for (auto [r, c] : cells) {
+        rotated.push_back({c, -r});
+    }
+
+    return normalize(rotated);
+}
+
+/*
+    Generate all distinct rotations of a shape.
+
+    A piece may be rotated by:
+        0, 90, 180, or 270 degrees.
+
+    Some rotations may be identical for symmetric shapes, so duplicates
+    are removed.
+*/
+vector<vector<pair<int, int>>> get_orientations(vector<pair<int, int>> cells) {
+    vector<vector<pair<int, int>>> result;
+
+    cells = normalize(cells);
+
+    for (int i = 0; i < 4; i++) {
+        if (find(result.begin(), result.end(), cells) == result.end()) {
+            result.push_back(cells);
+        }
+
+        cells = rotate90(cells);
+    }
+
+    return result;
+}
+
+/*
+    A group contains all pieces that have the same shape up to rotation.
+
+    For example, if A, B, C are all single-cell pieces, they are stored
+    in one group with letters = {'A', 'B', 'C'}.
+*/
+struct Group {
+    vector<vector<pair<int, int>>> orientations;
+    vector<char> letters;
+};
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> N;
+
+    table_grid.resize(20);
+    for (int i = 0; i < 20; i++) {
+        cin >> table_grid[i];
+    }
+
+    /*
+        Collect cells of each piece.
+    */
+    map<char, vector<pair<int, int>>> piece_cells;
+
+    for (int r = 0; r < 20; r++) {
+        for (int c = 0; c < 20; c++) {
+            char ch = table_grid[r][c];
+
+            if (ch != '.') {
+                piece_cells[ch].push_back({r, c});
+            }
+        }
+    }
+
+    /*
+        Group identical pieces.
+
+        Key:
+            canonical representation of the shape.
+
+        Value:
+            group containing all letters with that shape.
+    */
+    map<vector<pair<int, int>>, Group> grouped;
+
+    for (auto &[letter, cells] : piece_cells) {
+        vector<vector<pair<int, int>>> orientations = get_orientations(cells);
+
+        /*
+            Canonical key is the lexicographically smallest rotation.
+            All rotations of the same shape will produce the same key.
+        */
+        vector<pair<int, int>> key = *min_element(
+            orientations.begin(),
+            orientations.end()
+        );
+
+        Group &g = grouped[key];
+
+        if (g.orientations.empty()) {
+            g.orientations = orientations;
+        }
+
+        g.letters.push_back(letter);
+    }
+
+    /*
+        Convert map values into a vector for easier iteration in backtracking.
+    */
+    vector<Group> groups;
+
+    for (auto &[key, group] : grouped) {
+        groups.push_back(group);
+    }
+
+    /*
+        The board we are reconstructing.
+    */
+    vector<string> board(N, string(N, '.'));
+
+    /*
+        Recursive exact-cover search.
+    */
+    function<bool()> backtrack = [&]() -> bool {
+        int target_r = -1;
+        int target_c = -1;
+
+        /*
+            Find first empty cell in row-major order.
+        */
+        for (int r = 0; r < N && target_r == -1; r++) {
+            for (int c = 0; c < N; c++) {
+                if (board[r][c] == '.') {
+                    target_r = r;
+                    target_c = c;
+                    break;
+                }
+            }
+        }
+
+        /*
+            No empty cell means the board is fully tiled.
+        */
+        if (target_r == -1) {
+            return true;
+        }
+
+        /*
+            Try placing each remaining shape group.
+        */
+        for (Group &group : groups) {
+            if (group.letters.empty()) {
+                continue;
+            }
+
+            /*
+                Try every allowed orientation of this shape.
+            */
+            for (const auto &orientation : group.orientations) {
+                /*
+                    The first coordinate of the normalized orientation is the
+                    anchor. It must be placed on the first empty board cell.
+                */
+                int anchor_r = orientation[0].first;
+                int anchor_c = orientation[0].second;
+
+                vector<pair<int, int>> placed_cells;
+                bool ok = true;
+
+                /*
+                    Check whether the piece fits.
+                */
+                for (auto [r, c] : orientation) {
+                    int nr = target_r + r - anchor_r;
+                    int nc = target_c + c - anchor_c;
+
+                    if (nr < 0 || nr >= N || nc < 0 || nc >= N) {
+                        ok = false;
+                        break;
+                    }
+
+                    if (board[nr][nc] != '.') {
+                        ok = false;
+                        break;
+                    }
+
+                    placed_cells.push_back({nr, nc});
+                }
+
+                if (!ok) {
+                    continue;
+                }
+
+                /*
+                    Use one actual letter from this group.
+                */
+                char letter = group.letters.back();
+                group.letters.pop_back();
+
+                /*
+                    Place piece.
+                */
+                for (auto [r, c] : placed_cells) {
+                    board[r][c] = letter;
+                }
+
+                /*
+                    Continue recursively.
+                */
+                if (backtrack()) {
+                    return true;
+                }
+
+                /*
+                    Undo placement.
+                */
+                for (auto [r, c] : placed_cells) {
+                    board[r][c] = '.';
+                }
+
+                group.letters.push_back(letter);
+            }
+        }
+
+        return false;
+    };
+
+    /*
+        A solution is guaranteed.
+    */
+    backtrack();
+
+    for (string &row : board) {
+        cout << row << '\n';
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5. Python implementation with detailed comments
+
+```python
+import sys
+
+
+def normalize(cells):
+    """
+    Normalize a shape.
+
+    Shift all cells so that the minimum row and minimum column become 0.
+    Return a sorted tuple so the result is:
+        - comparable,
+        - hashable,
+        - usable as a dictionary key.
+    """
+
+    min_r = min(r for r, c in cells)
+    min_c = min(c for r, c in cells)
+
+    shifted = [(r - min_r, c - min_c) for r, c in cells]
+    shifted.sort()
+
+    return tuple(shifted)
+
+
+def rotate90(cells):
+    """
+    Rotate a shape by 90 degrees.
+
+    Formula:
+        (r, c) -> (c, -r)
+
+    After rotating, normalize again.
+    """
+
+    rotated = [(c, -r) for r, c in cells]
+    return normalize(rotated)
+
+
+def get_orientations(cells):
+    """
+    Generate all distinct rotations of a shape.
+
+    The allowed rotations are:
+        0, 90, 180, 270 degrees.
+
+    Symmetric pieces may produce duplicate rotations, so we remove them.
+    """
+
+    current = normalize(cells)
+    orientations = []
+
+    for _ in range(4):
+        if current not in orientations:
+            orientations.append(current)
+
+        current = rotate90(current)
+
+    return orientations
+
+
+def solve():
+    data = sys.stdin.read().splitlines()
+
+    n = int(data[0])
+    grid = data[1:21]
+
+    """
+    Collect cells of every piece.
+    """
+    piece_cells = {}
+
+    for r in range(20):
+        for c in range(20):
+            ch = grid[r][c]
+
+            if ch != ".":
+                piece_cells.setdefault(ch, []).append((r, c))
+
+    """
+    Group pieces with the same shape up to rotation.
+
+    grouped[key] stores:
+        - orientations: all possible rotations of this shape
+        - letters: all unused letters with this shape
+    """
+    grouped = {}
+
+    for letter in sorted(piece_cells):
+        orientations = get_orientations(piece_cells[letter])
+
+        # Canonical key is the smallest orientation.
+        key = min(orientations)
+
+        if key not in grouped:
+            grouped[key] = {
+                "orientations": orientations,
+                "letters": []
+            }
+
+        grouped[key]["letters"].append(letter)
+
+    groups = list(grouped.values())
+
+    """
+    Current reconstructed board.
+    """
+    board = [["." for _ in range(n)] for _ in range(n)]
+
+    def backtrack():
+        """
+        Recursive exact-cover search.
+
+        At each step:
+            1. Find first empty cell.
+            2. Try to cover it with one unused piece.
+            3. Recurse.
+        """
+
+        target_r = -1
+        target_c = -1
+
+        """
+        Find first empty cell in row-major order.
+        """
+        found = False
+
+        for r in range(n):
+            for c in range(n):
+                if board[r][c] == ".":
+                    target_r = r
+                    target_c = c
+                    found = True
+                    break
+            if found:
+                break
+
+        """
+        No empty cells means the board is fully reconstructed.
+        """
+        if target_r == -1:
+            return True
+
+        """
+        Try every remaining shape group.
+        """
+        for group in groups:
+            if not group["letters"]:
+                continue
+
+            """
+            Try each possible orientation.
+            """
+            for orientation in group["orientations"]:
+                anchor_r, anchor_c = orientation[0]
+
+                placed_cells = []
+                ok = True
+
+                """
+                Align the orientation's first cell with the target empty cell
+                and check whether all cells fit.
+                """
+                for r, c in orientation:
+                    nr = target_r + r - anchor_r
+                    nc = target_c + c - anchor_c
+
+                    if nr < 0 or nr >= n or nc < 0 or nc >= n:
+                        ok = False
+                        break
+
+                    if board[nr][nc] != ".":
+                        ok = False
+                        break
+
+                    placed_cells.append((nr, nc))
+
+                if not ok:
+                    continue
+
+                """
+                Use one actual letter from this group.
+                """
+                letter = group["letters"].pop()
+
+                """
+                Place piece.
+                """
+                for r, c in placed_cells:
+                    board[r][c] = letter
+
+                """
+                Continue recursively.
+                """
+                if backtrack():
+                    return True
+
+                """
+                Undo placement.
+                """
+                for r, c in placed_cells:
+                    board[r][c] = "."
+
+                group["letters"].append(letter)
+
+        return False
+
+    """
+    A solution is guaranteed by the statement.
+    """
+    backtrack()
+
+    print("\n".join("".join(row) for row in board))
+
+
+if __name__ == "__main__":
+    solve()
+```

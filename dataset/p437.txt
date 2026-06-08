@@ -1,0 +1,824 @@
+## 1. Abridged Problem Statement
+
+You are given a hexagonal Sudoku-like board with 31 numbered cells. Each cell must contain an integer from `1` to `K`.
+
+Constraints:
+
+- In each straight row of the board, in all 3 directions, all numbers must be distinct.
+- For each of 7 special marked cells, that marked cell and its adjacent cells form a group where all numbers must be distinct.
+- Some cells may already be filled.
+
+Given `K` and an integer `N`, find the `N`-th valid completion in lexicographical order by cell numbers `1..31`.
+
+If such a solution exists, print:
+
+```text
+Found
+```
+
+followed by the completed board.
+
+Otherwise print:
+
+```text
+No way
+```
+
+---
+
+## 2. Detailed Editorial
+
+### Key Observation
+
+The puzzle can be modeled as a graph coloring problem.
+
+- Each cell is a vertex.
+- Each number `1..K` is a color.
+- If two cells must contain different numbers, connect them with an edge.
+
+Then the task becomes:
+
+> Count valid colorings of this graph in lexicographical order and output the `N`-th one.
+
+The graph has only 31 vertices, but brute force over `K^31` is impossible.
+
+---
+
+### Building the Constraint Graph
+
+There are 28 all-different groups:
+
+1. 7 horizontal-like rows.
+2. 7 rows in the `/` direction.
+3. 7 rows in the `\` direction.
+4. 7 marked clusters, each consisting of a marked cell and its adjacent cells.
+
+If two cells appear together in any group, they must be different.
+
+The solution stores for each cell:
+
+```cpp
+row_id[i]
+left_id[i]
+right_id[i]
+```
+
+These describe the three directional row memberships.
+
+The marked clusters are explicitly listed:
+
+```cpp
+clusters[7][7]
+```
+
+Then for every group, all pairs of cells inside that group are marked adjacent.
+
+---
+
+### Lexicographical DFS
+
+Lexicographical order is defined by cell numbers.
+
+So if we perform DFS like this:
+
+```text
+for cell i from 1 to 31:
+    try values from 1 to K in increasing order
+```
+
+then complete solutions are visited exactly in lexicographical order.
+
+Whenever a complete valid assignment is found, increment the number of found solutions.
+
+When the counter reaches `N`, stop and output the current board.
+
+---
+
+### Handling Pre-filled Cells
+
+Pre-filled cells are fixed.
+
+However, their constraints must be applied before DFS starts. Otherwise the DFS could waste time exploring branches that will later conflict with a given cell.
+
+For every given cell `i` with value `v`, the value `v` is forbidden in every adjacent cell.
+
+---
+
+### Candidate Sets
+
+For every cell `i`, maintain:
+
+```cpp
+avail[i]
+```
+
+as a bitmask of currently available numbers.
+
+If bit `v` is set, then value `v` is still possible for cell `i`.
+
+Since `K <= 31`, all candidates fit into a 32-bit unsigned integer.
+
+Also maintain:
+
+```cpp
+avail_count[i]
+```
+
+which stores the number of currently available values.
+
+This allows quick detection of dead branches.
+
+---
+
+### Why `forbid_count` is Needed
+
+Suppose cell `j` cannot use value `v` because several already-filled neighboring cells contain `v`.
+
+If one of those neighboring assignments is undone, we cannot immediately restore `v` for `j`, because another neighbor may still forbid it.
+
+So the solution stores:
+
+```cpp
+forbid_count[j][v]
+```
+
+meaning:
+
+> How many currently assigned neighbors of cell `j` forbid value `v`.
+
+When placing value `v` in cell `i`, for every later unfilled neighbor `j`:
+
+```cpp
+forbid_count[j][v]++
+```
+
+If it changes from `0` to `1`, remove `v` from `avail[j]`.
+
+When backtracking:
+
+```cpp
+forbid_count[j][v]--
+```
+
+If it becomes `0`, restore `v` to `avail[j]`.
+
+---
+
+### Forward Checking
+
+When assigning value `v` to cell `i`, the algorithm updates all later unfilled neighbors.
+
+If any neighbor loses its last available value, the branch is impossible and is immediately abandoned.
+
+This is called forward checking.
+
+It greatly reduces the search space.
+
+---
+
+### Why Only Later Neighbors?
+
+The DFS fills cells in increasing order.
+
+When processing cell `i`:
+
+- Earlier cells are already assigned.
+- Later cells are not assigned yet.
+
+The candidate set of `i` already accounts for earlier assignments and given cells.
+
+When we assign `i`, we only need to propagate this new restriction to later cells.
+
+Therefore the code precomputes:
+
+```cpp
+fwd[i]
+```
+
+which contains all later non-given neighbors of cell `i`.
+
+---
+
+### Algorithm Summary
+
+1. Read `K`, `N`, and the 31 cell values.
+2. Construct all 28 all-different groups.
+3. Build adjacency matrix between cells.
+4. Precompute later unfilled neighbors for every cell.
+5. Initialize candidate masks for all cells.
+6. Apply constraints from given cells.
+7. DFS from cell `1` to cell `31`:
+   - If cell is given, skip it.
+   - Otherwise, try all currently available values in increasing order.
+   - Apply restrictions to later neighbors.
+   - If no contradiction, recurse.
+   - Undo restrictions.
+8. Stop when the `N`-th solution is found.
+9. Print the answer or `"No way"`.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std;
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Read every element of the vector.
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Print every element followed by a space.
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of possible values, values are from 1 to k.
+int k;
+
+// We need to find the n-th solution.
+int64_t n;
+
+// given[i] is the initially fixed number in cell i, or 0 if empty.
+// Cells are numbered 1..31, so size 32 is convenient.
+array<int, 32> given;
+
+// fwd[i] stores later empty neighbors of cell i.
+// Only these cells need to be updated when assigning cell i.
+int fwd[32][24];
+
+// Number of elements in fwd[i].
+int fwd_count[32];
+
+// forbid_count[cell][value] stores how many assigned neighboring cells
+// currently forbid this value for this cell.
+int forbid_count[32][33];
+
+// avail[cell] is a bitmask of currently available values for this cell.
+// Bit v corresponds to value v.
+unsigned avail[32];
+
+// avail_count[cell] is the number of available values in avail[cell].
+int avail_count[32];
+
+// Mask containing all values 1..k.
+unsigned full_mask;
+
+// Number of complete valid solutions already visited.
+int64_t solutions;
+
+// Current partial/complete assignment.
+int cur[32];
+
+// Whether the required n-th solution has been found.
+bool found;
+
+// Reads input.
+void read() {
+    cin >> k >> n; // Read K and N.
+
+    // Read 31 cell values.
+    for(int i = 1; i <= 31; i++) {
+        cin >> given[i];
+    }
+}
+
+// Recursive DFS starting at cell i.
+void search(int i) {
+    // If all 31 cells have been processed, we found one full solution.
+    if(i == 32) {
+        // Increase solution counter.
+        if(++solutions == n) {
+            // Stop once this is the requested solution.
+            found = true;
+        }
+        return;
+    }
+
+    // If this cell is pre-filled, it cannot be changed.
+    if(given[i]) {
+        search(i + 1); // Move to next cell.
+        return;
+    }
+
+    // Candidate values for this cell.
+    unsigned cand = avail[i];
+
+    // Pointer to the list of later empty neighbors.
+    const int* fw = fwd[i];
+
+    // Number of later empty neighbors.
+    int fn = fwd_count[i];
+
+    // Iterate over all candidate bits while the answer has not been found.
+    while(cand && !found) {
+        // Extract the lowest set bit.
+        // This corresponds to trying values in increasing order.
+        unsigned bit = cand & (~cand + 1);
+
+        // Remove that bit from the candidate mask.
+        cand ^= bit;
+
+        // Convert bit to value index.
+        // __builtin_ctz gives the number of trailing zero bits.
+        int v = __builtin_ctz(bit);
+
+        // Whether this assignment immediately causes contradiction.
+        bool dead = false;
+
+        // Assigning value v to cell i forbids value v in every later neighbor.
+        for(int t = 0; t < fn; t++) {
+            // Later neighbor cell.
+            int j = fw[t];
+
+            // Increase number of blockers for value v at cell j.
+            // If it was previously 0, v must be removed from availability.
+            if(forbid_count[j][v]++ == 0) {
+                // Remove value v from available mask of cell j.
+                avail[j] &= ~bit;
+
+                // Decrease available count.
+                if(--avail_count[j] == 0) {
+                    // If cell j now has no legal value, this branch is dead.
+                    dead = true;
+                }
+            }
+        }
+
+        // If no future cell was made impossible, continue recursion.
+        if(!dead) {
+            // Store current assignment.
+            cur[i] = v;
+
+            // Move to next cell.
+            search(i + 1);
+        }
+
+        // Undo all changes made to later neighbors.
+        for(int t = 0; t < fn; t++) {
+            // Later neighbor cell.
+            int j = fw[t];
+
+            // Remove one blocker for value v.
+            // If it becomes zero, value v becomes available again.
+            if(--forbid_count[j][v] == 0) {
+                // Restore value v in available mask.
+                avail[j] |= bit;
+
+                // Increase available count.
+                ++avail_count[j];
+            }
+        }
+    }
+}
+
+// Main solving function.
+void solve() {
+    /*
+     * The puzzle is treated as a graph coloring problem.
+     *
+     * Every cell is a vertex.
+     * Every number is a color.
+     * Two cells are adjacent if they appear together in any all-different group.
+     */
+
+    // Row ids in the first board direction.
+    // row_id[i] is the row group of cell i.
+    static const int row_id[32] = {
+        0,
+        1, 1,
+        2, 2, 2, 2, 2,
+        3, 3, 3, 3, 3, 3,
+        4, 4, 4, 4, 4,
+        5, 5, 5, 5, 5, 5,
+        6, 6, 6, 6, 6,
+        7, 7
+    };
+
+    // Row ids in the "/" direction.
+    static const int left_id[32] = {
+        0,
+        2, 3,
+        1, 2, 3, 4, 5,
+        1, 2, 3, 4, 5, 6,
+        2, 3, 4, 5, 6,
+        2, 3, 4, 5, 6, 7,
+        3, 4, 5, 6, 7,
+        5, 6
+    };
+
+    // Row ids in the "\" direction.
+    static const int right_id[32] = {
+        0,
+        3, 2,
+        5, 4, 3, 2, 1,
+        6, 5, 4, 3, 2, 1,
+        6, 5, 4, 3, 2,
+        7, 6, 5, 4, 3, 2,
+        7, 6, 5, 4, 3,
+        6, 5
+    };
+
+    // The 7 marked clusters.
+    // Each cluster is a clique: all listed cells must have different values.
+    static const int clusters[7][7] = {
+        {3, 4, 8, 9, 10, 14, 15},
+        {1, 2, 4, 5, 6, 10, 11},
+        {6, 7, 11, 12, 13, 17, 18},
+        {10, 11, 15, 16, 17, 21, 22},
+        {14, 15, 19, 20, 21, 25, 26},
+        {21, 22, 26, 27, 28, 30, 31},
+        {17, 18, 22, 23, 24, 28, 29},
+    };
+
+    // There are 28 groups:
+    // 0..6    : rows in first direction
+    // 7..13   : rows in second direction
+    // 14..20  : rows in third direction
+    // 21..27  : marked clusters
+    vector<vector<int>> members(28);
+
+    // Add every cell to its three directional row groups.
+    for(int i = 1; i <= 31; i++) {
+        members[row_id[i] - 1].push_back(i);
+        members[7 + left_id[i] - 1].push_back(i);
+        members[14 + right_id[i] - 1].push_back(i);
+    }
+
+    // Add cluster memberships.
+    for(int c = 0; c < 7; c++) {
+        for(int j = 0; j < 7; j++) {
+            members[21 + c].push_back(clusters[c][j]);
+        }
+    }
+
+    // adj[a][b] is true if cells a and b must be different.
+    bool adj[32][32] = {};
+
+    // For every group, connect all distinct pairs inside it.
+    for(const auto& g: members) {
+        for(int a: g) {
+            for(int b: g) {
+                adj[a][b] = (a != b);
+            }
+        }
+    }
+
+    // Precompute later empty neighbors for each cell.
+    for(int i = 1; i <= 31; i++) {
+        // Initially no later neighbors.
+        fwd_count[i] = 0;
+
+        // Only cells with greater index are relevant during DFS.
+        for(int j = i + 1; j <= 31; j++) {
+            // If j is adjacent and not given, it must be updated after assigning i.
+            if(adj[i][j] && !given[j]) {
+                fwd[i][fwd_count[i]++] = j;
+            }
+        }
+    }
+
+    // Construct mask with bits 1..k set.
+    // Example: k = 3 gives bits 1,2,3 set.
+    full_mask = ((1u << k) - 1) << 1;
+
+    // Initialize current solution and candidate structures.
+    for(int i = 1; i <= 31; i++) {
+        // Current value is the given value, or 0 for empty.
+        cur[i] = given[i];
+
+        // Initially every value 1..k is possible.
+        avail[i] = full_mask;
+
+        // There are initially k available values.
+        avail_count[i] = k;
+
+        // No value is initially forbidden.
+        for(int v = 0; v <= k; v++) {
+            forbid_count[i][v] = 0;
+        }
+    }
+
+    // Apply constraints from all given cells before DFS.
+    for(int i = 1; i <= 31; i++) {
+        // Only fixed cells matter here.
+        if(given[i]) {
+            // Fixed value.
+            int v = given[i];
+
+            // For every other cell adjacent to i, forbid value v.
+            for(int j = 1; j <= 31; j++) {
+                if(adj[i][j] && forbid_count[j][v]++ == 0) {
+                    // Remove value v from candidate mask of j.
+                    avail[j] &= ~(1u << v);
+
+                    // Decrease available count.
+                    avail_count[j]--;
+                }
+            }
+        }
+    }
+
+    // Start DFS from cell 1.
+    search(1);
+
+    // If the n-th solution was not reached, it does not exist.
+    if(!found) {
+        cout << "No way\n";
+        return;
+    }
+
+    // Otherwise print the found solution.
+    cout << "Found\n";
+
+    // Print all 31 cell values.
+    for(int i = 1; i <= 31; i++) {
+        cout << cur[i] << " \n"[i == 31];
+    }
+}
+
+// Program entry point.
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Only one test case.
+    int T = 1;
+
+    // Test loop, kept for convenience.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def main():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # First two integers are K and N.
+    k = data[0]
+    target_n = data[1]
+
+    # The next 31 integers are the initial board.
+    # We use 1-based indexing, so prepend a dummy zero.
+    given = [0] + data[2:33]
+
+    # Row ids in the first direction.
+    row_id = [
+        0,
+        1, 1,
+        2, 2, 2, 2, 2,
+        3, 3, 3, 3, 3, 3,
+        4, 4, 4, 4, 4,
+        5, 5, 5, 5, 5, 5,
+        6, 6, 6, 6, 6,
+        7, 7,
+    ]
+
+    # Row ids in the "/" direction.
+    left_id = [
+        0,
+        2, 3,
+        1, 2, 3, 4, 5,
+        1, 2, 3, 4, 5, 6,
+        2, 3, 4, 5, 6,
+        2, 3, 4, 5, 6, 7,
+        3, 4, 5, 6, 7,
+        5, 6,
+    ]
+
+    # Row ids in the "\" direction.
+    right_id = [
+        0,
+        3, 2,
+        5, 4, 3, 2, 1,
+        6, 5, 4, 3, 2, 1,
+        6, 5, 4, 3, 2,
+        7, 6, 5, 4, 3, 2,
+        7, 6, 5, 4, 3,
+        6, 5,
+    ]
+
+    # The 7 marked clusters.
+    # Every pair of cells inside a cluster must contain different values.
+    clusters = [
+        [3, 4, 8, 9, 10, 14, 15],
+        [1, 2, 4, 5, 6, 10, 11],
+        [6, 7, 11, 12, 13, 17, 18],
+        [10, 11, 15, 16, 17, 21, 22],
+        [14, 15, 19, 20, 21, 25, 26],
+        [21, 22, 26, 27, 28, 30, 31],
+        [17, 18, 22, 23, 24, 28, 29],
+    ]
+
+    # There are 28 all-different groups.
+    members = [[] for _ in range(28)]
+
+    # Add cells to their row groups in the three directions.
+    for i in range(1, 32):
+        members[row_id[i] - 1].append(i)
+        members[7 + left_id[i] - 1].append(i)
+        members[14 + right_id[i] - 1].append(i)
+
+    # Add cells to marked cluster groups.
+    for c in range(7):
+        for cell in clusters[c]:
+            members[21 + c].append(cell)
+
+    # Build adjacency matrix.
+    # adj[a][b] is True if cells a and b must differ.
+    adj = [[False] * 32 for _ in range(32)]
+
+    # Inside every all-different group, every pair is adjacent.
+    for group in members:
+        for a in group:
+            for b in group:
+                if a != b:
+                    adj[a][b] = True
+
+    # fwd[i] contains later empty cells adjacent to i.
+    # When assigning i during DFS, only these cells need candidate updates.
+    fwd = [[] for _ in range(32)]
+
+    for i in range(1, 32):
+        for j in range(i + 1, 32):
+            if adj[i][j] and given[j] == 0:
+                fwd[i].append(j)
+
+    # Bitmask with values 1..k set.
+    # Bit v corresponds to value v.
+    full_mask = ((1 << k) - 1) << 1
+
+    # Current assignment.
+    cur = given[:]
+
+    # avail[i] is a bitmask of currently possible values for cell i.
+    avail = [full_mask for _ in range(32)]
+
+    # Number of available values for each cell.
+    avail_count = [k for _ in range(32)]
+
+    # forbid_count[i][v] tells how many assigned neighbors forbid value v at cell i.
+    forbid_count = [[0] * (k + 1) for _ in range(32)]
+
+    # Apply constraints from given cells.
+    for i in range(1, 32):
+        if given[i] != 0:
+            v = given[i]
+            bit = 1 << v
+
+            # Every neighbor of this fixed cell cannot use v.
+            for j in range(1, 32):
+                if adj[i][j]:
+                    if forbid_count[j][v] == 0:
+                        avail[j] &= ~bit
+                        avail_count[j] -= 1
+                    forbid_count[j][v] += 1
+
+    # Number of complete solutions seen so far.
+    solutions = 0
+
+    # The found answer, stored as a list when discovered.
+    answer = None
+
+    # Recursive DFS.
+    def search(i):
+        nonlocal solutions, answer
+
+        # If answer is already found, stop searching.
+        if answer is not None:
+            return
+
+        # If all cells are processed, we found one valid solution.
+        if i == 32:
+            solutions += 1
+
+            # If this is the requested solution, save it.
+            if solutions == target_n:
+                answer = cur[:]
+            return
+
+        # Given cells are fixed and skipped.
+        if given[i] != 0:
+            search(i + 1)
+            return
+
+        # Candidate values for this cell.
+        cand = avail[i]
+
+        # Try candidates in increasing value order.
+        while cand and answer is None:
+            # Extract lowest set bit.
+            bit = cand & -cand
+
+            # Remove it from candidate set.
+            cand ^= bit
+
+            # Convert bit to value.
+            # For example, bit == 8 means value 3.
+            v = bit.bit_length() - 1
+
+            # List of updates made, so they can be undone.
+            # In this implementation, we know all changed cells are fwd[i],
+            # but this list makes undoing explicit.
+            changed = []
+
+            # Whether this branch became impossible.
+            dead = False
+
+            # Assigning v to i forbids v in all later neighbors.
+            for j in fwd[i]:
+                if forbid_count[j][v] == 0:
+                    # v was available before; remove it now.
+                    avail[j] &= ~bit
+                    avail_count[j] -= 1
+                    changed.append(j)
+
+                    # If a future cell has no candidates, branch is dead.
+                    if avail_count[j] == 0:
+                        dead = True
+
+                # Add one blocker.
+                forbid_count[j][v] += 1
+
+            # Recurse if still possible.
+            if not dead:
+                cur[i] = v
+                search(i + 1)
+                cur[i] = 0
+
+            # Undo changes.
+            for j in fwd[i]:
+                # Remove the blocker caused by assigning v to i.
+                forbid_count[j][v] -= 1
+
+                # If no blockers remain, restore v as available.
+                if forbid_count[j][v] == 0:
+                    avail[j] |= bit
+                    avail_count[j] += 1
+
+    # Start DFS.
+    search(1)
+
+    # Output result.
+    if answer is None:
+        print("No way")
+    else:
+        print("Found")
+        print(*answer[1:])
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Model the board as a graph coloring problem. Each cell is a vertex, and two cells are connected if they lie in the same row in any of the three directions or in the same marked cluster. Then a valid solution is a coloring of this graph using colors `1..K`.
+
+Build all 28 all-different groups, then create an adjacency matrix.
+
+Perform DFS over cells `1..31`. For each empty cell, try possible values in increasing order. Since cells are processed by index and values are tried increasingly, complete assignments are generated in lexicographical order. Count complete solutions until the `N`-th one is reached.
+
+Maintain for each cell a bitmask of currently available values. Also maintain `forbid_count[cell][value]`, the number of already assigned neighbors forbidding that value. When assigning a value to a cell, remove that value from all later unfilled adjacent cells. If any later cell loses all candidates, prune the branch immediately. On backtracking, restore all changes using `forbid_count`.
+
+Pre-filled cells are applied before DFS by forbidding their values in all neighboring cells. This avoids wasting time on branches that are already incompatible with fixed numbers.
+
+If the DFS reaches the `N`-th solution, output it. Otherwise output `"No way"`.

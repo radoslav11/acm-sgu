@@ -1,0 +1,344 @@
+p234.in1
+======================
+3 5
+1 1 1 0 0
+1 0 0 0 1
+1 1 0 1 1
+
+=================
+p234.cpp
+======================
+#include <bits/stdc++.h>
+// #include <coding_library/graph/hopcroft_karp.hpp>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+class HopcroftKarp {
+  private:
+    int n, m;
+    vector<int> dist;
+
+    bool bfs() {
+        queue<int> q;
+        dist.assign(n, -1);
+        for(int u = 0; u < n; u++) {
+            if(inv_match[u] == -1) {
+                dist[u] = 0;
+                q.push(u);
+            }
+        }
+
+        bool found = false;
+        while(!q.empty()) {
+            int u = q.front();
+            q.pop();
+            for(int v: adj[u]) {
+                int m = match[v];
+                if(m == -1) {
+                    found = true;
+                } else if(dist[m] == -1) {
+                    dist[m] = dist[u] + 1;
+                    q.push(m);
+                }
+            }
+        }
+
+        return found;
+    }
+
+    bool dfs(int u) {
+        for(int v: adj[u]) {
+            int m = match[v];
+            if(m == -1 || (dist[m] == dist[u] + 1 && dfs(m))) {
+                inv_match[u] = v;
+                match[v] = u;
+                return true;
+            }
+        }
+        dist[u] = -1;
+        return false;
+    }
+
+  public:
+    vector<int> match, inv_match;
+    vector<vector<int>> adj;
+
+    HopcroftKarp(int _n, int _m = -1) : n(_n), m(_m == -1 ? _n : _m) {
+        adj.assign(n, vector<int>());
+        clear(false);
+    }
+
+    void clear(bool clear_adj = true) {
+        match.assign(m, -1);
+        inv_match.assign(n, -1);
+        if(clear_adj) {
+            adj.assign(n, vector<int>());
+        }
+    }
+
+    void add_edge(int u, int v) { adj[u].push_back(v); }
+
+    int max_matching(bool shuffle_edges = false) {
+        if(shuffle_edges) {
+            for(int i = 0; i < n; i++) {
+                shuffle(
+                    adj[i].begin(), adj[i].end(),
+                    mt19937(
+                        chrono::steady_clock::now().time_since_epoch().count()
+                    )
+                );
+            }
+        }
+
+        int ans = 0;
+        while(bfs()) {
+            for(int u = 0; u < n; u++) {
+                if(inv_match[u] == -1 && dfs(u)) {
+                    ans++;
+                }
+            }
+        }
+        return ans;
+    }
+
+    vector<pair<int, int>> get_matching() {
+        vector<pair<int, int>> matches;
+        for(int u = 0; u < n; u++) {
+            if(inv_match[u] != -1) {
+                matches.emplace_back(u, inv_match[u]);
+            }
+        }
+        return matches;
+    }
+
+    pair<vector<int>, vector<int>> minimum_vertex_cover() {
+        // König: alternating-BFS from unmatched left vertices marks the
+        // reachable set Z; cover = (Left \ Z) on the left side together with
+        // (Right in Z) on the right side. Here dist[u] != -1 means u is in Z.
+
+        vector<int> left_cover, right_cover;
+        bfs();
+
+        for(int u = 0; u < n; u++) {
+            if(dist[u] == -1) {
+                left_cover.push_back(u);
+            }
+        }
+
+        for(int v = 0; v < m; v++) {
+            if(match[v] != -1 && dist[match[v]] != -1) {
+                right_cover.push_back(v);
+            }
+        }
+
+        return {left_cover, right_cover};
+    }
+
+    pair<vector<int>, vector<int>> maximum_independent_set() {
+        // The complement of a minimum vertex cover is a maximum independent
+        // set (König), so keep exactly the vertices not in the cover.
+
+        auto [left_cover, right_cover] = minimum_vertex_cover();
+        vector<char> in_left_cover(n), in_right_cover(m);
+        for(int u: left_cover) {
+            in_left_cover[u] = 1;
+        }
+
+        for(int v: right_cover) {
+            in_right_cover[v] = 1;
+        }
+
+        vector<int> left_set, right_set;
+        for(int u = 0; u < n; u++) {
+            if(!in_left_cover[u]) {
+                left_set.push_back(u);
+            }
+        }
+
+        for(int v = 0; v < m; v++) {
+            if(!in_right_cover[v]) {
+                right_set.push_back(v);
+            }
+        }
+
+        return {left_set, right_set};
+    }
+};
+
+using BipartiteMatching = HopcroftKarp;
+
+int m, n;
+vector<vector<int>> grid;
+
+void read() {
+    cin >> m >> n;
+    grid.assign(m, vector<int>(n));
+    for(auto& row: grid) {
+        cin >> row;
+    }
+}
+
+void solve() {
+    // A Guardian attacks its own cell and the four edge-neighbors. Two
+    // Guardians may not stand on the same or neighboring cells (they would
+    // kill each other), so the chosen cells form an independent set in the
+    // grid graph. Every present cell must also be attacked by some Guardian,
+    // i.e. the chosen set must be dominating. We want the largest such set.
+    //
+    // A maximum independent set is automatically dominating: if some cell
+    // were neither chosen nor adjacent to a chosen cell, we could add it and
+    // get a larger independent set, contradicting maximality. So the answer
+    // is just the maximum independent set of the grid graph.
+    //
+    // The grid graph is bipartite under a checkerboard coloring, with edges
+    // only between an even cell (i + j even) and an odd neighbor. By Koenig's
+    // theorem the maximum independent set is the complement of a minimum
+    // vertex cover, which we recover from a maximum matching: an even cell is
+    // chosen iff it is not in the cover, and likewise for odd cells.
+
+    vector<vector<int>> id(m, vector<int>(n, -1));
+    int num_even = 0, num_odd = 0;
+    for(int i = 0; i < m; i++) {
+        for(int j = 0; j < n; j++) {
+            if(grid[i][j]) {
+                id[i][j] = ((i + j) & 1) ? num_odd++ : num_even++;
+            }
+        }
+    }
+
+    HopcroftKarp hk(num_even, num_odd);
+    static const int di[] = {-1, 1, 0, 0};
+    static const int dj[] = {0, 0, -1, 1};
+    for(int i = 0; i < m; i++) {
+        for(int j = 0; j < n; j++) {
+            if(grid[i][j] && ((i + j) & 1) == 0) {
+                for(int d = 0; d < 4; d++) {
+                    int ni = i + di[d], nj = j + dj[d];
+                    if(ni >= 0 && ni < m && nj >= 0 && nj < n && grid[ni][nj]) {
+                        hk.add_edge(id[i][j], id[ni][nj]);
+                    }
+                }
+            }
+        }
+    }
+
+    hk.max_matching();
+    auto [even_set, odd_set] = hk.maximum_independent_set();
+
+    vector<char> even_chosen(num_even), odd_chosen(num_odd);
+    for(int u: even_set) {
+        even_chosen[u] = 1;
+    }
+
+    for(int v: odd_set) {
+        odd_chosen[v] = 1;
+    }
+
+    vector<string> out(m, string(n, '#'));
+    for(int i = 0; i < m; i++) {
+        for(int j = 0; j < n; j++) {
+            if(!grid[i][j]) {
+                continue;
+            }
+
+            bool chosen =
+                ((i + j) & 1) ? odd_chosen[id[i][j]] : even_chosen[id[i][j]];
+            out[i][j] = chosen ? 'G' : '.';
+        }
+    }
+
+    cout << even_set.size() + odd_set.size() << '\n';
+    for(auto& row: out) {
+        cout << row << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+p234.ans1
+======================
+5
+G.G##
+.###G
+G.#G.
+
+=================
+statement.txt
+======================
+234. Black-White King Strikes Back
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+An irrecoverable event happened today's morning in the Chess World. Black King was killed. Of course, a letter about it was immediately sent to his old ally, White King. Frightened witnesses said that injuries on the King's body appeared from nothing. Axes began to move themselves and stroke King. After all, a strange force raised him up and threw down from a palace balcony mortally.
+After White King had knew about it, he began to feel real danger. He understood that it's an awful deed of invisible Black-White King, who was considered dead after a legendary year, when Black and White King united to catch Black-White King, after what he was brutally hanged.
+The danger seemed to be over, and Kings got back to their kingdoms and returned to their basic life. But now White King needs to defend his life without Black King. Fortunately, when Black King was still alive, he created a new chess piece, Guardian. This awful piece is always attacking all neighboring cells and a cell under itself, even if it's nothing (seen) in this cell (of course, that precautions were made special to defend from Black-White Kings, in case of their sudden appearance). It can't injure itself, but it kills all spirited, occupying the same or neighboring cell with this piece, including other Guardians. The cell is declared neighboring in the Chess World if it shares a common edge with the corresponding cell. It's well-known that retired Black King used these pieces to defend himself and his kingdom (a kingdom in the Chess World is a rectangle with M rows and N columns with some cells removed). For full protection, he had put Guardians in some cells of his kingdom, so that all cells were defended by at least one Guardian, and the number of Guardians used was minimal possible.
+But, as a time had shown, it wasn't enough to protect Black King from an awful avenger. White King is now in horror. He realizes, that Black-White King had avoided punishment (it's not very amazing, because nobody had seen his corpse), and now, after killing Black King, he will want to kill White King too. So, really, this strange subject could be even another Black-White King, while nothing knows how they appear in the world (maybe except Black and White Kings. They can naturally know it, because they spent very much time together and shared the same secrets).
+That's why White King urgently needs a new way of defending his kingdom, but while it's not developed yet, he wants to defend his kingdom maximally using Guardians. For this purpose he wants to put as many Guardians as possible. Of course, he understands that if he puts Guardians in every cell of his kingdom, they will kill each other immediately and the kingdom will become absolutely unsafe. As he feels a real danger, he is ready to do everything for the sake of kingdom's safety. You have a real chance to help White King to put maximal possible number of Guardians inside the kingdom, so that no one of them will kill another Guardian, and they will defend all the cells of the kingdom from invisible Black-White Kings and other genetic mutants.
+
+Input
+On the first line of input file there are two numbers M and N, (1<=N,M<=200). Then M lines of N numbers follow. I-th number in J-th line is 0 if respective cell in kingdom is removed or 1 in other case.
+
+Output
+On the first line of output file must be only one integer - maximal possible number of Guardians. Next M lines, N symbols each, represent the placement of K guardians in the kingdom. Symbol must be ".", if respective cell is empty, "G", if Guardian placed in it, or "#" if cell is removed from board. Note that you do not need to defend removed cells. If there are several solutions, output any one of them.
+
+Sample test(s)
+
+Input
+3 5
+1 1 1 0 0
+1 0 0 0 1
+1 1 0 1 1
+
+Output
+5
+G.G##
+.###G
+G.#G.
+Author:	Alexey Preobrajensky
+Resource:	---
+Date:	October, 2003
+
+=================

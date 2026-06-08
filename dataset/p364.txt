@@ -1,0 +1,608 @@
+## 1. Abridged problem statement
+
+`N` lemmings appear one by one at point `A(x, h)`, every `s` seconds. Each starts moving to the right. A lemming falls vertically until it lands on a horizontal platform, then walks in its current direction until it reaches an end and falls again. The home is point `(a, b)` on a platform.
+
+You may stop lemmings on platforms. A stopped lemming stays forever and acts as a reflector: any later lemming touching it reverses direction. Stopped lemmings do not reach home.
+
+Choose which lemmings to stop so that the number of lemmings reaching home is maximized; among those strategies, minimize the time when the last successful lemming reaches home. If no lemming can reach home, output `0 0`.
+
+---
+
+## 2. Detailed editorial
+
+### Key interpretation
+
+Although the statement wording can sound like only one lemming may be stopped, the sample requires stopping two lemmings. The intended meaning is that stopping is the only type of action allowed, and it may be done multiple times.
+
+Each stopped lemming becomes a permanent reflector. Every reflector costs exactly one lemming, because the lemming stopped there cannot reach home.
+
+Therefore, if we need `S` reflectors to create a route from the start to home, then at most `N - S` lemmings can reach home. This is achievable by stopping the first `S` lemmings at the required reflector positions. All later lemmings follow the completed route to home.
+
+So the problem becomes:
+
+1. Find a route from `A` to home using the minimum number of direction reversals.
+2. Among routes with that minimum number of reversals, find the shortest travel distance/time.
+3. If the minimum number of reflectors is `S`, answer is:
+   - `K = N - S`
+   - `T = (N - 1) * s + D`, where `D` is travel time of one successful lemming along the final route.
+
+If `S >= N`, then no lemming remains to reach home.
+
+---
+
+### Movement model
+
+A lemming alternates between:
+
+- vertical falling,
+- horizontal walking on a platform.
+
+Speed is always `1 cm/s`, so travel time equals path length.
+
+Suppose a lemming lands on platform `p` at coordinate `ex`, moving in direction `dir`, where:
+
+- `dir = 1` means right,
+- `dir = -1` means left.
+
+From this state, only two meaningful choices exist:
+
+#### 1. Do not turn
+
+The lemming walks to the platform end in its current direction, then falls.
+
+Cost:
+
+- extra reflectors: `0`
+- extra distance: distance from `ex` to that end.
+
+#### 2. Turn once immediately at `ex`
+
+Place a reflector exactly at the entry point. The lemming reverses direction and walks to the opposite end.
+
+Cost:
+
+- extra reflectors: `1`
+- extra distance: distance from `ex` to the opposite end.
+
+Turning later on the same platform cannot be better: it would only add extra walking distance and still use one reflector.
+
+---
+
+### State graph
+
+A state is:
+
+```text
+(platform index, entry x-coordinate, direction)
+```
+
+For each state, we store the best pair:
+
+```text
+(number of reflectors used, travel distance)
+```
+
+Costs are compared lexicographically:
+
+1. fewer reflectors is better,
+2. if equal, shorter distance is better.
+
+When a lemming leaves a platform at an endpoint, it falls vertically to the highest platform strictly below that contains that x-coordinate in its interior. If no such platform exists, the path falls forever and is ignored.
+
+Every fall goes to a strictly lower height. Therefore, the state graph is a DAG. We can process platforms in descending order of height.
+
+---
+
+### Starting state
+
+The first fall starts from point `(x, h)`. We find the highest platform strictly below height `h` whose interior contains `x`.
+
+If such a platform exists, initial state is:
+
+```text
+that platform, entry coordinate x, direction right
+```
+
+with distance:
+
+```text
+h - platform_height
+```
+
+and `0` reflectors.
+
+---
+
+### Reaching home
+
+If the current platform is the home platform, the lemming may reach `(a, b)`.
+
+From entry coordinate `ex` and direction `dir`:
+
+- If home is ahead, no extra reflector is needed.
+- If home is behind, one reflector at `ex` reverses the lemming.
+
+Extra distance is always:
+
+```text
+abs(a - ex)
+```
+
+Update the global answer with the resulting cost pair.
+
+---
+
+### Complexity
+
+There are at most `100` platforms. For each transition, the solution scans all platforms to find the next one below.
+
+The number of states is small, bounded by possible platform endpoints and start positions.
+
+Complexity is easily within limits:
+
+```text
+O(number_of_states * M)
+```
+
+with `M <= 100`.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ library headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return input stream.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all elements by value.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out;       // Return output stream.
+};
+
+// Number of lemmings and interval between appearances.
+int n, s;
+
+// Start point A = (x, h), home point = (a, b).
+int x, h, a, b;
+
+// Number of platforms.
+int m;
+
+// Platform left endpoints, right endpoints, and heights.
+vector<int> pl, pr, ph;
+
+// Reads the input.
+void read() {
+    cin >> n >> s;          // Read N and s.
+    cin >> x >> h >> a >> b; // Read start and home coordinates.
+    cin >> m;               // Read number of platforms.
+
+    pl.assign(m, 0);        // Allocate left endpoint array.
+    pr.assign(m, 0);        // Allocate right endpoint array.
+    ph.assign(m, 0);        // Allocate height array.
+
+    for(int i = 0; i < m; i++) { // Read all platforms.
+        cin >> pl[i] >> pr[i] >> ph[i];
+    }
+}
+
+// Finds the highest platform strictly below height from_h
+// such that vertical line x = fx hits its interior.
+int next_below(int fx, int from_h) {
+    int best = -1; // Index of currently best platform, -1 means none found.
+
+    for(int i = 0; i < m; i++) { // Check every platform.
+        // Platform must be lower than from_h.
+        // The falling x-coordinate must lie strictly inside the platform.
+        if(ph[i] < from_h && pl[i] < fx && fx < pr[i]) {
+            // Choose the highest such platform.
+            if(best == -1 || ph[i] > ph[best]) {
+                best = i;
+            }
+        }
+    }
+
+    return best; // Return platform index, or -1 if falling forever.
+}
+
+// Solves the problem.
+void solve() {
+    /*
+        We may stop multiple lemmings. Each stopped lemming becomes a permanent
+        reflector and costs one lemming.
+
+        Therefore the goal is to find a path from start to home that uses the
+        minimum number of reflectors. Among such paths, minimize travel distance.
+
+        If the minimum number of reflectors is S and travel distance is D, then
+        N - S lemmings can reach home. The last lemming appears at time
+        (N - 1) * s, so the final time is (N - 1) * s + D.
+    */
+
+    int home_plat = -1; // Platform containing the home point.
+
+    for(int i = 0; i < m; i++) { // Search all platforms.
+        // Home is on platform i if it has height b and contains coordinate a.
+        if(ph[i] == b && pl[i] <= a && a <= pr[i]) {
+            home_plat = i;
+        }
+    }
+
+    vector<int> order(m); // Platform indices.
+    iota(order.begin(), order.end(), 0); // Fill with 0, 1, ..., m - 1.
+
+    // Process platforms from highest to lowest.
+    // Since every fall strictly decreases height, this is topological order.
+    sort(order.begin(), order.end(), [&](int i, int j) {
+        return ph[i] > ph[j];
+    });
+
+    /*
+        arrival[p] maps a state on platform p to its best cost.
+
+        State:
+            pair<int,int> = {entry_x, direction}
+
+        direction:
+            1  means moving right,
+           -1  means moving left
+
+        Cost:
+            pair<int,int> = {number_of_turns, distance}
+    */
+    vector<map<pair<int, int>, pair<int, int>>> arrival(m);
+
+    // Find the first platform hit when falling from the starting point.
+    int start = next_below(x, h);
+
+    // Best answer found so far: minimum turns, then minimum distance.
+    int answer_s = INT_MAX;
+    int answer_d = INT_MAX;
+
+    if(start != -1) { // If the first lemming lands on a platform.
+        // Initial state: enter at x, moving right, with 0 turns.
+        // Distance is the vertical fall from h to platform height.
+        arrival[start][{x, 1}] = {0, h - ph[start]};
+    }
+
+    // Process platforms in descending height order.
+    for(int plat: order) {
+        // Iterate over all reachable states on this platform.
+        for(auto& [state, cost]: arrival[plat]) {
+            auto [ex, dir] = state;       // Entry x-coordinate and direction.
+            auto [turns, dist] = cost;    // Best known reflector count and distance.
+
+            // If this is the platform containing the home, try to finish here.
+            if(plat == home_plat) {
+                int diff = a - ex; // Home position relative to entry point.
+
+                // If diff and dir have the same sign, home is ahead.
+                // Otherwise we need one extra turn at ex.
+                int reach_turns = turns + ((int64_t)diff * dir >= 0 ? 0 : 1);
+
+                // Walking distance from ex to home.
+                int reach_dist = dist + abs(diff);
+
+                // Keep lexicographically best answer.
+                if(make_pair(reach_turns, reach_dist) <
+                   make_pair(answer_s, answer_d)) {
+                    answer_s = reach_turns;
+                    answer_d = reach_dist;
+                }
+            }
+
+            // End reached if continuing in current direction.
+            int forward_end = dir > 0 ? pr[plat] : pl[plat];
+
+            // Opposite end reached if turning immediately at entry point.
+            int back_end = dir > 0 ? pl[plat] : pr[plat];
+
+            /*
+                Two possible moves:
+                1. Walk forward to forward_end:
+                   - same direction
+                   - same number of turns
+
+                2. Turn immediately and walk to back_end:
+                   - opposite direction
+                   - one additional turn
+            */
+            int moves[2][3] = {
+                {forward_end, dir, turns},
+                {back_end, -dir, turns + 1}
+            };
+
+            // Try both moves.
+            for(auto& mv: moves) {
+                int end_x = mv[0];       // x-coordinate where lemming leaves platform.
+                int new_dir = mv[1];     // Direction after leaving platform.
+                int new_turns = mv[2];   // Number of reflectors used.
+
+                // Find next platform below the leaving point.
+                int nb = next_below(end_x, ph[plat]);
+
+                if(nb == -1) { // If no platform below, lemming falls forever.
+                    continue;  // This route cannot reach home.
+                }
+
+                // New distance = old distance
+                //              + horizontal walk on current platform
+                //              + vertical fall to next platform.
+                int new_dist = dist + abs(end_x - ex) + (ph[plat] - ph[nb]);
+
+                // New state on the lower platform.
+                auto key = make_pair(end_x, new_dir);
+
+                // Check if this state has not been reached or can be improved.
+                auto jt = arrival[nb].find(key);
+                if(jt == arrival[nb].end() ||
+                   make_pair(new_turns, new_dist) < jt->second) {
+                    arrival[nb][key] = {new_turns, new_dist};
+                }
+            }
+        }
+    }
+
+    // If no route found, or all lemmings would have to be stopped, answer is 0 0.
+    if(answer_s == INT_MAX || answer_s >= n) {
+        cout << "0 0" << '\n';
+        return;
+    }
+
+    // Number of successful lemmings is all except the stopped ones.
+    // Last lemming appears at time (n - 1) * s and then needs answer_d seconds.
+    cout << n - answer_s << ' ' << (int64_t)(n - 1) * s + answer_d << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+    cin.tie(nullptr);                 // Untie cin from cout for speed.
+
+    int T = 1; // Only one test case.
+
+    // cin >> T; // Multiple tests are not used in this problem.
+
+    for(int test = 1; test <= T; test++) {
+        read();  // Read one test case.
+        solve(); // Solve it.
+    }
+
+    return 0; // Successful program termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def solve():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # Pointer into the input array.
+    idx = 0
+
+    # Number of lemmings and interval between appearances.
+    n = data[idx]
+    s = data[idx + 1]
+    idx += 2
+
+    # Start point A = (x, h), home point = (a, b).
+    x = data[idx]
+    h = data[idx + 1]
+    a = data[idx + 2]
+    b = data[idx + 3]
+    idx += 4
+
+    # Number of platforms.
+    m = data[idx]
+    idx += 1
+
+    # Platform arrays.
+    pl = [0] * m  # left endpoints
+    pr = [0] * m  # right endpoints
+    ph = [0] * m  # heights
+
+    # Read platform descriptions.
+    for i in range(m):
+        pl[i] = data[idx]
+        pr[i] = data[idx + 1]
+        ph[i] = data[idx + 2]
+        idx += 3
+
+    # Finds the highest platform strictly below height from_h
+    # whose interior contains x-coordinate fx.
+    def next_below(fx, from_h):
+        best = -1
+
+        for i in range(m):
+            # Must be below current height and contain fx strictly inside.
+            if ph[i] < from_h and pl[i] < fx < pr[i]:
+                # Pick the highest such platform.
+                if best == -1 or ph[i] > ph[best]:
+                    best = i
+
+        return best
+
+    # Find the platform containing the home point.
+    home_plat = -1
+    for i in range(m):
+        if ph[i] == b and pl[i] <= a <= pr[i]:
+            home_plat = i
+
+    # Process platforms from highest to lowest.
+    # Since every fall strictly decreases height, this is topological order.
+    order = sorted(range(m), key=lambda i: -ph[i])
+
+    # arrivals[p] is a dictionary for platform p.
+    #
+    # Key:
+    #   (entry_x, direction)
+    #
+    # direction:
+    #   1  means moving right
+    #  -1  means moving left
+    #
+    # Value:
+    #   (turns, distance)
+    #
+    # Costs are compared lexicographically.
+    arrivals = [dict() for _ in range(m)]
+
+    # Find first platform reached from the starting point.
+    start = next_below(x, h)
+
+    # Infinity for unreachable answer.
+    INF = 10**18
+
+    # Best answer so far: minimum turns, then minimum distance.
+    best_turns = INF
+    best_dist = INF
+
+    # Initialize starting state if the lemming lands on a platform.
+    if start != -1:
+        # Start moving right after falling vertically.
+        # Distance is vertical fall from h to platform height.
+        arrivals[start][(x, 1)] = (0, h - ph[start])
+
+    # Dynamic programming over platforms from top to bottom.
+    for plat in order:
+        # Make a list of items to safely iterate over the current states.
+        # Transitions always go to lower platforms, so this dict is not modified
+        # by transitions back into itself, but list() is harmless and safe.
+        for (ex, direction), (turns, dist) in list(arrivals[plat].items()):
+
+            # If current platform is the home platform, try finishing here.
+            if plat == home_plat:
+                diff = a - ex
+
+                # If the home is ahead or exactly at the current position,
+                # no extra reflector is needed. Otherwise, turn at ex.
+                extra_turn = 0 if diff * direction >= 0 else 1
+
+                reach_turns = turns + extra_turn
+                reach_dist = dist + abs(diff)
+
+                # Keep lexicographically best route to home.
+                if (reach_turns, reach_dist) < (best_turns, best_dist):
+                    best_turns = reach_turns
+                    best_dist = reach_dist
+
+            # The end reached by continuing in the current direction.
+            if direction > 0:
+                forward_end = pr[plat]
+                back_end = pl[plat]
+            else:
+                forward_end = pl[plat]
+                back_end = pr[plat]
+
+            # Two possible choices from this platform:
+            #
+            # 1. Continue forward to the forward end.
+            # 2. Turn immediately at entry and go to the opposite end.
+            moves = [
+                (forward_end, direction, turns),
+                (back_end, -direction, turns + 1),
+            ]
+
+            for end_x, new_direction, new_turns in moves:
+                # Find next platform after falling from end_x.
+                nb = next_below(end_x, ph[plat])
+
+                # If no platform is below, this path falls forever.
+                if nb == -1:
+                    continue
+
+                # Horizontal walking on current platform plus vertical fall.
+                new_dist = dist + abs(end_x - ex) + (ph[plat] - ph[nb])
+
+                # New state on the lower platform.
+                state = (end_x, new_direction)
+
+                # Relax if this is the first or better way to reach state.
+                old = arrivals[nb].get(state)
+
+                if old is None or (new_turns, new_dist) < old:
+                    arrivals[nb][state] = (new_turns, new_dist)
+
+    # If no route exists, or if every lemming must be stopped, nobody reaches home.
+    if best_turns == INF or best_turns >= n:
+        print("0 0")
+        return
+
+    # Number of successful lemmings.
+    successful = n - best_turns
+
+    # Last lemming appears at time (n - 1) * s.
+    # Then it needs best_dist seconds to reach home.
+    last_time = (n - 1) * s + best_dist
+
+    print(successful, last_time)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Each stopped lemming is a permanent reflector and costs one lemming. Thus maximizing successful lemmings means minimizing the number of reflectors needed to create a path from `A` to home. If that number is `S`, then `N - S` lemmings can reach home, and the last one arrives at `(N - 1) * s + D`, where `D` is the path length.
+
+Use DP on states:
+
+```text
+(platform, entry_x, direction)
+```
+
+For each state store the lexicographically best cost:
+
+```text
+(reflectors_used, distance)
+```
+
+From a platform state there are only two useful moves:
+
+1. continue to the forward end, no new reflector;
+2. turn immediately at entry, use one reflector, go to the opposite end.
+
+After leaving an end, fall to the highest platform below that contains the x-coordinate. Since every fall strictly lowers height, process platforms from highest to lowest.
+
+When on the home platform, update the answer: if home is ahead, no extra reflector; otherwise use one extra reflector at entry.
+
+If no route exists or required reflectors `>= N`, output `0 0`; otherwise output:
+
+```text
+N - S, (N - 1) * s + D
+```

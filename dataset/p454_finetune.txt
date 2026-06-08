@@ -1,0 +1,897 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+454. Kakuro
+Time limit per test: 2.75 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Kakuro puzzle is played on a nx m grid of "black" and "white" cells. Apart from the top row and leftmost column which are entirely black, the grid has some amount of white cells which form "runs" and some amount of black cells. "Run" is a vertical or horizontal maximal one-lined block of adjacent white cells. Each row and column of the puzzle can contain more than one "run". Every white cell belongs to exactly two runs — one horizontal and one vertical run. Each horizontal "run" always has a number in the black half-cell to its immediate left, and each vertical "run" always has a number in the black half-cell immediately above it. These numbers are located in "black" cells and are called "clues".
+
+The rules of the puzzle are simple:
+place a single digit from 1 to 9 in each "white" cell
+each digit may only be used once in each "run"
+for all runs, the sum of all digits in a "run" must match the clue associated with the "run"
+
+
+Given the grid, your task is to find a solution for the puzzle.
+
+
+Picture of the first sample input
+Picture of the first sample output
+
+
+Input
+The first line of input contains two integers n and m (2 ≤ n,m ≤ 6) — the number of rows and columns correspondingly. Each of the next n lines contains descriptions of m cells. Each cell description is one of the following 5-character strings:
+..... — "white" cell;
+XXXXX — "black" cell with no clues;
+AA\BB — "black" cell with one or two clues. AA is either a 2-digit clue for the corresponding vertical run, or XX if there is no associated vertical run. BB is either a 2-digit clue for the corresponding horizontal run, or XX if there is no associated horizontal run.
+The first row and the first column of the grid will never have any white cells. The given grid will have at least one "white" cell.
+
+It is guaranteed that the given puzzle has at least one solution.
+
+Output
+Print n lines to the output with m cells in each line. For every "black" cell print '' (underscore), for every "white" cell print the corresponding digit from the solution. Delimit cells with a single space, so that each row consists of 2m-1 characters.
+
+If there are many solutions, you may output any of them.
+
+Example(s)
+sample input
+sample output
+6 6
+XXXXX XXXXX 28\XX 17\XX 28\XX XXXXX
+XXXXX 22\22 ..... ..... ..... 10\XX
+XX\34 ..... ..... ..... ..... .....
+XX\14 ..... ..... 16\13 ..... .....
+XX\22 ..... ..... ..... ..... XXXXX
+XXXXX XX\16 ..... ..... XXXXX XXXXX
+_ _ _ _ _ _
+_ _ 5 8 9 _
+_ 7 6 9 8 4
+_ 6 8 _ 7 6
+_ 9 2 7 4 _
+_ _ 7 9 _ _
+
+sample input
+sample output
+3 3
+XXXXX 04\XX XXXXX
+XX\04 ..... XXXXX
+XXXXX XXXXX XXXXX
+_ _ _
+_ 4 _
+_ _ _
+
+<|response|>
+## 1. Abridged Problem Statement
+
+Given a Kakuro grid of size `n × m`, where `2 ≤ n, m ≤ 6`, fill every white cell with a digit from `1` to `9`.
+
+Each white cell belongs to exactly:
+
+- one horizontal run,
+- one vertical run.
+
+For every run:
+
+- all digits must be distinct,
+- the sum of digits must equal the clue associated with that run.
+
+Black cells are printed as `_`, and white cells are printed as their solved digit.
+
+The puzzle is guaranteed to have at least one solution.
+
+---
+
+## 2. Key Observations
+
+### Observation 1: Runs are the real constraints
+
+A Kakuro constraint is not attached to a single cell, but to a whole run.
+
+For example, a horizontal clue `22` for a run of length `3` means:
+
+```text
+choose 3 distinct digits from 1..9 whose sum is 22
+```
+
+So instead of only checking sums during brute force, we should reason about possible digit sets for each run.
+
+---
+
+### Observation 2: Digits can be represented by bitmasks
+
+There are only digits `1..9`.
+
+We can represent a set of digits as a bitmask:
+
+```text
+digit 1 -> bit 1
+digit 2 -> bit 2
+...
+digit 9 -> bit 9
+```
+
+For example:
+
+```text
+{2, 5, 9} => (1 << 2) | (1 << 5) | (1 << 9)
+```
+
+This makes checking used digits and intersections very fast.
+
+---
+
+### Observation 3: Precompute all valid digit sets
+
+For every possible subset of digits `1..9`, compute:
+
+- how many digits it contains,
+- what its sum is.
+
+Then group masks by:
+
+```text
+(length, sum)
+```
+
+For a run of length `k` and clue `S`, all possible complete digit sets are stored in:
+
+```text
+valid[k][S]
+```
+
+---
+
+### Observation 4: Use backtracking with strong pruning
+
+During search, maintain:
+
+```text
+h_used[run] = digits already placed in this horizontal run
+v_used[run] = digits already placed in this vertical run
+```
+
+For a run, a digit can still be used if it belongs to at least one valid full mask that contains all already-used digits.
+
+For a white cell, candidate digits are:
+
+```text
+allowed_by_horizontal_run & allowed_by_vertical_run
+```
+
+---
+
+### Observation 5: Choose the most constrained cell first
+
+At every step, choose the unfilled white cell with the fewest possible digits.
+
+This is the MRV heuristic: Minimum Remaining Values.
+
+It greatly reduces the search space.
+
+---
+
+## 3. Full Solution Approach
+
+### Step 1: Parse the grid
+
+Each cell is one of:
+
+```text
+.....   white cell
+XXXXX   black cell without clues
+AA\BB   black cell with vertical clue AA and horizontal clue BB
+```
+
+For a clue cell:
+
+- if `BB != "XX"`, it starts a horizontal run to the right,
+- if `AA != "XX"`, it starts a vertical run downward.
+
+For each white cell, store:
+
+```text
+h_run[i][j] = horizontal run ID
+v_run[i][j] = vertical run ID
+```
+
+Also store each run's:
+
+```text
+clue sum
+length
+```
+
+---
+
+### Step 2: Precompute valid digit masks
+
+Enumerate all masks over digits `1..9`.
+
+For every mask:
+
+- count digits,
+- compute digit sum,
+- store it in `valid[count][sum]`.
+
+Since there are only `2^9 = 512` useful masks, this is tiny.
+
+---
+
+### Step 3: Assign valid masks to each run
+
+For every horizontal run:
+
+```text
+h_masks[run] = valid[length][clue]
+```
+
+For every vertical run:
+
+```text
+v_masks[run] = valid[length][clue]
+```
+
+Each of these lists contains all possible complete digit sets for that run.
+
+---
+
+### Step 4: Backtracking
+
+Maintain:
+
+```text
+h_used[run]
+v_used[run]
+answer[i][j]
+filled[cell_index]
+```
+
+For each unfilled white cell:
+
+```text
+candidates = allowed(horizontal run) & allowed(vertical run)
+```
+
+Where `allowed(run)` is computed as:
+
+```text
+union of all valid full masks containing currently used digits
+minus already used digits
+```
+
+Choose the cell with the fewest candidates and try all possible digits.
+
+---
+
+### Step 5: Output
+
+For every cell:
+
+- if black, print `_`,
+- if white, print the solved digit.
+
+Separate cells by a single space.
+
+---
+
+### Complexity
+
+The grid has at most `36` cells.
+
+The worst-case search is exponential, but the constraints are very small and pruning is strong.
+
+Precomputation is constant time:
+
+```text
+O(2^9)
+```
+
+The backtracking is easily fast enough for `n, m ≤ 6`.
+
+---
+
+## 4. C++ Implementation with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int n, m;
+vector<vector<string>> grid;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n >> m;
+
+    grid.assign(n, vector<string>(m));
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            cin >> grid[i][j];
+        }
+    }
+
+    /*
+        h_run[i][j] = ID of the horizontal run containing cell (i, j)
+        v_run[i][j] = ID of the vertical run containing cell (i, j)
+
+        Only white cells have valid run IDs.
+    */
+    vector<vector<int>> h_run(n, vector<int>(m, -1));
+    vector<vector<int>> v_run(n, vector<int>(m, -1));
+
+    /*
+        For each run we store:
+        - its clue sum
+        - its length
+    */
+    vector<int> h_clue, v_clue;
+    vector<int> h_len, v_len;
+
+    /*
+        Parse all clue cells and assign runs.
+
+        In a clue cell AA\BB:
+        - AA is the vertical clue, if AA != XX
+        - BB is the horizontal clue, if BB != XX
+    */
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            string s = grid[i][j];
+
+            // White cells and empty black cells do not start runs.
+            if (s == "....." || s == "XXXXX") {
+                continue;
+            }
+
+            string aa = s.substr(0, 2); // vertical clue
+            string bb = s.substr(3, 2); // horizontal clue
+
+            // Horizontal run starts to the right.
+            if (bb != "XX") {
+                int id = (int)h_clue.size();
+                h_clue.push_back(stoi(bb));
+
+                int cnt = 0;
+
+                for (int col = j + 1; col < m && grid[i][col] == "....."; col++) {
+                    h_run[i][col] = id;
+                    cnt++;
+                }
+
+                h_len.push_back(cnt);
+            }
+
+            // Vertical run starts downward.
+            if (aa != "XX") {
+                int id = (int)v_clue.size();
+                v_clue.push_back(stoi(aa));
+
+                int cnt = 0;
+
+                for (int row = i + 1; row < n && grid[row][j] == "....."; row++) {
+                    v_run[row][j] = id;
+                    cnt++;
+                }
+
+                v_len.push_back(cnt);
+            }
+        }
+    }
+
+    /*
+        valid[len][sum] contains all masks of distinct digits 1..9
+        having exactly len digits and total sum equal to sum.
+
+        We use bits 1..9.
+        Bit 0 is unused.
+    */
+    vector<vector<vector<int>>> valid(10, vector<vector<int>>(46));
+
+    for (int mask = 0; mask < (1 << 10); mask++) {
+        // Ignore masks using bit 0.
+        if (mask & 1) {
+            continue;
+        }
+
+        int cnt = __builtin_popcount(mask);
+        int sum = 0;
+
+        for (int d = 1; d <= 9; d++) {
+            if (mask & (1 << d)) {
+                sum += d;
+            }
+        }
+
+        if (cnt <= 9 && sum <= 45) {
+            valid[cnt][sum].push_back(mask);
+        }
+    }
+
+    int H = (int)h_clue.size();
+    int V = (int)v_clue.size();
+
+    /*
+        For each actual run, store its possible full digit masks.
+    */
+    vector<vector<int>> h_masks(H);
+    vector<vector<int>> v_masks(V);
+
+    for (int r = 0; r < H; r++) {
+        h_masks[r] = valid[h_len[r]][h_clue[r]];
+    }
+
+    for (int r = 0; r < V; r++) {
+        v_masks[r] = valid[v_len[r]][v_clue[r]];
+    }
+
+    /*
+        Collect all white cells.
+    */
+    vector<pair<int, int>> cells;
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            if (grid[i][j] == ".....") {
+                cells.push_back({i, j});
+            }
+        }
+    }
+
+    int total = (int)cells.size();
+
+    /*
+        Used digit masks for every run.
+    */
+    vector<int> h_used(H, 0);
+    vector<int> v_used(V, 0);
+
+    /*
+        filled[idx] says whether cells[idx] already has a digit.
+    */
+    vector<bool> filled(total, false);
+
+    /*
+        ans[i][j] stores the final digit for white cells.
+    */
+    vector<vector<int>> ans(n, vector<int>(m, 0));
+
+    /*
+        Given:
+        - all valid full masks for a run
+        - currently used digit mask
+
+        Return:
+        - all digits that can still be added to this run.
+    */
+    auto allowed_for = [](const vector<int>& masks, int used) {
+        int allowed = 0;
+
+        for (int full_mask : masks) {
+            // This full mask is possible only if it contains all used digits.
+            if ((full_mask & used) == used) {
+                allowed |= full_mask;
+            }
+        }
+
+        // Already used digits cannot be used again in the same run.
+        return allowed & ~used;
+    };
+
+    /*
+        Recursive backtracking.
+
+        placed = number of white cells already filled.
+    */
+    function<bool(int)> backtrack = [&](int placed) -> bool {
+        if (placed == total) {
+            return true;
+        }
+
+        /*
+            Compute currently allowed extra digits for every run.
+        */
+        vector<int> h_allowed(H);
+        vector<int> v_allowed(V);
+
+        for (int r = 0; r < H; r++) {
+            h_allowed[r] = allowed_for(h_masks[r], h_used[r]);
+        }
+
+        for (int r = 0; r < V; r++) {
+            v_allowed[r] = allowed_for(v_masks[r], v_used[r]);
+        }
+
+        /*
+            MRV heuristic:
+            choose the unfilled cell with the fewest candidates.
+        */
+        int best_idx = -1;
+        int best_mask = 0;
+        int best_count = 100;
+
+        for (int idx = 0; idx < total; idx++) {
+            if (filled[idx]) {
+                continue;
+            }
+
+            auto [i, j] = cells[idx];
+
+            int hr = h_run[i][j];
+            int vr = v_run[i][j];
+
+            int candidates = h_allowed[hr] & v_allowed[vr];
+            int cnt = __builtin_popcount(candidates);
+
+            if (cnt < best_count) {
+                best_count = cnt;
+                best_idx = idx;
+                best_mask = candidates;
+
+                // Cannot do better than zero or one candidate.
+                if (cnt <= 1) {
+                    break;
+                }
+            }
+        }
+
+        // Dead end.
+        if (best_count == 0) {
+            return false;
+        }
+
+        auto [i, j] = cells[best_idx];
+
+        int hr = h_run[i][j];
+        int vr = v_run[i][j];
+
+        filled[best_idx] = true;
+
+        /*
+            Try every possible digit for this cell.
+        */
+        for (int mask = best_mask; mask; mask &= mask - 1) {
+            int bit = mask & -mask;
+            int digit = __builtin_ctz(bit);
+
+            // Place digit.
+            h_used[hr] |= bit;
+            v_used[vr] |= bit;
+            ans[i][j] = digit;
+
+            if (backtrack(placed + 1)) {
+                return true;
+            }
+
+            // Undo placement.
+            h_used[hr] ^= bit;
+            v_used[vr] ^= bit;
+            ans[i][j] = 0;
+        }
+
+        filled[best_idx] = false;
+
+        return false;
+    };
+
+    // The puzzle is guaranteed to be solvable.
+    backtrack(0);
+
+    /*
+        Print answer.
+    */
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++) {
+            if (j > 0) {
+                cout << ' ';
+            }
+
+            if (grid[i][j] == ".....") {
+                cout << ans[i][j];
+            } else {
+                cout << '_';
+            }
+        }
+
+        cout << '\n';
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5. Python Implementation with Detailed Comments
+
+```python
+import sys
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+
+    n = int(data[0])
+    m = int(data[1])
+
+    tokens = data[2:]
+
+    grid = []
+    ptr = 0
+
+    for _ in range(n):
+        grid.append(tokens[ptr:ptr + m])
+        ptr += m
+
+    """
+    h_run[i][j] = ID of horizontal run containing white cell (i, j)
+    v_run[i][j] = ID of vertical run containing white cell (i, j)
+    """
+    h_run = [[-1] * m for _ in range(n)]
+    v_run = [[-1] * m for _ in range(n)]
+
+    """
+    For every run, store:
+    - clue sum
+    - length
+    """
+    h_clue = []
+    v_clue = []
+
+    h_len = []
+    v_len = []
+
+    """
+    Parse all clue cells.
+
+    A cell AA\BB:
+    - AA is the vertical clue, if not XX
+    - BB is the horizontal clue, if not XX
+    """
+    for i in range(n):
+        for j in range(m):
+            s = grid[i][j]
+
+            # White cells and clue-less black cells do not start runs.
+            if s == "....." or s == "XXXXX":
+                continue
+
+            aa = s[:2]      # vertical clue
+            bb = s[3:5]     # horizontal clue
+
+            # Horizontal run starts immediately to the right.
+            if bb != "XX":
+                run_id = len(h_clue)
+                h_clue.append(int(bb))
+
+                cnt = 0
+                col = j + 1
+
+                while col < m and grid[i][col] == ".....":
+                    h_run[i][col] = run_id
+                    cnt += 1
+                    col += 1
+
+                h_len.append(cnt)
+
+            # Vertical run starts immediately downward.
+            if aa != "XX":
+                run_id = len(v_clue)
+                v_clue.append(int(aa))
+
+                cnt = 0
+                row = i + 1
+
+                while row < n and grid[row][j] == ".....":
+                    v_run[row][j] = run_id
+                    cnt += 1
+                    row += 1
+
+                v_len.append(cnt)
+
+    """
+    valid[length][sum] contains all digit masks using distinct digits 1..9
+    with exactly `length` digits and total sum equal to `sum`.
+
+    Digits are represented by bits 1..9.
+    Bit 0 is unused.
+    """
+    valid = [[[] for _ in range(46)] for _ in range(10)]
+
+    for mask in range(1 << 10):
+        # Ignore bit 0 because digit 0 is not allowed.
+        if mask & 1:
+            continue
+
+        cnt = mask.bit_count()
+        total_sum = 0
+
+        for d in range(1, 10):
+            if mask & (1 << d):
+                total_sum += d
+
+        if cnt <= 9 and total_sum <= 45:
+            valid[cnt][total_sum].append(mask)
+
+    H = len(h_clue)
+    V = len(v_clue)
+
+    """
+    For each actual run, store all possible complete digit masks.
+    """
+    h_masks = []
+    v_masks = []
+
+    for r in range(H):
+        h_masks.append(valid[h_len[r]][h_clue[r]])
+
+    for r in range(V):
+        v_masks.append(valid[v_len[r]][v_clue[r]])
+
+    """
+    Collect all white cells.
+    """
+    cells = []
+
+    for i in range(n):
+        for j in range(m):
+            if grid[i][j] == ".....":
+                cells.append((i, j))
+
+    total_cells = len(cells)
+
+    """
+    Used digit masks for each run.
+    """
+    h_used = [0] * H
+    v_used = [0] * V
+
+    """
+    Whether a white cell has already been filled.
+    """
+    filled = [False] * total_cells
+
+    """
+    Answer grid.
+    Only values for white cells matter.
+    """
+    ans = [[0] * m for _ in range(n)]
+
+    def allowed_for(masks, used):
+        """
+        Given:
+        - masks: all possible full masks for a run
+        - used: digits already placed in that run
+
+        Return:
+        - bitmask of digits that can still be placed in this run.
+        """
+        allowed = 0
+
+        for full_mask in masks:
+            # This full mask is compatible only if it contains all used digits.
+            if (full_mask & used) == used:
+                allowed |= full_mask
+
+        # Already-used digits cannot be repeated.
+        return allowed & ~used
+
+    def backtrack(placed):
+        """
+        placed = number of already filled white cells.
+        """
+        if placed == total_cells:
+            return True
+
+        """
+        Compute currently allowed digits for every run.
+        """
+        h_allowed = [0] * H
+        v_allowed = [0] * V
+
+        for r in range(H):
+            h_allowed[r] = allowed_for(h_masks[r], h_used[r])
+
+        for r in range(V):
+            v_allowed[r] = allowed_for(v_masks[r], v_used[r])
+
+        """
+        MRV heuristic:
+        choose the unfilled cell with the fewest candidate digits.
+        """
+        best_idx = -1
+        best_mask = 0
+        best_count = 100
+
+        for idx, (i, j) in enumerate(cells):
+            if filled[idx]:
+                continue
+
+            hr = h_run[i][j]
+            vr = v_run[i][j]
+
+            candidates = h_allowed[hr] & v_allowed[vr]
+            cnt = candidates.bit_count()
+
+            if cnt < best_count:
+                best_count = cnt
+                best_idx = idx
+                best_mask = candidates
+
+                # Cannot improve much beyond this.
+                if cnt <= 1:
+                    break
+
+        # No possible digit for this cell means this branch is impossible.
+        if best_count == 0:
+            return False
+
+        i, j = cells[best_idx]
+
+        hr = h_run[i][j]
+        vr = v_run[i][j]
+
+        filled[best_idx] = True
+
+        """
+        Try every candidate digit.
+        """
+        mask = best_mask
+
+        while mask:
+            bit = mask & -mask
+            digit = bit.bit_length() - 1
+
+            # Place digit.
+            h_used[hr] |= bit
+            v_used[vr] |= bit
+            ans[i][j] = digit
+
+            if backtrack(placed + 1):
+                return True
+
+            # Undo placement.
+            h_used[hr] ^= bit
+            v_used[vr] ^= bit
+            ans[i][j] = 0
+
+            mask &= mask - 1
+
+        filled[best_idx] = False
+
+        return False
+
+    # The puzzle is guaranteed to have a solution.
+    backtrack(0)
+
+    """
+    Print solved grid.
+    Black cells are printed as underscores.
+    White cells are printed as their solved digits.
+    """
+    output = []
+
+    for i in range(n):
+        row = []
+
+        for j in range(m):
+            if grid[i][j] == ".....":
+                row.append(str(ans[i][j]))
+            else:
+                row.append("_")
+
+        output.append(" ".join(row))
+
+    print("\n".join(output))
+
+
+if __name__ == "__main__":
+    solve()
+```

@@ -1,0 +1,587 @@
+## 1. Abridged Problem Statement
+
+Given a possibly disconnected dendrogram with `N` objects/leaves and `M` horizontal merge/split lines, reorder the leaves from left to right so the dendrogram can be drawn cleanly: no vertical/horizontal line crossings.
+
+Each horizontal line has height `Y` and connects `L` current subgroups, represented by arbitrary object IDs inside those subgroups. Smaller `Y` means the line is higher in the dendrogram; larger `Y` means lower/deeper.
+
+There may be many clean leaf orders. Output the lexicographically smallest one, but only for `Q` queried positions.
+
+Constraints: `1 ≤ N ≤ 100000`, `0 ≤ M < N`, `Q ≤ 1000`.
+
+---
+
+## 2. Detailed Editorial
+
+### Key observation
+
+A dendrogram is a forest of rooted trees:
+
+- Leaves are the original objects `1..N`.
+- Each horizontal line is an internal node.
+- The children of that internal node are the subgroups connected by the line.
+- If the dendrogram is disconnected, we get multiple root trees.
+
+A clean drawing means that every subtree must occupy one contiguous interval of leaves. Therefore, the only freedom is:
+
+1. The left-to-right order of children of each internal node.
+2. The left-to-right order of the forest roots.
+
+So the problem becomes:
+
+> Given a forest, order the children of every node so that the final leaf sequence is lexicographically smallest.
+
+---
+
+### Building the forest
+
+Horizontal lines are given with a vertical position `Y`.
+
+- Smaller `Y` means higher in the dendrogram.
+- Larger `Y` means lower/deeper.
+
+If we process lines from bottom to top, i.e. in decreasing `Y`, then when we process a line, all subgroups below it have already been built.
+
+We use DSU / Union-Find.
+
+For each DSU component, we store `node_of[root]`, which is the current tree node representing that component.
+
+Initially:
+
+```text
+component i contains object i
+node_of[i] = i
+```
+
+When processing a horizontal line connecting representatives `V1, V2, ..., VL`:
+
+1. Create a new internal node.
+2. For each representative `Vi`, find its current DSU component.
+3. Add `node_of[component]` as a child of the new internal node.
+4. Union all these DSU components.
+5. The merged component is now represented by the new internal node.
+
+Because we process lower lines first, every child node is created before its parent.
+
+---
+
+### Choosing lexicographically smallest order
+
+Consider any subtree.
+
+To make its leaf sequence lexicographically smallest, its first leaf should be as small as possible.
+
+For every subtree, define:
+
+```text
+subtree_min[u] = smallest leaf ID inside subtree u
+```
+
+For a leaf:
+
+```text
+subtree_min[i] = i
+```
+
+For an internal node:
+
+```text
+subtree_min[u] = min(subtree_min[child])
+```
+
+Now consider two sibling subtrees `A` and `B`.
+
+The lexicographically smallest sequence of subtree `A` starts with `subtree_min[A]`.
+
+The lexicographically smallest sequence of subtree `B` starts with `subtree_min[B]`.
+
+Since sibling subtrees contain disjoint leaves, these minimum values are different. Therefore:
+
+```text
+A should come before B iff subtree_min[A] < subtree_min[B]
+```
+
+Thus:
+
+- Sort children of each internal node by `subtree_min`.
+- Sort forest roots by `subtree_min`.
+
+Then traverse the forest left-to-right and output leaves.
+
+---
+
+### Computing subtree minimums
+
+Internal nodes are created in processing order.
+
+Since lower nodes are processed first and upper nodes later, every child has a smaller node ID than its parent.
+
+Therefore, after building the forest, we can compute `subtree_min` in increasing node ID order:
+
+```cpp
+for leaf i:
+    subtree_min[i] = i
+
+for internal node id = n+1 to n+m:
+    subtree_min[id] = min(subtree_min[child])
+```
+
+---
+
+### Complexity
+
+Let `S` be the total number of representatives over all horizontal lines.
+
+- Sorting horizontal lines: `O(M log M)`
+- DSU operations: almost `O(S)`
+- Sorting children: `O(S log S)` in the worst case, usually written as `Σ deg(u) log deg(u)`
+- Traversal: `O(N + M)`
+
+Memory usage: `O(N + M + S)`.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ library headers.
+
+using namespace std; // Allows using std:: names without writing std:: each time.
+
+// Output operator for pairs.
+// Not essential to the main algorithm, but useful as a generic helper.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair elements separated by a space.
+}
+
+// Input operator for pairs.
+// Also a generic helper.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read the two pair elements.
+}
+
+// Input operator for vectors.
+// Reads every element of an already-sized vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate by reference over all vector elements.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return the input stream.
+};
+
+// Output operator for vectors.
+// Prints all elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all vector elements.
+        out << x << ' '; // Print element followed by a space.
+    }
+    return out;       // Return the output stream.
+};
+
+// n = number of objects/leaves.
+// m = number of horizontal lines.
+// q = number of queries.
+int n, m, q;
+
+// Each horizontal line is stored as:
+// first  = y-coordinate
+// second = list of representative object IDs connected by the line.
+vector<pair<int, vector<int>>> lines;
+
+// Queried leaf positions.
+vector<int> queries;
+
+// Reads the whole input.
+void read() {
+    cin >> n >> m >> q; // Read N, M, Q.
+
+    lines.resize(m); // Allocate storage for M horizontal lines.
+
+    // Read every horizontal line.
+    for(auto& [y, members]: lines) {
+        int len; // Number of representatives connected by this horizontal line.
+
+        cin >> y >> len; // Read height Y and number L.
+
+        members.resize(len); // Allocate space for L representatives.
+
+        cin >> members; // Read the L representative object IDs.
+    }
+
+    queries.resize(q); // Allocate space for Q queries.
+
+    cin >> queries; // Read queried positions.
+}
+
+// Solves the problem.
+void solve() {
+    /*
+        Each horizontal line becomes an internal tree node.
+
+        Leaves 1..n are the original objects.
+
+        Larger Y means the line is lower/deeper.
+        We process lines from lower to upper, i.e. decreasing Y.
+
+        DSU tracks which objects currently belong to the same built subgroup.
+        For every DSU root, node_of[root] stores the current tree node
+        representing that subgroup.
+
+        After building the forest, we sort children of every internal node
+        by the smallest leaf contained in each child subtree.
+        This gives the lexicographically smallest clean drawing.
+    */
+
+    // Sort horizontal lines from lower to upper.
+    // Larger Y should be processed first.
+    sort(lines.begin(), lines.end(), [](const auto& a, const auto& b) {
+        return a.first > b.first;
+    });
+
+    // Total number of possible tree nodes:
+    // n leaves + m internal nodes.
+    int total = n + m;
+
+    // DSU parent array for original objects/components.
+    // Only indices 1..n are used.
+    vector<int> par(n + 1);
+
+    // node_of[root] = current tree node representing the DSU component root.
+    vector<int> node_of(n + 1);
+
+    // Initially every object is its own component and its own tree node.
+    for(int i = 1; i <= n; i++) {
+        par[i] = i;      // DSU parent of i is itself.
+        node_of[i] = i;  // Component i is represented by leaf node i.
+    }
+
+    // Iterative DSU find with path compression.
+    auto find = [&](int x) {
+        while(par[x] != x) {      // While x is not the root.
+            par[x] = par[par[x]]; // Path halving: point x to its grandparent.
+            x = par[x];           // Move upward.
+        }
+        return x;                 // Return root.
+    };
+
+    // children[u] stores the children of tree node u.
+    // Leaves have no children.
+    vector<vector<int>> children(total + 1);
+
+    // Next available internal node ID.
+    // Leaves are 1..n, so internal nodes start from n+1.
+    int next_id = n;
+
+    // Process each horizontal line from bottom to top.
+    for(const auto& [y, members]: lines) {
+        int cur = ++next_id; // Create a new internal node for this line.
+
+        // Choose the DSU root of the first representative as the base root.
+        int base = find(members[0]);
+
+        // Every representative belongs to one child subgroup.
+        for(int v: members) {
+            int r = find(v); // Find the current DSU component of object v.
+
+            // The current tree node of that subgroup becomes a child
+            // of the new internal node.
+            children[cur].push_back(node_of[r]);
+
+            // Union this component into the base component.
+            par[r] = base;
+        }
+
+        // Re-find base in case path compression/union affected it.
+        base = find(base);
+
+        // The merged component is now represented by the new internal node.
+        node_of[base] = cur;
+    }
+
+    // subtree_min[u] = smallest leaf ID inside subtree rooted at u.
+    vector<int> subtree_min(total + 1);
+
+    // For leaves, the smallest leaf in the subtree is the leaf itself.
+    for(int i = 1; i <= n; i++) {
+        subtree_min[i] = i;
+    }
+
+    // Internal nodes were created after their children.
+    // Therefore, processing IDs in increasing order is valid.
+    for(int id = n + 1; id <= total; id++) {
+        int best = INT_MAX; // Current minimum among children.
+
+        // Check every child of this internal node.
+        for(int c: children[id]) {
+            best = min(best, subtree_min[c]); // Update minimum leaf ID.
+        }
+
+        subtree_min[id] = best; // Store subtree minimum.
+    }
+
+    // Comparator for sorting nodes by smallest contained leaf.
+    auto by_min = [&](int a, int b) {
+        return subtree_min[a] < subtree_min[b];
+    };
+
+    // Sort children of every internal node.
+    // This gives lexicographically smallest order inside each subtree.
+    for(int id = n + 1; id <= total; id++) {
+        sort(children[id].begin(), children[id].end(), by_min);
+    }
+
+    // Collect roots of the final forest.
+    vector<int> roots;
+
+    // A DSU root corresponds to one connected component/tree.
+    for(int i = 1; i <= n; i++) {
+        if(find(i) == i) { // If i is a DSU root.
+            roots.push_back(node_of[i]); // Add its current tree node as a forest root.
+        }
+    }
+
+    // Sort forest roots as well, using the same lexicographic rule.
+    sort(roots.begin(), roots.end(), by_min);
+
+    // Final left-to-right order of leaves.
+    vector<int> order;
+
+    // Reserve space for exactly n leaves.
+    order.reserve(n);
+
+    // Stack for iterative DFS.
+    vector<int> stack;
+
+    // Push roots in reverse order so that the smallest root is processed first.
+    for(auto it = roots.rbegin(); it != roots.rend(); ++it) {
+        stack.push_back(*it);
+    }
+
+    // Iterative preorder traversal.
+    while(!stack.empty()) {
+        int u = stack.back(); // Take the next node.
+        stack.pop_back();    // Remove it from the stack.
+
+        // If u is a leaf, append it to the final leaf order.
+        if(u <= n) {
+            order.push_back(u);
+            continue;
+        }
+
+        // Otherwise, u is an internal node.
+        const auto& ch = children[u];
+
+        // Push children in reverse order so they are processed left-to-right.
+        for(auto it = ch.rbegin(); it != ch.rend(); ++it) {
+            stack.push_back(*it);
+        }
+    }
+
+    // Answer queries.
+    for(int pos: queries) {
+        // Queries are 1-indexed, vector is 0-indexed.
+        cout << order[pos - 1] << '\n';
+    }
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+    cin.tie(nullptr);                 // Untie cin from cout for faster input.
+
+    int T = 1; // Number of test cases. This problem has only one.
+
+    // cin >> T; // Disabled because input does not contain T.
+
+    // Solve each test case.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve and print answers.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def solve():
+    # Read all integers from standard input at once for speed.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # Pointer into the data list.
+    idx = 0
+
+    # Read N, M, Q.
+    n = data[idx]
+    idx += 1
+    m = data[idx]
+    idx += 1
+    q = data[idx]
+    idx += 1
+
+    # Store horizontal lines as pairs:
+    # (Y, [representatives])
+    lines = []
+
+    # Read M horizontal lines.
+    for _ in range(m):
+        y = data[idx]
+        idx += 1
+
+        length = data[idx]
+        idx += 1
+
+        members = data[idx:idx + length]
+        idx += length
+
+        lines.append((y, members))
+
+    # Read Q queries.
+    queries = data[idx:idx + q]
+
+    # Process lines from bottom to top.
+    # Larger Y means lower/deeper, so sort by decreasing Y.
+    lines.sort(key=lambda x: -x[0])
+
+    # Total number of tree nodes:
+    # leaves 1..n plus internal nodes n+1..n+m.
+    total = n + m
+
+    # DSU parent array.
+    parent = list(range(n + 1))
+
+    # node_of[root] stores the current tree node representing a DSU component.
+    node_of = list(range(n + 1))
+
+    # children[u] contains children of tree node u.
+    children = [[] for _ in range(total + 1)]
+
+    # Iterative DSU find with path compression.
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    # Next internal node ID.
+    next_id = n
+
+    # Build the forest.
+    for y, members in lines:
+        # Create new internal node for this horizontal line.
+        next_id += 1
+        cur = next_id
+
+        # Use the first member's component as the base component.
+        base = find(members[0])
+
+        # Connect all represented current subgroups as children of cur.
+        for v in members:
+            r = find(v)
+
+            # The tree node representing this component becomes a child.
+            children[cur].append(node_of[r])
+
+            # Union this component into base.
+            parent[r] = base
+
+        # Get actual base root after possible path changes.
+        base = find(base)
+
+        # The merged component is now represented by cur.
+        node_of[base] = cur
+
+    # subtree_min[u] = smallest leaf ID inside subtree rooted at u.
+    subtree_min = [0] * (total + 1)
+
+    # Leaves contain only themselves.
+    for i in range(1, n + 1):
+        subtree_min[i] = i
+
+    # Internal nodes are created after their children,
+    # so increasing ID order works.
+    INF = 10**30
+    for u in range(n + 1, total + 1):
+        best = INF
+
+        # Minimum over all child subtrees.
+        for c in children[u]:
+            if subtree_min[c] < best:
+                best = subtree_min[c]
+
+        subtree_min[u] = best
+
+    # Sort children of each internal node by their smallest contained leaf.
+    for u in range(n + 1, total + 1):
+        children[u].sort(key=lambda x: subtree_min[x])
+
+    # Collect roots of the final forest.
+    roots = []
+
+    # Each DSU root is one connected component of the forest.
+    for i in range(1, n + 1):
+        if find(i) == i:
+            roots.append(node_of[i])
+
+    # Sort forest roots by smallest contained leaf.
+    roots.sort(key=lambda x: subtree_min[x])
+
+    # Produce final left-to-right leaf order by iterative DFS.
+    order = []
+
+    # Stack stores nodes to process.
+    # Push roots in reverse order so popping processes leftmost first.
+    stack = roots[::-1]
+
+    while stack:
+        u = stack.pop()
+
+        # Leaf node.
+        if u <= n:
+            order.append(u)
+        else:
+            # Internal node.
+            # Push children in reverse order so they are processed left-to-right.
+            for c in reversed(children[u]):
+                stack.append(c)
+
+    # Answer queries.
+    out = []
+
+    for pos in queries:
+        # Queries are 1-indexed.
+        out.append(str(order[pos - 1]))
+
+    # Print all answers.
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Build the dendrogram as a forest.
+
+Sort horizontal lines by decreasing `Y`, because larger `Y` means lower/deeper. Use DSU to maintain current connected subgroups. For each line, create a new internal node and make the current tree nodes of its listed representatives children of that node. Union those DSU components, and store the new internal node as the representative tree node of the merged component.
+
+After all lines are processed, remaining DSU components are forest roots.
+
+For a clean drawing, every subtree must occupy a contiguous leaf interval. Therefore only sibling order matters. The lexicographically smallest order is obtained by sorting children by the minimum leaf ID inside each child subtree. The same sorting rule applies to forest roots.
+
+Compute `subtree_min` bottom-up. Since internal nodes are created after their children, increasing node ID order works.
+
+Finally, DFS through sorted roots and sorted children to get the full leaf order, then answer queried positions.

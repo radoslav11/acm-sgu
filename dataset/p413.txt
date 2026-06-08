@@ -1,0 +1,867 @@
+## 1. Abridged problem statement
+
+Given several connected simple undirected graphs with an even number `n` of vertices, partition the vertices into countries. Each country must contain at least two vertices, and inside every country there must be exactly one path between every pair of its vertices using only vertices of that country. Equivalently, the subgraph induced by each country must be a tree.
+
+For every test case, output any valid country number for each vertex. Countries should be numbered `1..k`.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+A country must induce a tree:
+
+- It must be connected, because there must be a path between every pair of its cities.
+- It must be acyclic, because if there is a cycle, then two vertices on that cycle have more than one path between them.
+
+So we need to split the graph into vertex-disjoint induced trees, each with at least two vertices.
+
+---
+
+### DFS tree viewpoint
+
+Root the graph and build a DFS spanning tree.
+
+In an undirected graph, every non-tree edge in a DFS traversal connects a vertex with one of its ancestors. Such edges are called back edges.
+
+Now imagine cutting some edges of the DFS tree. The connected components of the remaining DFS tree edges are candidate countries.
+
+For such a component to be a valid country:
+
+1. It must contain at least two vertices.
+2. It must not contain both endpoints of any back edge.  
+   Otherwise, the tree path between those endpoints plus the back edge would form a cycle.
+
+So the problem becomes:
+
+> Cut some DFS tree edges so that every resulting block has size at least two and no back edge is fully inside one block.
+
+The solution tries every possible DFS root. For at least one root, such a decomposition exists.
+
+---
+
+### DP state
+
+For a vertex `v`, process its DFS subtree bottom-up.
+
+We consider the unfinished block containing `v`. This block may later be merged with `v`'s parent.
+
+For this unfinished block, we store two pieces of information:
+
+```cpp
+big
+target
+```
+
+where:
+
+- `big = 0` means the block currently contains only one vertex.
+- `big = 1` means the block already contains at least two vertices.
+- `target` is the maximum depth of an ancestor reached by a back edge from some vertex in this block.
+- `target = -1` means there is no such back edge.
+
+The maximum depth corresponds to the closest ancestor reached by a back edge.
+
+The state is encoded as:
+
+```cpp
+encode(big, target) = big * nb + (target + 1)
+```
+
+where `nb = n + 2`.
+
+---
+
+### Initial state for a vertex
+
+Before processing children, the unfinished block is just `{v}`.
+
+So:
+
+- `big = 0`
+- `target = up_target[v]`
+
+Here `up_target[v]` is the closest ancestor of `v` connected to `v` by a back edge, or `-1` if no such ancestor exists.
+
+---
+
+### Processing a child
+
+Suppose we are processing child `c` of `v`.
+
+There are two choices.
+
+---
+
+#### Choice 1: Cut the child block
+
+The unfinished block of child `c` becomes a separate country.
+
+This is allowed only if that child block already has size at least two:
+
+```cpp
+child_big == 1
+```
+
+The state of `v`'s block does not change.
+
+---
+
+#### Choice 2: Merge the child block into `v`'s block
+
+This means the tree edge `v-c` remains inside the same country.
+
+This is allowed only if the child block has no back edge to `v` or to a descendant of `v` already inside the merged block.
+
+The dangerous case is when the child block has a back edge to `v`, because then adding the tree edge path plus the back edge creates a cycle.
+
+Since `target` stores the deepest ancestor reached by a back edge, merging is safe iff:
+
+```cpp
+child_target <= dep[v] - 1
+```
+
+That means every back edge from the child block goes strictly above `v`.
+
+After merging:
+
+```cpp
+big = 1
+target = max(current_target, child_target)
+```
+
+The block is definitely big because it contains `v` plus at least one vertex from the child subtree.
+
+---
+
+### Root condition
+
+After processing the root, the whole remaining block must itself be a valid country.
+
+Therefore its final state must be:
+
+```cpp
+big = 1
+target = -1
+```
+
+Why `target = -1`?
+
+Because the root has no ancestors, so there must be no pending back edge going outside the root block.
+
+---
+
+### Reconstruction
+
+During DP, for every reachable state, the solution stores the decisions used:
+
+- whether a child was cut away as a separate country,
+- or merged into the current block.
+
+After finding a valid root state, we replay those decisions recursively:
+
+- If a child is merged, it receives the same country number.
+- If a child is cut, it receives a new country number.
+
+Finally, country labels are compressed to `1..k`.
+
+---
+
+### Complexity
+
+For each vertex, the number of states is `O(n)`, because:
+
+- `big` has only two possibilities,
+- `target` is one of `-1, 0, ..., n`.
+
+For each root, the DP is roughly `O(n^3)` in the worst case, but constraints are tiny:
+
+```text
+n <= 100
+m <= 1000
+total n over tests <= 100
+```
+
+So trying all roots is easily fast enough.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+// Include the entire standard C++ library.
+#include <bits/stdc++.h>
+
+// Use the standard namespace to avoid writing std:: everywhere.
+using namespace std;
+
+// Overload output for pairs.
+// This is a helper template; it is not essential for this particular solution.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    // Print first and second element separated by a space.
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input for pairs.
+// Also a generic helper.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    // Read first and second element.
+    return in >> x.first >> x.second;
+}
+
+// Overload input for vectors.
+// Reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    // Iterate over all elements by reference.
+    for(auto& x: a) {
+        // Read the current element.
+        in >> x;
+    }
+
+    // Return the stream to allow chaining.
+    return in;
+};
+
+// Overload output for vectors.
+// Prints all elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    // Iterate over all elements.
+    for(auto x: a) {
+        // Print the current element followed by a space.
+        out << x << ' ';
+    }
+
+    // Return the stream to allow chaining.
+    return out;
+};
+
+// Number of vertices and edges in the current test case.
+int n, m;
+
+// List of original graph edges.
+// Each edge is stored as a vector of size 2.
+vector<vector<int>> edges;
+
+// Base used for encoding DP states.
+int nb;
+
+// Adjacency list of the graph.
+vector<vector<int>> adj;
+
+// DFS children for every vertex.
+vector<vector<int>> kids;
+
+// dep[v] = depth of vertex v in the DFS tree.
+vector<int> dep;
+
+// par[v] = parent of vertex v in the DFS tree.
+vector<int> par;
+
+// up_target[v] = maximum depth of an ancestor connected to v by a back edge.
+// If no such ancestor exists, up_target[v] = -1.
+vector<int> up_target;
+
+// seen[v] tells whether vertex v was already visited by DFS.
+vector<char> seen;
+
+// plan[v] stores DP states for vertex v.
+//
+// Key: encoded state.
+// Value: list of decisions used to obtain that state.
+// Each decision is {child, action, child_state}.
+// action = 0 means child block is cut as a separate country.
+// action = 1 means child block is merged into v's block.
+vector<map<int, vector<array<int, 3>>>> plan;
+
+// country[v] = country id assigned to vertex v during reconstruction.
+vector<int> country;
+
+// Next unused country id.
+int next_country;
+
+// Encode a DP state into one integer.
+//
+// big is 0 or 1:
+//   0 means the current block has size 1.
+//   1 means the current block has size at least 2.
+//
+// target is -1 or a depth value.
+// We store target + 1 to make it non-negative.
+int encode(int big, int target) {
+    return big * nb + (target + 1);
+}
+
+// DFS builds the DFS tree and computes back-edge information.
+void dfs(int v, int p, int d) {
+    // Mark vertex v as visited.
+    seen[v] = 1;
+
+    // Store parent of v.
+    par[v] = p;
+
+    // Store depth of v.
+    dep[v] = d;
+
+    // Initially, v has no back edge to an ancestor.
+    up_target[v] = -1;
+
+    // Iterate over all neighbors of v.
+    for(int u: adj[v]) {
+        // Ignore the edge back to the DFS parent.
+        if(u == p) {
+            continue;
+        }
+
+        // If u is unvisited, it becomes a DFS child of v.
+        if(!seen[u]) {
+            // Add u as a child of v in the DFS tree.
+            kids[v].push_back(u);
+
+            // Continue DFS from u.
+            dfs(u, v, d + 1);
+        }
+        // Otherwise, if u was already visited and is an ancestor of v,
+        // then edge v-u is a back edge from v to ancestor u.
+        else if(dep[u] < d) {
+            // Store the closest ancestor reached by a back edge,
+            // which is the ancestor with maximum depth.
+            up_target[v] = max(up_target[v], dep[u]);
+        }
+    }
+}
+
+// Bottom-up DP on the DFS tree.
+void build_dp(int v) {
+    // First compute DP for all children.
+    for(int c: kids[v]) {
+        build_dp(c);
+    }
+
+    // cur stores reachable states after processing some children of v.
+    map<int, vector<array<int, 3>>> cur;
+
+    // Initially, the unfinished block contains only v.
+    // Its size is 1, so big = 0.
+    // Its pending back-edge target is up_target[v].
+    cur[encode(0, up_target[v])] = {};
+
+    // Process children one by one.
+    for(int c: kids[v]) {
+        // nxt will store states after also processing child c.
+        map<int, vector<array<int, 3>>> nxt;
+
+        // Iterate over all current states of v's unfinished block.
+        for(auto& [state, decisions]: cur) {
+            // Decode the current target.
+            int target = state % nb - 1;
+
+            // ------------------------------------------------------------
+            // Option 1: cut child c away as a completed country.
+            // This is allowed if child's block has size at least two.
+            // ------------------------------------------------------------
+            for(auto& [child_state, _]: plan[c]) {
+                // child_state / nb is the big flag.
+                if(child_state / nb == 1) {
+                    // If we have not yet created this resulting state,
+                    // store the decision sequence.
+                    if(!nxt.count(state)) {
+                        // Copy previous decisions.
+                        nxt[state] = decisions;
+
+                        // Add decision:
+                        // child c is cut, using child_state.
+                        nxt[state].push_back({c, 0, child_state});
+                    }
+
+                    // One valid child state is enough for this transition.
+                    break;
+                }
+            }
+
+            // ------------------------------------------------------------
+            // Option 2: merge child c into v's unfinished block.
+            // ------------------------------------------------------------
+            for(auto& [child_state, _]: plan[c]) {
+                // Decode child's target.
+                int child_target = child_state % nb - 1;
+
+                // Merging is safe only if the child block has no back edge
+                // to v itself. All pending back edges must go strictly above v.
+                if(child_target <= dep[v] - 1) {
+                    // After merging, the block has at least two vertices.
+                    // Its new pending target is the maximum of both targets.
+                    int merged = encode(1, max(target, child_target));
+
+                    // Store this state only once.
+                    if(!nxt.count(merged)) {
+                        // Copy previous decisions.
+                        nxt[merged] = decisions;
+
+                        // Add decision:
+                        // child c is merged, using child_state.
+                        nxt[merged].push_back({c, 1, child_state});
+                    }
+                }
+            }
+        }
+
+        // Move to the states after processing this child.
+        cur.swap(nxt);
+    }
+
+    // Store all reachable states for v.
+    plan[v] = cur;
+}
+
+// Reconstruct country assignments using stored DP decisions.
+void build_country(int v, int state, int id) {
+    // Assign vertex v to country id.
+    country[v] = id;
+
+    // Replay all child decisions that produced this state.
+    for(auto& [c, action, child_state]: plan[v][state]) {
+        // If action == 1, child is merged into the same country.
+        // If action == 0, child starts a new country.
+        build_country(c, child_state, action == 1 ? id : ++next_country);
+    }
+}
+
+// Try to build a valid partition using a fixed DFS root.
+bool partition_from(int root) {
+    // Reset DFS children.
+    kids.assign(n + 1, {});
+
+    // Reset depths.
+    dep.assign(n + 1, 0);
+
+    // Reset parents.
+    par.assign(n + 1, 0);
+
+    // Reset back-edge targets.
+    up_target.assign(n + 1, 0);
+
+    // Mark all vertices as unvisited.
+    seen.assign(n + 1, 0);
+
+    // Clear DP plans.
+    plan.assign(n + 1, {});
+
+    // Build DFS tree rooted at root.
+    dfs(root, 0, 0);
+
+    // Run bottom-up DP.
+    build_dp(root);
+
+    // Required final state:
+    // big = 1, meaning root block has at least two vertices.
+    // target = -1, meaning no pending back edge to an ancestor.
+    int whole = encode(1, -1);
+
+    // If this state is impossible, this root fails.
+    if(!plan[root].count(whole)) {
+        return false;
+    }
+
+    // Prepare country assignment array.
+    country.assign(n + 1, 0);
+
+    // Start numbering countries from 1.
+    next_country = 1;
+
+    // Reconstruct assignments.
+    build_country(root, whole, 1);
+
+    // Root succeeded.
+    return true;
+}
+
+// Read one test case.
+void read() {
+    // Read number of vertices and edges.
+    cin >> n >> m;
+
+    // Prepare edge list.
+    edges.assign(m, {});
+
+    // Read all edges.
+    for(auto& e: edges) {
+        // Each edge has two endpoints.
+        e.resize(2);
+
+        // Read endpoints.
+        cin >> e[0] >> e[1];
+    }
+}
+
+// Solve one test case.
+void solve() {
+    /*
+        A country must induce a tree.
+
+        We build a DFS spanning tree and cut some of its edges.
+        Each resulting component is a candidate country.
+
+        In an undirected DFS tree, every non-tree edge connects an ancestor
+        and a descendant. Such an edge cannot have both endpoints inside the
+        same country, because then it creates a cycle together with the DFS
+        tree path.
+
+        The DP decides which child blocks to cut and which to merge.
+    */
+
+    // nb is used for encoding states.
+    nb = n + 2;
+
+    // Build adjacency list.
+    adj.assign(n + 1, {});
+
+    // Add every undirected edge.
+    for(auto& e: edges) {
+        // Add e[1] as neighbor of e[0].
+        adj[e[0]].push_back(e[1]);
+
+        // Add e[0] as neighbor of e[1].
+        adj[e[1]].push_back(e[0]);
+    }
+
+    // Try every possible DFS root.
+    int root = 1;
+
+    // Stop once a root gives a valid partition.
+    while(root <= n && !partition_from(root)) {
+        root++;
+    }
+
+    // Compress country labels to consecutive labels in vertex order.
+    vector<int> label(n + 2, 0);
+
+    // last is the number of labels assigned so far.
+    int last = 0;
+
+    // Iterate over vertices.
+    for(int v = 1; v <= n; v++) {
+        // If this country id has not received a compressed label yet,
+        // assign a new one.
+        if(!label[country[v]]) {
+            label[country[v]] = ++last;
+        }
+
+        // Replace old country id by compressed id.
+        country[v] = label[country[v]];
+    }
+
+    // Output country id for every vertex.
+    for(int v = 1; v <= n; v++) {
+        // Print a space after every number except the last,
+        // where a newline is printed instead.
+        cout << country[v] << " \n"[v == n];
+    }
+}
+
+// Main function.
+int main() {
+    // Speed up C++ I/O.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout.
+    cin.tie(nullptr);
+
+    // Number of test cases.
+    int T = 1;
+
+    // Read test count.
+    cin >> T;
+
+    // Process each test case.
+    for(int test = 1; test <= T; test++) {
+        // Read input.
+        read();
+
+        // Solve and output answer.
+        solve();
+    }
+
+    // Successful termination.
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+# Increase recursion limit because we use recursive DFS.
+sys.setrecursionlimit(1000000)
+
+
+def solve():
+    # Read all integers from input at once.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # Pointer into the input array.
+    ptr = 0
+
+    # Number of test cases.
+    t = data[ptr]
+    ptr += 1
+
+    # Store output lines here.
+    out_lines = []
+
+    # Process each test case.
+    for _ in range(t):
+        # Read number of vertices and edges.
+        n = data[ptr]
+        m = data[ptr + 1]
+        ptr += 2
+
+        # Read edges.
+        edges = []
+        for _ in range(m):
+            a = data[ptr]
+            b = data[ptr + 1]
+            ptr += 2
+            edges.append((a, b))
+
+        # Build adjacency list.
+        adj = [[] for _ in range(n + 1)]
+        for a, b in edges:
+            adj[a].append(b)
+            adj[b].append(a)
+
+        # Base used for encoding states.
+        nb = n + 2
+
+        # Encode DP state into one integer.
+        #
+        # big:
+        #   0 means current block has exactly one vertex.
+        #   1 means current block has at least two vertices.
+        #
+        # target:
+        #   -1 means no pending back edge to an ancestor.
+        #   otherwise, it is the depth of the closest ancestor reached
+        #   by a back edge from this block.
+        def encode(big, target):
+            return big * nb + (target + 1)
+
+        # Try to construct a valid partition using a fixed DFS root.
+        def partition_from(root):
+            # DFS tree children.
+            kids = [[] for _ in range(n + 1)]
+
+            # Depth of each vertex in DFS tree.
+            dep = [0] * (n + 1)
+
+            # Parent of each vertex.
+            par = [0] * (n + 1)
+
+            # up_target[v] is closest ancestor reached by a back edge from v.
+            up_target = [-1] * (n + 1)
+
+            # Visited array for DFS.
+            seen = [False] * (n + 1)
+
+            # plan[v] maps encoded state to the decisions producing it.
+            #
+            # Decision format:
+            #   (child, action, child_state)
+            #
+            # action = 0 means cut child as a separate country.
+            # action = 1 means merge child into current country.
+            plan = [dict() for _ in range(n + 1)]
+
+            # Standard DFS that also records back edges.
+            def dfs(v, p, d):
+                # Mark vertex as visited.
+                seen[v] = True
+
+                # Store parent and depth.
+                par[v] = p
+                dep[v] = d
+
+                # Initially there is no back edge from v to an ancestor.
+                up_target[v] = -1
+
+                # Explore all neighbors.
+                for u in adj[v]:
+                    # Ignore the tree edge to parent.
+                    if u == p:
+                        continue
+
+                    # If u is unvisited, it becomes a DFS child.
+                    if not seen[u]:
+                        kids[v].append(u)
+                        dfs(u, v, d + 1)
+
+                    # If u was already seen and is an ancestor,
+                    # edge v-u is a back edge.
+                    elif dep[u] < d:
+                        # Store the closest ancestor, i.e. maximum depth.
+                        up_target[v] = max(up_target[v], dep[u])
+
+            # Bottom-up DP.
+            def build_dp(v):
+                # First process all children.
+                for c in kids[v]:
+                    build_dp(c)
+
+                # Initially the block contains only v.
+                # It is not big, and its pending target is up_target[v].
+                cur = {
+                    encode(0, up_target[v]): []
+                }
+
+                # Process children one by one.
+                for c in kids[v]:
+                    # States after processing this child.
+                    nxt = {}
+
+                    # Iterate over current states.
+                    for state, decisions in cur.items():
+                        # Decode current target.
+                        target = state % nb - 1
+
+                        # ------------------------------------------------
+                        # Option 1: cut child as a separate country.
+                        # This is allowed only if child's block is big.
+                        # ------------------------------------------------
+                        for child_state in plan[c].keys():
+                            child_big = child_state // nb
+
+                            if child_big == 1:
+                                # State of v's block does not change.
+                                if state not in nxt:
+                                    nxt[state] = decisions + [
+                                        (c, 0, child_state)
+                                    ]
+
+                                # One suitable child state is enough.
+                                break
+
+                        # ------------------------------------------------
+                        # Option 2: merge child into v's block.
+                        # ------------------------------------------------
+                        for child_state in plan[c].keys():
+                            # Decode child's pending target.
+                            child_target = child_state % nb - 1
+
+                            # Safe only if child has no back edge to v.
+                            # All pending back edges must go strictly above v.
+                            if child_target <= dep[v] - 1:
+                                # Merged block is definitely big.
+                                merged_state = encode(
+                                    1,
+                                    max(target, child_target)
+                                )
+
+                                # Store first way to obtain this state.
+                                if merged_state not in nxt:
+                                    nxt[merged_state] = decisions + [
+                                        (c, 1, child_state)
+                                    ]
+
+                    # Continue with updated states.
+                    cur = nxt
+
+                # Store DP result for v.
+                plan[v] = cur
+
+            # Build country assignments from stored decisions.
+            country = [0] * (n + 1)
+            next_country = [1]
+
+            def build_country(v, state, cid):
+                # Assign current vertex to country cid.
+                country[v] = cid
+
+                # Replay decisions for this DP state.
+                for c, action, child_state in plan[v][state]:
+                    if action == 1:
+                        # Child is merged into same country.
+                        build_country(c, child_state, cid)
+                    else:
+                        # Child is cut; create a new country id.
+                        next_country[0] += 1
+                        build_country(c, child_state, next_country[0])
+
+            # Build DFS tree from this root.
+            dfs(root, 0, 0)
+
+            # Run DP.
+            build_dp(root)
+
+            # Required final state for the root block:
+            # size at least two and no pending ancestor target.
+            whole = encode(1, -1)
+
+            # If impossible, this root fails.
+            if whole not in plan[root]:
+                return None
+
+            # Reconstruct answer.
+            build_country(root, whole, 1)
+
+            # Return country assignment.
+            return country
+
+        # Try all possible roots.
+        answer = None
+        for root in range(1, n + 1):
+            answer = partition_from(root)
+            if answer is not None:
+                break
+
+        # The problem guarantees that a solution exists.
+        country = answer
+
+        # Compress country labels to 1..k in order of first appearance.
+        label = {}
+        compressed = []
+        last = 0
+
+        for v in range(1, n + 1):
+            cid = country[v]
+
+            if cid not in label:
+                last += 1
+                label[cid] = last
+
+            compressed.append(str(label[cid]))
+
+        # Add this test case output.
+        out_lines.append(" ".join(compressed))
+
+    # Print all answers.
+    sys.stdout.write("\n".join(out_lines))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Root the graph and take a DFS tree. In an undirected DFS, every non-tree edge connects an ancestor and a descendant. If a country contains both endpoints of such a back edge, then the back edge plus the DFS-tree path creates a cycle, so this is forbidden.
+
+Use DP on the DFS tree. For each vertex `v`, maintain states for the unfinished block containing `v`:
+
+- whether its size is already at least two,
+- the closest ancestor depth reached by a back edge from this block, or `-1`.
+
+For every child, either:
+
+1. cut the child block as a finished country, allowed only if it already has size at least two;
+2. merge it into `v`'s block, allowed only if its pending back edge target is strictly above `v`.
+
+At the root, require state `(size at least two, target = -1)`. Store transitions to reconstruct country ids. Try every vertex as DFS root and output the first successful partition.

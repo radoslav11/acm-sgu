@@ -1,0 +1,957 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+351. A Mission for a Scout
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+The scout Sidorov is facing a delicate situation: he has to get from A to B. The embarrassment of the situation apparently lies in the news that the scout received lately. It appears that a bomb has been detonated at the neighborhood recently, and the explosion caused a circle crater. Fortunately, Sidorov has an antigravitator to fly over the craters, but the fuel in the tank is hardly enough for the distance D. Sidorov wrote out all the necessary data he had and sent it to you by secret post. He is looking forward to hearing from you, for nobody else can calculate the length of the shortest route from A to B, taking into consideration the craters and the fuel left. He also would like to get the route itself. Clearly, the route will consist only of segments and arcs of the circle formed by the crater.
+
+Input
+The first line describes four numbers XA, YA, XB, YB — coordinates of A and B accordingly. The second line describes three numbers XC, YC, RC — coordinates of the center and the radius of the crater. The third line describes D — the distance the antigravitator can fly over the crater. All coordinates in the input file are integers from 0 to 10\,000. RC and D are integer numbers from 1 to 10\,000. A doesn't coincide with B and both points are outside the crater.
+
+Output
+Write the number of the parts T of the desired route to the first line of the output file. After that write the description of route parts one per line. For each part of the route print character "S" (for segment) or "A" (for arc) followed by the coordinates of their endpoints. Coordinates should be written with 8 digits after decimal point. T should not exceed 100. The first point in the route should be point A, the last point — B, and the second endpoint of each part should coincide with the first endpoint of the next part in the route.
+Example(s)
+sample input
+sample output
+1 1 101 1
+50 1 40
+80
+1
+S 1.000000000 1.000000000 101.000000000 1.000000000
+
+sample input
+sample output
+1 1 101 1
+50 1 40
+1
+4
+S 1.00000000 1.00000000 17.34693878 24.10362726
+S 17.34693878 24.10362726 17.93468841 24.91267013
+A 17.93468841 24.91267013 81.37254902 25.81457572
+S 81.37254902 25.81457572 101.00000000 1.00000000
+
+<|response|>
+## 1. Abridged problem statement
+
+Given two points `A` and `B` outside a circular crater with center `C` and radius `R`, find and output a shortest route from `A` to `B`.
+
+A route may consist of:
+
+- straight segments;
+- arcs of the crater boundary circle.
+
+The route is allowed to pass through the crater, but the total length of all parts lying inside the circle must not exceed `D`.
+
+Output any shortest valid route using at most `100` parts.
+
+---
+
+## 2. Key observations needed to solve the problem
+
+### Observation 1 — Direct segment may already be optimal
+
+The shortest possible Euclidean route is the straight segment `AB`.
+
+If `AB` does not enter the crater, it is valid and optimal.
+
+If `AB` enters the crater, then the part inside the circle is a chord. If that chord length is at most `D`, the straight segment is still valid and optimal.
+
+---
+
+### Observation 2 — Otherwise, optimal routes touch the circle boundary
+
+If direct travel is impossible, the path must avoid part of the crater. Around a circle, shortest outside paths are made of:
+
+```text
+segment from A to tangent point
+arc along circle
+segment from tangent point to B
+```
+
+There are two such routes: clockwise and counterclockwise.
+
+---
+
+### Observation 3 — Fuel can replace boundary arc by one chord
+
+Passing through the crater between two boundary points means using a chord.
+
+A chord of length `x` in a circle of radius `R` subtends central angle:
+
+```text
+theta = 2 * asin(x / (2R))
+```
+
+Replacing an arc by a chord saves length:
+
+```text
+R * theta - x
+```
+
+It is never worse to spend all usable fuel on one chord rather than splitting it into several chords.
+
+So for a fixed side of the circle, we can try replacing part of the circular arc by one chord of length `D`.
+
+---
+
+### Observation 4 — Two possible chord situations
+
+For one side of the circle, suppose the tangent-to-tangent arc angle is `Phi`.
+
+Let:
+
+```text
+thetaD = 2 * asin(D / (2R))
+```
+
+There are two cases.
+
+#### Case A: `thetaD <= Phi`
+
+The chord fits inside the tangent arc.
+
+Then the optimal path for this side may be:
+
+```text
+A -> tangent from A -> chord of length D -> remaining arc -> tangent to B -> B
+```
+
+The chord can be placed anywhere on the arc, because all chords of length `D` save the same amount. We place it immediately after the tangent point from `A`.
+
+#### Case B: `thetaD > Phi`
+
+The chord is too large to fit between the two tangent points.
+
+Then the optimal path may have no boundary arc:
+
+```text
+A -> P -> Q -> B
+```
+
+where:
+
+- `P` and `Q` lie on the circle;
+- `PQ` is a chord of length `D`;
+- the angle between `P` and `Q` is `thetaD`;
+- segments `AP` and `QB` must not enter the crater.
+
+Now only one variable remains: the angle of `P`.
+
+We minimize:
+
+```text
+|A - P| + D + |Q - B|
+```
+
+over all feasible positions of `P`.
+
+This is a one-dimensional unimodal function, so ternary search is enough.
+
+---
+
+## 3. Full solution approach
+
+### Step 1 — Basic geometry utilities
+
+We need:
+
+- vector addition/subtraction;
+- dot product;
+- cross product;
+- distance;
+- angle of a vector;
+- point on the circle by angle.
+
+For angle `alpha`, the point on the crater boundary is:
+
+```text
+C + R * (cos(alpha), sin(alpha))
+```
+
+---
+
+### Step 2 — Check whether a segment enters the crater
+
+For segment `P0P1`, find the point on the segment closest to the center `C`.
+
+Let:
+
+```text
+v = P1 - P0
+t = dot(C - P0, v) / |v|²
+```
+
+Clamp `t` to `[0, 1]`.
+
+The closest point is:
+
+```text
+P0 + t * v
+```
+
+If its distance from `C` is at least `R`, the segment does not enter the crater.
+
+---
+
+### Step 3 — Try direct route
+
+If `AB` does not enter the circle, output:
+
+```text
+S A B
+```
+
+Otherwise, compute the distance `h` from `C` to the line `AB`.
+
+The chord cut by the circle has length:
+
+```text
+2 * sqrt(R² - h²)
+```
+
+If this is at most `D`, output the direct segment.
+
+---
+
+### Step 4 — Compute tangent information
+
+For an outside point `P`:
+
+```text
+d = |P - C|
+psi = angle(C -> P)
+gamma = acos(R / d)
+```
+
+The two tangent points have angular coordinates:
+
+```text
+psi + gamma
+psi - gamma
+```
+
+For each side `s = +1` or `s = -1`, choose compatible tangent angles:
+
+```text
+from A: a1 = psiA + s * gammaA
+to B:   a2 = psiB - s * gammaB
+```
+
+The arc angle from `a1` to `a2` in direction `s` is:
+
+```text
+Phi = s * (a2 - a1) mod 2π
+```
+
+---
+
+### Step 5 — Consider candidates for both sides
+
+For each side:
+
+#### Candidate 1 — Pure outside detour
+
+```text
+A -> tangent A -> arc -> tangent B -> B
+```
+
+Length:
+
+```text
+tangentA + R * Phi + tangentB
+```
+
+---
+
+#### Candidate 2 — Tangent path with one chord
+
+If `thetaD <= Phi`, use:
+
+```text
+A -> tangent A -> chord -> remaining arc -> tangent B -> B
+```
+
+Length:
+
+```text
+tangentA + D + R * (Phi - thetaD) + tangentB
+```
+
+---
+
+#### Candidate 3 — Free chord path
+
+Try:
+
+```text
+A -> P -> Q -> B
+```
+
+where:
+
+```text
+angle(Q) = angle(P) + s * thetaD
+```
+
+The point `P` must be visible from `A`, and `Q` must be visible from `B`.
+
+Visibility from an outside point is exactly the interval between its two tangent points.
+
+So we intersect:
+
+```text
+P angle in A-visible interval
+Q angle in B-visible interval
+```
+
+Then minimize:
+
+```text
+|A - P| + D + |Q - B|
+```
+
+with ternary search.
+
+---
+
+### Step 6 — Output best candidate
+
+Keep the shortest valid route among all candidates and print its parts.
+
+The number of parts is at most `4`.
+
+Complexity:
+
+```text
+O(1)
+```
+
+---
+
+## 4. C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+const double EPS = 1e-9;
+const double PI = acos(-1.0);
+const double INF = 1e100;
+
+struct Point {
+    double x, y;
+
+    Point(double x = 0, double y = 0) : x(x), y(y) {}
+
+    Point operator + (const Point& other) const {
+        return Point(x + other.x, y + other.y);
+    }
+
+    Point operator - (const Point& other) const {
+        return Point(x - other.x, y - other.y);
+    }
+
+    Point operator * (double k) const {
+        return Point(x * k, y * k);
+    }
+
+    Point operator / (double k) const {
+        return Point(x / k, y / k);
+    }
+
+    double dot(const Point& other) const {
+        return x * other.x + y * other.y;
+    }
+
+    double cross(const Point& other) const {
+        return x * other.y - y * other.x;
+    }
+
+    double norm2() const {
+        return x * x + y * y;
+    }
+
+    double norm() const {
+        return sqrt(norm2());
+    }
+
+    double angle() const {
+        return atan2(y, x);
+    }
+};
+
+struct Part {
+    char type; // 'S' for segment, 'A' for arc
+    Point a, b;
+};
+
+Point A, B, C;
+double R, D;
+
+double dist(Point a, Point b) {
+    return (a - b).norm();
+}
+
+Point onCircle(double angle) {
+    return C + Point(cos(angle), sin(angle)) * R;
+}
+
+/*
+    Checks whether segment p0-p1 does not enter the open disk.
+
+    Touching the boundary is allowed.
+*/
+bool segmentOutsideCircle(Point p0, Point p1) {
+    Point v = p1 - p0;
+    double len2 = v.norm2();
+
+    double t = 0.0;
+
+    if (len2 > EPS) {
+        t = (C - p0).dot(v) / len2;
+        t = max(0.0, min(1.0, t));
+    }
+
+    Point closest = p0 + v * t;
+
+    return dist(closest, C) >= R - 1e-7;
+}
+
+/*
+    Prints the route, removing zero-length parts.
+*/
+void printRoute(vector<Part> parts) {
+    vector<Part> filtered;
+
+    for (Part p : parts) {
+        if (dist(p.a, p.b) > 1e-9) {
+            filtered.push_back(p);
+        }
+    }
+
+    cout << fixed << setprecision(8);
+    cout << filtered.size() << '\n';
+
+    for (Part p : filtered) {
+        cout << p.type << ' '
+             << p.a.x << ' ' << p.a.y << ' '
+             << p.b.x << ' ' << p.b.y << '\n';
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> A.x >> A.y >> B.x >> B.y;
+    cin >> C.x >> C.y >> R;
+    cin >> D;
+
+    /*
+        First, try the direct segment A-B.
+    */
+    if (segmentOutsideCircle(A, B)) {
+        printRoute({{'S', A, B}});
+        return 0;
+    }
+
+    /*
+        The segment intersects the circle.
+        Compute the chord length inside the crater.
+    */
+    double lineDistance =
+        fabs((B - A).cross(C - A)) / dist(A, B);
+
+    double chordAB =
+        2.0 * sqrt(max(0.0, R * R - lineDistance * lineDistance));
+
+    if (chordAB <= D + 1e-9) {
+        printRoute({{'S', A, B}});
+        return 0;
+    }
+
+    /*
+        Now direct movement is impossible.
+        We build candidates involving the circle boundary.
+    */
+
+    double dA = dist(A, C);
+    double dB = dist(B, C);
+
+    // Lengths of tangent segments from A and B.
+    double tangentA = sqrt(dA * dA - R * R);
+    double tangentB = sqrt(dB * dB - R * R);
+
+    // Polar angles of A and B relative to center C.
+    double psiA = (A - C).angle();
+    double psiB = (B - C).angle();
+
+    // Angular distance from CP direction to each tangent point.
+    double gammaA = acos(R / dA);
+    double gammaB = acos(R / dB);
+
+    // Central angle of a chord of length D.
+    double thetaD = 2.0 * asin(min(1.0, D / (2.0 * R)));
+
+    double bestLen = INF;
+    vector<Part> bestRoute;
+
+    auto consider = [&](double length, vector<Part> route) {
+        if (length < bestLen) {
+            bestLen = length;
+            bestRoute = route;
+        }
+    };
+
+    /*
+        Try both directions around the circle.
+        s = +1 and s = -1 represent opposite orientations.
+    */
+    for (int s : {1, -1}) {
+        /*
+            Tangent point from A on this side.
+        */
+        double angleA = psiA + s * gammaA;
+
+        /*
+            Tangent point to B on this side.
+        */
+        double angleB = psiB - s * gammaB;
+
+        /*
+            Arc angle from angleA to angleB in direction s.
+        */
+        double Phi = fmod(s * (angleB - angleA), 2.0 * PI);
+
+        if (Phi < 0) {
+            Phi += 2.0 * PI;
+        }
+
+        Point TA = onCircle(angleA);
+        Point TB = onCircle(angleB);
+
+        /*
+            Candidate 1:
+            Pure outside detour.
+        */
+        consider(
+            tangentA + R * Phi + tangentB,
+            {
+                {'S', A, TA},
+                {'A', TA, TB},
+                {'S', TB, B}
+            }
+        );
+
+        /*
+            Candidate 2:
+            Replace part of the boundary arc by a chord of length D.
+        */
+        if (thetaD <= Phi + 1e-12) {
+            Point afterChord = onCircle(angleA + s * thetaD);
+
+            consider(
+                tangentA + D + R * (Phi - thetaD) + tangentB,
+                {
+                    {'S', A, TA},
+                    {'S', TA, afterChord},
+                    {'A', afterChord, TB},
+                    {'S', TB, B}
+                }
+            );
+        }
+
+        /*
+            Candidate 3:
+            A -> P -> Q -> B,
+            where P and Q are boundary points and PQ is a chord of length D.
+
+            angle(Q) = angle(P) + s * thetaD
+        */
+        auto freeChordCost = [&](double alpha) -> double {
+            Point P = onCircle(alpha);
+            Point Q = onCircle(alpha + s * thetaD);
+
+            // The outer segments must stay outside the crater.
+            if (!segmentOutsideCircle(A, P)) {
+                return INF;
+            }
+
+            if (!segmentOutsideCircle(Q, B)) {
+                return INF;
+            }
+
+            return dist(A, P) + D + dist(Q, B);
+        };
+
+        /*
+            Feasible angles for P:
+
+            P must be visible from A:
+                alpha in [psiA - gammaA, psiA + gammaA]
+
+            Q must be visible from B:
+                alpha + s * thetaD in [psiB - gammaB, psiB + gammaB]
+        */
+        double shiftedCenterB = psiB - s * thetaD;
+
+        /*
+            Put shifted B interval near psiA to avoid angle wrap issues.
+        */
+        double delta = atan2(
+            sin(shiftedCenterB - psiA),
+            cos(shiftedCenterB - psiA)
+        );
+
+        double lo = max(-gammaA, delta - gammaB);
+        double hi = min( gammaA, delta + gammaB);
+
+        if (lo <= hi) {
+            lo += psiA;
+            hi += psiA;
+
+            /*
+                Ternary search on the feasible angular interval.
+            */
+            for (int it = 0; it < 200; it++) {
+                double m1 = lo + (hi - lo) / 3.0;
+                double m2 = hi - (hi - lo) / 3.0;
+
+                if (freeChordCost(m1) < freeChordCost(m2)) {
+                    hi = m2;
+                } else {
+                    lo = m1;
+                }
+            }
+
+            double alpha = (lo + hi) / 2.0;
+            double cost = freeChordCost(alpha);
+
+            if (cost < INF / 2) {
+                Point P = onCircle(alpha);
+                Point Q = onCircle(alpha + s * thetaD);
+
+                consider(
+                    cost,
+                    {
+                        {'S', A, P},
+                        {'S', P, Q},
+                        {'S', Q, B}
+                    }
+                );
+            }
+        }
+    }
+
+    printRoute(bestRoute);
+
+    return 0;
+}
+```
+
+---
+
+## 5. Python implementation with detailed comments
+
+```python
+import sys
+import math
+
+
+EPS = 1e-9
+PI = math.pi
+INF = 10 ** 100
+
+
+class Point:
+    """Simple 2D point/vector class."""
+
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def __add__(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        return Point(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, value):
+        """
+        If value is another Point, return dot product.
+        Otherwise, multiply by scalar.
+        """
+        if isinstance(value, Point):
+            return self.x * value.x + self.y * value.y
+        return Point(self.x * value, self.y * value)
+
+    def __rmul__(self, value):
+        return self.__mul__(value)
+
+    def __truediv__(self, value):
+        return Point(self.x / value, self.y / value)
+
+    def cross(self, other):
+        return self.x * other.y - self.y * other.x
+
+    def norm2(self):
+        return self.x * self.x + self.y * self.y
+
+    def norm(self):
+        return math.sqrt(self.norm2())
+
+    def angle(self):
+        return math.atan2(self.y, self.x)
+
+
+def dist(a, b):
+    return (a - b).norm()
+
+
+def main():
+    data = list(map(float, sys.stdin.read().split()))
+
+    xa, ya, xb, yb = data[0:4]
+    xc, yc, r = data[4:7]
+    D = data[7]
+
+    A = Point(xa, ya)
+    B = Point(xb, yb)
+    C = Point(xc, yc)
+    R = r
+
+    def on_circle(angle):
+        """
+        Point on the crater boundary with polar angle `angle`
+        around center C.
+        """
+        return C + Point(math.cos(angle), math.sin(angle)) * R
+
+    def segment_outside_circle(p0, p1):
+        """
+        Return True if segment p0-p1 does not enter the open disk.
+        Touching the boundary is allowed.
+        """
+        v = p1 - p0
+        length2 = v.norm2()
+
+        t = 0.0
+
+        if length2 > EPS:
+            t = ((C - p0) * v) / length2
+            t = max(0.0, min(1.0, t))
+
+        closest = p0 + v * t
+
+        return dist(closest, C) >= R - 1e-7
+
+    def print_route(parts):
+        """
+        Print route parts, removing zero-length parts.
+
+        Each part is:
+            (type, start_point, end_point)
+        """
+        filtered = []
+
+        for typ, p, q in parts:
+            if dist(p, q) > 1e-9:
+                filtered.append((typ, p, q))
+
+        print(len(filtered))
+
+        for typ, p, q in filtered:
+            print(
+                f"{typ} "
+                f"{p.x:.8f} {p.y:.8f} "
+                f"{q.x:.8f} {q.y:.8f}"
+            )
+
+    # ------------------------------------------------------------
+    # Step 1: Try direct route A -> B.
+    # ------------------------------------------------------------
+
+    if segment_outside_circle(A, B):
+        print_route([("S", A, B)])
+        return
+
+    # Distance from C to line AB.
+    line_distance = abs((B - A).cross(C - A)) / dist(A, B)
+
+    # Chord length inside the crater.
+    chord_ab = 2.0 * math.sqrt(
+        max(0.0, R * R - line_distance * line_distance)
+    )
+
+    if chord_ab <= D + 1e-9:
+        print_route([("S", A, B)])
+        return
+
+    # ------------------------------------------------------------
+    # Step 2: Compute tangent-related values.
+    # ------------------------------------------------------------
+
+    dA = dist(A, C)
+    dB = dist(B, C)
+
+    tangentA = math.sqrt(dA * dA - R * R)
+    tangentB = math.sqrt(dB * dB - R * R)
+
+    psiA = (A - C).angle()
+    psiB = (B - C).angle()
+
+    gammaA = math.acos(R / dA)
+    gammaB = math.acos(R / dB)
+
+    # Chord of length D subtends this central angle.
+    thetaD = 2.0 * math.asin(min(1.0, D / (2.0 * R)))
+
+    best_len = INF
+    best_route = []
+
+    def consider(length, route):
+        nonlocal best_len, best_route
+
+        if length < best_len:
+            best_len = length
+            best_route = route
+
+    # ------------------------------------------------------------
+    # Step 3: Try both directions around the circle.
+    # ------------------------------------------------------------
+
+    for s in (1, -1):
+        # Tangent point from A on this side.
+        angleA = psiA + s * gammaA
+
+        # Tangent point to B on this side.
+        angleB = psiB - s * gammaB
+
+        # Angular length of arc from angleA to angleB in direction s.
+        Phi = math.fmod(s * (angleB - angleA), 2.0 * PI)
+
+        if Phi < 0.0:
+            Phi += 2.0 * PI
+
+        TA = on_circle(angleA)
+        TB = on_circle(angleB)
+
+        # --------------------------------------------------------
+        # Candidate 1: pure outside detour.
+        # A -> tangent -> arc -> tangent -> B
+        # --------------------------------------------------------
+
+        consider(
+            tangentA + R * Phi + tangentB,
+            [
+                ("S", A, TA),
+                ("A", TA, TB),
+                ("S", TB, B),
+            ],
+        )
+
+        # --------------------------------------------------------
+        # Candidate 2: replace part of the arc by one chord.
+        # --------------------------------------------------------
+
+        if thetaD <= Phi + 1e-12:
+            after_chord = on_circle(angleA + s * thetaD)
+
+            consider(
+                tangentA + D + R * (Phi - thetaD) + tangentB,
+                [
+                    ("S", A, TA),
+                    ("S", TA, after_chord),
+                    ("A", after_chord, TB),
+                    ("S", TB, B),
+                ],
+            )
+
+        # --------------------------------------------------------
+        # Candidate 3:
+        # A -> P -> Q -> B
+        #
+        # P and Q are on the boundary.
+        # PQ is a chord of length D.
+        # angle(Q) = angle(P) + s * thetaD.
+        # --------------------------------------------------------
+
+        def free_chord_cost(alpha):
+            P = on_circle(alpha)
+            Q = on_circle(alpha + s * thetaD)
+
+            if not segment_outside_circle(A, P):
+                return INF
+
+            if not segment_outside_circle(Q, B):
+                return INF
+
+            return dist(A, P) + D + dist(Q, B)
+
+        """
+        Feasible angle interval for P.
+
+        P must be visible from A:
+            alpha in [psiA - gammaA, psiA + gammaA]
+
+        Q must be visible from B:
+            alpha + s * thetaD in [psiB - gammaB, psiB + gammaB]
+
+        Therefore alpha must also lie in:
+            [psiB - s * thetaD - gammaB,
+             psiB - s * thetaD + gammaB]
+        """
+
+        shifted_center_b = psiB - s * thetaD
+
+        # Bring shifted_center_b close to psiA to avoid 2*pi wrap issues.
+        delta = math.atan2(
+            math.sin(shifted_center_b - psiA),
+            math.cos(shifted_center_b - psiA),
+        )
+
+        lo = max(-gammaA, delta - gammaB)
+        hi = min(gammaA, delta + gammaB)
+
+        if lo <= hi:
+            lo += psiA
+            hi += psiA
+
+            # Ternary search over the feasible interval.
+            for _ in range(200):
+                m1 = lo + (hi - lo) / 3.0
+                m2 = hi - (hi - lo) / 3.0
+
+                if free_chord_cost(m1) < free_chord_cost(m2):
+                    hi = m2
+                else:
+                    lo = m1
+
+            alpha = (lo + hi) / 2.0
+            cost = free_chord_cost(alpha)
+
+            if cost < INF / 2:
+                P = on_circle(alpha)
+                Q = on_circle(alpha + s * thetaD)
+
+                consider(
+                    cost,
+                    [
+                        ("S", A, P),
+                        ("S", P, Q),
+                        ("S", Q, B),
+                    ],
+                )
+
+    print_route(best_route)
+
+
+if __name__ == "__main__":
+    main()
+```

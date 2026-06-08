@@ -1,0 +1,481 @@
+#include <bits/stdc++.h>
+// #include <coding_library/geometry/point.hpp>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+using coord_t = double;
+
+struct Point {
+    static constexpr coord_t eps = 1e-9;
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+    coord_t angle() const { return atan2(y, x); }
+
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    Point perp() const { return Point(-y, x); }
+    Point unit() const { return *this / norm(); }
+    Point normal() const { return perp().unit(); }
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) {
+            return 0;
+        } else if(v > 0) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    friend bool point_on_segment(
+        const Point& a, const Point& b, const Point& p
+    ) {
+        return ccw(a, b, p) == 0 && p.x >= min(a.x, b.x) - eps &&
+               p.x <= max(a.x, b.x) + eps && p.y >= min(a.y, b.y) - eps &&
+               p.y <= max(a.y, b.y) + eps;
+    }
+
+    friend bool point_in_triangle(
+        const Point& a, const Point& b, const Point& c, const Point& p
+    ) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) {
+            theta2 += 2 * PI;
+        }
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) {
+            return {};
+        }
+        if(h_sq < 0) {
+            h_sq = 0;
+        }
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) {
+            return {mid};
+        }
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through, const Point& seg_a,
+        const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) {
+            return {};
+        }
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) {
+            return {};
+        }
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) {
+            return {};
+        }
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) {
+            return {};
+        }
+        return ray_start + ray_dir * t;
+    }
+};
+
+template<typename F>
+int first_true(int lo, int hi, F pred) {
+    while(lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if(pred(mid)) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    return lo;
+}
+
+char in_buf[1 << 16];
+int in_pos = 0, in_len = 0;
+
+int next_char() {
+    if(in_pos == in_len) {
+        in_len = (int)fread(in_buf, 1, sizeof(in_buf), stdin);
+        in_pos = 0;
+        if(in_len == 0) {
+            return -1;
+        }
+    }
+    return in_buf[in_pos++];
+}
+
+int read_int() {
+    int c = next_char();
+    while(c <= ' ') {
+        c = next_char();
+    }
+    bool neg = c == '-';
+    if(neg) {
+        c = next_char();
+    }
+    int x = 0;
+    while(c > ' ') {
+        x = x * 10 + (c - '0');
+        c = next_char();
+    }
+    return neg ? -x : x;
+}
+
+coord_t read_real() {
+    int c = next_char();
+    while(c <= ' ') {
+        c = next_char();
+    }
+    int sign = 1;
+    if(c == '-') {
+        sign = -1;
+        c = next_char();
+    } else if(c == '+') {
+        c = next_char();
+    }
+
+    long long ival = 0;
+    while(c >= '0' && c <= '9') {
+        ival = ival * 10 + (c - '0');
+        c = next_char();
+    }
+
+    coord_t val = (coord_t)ival;
+    if(c == '.') {
+        c = next_char();
+        long long fval = 0;
+        int fdigits = 0;
+        while(c >= '0' && c <= '9' && fdigits < 18) {
+            fval = fval * 10 + (c - '0');
+            fdigits++;
+            c = next_char();
+        }
+
+        while(c >= '0' && c <= '9') {
+            c = next_char();
+        }
+
+        if(fdigits > 0) {
+            static const coord_t ipow10[19] = {1.0,   1e-1,  1e-2,  1e-3,
+                                               1e-4,  1e-5,  1e-6,  1e-7,
+                                               1e-8,  1e-9,  1e-10, 1e-11,
+                                               1e-12, 1e-13, 1e-14, 1e-15,
+                                               1e-16, 1e-17, 1e-18};
+            val += (coord_t)fval * ipow10[fdigits];
+        }
+    }
+    return sign * val;
+}
+
+int n, q;
+vector<Point> pts;
+vector<coord_t> pref;
+coord_t total_area;
+int l_idx, r_idx;
+int lower_len, upper_len;
+
+void read() {
+    n = read_int();
+    pts.resize(n);
+    for(int i = 0; i < n; i++) {
+        pts[i].x = read_real();
+        pts[i].y = read_real();
+    }
+
+    coord_t s = 0;
+    for(int i = 0; i < n; i++) {
+        s += pts[i] ^ pts[(i + 1) % n];
+    }
+
+    if(s < 0) {
+        reverse(pts.begin(), pts.end());
+        s = -s;
+    }
+
+    pref.assign(n + 1, 0);
+    for(int i = 0; i < n; i++) {
+        pref[i + 1] = pref[i] + (pts[i] ^ pts[(i + 1) % n]);
+    }
+
+    l_idx = r_idx = 0;
+    for(int i = 1; i < n; i++) {
+        if(pts[i] < pts[l_idx]) {
+            l_idx = i;
+        }
+        if(pts[r_idx] < pts[i]) {
+            r_idx = i;
+        }
+    }
+
+    lower_len = ((r_idx - l_idx) % n + n) % n + 1;
+    upper_len = ((l_idx - r_idx) % n + n) % n + 1;
+
+    pts.resize(2 * n);
+    for(int i = 0; i < n; i++) {
+        pts[n + i] = pts[i];
+    }
+
+    total_area = s / 2;
+    q = read_int();
+}
+
+void solve() {
+    // After ensuring CCW orientation we precompute prefix shoelace sums
+    // and split the polygon into two x-monotone chains by the leftmost
+    // and rightmost vertices l_idx and r_idx:
+    //
+    //   lower chain = pts[l_idx], pts[l_idx + 1], ..., pts[r_idx]
+    //   upper chain = pts[r_idx], pts[r_idx + 1], ..., pts[l_idx]
+    //
+    // Both chains share l_idx and r_idx. They are individually convex,
+    // so for any cut line with direction d the side function
+    // side(i) = d ^ (pts[i] - a) is unimodal on each chain: convex (one
+    // interior minimum, max at endpoint) when d.x has the appropriate
+    // sign for that chain, concave (one interior maximum, min at
+    // endpoint) otherwise. This means a single ternary search per chain
+    // suffices to find both extrema, and the polygon-wide peak i_max
+    // and trough i_min are just the max/min across the two chains.
+    //
+    // Once i_max and i_min are known, side is genuinely monotone on each
+    // arc between them: ascending on the arc from i_min to i_max (CCW),
+    // descending on the arc from i_max to i_min (CCW). A textbook binary
+    // search on each arc locates the zero crossing, giving the two edges
+    // the cut intersects. The line_line_intersection of d with each of
+    // those edges yields x and y, and the positive piece's doubled area
+    // is the shoelace sum (x ^ pts[ccw_first]) + chain_sum + (pts[ccw_last]
+    // ^ y) + (y ^ x), where chain_sum reduces to a prefix-sum slice.
+    // The answer is min(piece, total - piece).
+
+    cout << fixed << setprecision(6);
+
+    for(int qi = 0; qi < q; qi++) {
+        Point a, b;
+        a.x = read_real();
+        a.y = read_real();
+        b.x = read_real();
+        b.y = read_real();
+        Point d = b - a;
+
+        auto side = [&](int i) -> coord_t { return d ^ (pts[i] - a); };
+
+        auto extreme_on_chain = [&](int chain_start, int chain_len,
+                                    bool want_max) -> int {
+            int lo = 0, hi = chain_len - 1;
+            while(lo < hi) {
+                int mid = lo + (hi - lo) / 2;
+                coord_t sm = side(chain_start + mid);
+                coord_t sn = side(chain_start + mid + 1);
+                if(want_max ? sm < sn : sm > sn) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            int best = lo;
+            coord_t best_v = side(chain_start + lo);
+            coord_t v0 = side(chain_start);
+            if(want_max ? v0 > best_v : v0 < best_v) {
+                best = 0;
+                best_v = v0;
+            }
+            coord_t vL = side(chain_start + chain_len - 1);
+            if(want_max ? vL > best_v : vL < best_v) {
+                best = chain_len - 1;
+            }
+            return best;
+        };
+
+        int max_lower_k = extreme_on_chain(l_idx, lower_len, true);
+        int max_upper_k = extreme_on_chain(r_idx, upper_len, true);
+        coord_t max_lower_v = side(l_idx + max_lower_k);
+        coord_t max_upper_v = side(r_idx + max_upper_k);
+        int i_max = max_lower_v >= max_upper_v ? (l_idx + max_lower_k) % n
+                                               : (r_idx + max_upper_k) % n;
+
+        if(side(i_max) <= Point::eps) {
+            cout << (coord_t)0 << '\n';
+            continue;
+        }
+
+        int min_lower_k = extreme_on_chain(l_idx, lower_len, false);
+        int min_upper_k = extreme_on_chain(r_idx, upper_len, false);
+        coord_t min_lower_v = side(l_idx + min_lower_k);
+        coord_t min_upper_v = side(r_idx + min_upper_k);
+        int i_min = min_lower_v <= min_upper_v ? (l_idx + min_lower_k) % n
+                                               : (r_idx + min_upper_k) % n;
+
+        if(side(i_min) >= -Point::eps) {
+            cout << (coord_t)0 << '\n';
+            continue;
+        }
+
+        int len_up = ((i_max - i_min) % n + n) % n;
+        int len_dn = ((i_min - i_max) % n + n) % n;
+
+        int ccw_first_k = first_true(1, len_up + 1, [&](int k) {
+            return side(i_min + k) > 0;
+        });
+        int ccw_last_k =
+            first_true(1, len_dn, [&](int k) { return side(i_max + k) <= 0; }) -
+            1;
+
+        auto wrap = [&](int i) { return i < n ? i : i - n; };
+        int ccw_first = wrap(i_min + ccw_first_k);
+        int ccw_last = wrap(i_max + ccw_last_k);
+        int prev_f = ccw_first == 0 ? n - 1 : ccw_first - 1;
+        int next_l = ccw_last + 1 == n ? 0 : ccw_last + 1;
+
+        Point x = line_line_intersection(pts[prev_f], pts[ccw_first], a, b);
+        Point y = line_line_intersection(pts[ccw_last], pts[next_l], a, b);
+
+        coord_t chain = ccw_first <= ccw_last
+                            ? pref[ccw_last] - pref[ccw_first]
+                            : pref[n] - pref[ccw_first] + pref[ccw_last];
+        coord_t doubled =
+            (x ^ pts[ccw_first]) + chain + (pts[ccw_last] ^ y) + (y ^ x);
+        coord_t piece = fabs(doubled) / 2;
+        cout << max(min(piece, total_area - piece), (coord_t)0) << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}

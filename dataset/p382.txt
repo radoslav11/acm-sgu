@@ -1,0 +1,688 @@
+## 1) Abridged problem statement
+
+The Cantor function \(f(x)\) is defined on \([0,1]\) (the classic “Devil’s staircase”).  
+For a given integer \(n\) (\(0 \le n \le 50\)), compute
+
+\[
+I_n=\int_{0}^{1} f(x)^n \, dx
+\]
+
+It is known that \(I_n\) is rational. Output it as an irreducible fraction `p/q` (natural numbers, \(\gcd(p,q)=1\)).
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key self-similarity of the Cantor function
+The Cantor function satisfies these relations:
+
+1. For \(x \in [0,1]\):  
+   \[
+   f(x/3) = \frac{f(x)}{2}
+   \]
+2. For \(x \in [1/3, 2/3]\):  
+   \[
+   f(x) = \frac12
+   \]
+3. For \(x \in [0,1]\):  
+   \[
+   f(x/3 + 2/3) = \frac12 + \frac{f(x)}{2} = \frac{1+f(x)}{2}
+   \]
+
+We split the integral over three subintervals:
+\([0,1/3]\), \([1/3,2/3]\), \([2/3,1]\).
+
+---
+
+### Contribution of each piece
+
+Let \(I_n=\int_0^1 f(x)^n dx\).
+
+#### 1) Interval \([0,1/3]\)
+Substitute \(u=3x\), so \(dx=du/3\), and \(f(x)=f(u/3)=f(u)/2\):
+\[
+\int_0^{1/3} f(x)^n dx
+= \frac13 \int_0^1 \left(\frac{f(u)}2\right)^n du
+= \frac{1}{3\cdot 2^n} I_n
+\]
+
+#### 2) Interval \([1/3,2/3]\)
+Here \(f(x)=1/2\) constant, interval length \(1/3\):
+\[
+\int_{1/3}^{2/3} f(x)^n dx
+= \frac13 \left(\frac12\right)^n
+= \frac{1}{3\cdot 2^n}
+\]
+
+#### 3) Interval \([2/3,1]\)
+Substitute \(u=3x-2\), so \(dx=du/3\), and
+\(f(x)=\frac{1+f(u)}2\):
+\[
+\int_{2/3}^1 f(x)^n dx
+= \frac13\int_0^1 \left(\frac{1+f(u)}2\right)^n du
+= \frac{1}{3\cdot 2^n}\int_0^1 (1+f(u))^n du
+\]
+Expand by the binomial theorem:
+\[
+(1+f(u))^n=\sum_{k=0}^n \binom{n}{k} f(u)^k
+\]
+So:
+\[
+\int_{2/3}^1 f(x)^n dx
+= \frac{1}{3\cdot 2^n} \sum_{k=0}^n \binom{n}{k} I_k
+\]
+
+---
+
+### Recurrence for \(I_n\)
+
+Add the three parts:
+
+\[
+I_n = \frac{1}{3\cdot 2^n} I_n
++ \frac{1}{3\cdot 2^n}
++ \frac{1}{3\cdot 2^n}\sum_{k=0}^n \binom{n}{k} I_k
+\]
+
+Multiply both sides by \(3\cdot 2^n\):
+
+\[
+3\cdot 2^n I_n = I_n + 1 + \sum_{k=0}^n \binom{n}{k} I_k
+\]
+
+Move the \(I_n\) terms together, and note the sum includes \(k=n\) term \(\binom{n}{n}I_n=I_n\):
+
+\[
+(3\cdot 2^n - 2) I_n = 1 + \sum_{k=0}^{n-1} \binom{n}{k} I_k
+\]
+
+Base case:
+\[
+I_0=\int_0^1 1\,dx = 1
+\]
+
+So we can compute \(I_1, I_2, \dots, I_n\) in order.
+
+---
+
+### Handling rational arithmetic with huge numbers
+For \(n\le 50\), denominators/numerators become enormous, so we must use big integers.
+
+Let \(I_k = p_k / q_k\) in lowest terms.
+
+To compute:
+\[
+\text{RHS} = 1 + \sum_{k=0}^{m-1}\binom{m}{k}\frac{p_k}{q_k}
+\]
+We need a common denominator. Doing full fraction addition with gcd reduction at every term can be expensive.
+
+Optimization used by the C++ code:
+- Maintain `common` = \(\mathrm{lcm}(q_0,q_1,\dots,q_{m-1})\).
+- Convert each term to denominator `common` once:
+  \[
+  \frac{p_k}{q_k} = \frac{(common/q_k)p_k}{common}
+  \]
+So the numerator over `common` is:
+\[
+num = common + \sum_{k=0}^{m-1} (common/q_k)\, p_k \, \binom{m}{k}
+\]
+Then:
+\[
+I_m = \frac{num}{common\cdot(3\cdot 2^m - 2)}
+\]
+Finally reduce once using \(g=\gcd(num,den)\).
+
+Update:
+\[
+common \leftarrow \mathrm{lcm}(common, q_m)
+\]
+
+Binomial coefficients \(\binom{50}{k}\) fit in 64-bit, so they are stored as `int64_t`, but all mixed arithmetic is done with `bigint`.
+
+Complexity is tiny for \(n\le 50\); big integer multiplication dominates but remains well within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience output for pair<T1,T2>
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience input for pair<T1,T2>
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector of items
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+};
+
+// Big integer base: store number in chunks of 1e9 (9 decimal digits each).
+const int base = 1000000000;
+const int base_digits = 9;
+
+struct bigint {
+    vector<int> z; // magnitude in base 1e9, little-endian: z[0] is least significant
+    int sign;      // +1 or -1
+
+    bigint() : sign(1) {}              // default = 0 with positive sign
+    bigint(long long v) { *this = v; } // construct from 64-bit integer
+    bigint(const string& s) { read(s); } // construct from decimal string
+
+    // Copy assignment
+    void operator=(const bigint& v) {
+        sign = v.sign;
+        z = v.z;
+    }
+
+    // Assign from 64-bit integer
+    void operator=(long long v) {
+        sign = 1;
+        if(v < 0) sign = -1, v = -v;
+        z.clear();
+        // split into base-1e9 chunks
+        for(; v > 0; v /= base) z.push_back(v % base);
+    }
+
+    // Addition
+    bigint operator+(const bigint& v) const {
+        // If same sign, add magnitudes
+        if(sign == v.sign) {
+            bigint res = v; // start from v then add *this
+            for(int i = 0, carry = 0;
+                i < (int)max(z.size(), v.z.size()) || carry; ++i) {
+                if(i == (int)res.z.size()) res.z.push_back(0);
+                res.z[i] += carry + (i < (int)z.size() ? z[i] : 0);
+                carry = res.z[i] >= base;
+                if(carry) res.z[i] -= base;
+            }
+            return res;
+        }
+        // Different signs: a + (-b) = a - b
+        return *this - (-v);
+    }
+
+    // Subtraction
+    bigint operator-(const bigint& v) const {
+        if(sign == v.sign) {
+            // If |a| >= |b|, do magnitude subtraction
+            if(abs() >= v.abs()) {
+                bigint res = *this;
+                for(int i = 0, carry = 0; i < (int)v.z.size() || carry; ++i) {
+                    res.z[i] -= carry + (i < (int)v.z.size() ? v.z[i] : 0);
+                    carry = res.z[i] < 0;
+                    if(carry) res.z[i] += base;
+                }
+                res.trim(); // remove leading zeros
+                return res;
+            }
+            // Otherwise result is negative of (b-a)
+            return -(v - *this);
+        }
+        // a - (-b) = a + b
+        return *this + (-v);
+    }
+
+    // Multiply by small int
+    void operator*=(int v) {
+        if(v < 0) sign = -sign, v = -v;
+        for(int i = 0, carry = 0; i < (int)z.size() || carry; ++i) {
+            if(i == (int)z.size()) z.push_back(0);
+            long long cur = z[i] * (long long)v + carry;
+            carry = (int)(cur / base);
+            z[i] = (int)(cur % base);
+        }
+        trim();
+    }
+
+    // Multiply by small int (returns new bigint)
+    bigint operator*(int v) const { bigint res = *this; res *= v; return res; }
+
+    // Division with remainder: returns {q, r} for a1 / b1
+    friend pair<bigint, bigint> divmod(const bigint& a1, const bigint& b1) {
+        // normalize so that leading digit of divisor is large
+        int norm = base / (b1.z.back() + 1);
+        bigint a = a1.abs() * norm;
+        bigint b = b1.abs() * norm;
+        bigint q, r;
+        q.z.resize(a.z.size());
+
+        // classic long division from most significant chunk
+        for(int i = (int)a.z.size() - 1; i >= 0; i--) {
+            r *= base;     // shift r left by one base digit
+            r += a.z[i];   // bring down next digit
+            int s1 = (int)b.z.size() < (int)r.z.size() ? r.z[b.z.size()] : 0;
+            int s2 = (int)b.z.size() - 1 < (int)r.z.size() ? r.z[b.z.size() - 1] : 0;
+            int d = ((long long)s1 * base + s2) / b.z.back(); // quotient digit guess
+            r -= b * d;    // subtract guess * divisor
+            while(r < 0) { // fix if guess too big
+                r += b;
+                --d;
+            }
+            q.z[i] = d;
+        }
+
+        // set signs
+        q.sign = a1.sign * b1.sign;
+        r.sign = a1.sign;
+
+        q.trim();
+        r.trim();
+        return make_pair(q, r / norm); // unnormalize remainder
+    }
+
+    // Integer square root (not used in this problem)
+    friend bigint sqrt(const bigint& a1) {
+        bigint a = a1;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        int n = (int)a.z.size();
+        int firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int norm = base / (firstDigit + 1);
+        a *= norm;
+        a *= norm;
+        while(a.z.empty() || a.z.size() % 2 == 1) a.z.push_back(0);
+
+        bigint r = (long long)a.z[n - 1] * base + a.z[n - 2];
+        firstDigit = (int)sqrt((double)a.z[n - 1] * base + a.z[n - 2]);
+        int q = firstDigit;
+        bigint res;
+
+        for(int j = n / 2 - 1; j >= 0; j--) {
+            for(;; --q) {
+                bigint r1 =
+                    (r - (res * 2 * base + q) * q) * base * base +
+                    (j > 0 ? (long long)a.z[2 * j - 1] * base + a.z[2 * j - 2] : 0);
+                if(r1 >= 0) { r = r1; break; }
+            }
+            res *= base;
+            res += q;
+
+            if(j > 0) {
+                int d1 = (int)res.z.size() + 2 < (int)r.z.size() ? r.z[res.z.size() + 2] : 0;
+                int d2 = (int)res.z.size() + 1 < (int)r.z.size() ? r.z[res.z.size() + 1] : 0;
+                int d3 = (int)res.z.size() < (int)r.z.size() ? r.z[res.z.size()] : 0;
+                q = ((long long)d1 * base * base + (long long)d2 * base + d3) / (firstDigit * 2);
+            }
+        }
+
+        res.trim();
+        return res / norm;
+    }
+
+    // Division and modulo by bigint
+    bigint operator/(const bigint& v) const { return divmod(*this, v).first; }
+    bigint operator%(const bigint& v) const { return divmod(*this, v).second; }
+
+    // Divide by small int
+    void operator/=(int v) {
+        if(v < 0) sign = -sign, v = -v;
+        for(int i = (int)z.size() - 1, rem = 0; i >= 0; --i) {
+            long long cur = z[i] + rem * (long long)base;
+            z[i] = (int)(cur / v);
+            rem = (int)(cur % v);
+        }
+        trim();
+    }
+
+    // Divide by small int (returns new)
+    bigint operator/(int v) const { bigint res = *this; res /= v; return res; }
+
+    // Mod by small int
+    int operator%(int v) const {
+        if(v < 0) v = -v;
+        int m = 0;
+        for(int i = (int)z.size() - 1; i >= 0; --i) {
+            m = (z[i] + m * (long long)base) % v;
+        }
+        return m * sign;
+    }
+
+    // Compound ops
+    void operator+=(const bigint& v) { *this = *this + v; }
+    void operator-=(const bigint& v) { *this = *this - v; }
+    void operator*=(const bigint& v) { *this = *this * v; }
+    void operator/=(const bigint& v) { *this = *this / v; }
+
+    // Comparisons
+    bool operator<(const bigint& v) const {
+        if(sign != v.sign) return sign < v.sign;
+        if(z.size() != v.z.size()) return z.size() * sign < v.z.size() * v.sign;
+        for(int i = (int)z.size() - 1; i >= 0; i--) {
+            if(z[i] != v.z[i]) return z[i] * sign < v.z[i] * sign;
+        }
+        return false;
+    }
+    bool operator>(const bigint& v)  const { return v < *this; }
+    bool operator<=(const bigint& v) const { return !(v < *this); }
+    bool operator>=(const bigint& v) const { return !(*this < v); }
+    bool operator==(const bigint& v) const { return !(*this < v) && !(v < *this); }
+    bool operator!=(const bigint& v) const { return *this < v || v < *this; }
+
+    // Remove leading zeros and normalize sign for zero
+    void trim() {
+        while(!z.empty() && z.back() == 0) z.pop_back();
+        if(z.empty()) sign = 1;
+    }
+
+    // Check for zero
+    bool isZero() const { return z.empty() || (z.size() == 1 && !z[0]); }
+
+    // Unary minus
+    bigint operator-() const { bigint res = *this; res.sign = -sign; return res; }
+
+    // Absolute value
+    bigint abs() const { bigint res = *this; res.sign *= res.sign; return res; }
+
+    // Convert to 64-bit (unsafe if too big; not used for big values)
+    long long longValue() const {
+        long long res = 0;
+        for(int i = (int)z.size() - 1; i >= 0; i--) res = res * base + z[i];
+        return res * sign;
+    }
+
+    // GCD via Euclid
+    friend bigint gcd(const bigint& a, const bigint& b) {
+        return b.isZero() ? a : gcd(b, a % b);
+    }
+
+    // LCM (not used directly; code uses gcd to update lcm manually)
+    friend bigint lcm(const bigint& a, const bigint& b) {
+        return a / gcd(a, b) * b;
+    }
+
+    // Read from decimal string
+    void read(const string& s) {
+        sign = 1;
+        z.clear();
+        int pos = 0;
+        // handle +/-
+        while(pos < (int)s.size() && (s[pos] == '-' || s[pos] == '+')) {
+            if(s[pos] == '-') sign = -sign;
+            ++pos;
+        }
+        // read in chunks of base_digits from the end
+        for(int i = (int)s.size() - 1; i >= pos; i -= base_digits) {
+            int x = 0;
+            for(int j = max(pos, i - base_digits + 1); j <= i; j++) x = x * 10 + s[j] - '0';
+            z.push_back(x);
+        }
+        trim();
+    }
+
+    // Stream input
+    friend istream& operator>>(istream& stream, bigint& v) {
+        string s; stream >> s; v.read(s); return stream;
+    }
+
+    // Stream output
+    friend ostream& operator<<(ostream& stream, const bigint& v) {
+        if(v.sign == -1) stream << '-';
+        stream << (v.z.empty() ? 0 : v.z.back()); // most significant chunk no leading zeros
+        for(int i = (int)v.z.size() - 2; i >= 0; --i)
+            stream << setw(base_digits) << setfill('0') << v.z[i]; // pad each chunk
+        return stream;
+    }
+
+    // Convert between chunk sizes in base 10^k (helper for multiplication)
+    static vector<int> convert_base(const vector<int>& a, int old_digits, int new_digits) {
+        vector<long long> p(max(old_digits, new_digits) + 1);
+        p[0] = 1;
+        for(int i = 1; i < (int)p.size(); i++) p[i] = p[i - 1] * 10;
+
+        vector<int> res;
+        long long cur = 0;
+        int cur_digits = 0;
+        for(int i = 0; i < (int)a.size(); i++) {
+            cur += a[i] * p[cur_digits];
+            cur_digits += old_digits;
+            while(cur_digits >= new_digits) {
+                res.push_back(int(cur % p[new_digits]));
+                cur /= p[new_digits];
+                cur_digits -= new_digits;
+            }
+        }
+        res.push_back((int)cur);
+        while(!res.empty() && res.back() == 0) res.pop_back();
+        return res;
+    }
+
+    typedef vector<long long> vll;
+
+    // Karatsuba multiplication for faster bigint * bigint
+    static vll karatsubaMultiply(const vll& a, const vll& b) {
+        int n = a.size();
+        vll res(n + n);
+        // base case: naive O(n^2)
+        if(n <= 32) {
+            for(int i = 0; i < n; i++)
+                for(int j = 0; j < n; j++)
+                    res[i + j] += a[i] * b[j];
+            return res;
+        }
+
+        int k = n >> 1;
+        vll a1(a.begin(), a.begin() + k);
+        vll a2(a.begin() + k, a.end());
+        vll b1(b.begin(), b.begin() + k);
+        vll b2(b.begin() + k, b.end());
+
+        vll a1b1 = karatsubaMultiply(a1, b1);
+        vll a2b2 = karatsubaMultiply(a2, b2);
+
+        for(int i = 0; i < k; i++) a2[i] += a1[i];
+        for(int i = 0; i < k; i++) b2[i] += b1[i];
+
+        vll r = karatsubaMultiply(a2, b2);
+        for(int i = 0; i < (int)a1b1.size(); i++) r[i] -= a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) r[i] -= a2b2[i];
+
+        for(int i = 0; i < (int)r.size(); i++) res[i + k] += r[i];
+        for(int i = 0; i < (int)a1b1.size(); i++) res[i] += a1b1[i];
+        for(int i = 0; i < (int)a2b2.size(); i++) res[i + n] += a2b2[i];
+        return res;
+    }
+
+    // Full bigint multiplication using Karatsuba on base 10^6 chunks
+    bigint operator*(const bigint& v) const {
+        vector<int> a6 = convert_base(this->z, base_digits, 6);
+        vector<int> b6 = convert_base(v.z, base_digits, 6);
+        vll a(a6.begin(), a6.end());
+        vll b(b6.begin(), b6.end());
+
+        // pad to same size
+        while(a.size() < b.size()) a.push_back(0);
+        while(b.size() < a.size()) b.push_back(0);
+
+        // pad to power of two for Karatsuba
+        while(a.size() & (a.size() - 1)) { a.push_back(0); b.push_back(0); }
+
+        vll c = karatsubaMultiply(a, b);
+
+        bigint res;
+        res.sign = sign * v.sign;
+
+        // carry propagation in base 10^6
+        for(int i = 0, carry = 0; i < (int)c.size(); i++) {
+            long long cur = c[i] + carry;
+            res.z.push_back((int)(cur % 1000000));
+            carry = (int)(cur / 1000000);
+        }
+
+        // convert back to base 1e9 chunks
+        res.z = convert_base(res.z, 6, base_digits);
+        res.trim();
+        return res;
+    }
+};
+
+int n;
+
+// Read input n
+void read() { cin >> n; }
+
+void solve() {
+    // We compute I_n = ∫_0^1 f(x)^n dx as a reduced fraction p[n]/q[n].
+    // The recurrence derived from self-similarity is:
+    //
+    //   (3*2^m - 2) * I_m = 1 + sum_{k=0..m-1} C(m,k) * I_k
+    //
+    // with I_0 = 1.
+    //
+    // Use big integers for numerator/denominator; binomial fits in int64.
+
+    // Precompute binomial coefficients up to n
+    vector<vector<int64_t>> binom(n + 1, vector<int64_t>(n + 1, 0));
+    for(int i = 0; i <= n; i++) {
+        binom[i][0] = 1;
+        for(int j = 1; j <= i; j++) {
+            binom[i][j] = binom[i - 1][j - 1] + (j < i ? binom[i - 1][j] : (int64_t)0);
+        }
+    }
+
+    // p[k]/q[k] stores I_k in lowest terms
+    vector<bigint> p(n + 1), q(n + 1);
+    p[0] = bigint(1);
+    q[0] = bigint(1);
+
+    // common = lcm(q[0],...,q[m-1]) while building I_m
+    bigint common(1);
+
+    for(int m = 1; m <= n; m++) {
+        // Build numerator of:
+        //   1 + sum_{k=0..m-1} C(m,k)*I_k
+        // over denominator = common.
+        // '1' becomes common/common.
+        bigint num = common;
+
+        for(int k = 0; k < m; k++) {
+            // term = C(m,k) * p[k]/q[k]
+            // rewrite with denominator common:
+            // term numerator = (common/q[k]) * p[k] * C(m,k)
+            num = num + (common / q[k]) * p[k] * bigint(binom[m][k]);
+        }
+
+        // Denominator after dividing by (3*2^m - 2):
+        // I_m = num / (common*(3*2^m - 2))
+        bigint den = common * bigint((int64_t)3 * ((int64_t)1 << m) - 2);
+
+        // Reduce fraction once
+        bigint g = gcd(num, den);
+        p[m] = num / g;
+        q[m] = den / g;
+
+        // Update common = lcm(common, q[m]) for next iteration
+        bigint h = gcd(common, q[m]);
+        common = (common / h) * q[m];
+    }
+
+    // Output I_n
+    cout << p[n] << "/" << q[n] << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // single test case
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same idea, detailed comments)
+
+```python
+import math
+from math import comb
+from fractions import Fraction
+
+def solve():
+    # Read n (0..50)
+    n = int(input().strip())
+
+    # We use the recurrence:
+    #   (3*2^m - 2) * I_m = 1 + sum_{k=0..m-1} C(m,k) * I_k
+    # with I_0 = 1.
+    #
+    # In Python, integers are arbitrary precision, so we can safely store
+    # huge numerators/denominators. We'll still do explicit gcd reductions.
+
+    # Store I_k as (p_k, q_k) in lowest terms.
+    p = [0] * (n + 1)
+    q = [0] * (n + 1)
+
+    p[0], q[0] = 1, 1  # I_0 = 1
+
+    # common will track lcm(q_0, ..., q_{m-1}) to add rationals efficiently
+    common = 1
+
+    for m in range(1, n + 1):
+        # num/common will represent:
+        # 1 + sum_{k=0..m-1} C(m,k) * (p[k]/q[k])
+        #
+        # The "1" contributes common/common.
+        num = common
+
+        for k in range(m):
+            # Add C(m,k) * p[k]/q[k] in terms of denominator = common:
+            # numerator contribution = (common // q[k]) * p[k] * C(m,k)
+            num += (common // q[k]) * p[k] * comb(m, k)
+
+        # Now I_m = num / ( common * (3*2^m - 2) )
+        den = common * (3 * (1 << m) - 2)
+
+        # Reduce the fraction once
+        g = math.gcd(num, den)
+        p[m] = num // g
+        q[m] = den // g
+
+        # Update common = lcm(common, q[m])
+        common = common // math.gcd(common, q[m]) * q[m]
+
+    print(f"{p[n]}/{q[n]}")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Split \(\int_0^1 f(x)^n dx\) over \([0,1/3],[1/3,2/3],[2/3,1]\) and use Cantor-function self-similarity:
+- \([0,1/3]\): contributes \(\frac{1}{3\cdot 2^n}I_n\)
+- \([1/3,2/3]\): contributes \(\frac{1}{3\cdot 2^n}\)
+- \([2/3,1]\): with \(u=3x-2\), \(f(x)=\frac{1+f(u)}2\), binomial expansion gives  
+  \(\frac{1}{3\cdot 2^n}\sum_{k=0}^n \binom{n}{k} I_k\)
+
+Combine and rearrange:
+\[
+(3\cdot 2^n - 2)I_n = 1 + \sum_{k=0}^{n-1}\binom{n}{k}I_k,\quad I_0=1
+\]
+
+Compute \(I_1..I_n\) as reduced fractions using big integers. To add terms efficiently, keep `common = lcm` of previous denominators and build each RHS over `common`, doing only one gcd reduction per \(m\). Output \(p_n/q_n\).

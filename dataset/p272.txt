@@ -1,0 +1,673 @@
+## 1. Abridged problem statement
+
+Given an undirected graph of laboratories and tunnels, two disjoint sets of vertices are specified:
+
+- `A`: important labs, each containing one employee;
+- `B`: labs with exits.
+
+An evacuation path must start at a vertex in `A`, end at a vertex in `B`, and have length exactly
+
+\[
+K = \min_{a \in A, b \in B} dist(a,b)
+\]
+
+All chosen paths must be vertex-disjoint, including their starting and ending vertices.
+
+It is not necessary to evacuate every employee. We only need output any evacuation plan that **cannot be extended** by adding another valid vertex-disjoint path of length `K`.
+
+Output the number of paths `P`, the common length `K`, and then the `P` paths.
+
+
+
+## 2. Detailed editorial
+
+### Key observation
+
+Let `dist[v]` be the distance from vertex `v` to the nearest exit vertex in `B`.
+
+We can compute all `dist[v]` with one multi-source BFS starting from every vertex in `B`.
+
+Then
+
+\[
+K = \min_{a \in A} dist[a]
+\]
+
+Only vertices `a in A` with `dist[a] = K` can be starting points of valid evacuation paths.
+
+Why?
+
+- A valid path must have length exactly `K`.
+- The shortest distance from `a` to any exit is `dist[a]`.
+- Since `K` is the minimum over all `A` vertices, no `A` vertex can have `dist[a] < K`.
+- If `dist[a] > K`, it is impossible to reach an exit in only `K` steps.
+- Therefore only `A` vertices with `dist[a] = K` may participate.
+
+Now consider a shortest path from such an `A` vertex to a `B` vertex. Along that path, the distance to the nearest exit decreases by exactly `1` at every step:
+
+\[
+K, K-1, K-2, \dots, 0
+\]
+
+So we can orient every tunnel `{u, v}` from the vertex with larger `dist` to the vertex with smaller `dist`, but only if their distances differ by exactly `1`.
+
+That gives a directed acyclic graph of all shortest paths toward exits.
+
+---
+
+### Enforcing vertex-disjointness
+
+We need paths that do not share vertices.
+
+A standard trick is vertex splitting:
+
+For every original vertex `v`, create two nodes:
+
+- `v_in`
+- `v_out`
+
+Add an edge:
+
+```text
+v_in -> v_out
+```
+
+with capacity `1`.
+
+This means at most one evacuation path can pass through vertex `v`.
+
+For every oriented shortest-path edge `u -> v`, add:
+
+```text
+u_out -> v_in
+```
+
+with capacity `1`.
+
+Add a super source `S` and a super sink `T`.
+
+For every usable starting vertex `a in A` with `dist[a] = K`, add:
+
+```text
+S -> a_in
+```
+
+with capacity `1`.
+
+For every exit vertex `b in B`, add:
+
+```text
+b_out -> T
+```
+
+with capacity `1`.
+
+Now every unit flow from `S` to `T` corresponds to one valid evacuation path.
+
+---
+
+### Why a maximum flow is not necessary
+
+The problem does not require the maximum possible number of paths.
+
+It only requires a plan that cannot be extended by simply adding one more valid disjoint path.
+
+So it is enough to build a **maximal** set of vertex-disjoint shortest paths.
+
+The provided solution does this using one DFS-based blocking-flow phase without reverse edges.
+
+Each DFS tries to find one more path from `S` to `T`.
+
+Once a vertex/edge is saturated, it cannot be used again.
+
+The `ptr` array stores the current outgoing edge tried for each node. If an outgoing edge fails to lead to the sink, the algorithm never tries it again.
+
+When no DFS from `S` succeeds anymore, there is no unused directed path from a valid source to an exit in the remaining graph. Therefore the current plan cannot be extended.
+
+---
+
+### Complexity
+
+Multi-source BFS:
+
+\[
+O(N + M)
+\]
+
+Building the flow graph:
+
+\[
+O(N + M)
+\]
+
+The greedy blocking-flow DFS phase is also linear in this unit-capacity setting:
+
+\[
+O(N + M)
+\]
+
+Total complexity:
+
+\[
+O(N + M)
+\]
+
+Memory complexity:
+
+\[
+O(N + M)
+\]
+
+This fits the constraints:
+
+- `N <= 10000`
+- `M <= 100000`
+
+
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs, prints "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs, reads "first second".
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors, reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate by reference over all vector elements.
+        in >> x;      // Read one element.
+    }
+    return in;        // Return the input stream.
+};
+
+// Output operator for vectors, prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {       // Iterate over all vector elements.
+        out << x << ' ';   // Print element and a trailing space.
+    }
+    return out;            // Return the output stream.
+};
+
+// Edge in the auxiliary directed flow graph.
+struct edge {
+    int to, cap, flow; // Destination node, capacity, and current flow.
+};
+
+int n, m;                       // Number of laboratories and tunnels.
+vector<vector<int>> adj;        // Original undirected graph adjacency list.
+vector<pair<int, int>> tunnels; // Original list of undirected tunnels.
+vector<int> a_set, b_set;       // Sets A and B.
+
+void read() {
+    cin >> n >> m;              // Read number of vertices and edges.
+
+    adj.assign(n + 1, {});      // Initialize adjacency list, vertices are 1-based.
+
+    tunnels.resize(m);          // Reserve space for all tunnels.
+
+    for(auto& [u, w]: tunnels) { // Read every tunnel.
+        cin >> u >> w;           // Read its two endpoints.
+
+        adj[u].push_back(w);     // Since graph is undirected, add w to u's list.
+        adj[w].push_back(u);     // Add u to w's list.
+    }
+
+    int n1;                      // Number of A-labs.
+    cin >> n1;                   // Read size of set A.
+
+    a_set.resize(n1);            // Allocate set A array.
+    cin >> a_set;                // Read all A-labs.
+
+    int n2;                      // Number of B-labs.
+    cin >> n2;                   // Read size of set B.
+
+    b_set.resize(n2);            // Allocate set B array.
+    cin >> b_set;                // Read all B-labs.
+}
+
+void solve() {
+    const int INF = INT_MAX;     // Represents an unreachable distance.
+
+    vector<int> dist(n + 1, INF); // dist[v] = distance from v to nearest B-lab.
+
+    queue<int> bfs;              // Queue for multi-source BFS.
+
+    // Start BFS simultaneously from all exit vertices.
+    for(int b: b_set) {
+        if(dist[b] == INF) {     // Avoid pushing duplicates if any.
+            dist[b] = 0;         // Distance from an exit to itself is zero.
+            bfs.push(b);         // Add exit to BFS queue.
+        }
+    }
+
+    // Standard BFS on the original undirected graph.
+    while(!bfs.empty()) {
+        int u = bfs.front();     // Take next vertex.
+        bfs.pop();               // Remove it from queue.
+
+        for(int w: adj[u]) {     // Check all neighboring vertices.
+            if(dist[w] == INF) { // If w was not visited yet...
+                dist[w] = dist[u] + 1; // Its distance is one more than u's.
+                bfs.push(w);           // Add it to queue.
+            }
+        }
+    }
+
+    int k = INF;                 // K = shortest distance from any A-lab to any B-lab.
+
+    for(int a: a_set) {
+        k = min(k, dist[a]);     // Take minimum distance among all A-labs.
+    }
+
+    int src = 0;                 // Super source node id.
+    int snk = 2 * n + 1;         // Super sink node id.
+
+    // Maps original vertex v to its "in" node in the split graph.
+    auto in_node = [&](int v) { return v; };
+
+    // Maps original vertex v to its "out" node in the split graph.
+    auto out_node = [&](int v) { return n + v; };
+
+    vector<edge> edges;          // All directed edges of auxiliary graph.
+
+    vector<vector<int>> g(2 * n + 2); // Adjacency list of edge indices.
+
+    // Adds directed edge u -> v with capacity cap.
+    auto add_edge = [&](int u, int v, int cap) {
+        g[u].push_back(edges.size()); // Store index of new edge in u's list.
+        edges.push_back({v, cap, 0}); // Add edge with zero initial flow.
+    };
+
+    // Add source edges only to A-labs that can start a length-K shortest path.
+    for(int a: a_set) {
+        if(dist[a] == k) {              // Only closest A-labs are usable.
+            add_edge(src, in_node(a), 1); // At most one employee starts there.
+        }
+    }
+
+    // Split every original vertex with capacity 1.
+    for(int v = 1; v <= n; v++) {
+        add_edge(in_node(v), out_node(v), 1); // Allows at most one path through v.
+    }
+
+    // Add directed edges corresponding to steps along shortest paths to exits.
+    for(auto& [u, w]: tunnels) {
+        // If going from u to w decreases distance by 1, orient u -> w.
+        if(dist[u] != INF && dist[u] == dist[w] + 1) {
+            add_edge(out_node(u), in_node(w), 1);
+        }
+        // Otherwise, if going from w to u decreases distance by 1, orient w -> u.
+        else if(dist[w] != INF && dist[w] == dist[u] + 1) {
+            add_edge(out_node(w), in_node(u), 1);
+        }
+    }
+
+    // Add edges from every exit to the sink.
+    for(int b: b_set) {
+        add_edge(out_node(b), snk, 1); // At most one path may end at each exit.
+    }
+
+    vector<int> ptr(2 * n + 2, 0); // Current outgoing edge pointer for each node.
+
+    // DFS tries to find one augmenting path from u to sink.
+    function<bool(int)> dfs = [&](int u) -> bool {
+        if(u == snk) {           // If we reached the sink...
+            return true;         // A complete path was found.
+        }
+
+        // Try outgoing edges starting from the current pointer.
+        for(; ptr[u] < (int)g[u].size(); ptr[u]++) {
+            edge& e = edges[g[u][ptr[u]]]; // Current edge.
+
+            // If edge has free capacity and its destination can reach sink...
+            if(e.cap - e.flow > 0 && dfs(e.to)) {
+                e.flow++;        // Use this edge by sending one unit of flow.
+                return true;     // Report success.
+            }
+        }
+
+        return false;            // No outgoing edge can lead to sink.
+    };
+
+    // Keep adding paths greedily until no more path can be found.
+    while(dfs(src)) {
+    }
+
+    vector<vector<int>> paths;   // Stores final evacuation paths as original vertices.
+
+    // Each saturated edge from source corresponds to one chosen path.
+    for(int id: g[src]) {
+        if(edges[id].flow == 0) { // If this source edge was not used...
+            continue;             // Skip it.
+        }
+
+        vector<int> path;         // Current reconstructed path.
+
+        int cur = edges[id].to;   // Start at the A-lab's in-node.
+                                  // Since in_node(v) == v, this is also original vertex id.
+
+        while(true) {
+            path.push_back(cur);  // Add current original vertex to the answer path.
+
+            if(dist[cur] == 0) {  // Distance 0 means current vertex is an exit.
+                break;            // Path is complete.
+            }
+
+            // Look for the saturated shortest-path edge leaving cur's out-node.
+            for(int eid: g[out_node(cur)]) {
+                if(edges[eid].flow == 1 && edges[eid].to != snk) {
+                    cur = edges[eid].to; // Move to the next vertex's in-node.
+                    break;               // Continue reconstructing from there.
+                }
+            }
+        }
+
+        paths.push_back(path);    // Store reconstructed path.
+    }
+
+    cout << paths.size() << ' ' << k << '\n'; // Print number of paths and common length.
+
+    for(auto& path: paths) {
+        cout << path << '\n';     // Print one path.
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+    cin.tie(nullptr);                 // Untie cin from cout for faster input.
+
+    int T = 1;                        // Number of test cases. Problem has one test case.
+
+    // cin >> T;                      // Unused; left for possible multi-test versions.
+
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read input.
+        solve();                      // Solve and print output.
+    }
+
+    return 0;                         // End program successfully.
+}
+```
+
+
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from collections import deque
+
+
+def main():
+    # Read all integers from standard input at once for speed.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # Pointer into the input array.
+    idx = 0
+
+    # Read number of vertices and tunnels.
+    n = data[idx]
+    idx += 1
+    m = data[idx]
+    idx += 1
+
+    # Original undirected graph adjacency list.
+    # Vertices are numbered from 1 to n.
+    adj = [[] for _ in range(n + 1)]
+
+    # Store the original tunnel list as pairs.
+    tunnels = []
+
+    # Read all tunnels.
+    for _ in range(m):
+        u = data[idx]
+        idx += 1
+        v = data[idx]
+        idx += 1
+
+        tunnels.append((u, v))
+
+        # Undirected graph: add both directions.
+        adj[u].append(v)
+        adj[v].append(u)
+
+    # Read set A.
+    n1 = data[idx]
+    idx += 1
+    a_set = data[idx:idx + n1]
+    idx += n1
+
+    # Read set B.
+    n2 = data[idx]
+    idx += 1
+    b_set = data[idx:idx + n2]
+    idx += n2
+
+    # Large value representing infinity.
+    INF = 10 ** 18
+
+    # dist[v] = distance from v to nearest exit in B.
+    dist = [INF] * (n + 1)
+
+    # Multi-source BFS queue.
+    q = deque()
+
+    # Initialize BFS with all exits.
+    for b in b_set:
+        if dist[b] == INF:
+            dist[b] = 0
+            q.append(b)
+
+    # Standard BFS.
+    while q:
+        u = q.popleft()
+
+        for v in adj[u]:
+            if dist[v] == INF:
+                dist[v] = dist[u] + 1
+                q.append(v)
+
+    # K is the shortest distance from any A-lab to any B-lab.
+    k = min(dist[a] for a in a_set)
+
+    # Node ids in the auxiliary split graph:
+    # source = 0
+    # in_node(v) = v
+    # out_node(v) = n + v
+    # sink = 2 * n + 1
+    src = 0
+    snk = 2 * n + 1
+    total_nodes = 2 * n + 2
+
+    def in_node(v):
+        # Input side of original vertex v.
+        return v
+
+    def out_node(v):
+        # Output side of original vertex v.
+        return n + v
+
+    # Each edge is stored as [to, capacity, flow].
+    edges = []
+
+    # g[u] contains indices of outgoing edges from u.
+    g = [[] for _ in range(total_nodes)]
+
+    def add_edge(u, v, cap):
+        # Add edge index to adjacency list.
+        g[u].append(len(edges))
+
+        # Store directed edge.
+        edges.append([v, cap, 0])
+
+    # Add source edges to usable A-labs.
+    # Only A-labs with dist[a] == k can start a length-k shortest path.
+    for a in a_set:
+        if dist[a] == k:
+            add_edge(src, in_node(a), 1)
+
+    # Add vertex-capacity edges.
+    # Each original vertex can be used by at most one evacuation path.
+    for v in range(1, n + 1):
+        add_edge(in_node(v), out_node(v), 1)
+
+    # Add directed edges along shortest paths toward exits.
+    for u, v in tunnels:
+        # If u is exactly one step farther from exits than v,
+        # then a shortest path may go u -> v.
+        if dist[u] != INF and dist[u] == dist[v] + 1:
+            add_edge(out_node(u), in_node(v), 1)
+
+        # If v is exactly one step farther from exits than u,
+        # then a shortest path may go v -> u.
+        elif dist[v] != INF and dist[v] == dist[u] + 1:
+            add_edge(out_node(v), in_node(u), 1)
+
+    # Add exit edges to sink.
+    for b in b_set:
+        add_edge(out_node(b), snk, 1)
+
+    # Current edge pointer for each auxiliary node.
+    ptr = [0] * total_nodes
+
+    # Recursion depth may be up to the path length in the split graph.
+    sys.setrecursionlimit(10 ** 6)
+
+    def dfs(u):
+        """
+        Try to find one more available path from u to the sink.
+
+        This is a greedy DFS with current-arc optimization.
+        It does not use reverse edges because we only need a maximal,
+        not maximum, set of paths.
+        """
+
+        # Sink reached: path found.
+        if u == snk:
+            return True
+
+        # Try outgoing edges starting from the saved pointer.
+        while ptr[u] < len(g[u]):
+            eid = g[u][ptr[u]]
+            to, cap, flow = edges[eid]
+
+            # If this edge has remaining capacity and the destination
+            # can reach the sink, use this edge.
+            if cap - flow > 0 and dfs(to):
+                edges[eid][2] += 1
+                return True
+
+            # This edge cannot help anymore; skip it forever.
+            ptr[u] += 1
+
+        # No outgoing edge leads to the sink.
+        return False
+
+    # Repeatedly add one more path while possible.
+    while dfs(src):
+        pass
+
+    # Reconstruct actual paths from saturated source edges.
+    paths = []
+
+    for eid in g[src]:
+        # Only used source edges correspond to selected evacuation paths.
+        if edges[eid][2] == 0:
+            continue
+
+        # The target of source edge is a_in.
+        # Since in_node(a) == a, it is also the original vertex number.
+        cur = edges[eid][0]
+
+        path = []
+
+        while True:
+            # Add current original vertex.
+            path.append(cur)
+
+            # dist == 0 means this vertex is in B, so path ends here.
+            if dist[cur] == 0:
+                break
+
+            # Move along the unique saturated shortest-path edge from cur.
+            next_cur = None
+
+            for out_eid in g[out_node(cur)]:
+                to, cap, flow = edges[out_eid]
+
+                # Ignore edge to sink; we only want movement to next lab.
+                if flow == 1 and to != snk:
+                    next_cur = to
+                    break
+
+            # This should always exist for a valid saturated path.
+            cur = next_cur
+
+    # Store reconstructed path.
+        paths.append(path)
+
+    # Prepare output.
+    output = []
+
+    # First line: number of paths and common length.
+    output.append(f"{len(paths)} {k}")
+
+    # Each path contains k + 1 vertices.
+    for path in paths:
+        output.append(" ".join(map(str, path)))
+
+    # Print final answer.
+    sys.stdout.write("\n".join(output))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+
+## 5. Compressed editorial
+
+Run multi-source BFS from all exits `B`, obtaining `dist[v]`, the distance from each vertex to the nearest exit.
+
+Let:
+
+\[
+K = \min_{a \in A} dist[a]
+\]
+
+Only `A` vertices with `dist[a] = K` can start valid paths.
+
+Build the shortest-path DAG by orienting each tunnel `{u,v}` from the vertex with larger distance to the one with smaller distance if the distances differ by exactly `1`.
+
+To enforce vertex-disjoint paths, split every vertex `v` into `v_in -> v_out` with capacity `1`. Add edges:
+
+- `source -> a_in` for every `a in A` with `dist[a] = K`;
+- `u_out -> v_in` for each oriented shortest-path edge `u -> v`;
+- `b_out -> sink` for every `b in B`.
+
+Now every unit path from source to sink is a valid evacuation route of length `K`.
+
+Since the task asks only for a non-extendable plan, not a maximum one, greedily find paths using DFS with current-edge pointers until no more path exists. The resulting set is maximal, so it cannot be extended.
+
+Finally, decompose saturated edges into original vertex paths and print them.
+
+Complexity:
+
+\[
+O(N + M)
+\]

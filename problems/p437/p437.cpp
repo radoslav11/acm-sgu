@@ -78,10 +78,12 @@ void search(int i) {
                 }
             }
         }
+
         if(!dead) {
             cur[i] = v;
             search(i + 1);
         }
+
         for(int t = 0; t < fn; t++) {
             int j = fw[t];
             if(--forbid_count[j][v] == 0) {
@@ -114,14 +116,14 @@ void solve() {
     // last blocker is undone). Placing a number at a cell removes it from every
     // later free neighbour's avail, and the branch is abandoned the instant one
     // of those neighbours is left with an empty avail (forward checking). The
-    // per-node cost is proportional to a cell's not-yet-filled neighbours, which
-    // shrinks with depth, so the search stays fast all the way down.
+    // per-node cost is proportional to a cell's not-yet-filled neighbours,
+    // which shrinks with depth, so the search stays fast all the way down.
     //
     // Pre-filled cells are baked into the board before the walk starts (their
-    // number is marked forbidden on every neighbour) and then skipped during the
-    // walk; otherwise a given number on a late cell would only be discovered at
-    // that depth, after the search had already wandered through every free cell
-    // before it.
+    // number is marked forbidden on every neighbour) and then skipped during
+    // the walk; otherwise a given number on a late cell would only be
+    // discovered at that depth, after the search had already wandered through
+    // every free cell before it.
 
     static const int row_id[32] = {0, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3,
                                    3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5,
@@ -150,6 +152,7 @@ void solve() {
             members[21 + c].push_back(clusters[c][j]);
         }
     }
+
     bool adj[32][32] = {};
     for(const auto& g: members) {
         for(int a: g) {
@@ -158,6 +161,7 @@ void solve() {
             }
         }
     }
+
     for(int i = 1; i <= 31; i++) {
         fwd_count[i] = 0;
         for(int j = i + 1; j <= 31; j++) {
@@ -176,6 +180,7 @@ void solve() {
             forbid_count[i][v] = 0;
         }
     }
+
     for(int i = 1; i <= 31; i++) {
         if(given[i]) {
             int v = given[i];
@@ -187,6 +192,7 @@ void solve() {
             }
         }
     }
+
     search(1);
 
     if(!found) {

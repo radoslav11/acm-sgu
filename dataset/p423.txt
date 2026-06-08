@@ -1,0 +1,544 @@
+## 1) Concise, abridged problem statement
+
+There are `n (≤ 13)` cities with undirected roads (given as an `n×n` 0/1 matrix) and populations `popul[i]`. City `s` starts country **A** and city `t` starts country **B** (these two cities are initially owned).
+
+At any point, A owns set `A`, B owns set `B`, and the rest are free. Define `neigh(X)` as the set of cities adjacent by a road to any city in `X`, excluding cities in `X` itself.
+
+On A’s turn (morning), A may conquer **any subset** `C` of currently free cities (possibly empty only if no move exists) **in one action** iff:
+
+`pop(neigh(C) ∩ A) > pop(C) + pop(neigh(C) ∩ B)`.
+
+B’s turn (evening) is symmetric:
+
+`pop(neigh(C) ∩ B) > pop(C) + pop(neigh(C) ∩ A)`.
+
+Players alternate turns; if the current player has no valid conquest subset, they **pass**. The game ends when no one can move (or equivalently when all remaining free cities can never be taken).
+
+Both play optimally: A maximizes final `pop(A) - pop(B)`, B minimizes it (equivalently maximizes `pop(B) - pop(A)`).
+
+Output the final value `pop(A) - pop(B)` under optimal play.
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observations
+
+1. **State is only ownership + whose turn.**  
+   The game has perfect information and no randomness. A state can be represented by:
+   - bitmask `A` (cities owned by country A),
+   - bitmask `B` (cities owned by country B),
+   - `who` ∈ {0,1} indicating whose turn it is (0=A, 1=B).  
+   Note: `A` and `B` are disjoint.
+
+2. **Move is a subset of free cities, not a single city.**  
+   A player may conquer *any subset* `C` of free cities **at once** if the inequality holds for that entire subset. This is the crucial complexity: even if each city individually looks conquerable/unconquerable, subsets behave non-monotonically, so we truly must consider subsets `C ⊆ free`.
+
+3. **Terminal evaluation.**  
+   If the game ends (no free cities, or neither player can move), the payoff is:
+   \[
+   score = pop(A) - pop(B)
+   \]
+   This is exactly what A wants to maximize and B wants to minimize.
+
+4. **Minimax with memoization.**  
+   This is a finite deterministic two-player zero-sum game → solve by DP minimax:
+   - If it’s A’s turn: choose a valid `C` to maximize resulting score.
+   - If it’s B’s turn: choose a valid `C` to minimize resulting score.
+   If a player has no valid move but the opponent has, they pass (turn flips).
+   If neither has a move, end with current score.
+
+### Efficient representation and precomputation
+
+Because `n ≤ 13`, bitmasking over cities is natural (`0..(1<<n)-1`).
+
+We need to compute, for any subset `C`:
+
+- `pop(C)` quickly
+- `neigh(C)` quickly (neighbors of any city in `C`, excluding `C` itself)
+- `pop(neigh(C) ∩ A)` and `pop(neigh(C) ∩ B)` quickly
+
+Precomputations:
+
+1. **Population sum for any mask**  
+   `total_pop[mask] = sum(pop[i] for i in mask)` in `O(2^n)` using low-bit DP.
+
+2. **Neighbor mask for any subset**  
+   First encode adjacency of each city as a bitmask `adj_mask[i]`.  
+   Then for each subset `m`, compute:
+   - `nb = OR(adj_mask[i])` for i in m
+   - `neigh_mask[m] = nb & ~m` (exclude internal nodes of `m`)
+
+This allows:
+- `neigh(C) ∩ A` becomes `neigh_mask[C] & A`
+- its population is `total_pop[neigh_mask[C] & A]`
+
+### DP state indexing: ternary encoding
+
+We must memoize over all `(A,B)` disjoint pairs. If we only store by `(A,B)` separately, that’s 3^n possible ownership assignments per city: each city is in one of `{free, A, B}`.
+
+So we encode a combined index `idx` in base 3:
+- digit i = 0 if free
+- digit i = 1 if in A
+- digit i = 2 if in B
+
+Then total states = `3^n` (≤ 3^13 = 1,594,323). We keep two DP arrays:
+- `dp_a[idx]` = value when it’s A to move
+- `dp_b[idx]` = value when it’s B to move
+
+To update `idx` fast when we add a whole subset `C` to A or B, we precompute:
+- `pow3[i] = 3^i`
+- `pow3_subset[mask] = sum(pow3[i] for i in mask)`
+
+Then:
+- adding subset `C` to A increases `idx` by `pow3_subset[C]`
+- adding subset `C` to B increases `idx` by `2 * pow3_subset[C]`
+
+### Transition (enumerating moves)
+
+Let `free = full_mask ^ A ^ B`.
+
+For each submask `c` of `free` (iterate all `c ⊆ free`, `c != 0`):
+
+Compute:
+- `pa = pop(neigh(c) ∩ A)` = `total_pop[neigh_mask[c] & A]`
+- `pb = pop(neigh(c) ∩ B)` = `total_pop[neigh_mask[c] & B]`
+- `pc = pop(c)` = `total_pop[c]`
+
+Validity:
+- A can take `c` iff `pa > pc + pb`
+- B can take `c` iff `pb > pc + pa`
+
+Minimax:
+- If `who == A`: among all `a_valid` moves, take max of `solve(A|c, B, who=B)`
+- If `who == B`: among all `b_valid` moves, take min of `solve(A, B|c, who=A)`
+
+Passing rule:
+- If current player has **no valid** move but the opponent has **some** valid move from this state, then result is `solve(A,B,who^1)`.
+- If neither has any valid move, return terminal `pop(A)-pop(B)`.
+
+### Complexity
+
+- States: `3^n` (~1.6M max)
+- For each state, we enumerate all submasks of `free`; worst-case `2^n`.
+- Overall typical upper bound described as about `O(4^n)` in such subset-enumeration games and is feasible for `n ≤ 13` in optimized C++ with bit tricks and memoization.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair (not used in the final solution logic, but harmless).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair (not used).
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector of known size by reading each element.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x : a) in >> x;
+    return in;
+}
+
+// Print a vector (not used).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x : a) out << x << ' ';
+    return out;
+}
+
+int n, src_a, src_b;          // number of cities, starting cities for A and B (0-based later)
+vector<int> adj_mask;         // adj_mask[i] = bitmask of neighbors of city i
+vector<int64_t> popul;        // population of each city
+
+void read() {
+    cin >> n >> src_a >> src_b;
+    src_a--;                  // convert to 0-based indexing
+    src_b--;
+
+    // Read adjacency matrix as strings of '0'/'1'
+    vector<string> grid(n);
+    for (auto& row : grid) cin >> row;
+
+    // Build bitmask adjacency list
+    adj_mask.assign(n, 0);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (grid[i][j] == '1') {
+                adj_mask[i] |= (1 << j);  // set bit j if edge i-j exists
+            }
+        }
+    }
+
+    // Read populations
+    popul.assign(n, 0);
+    cin >> popul;
+}
+
+int full_mask;                 // (1<<n)-1
+vector<int64_t> total_pop;      // total_pop[mask] = sum of populations in mask
+vector<int> neigh_mask;         // neigh_mask[mask] = neighbors of mask, excluding mask itself
+vector<int> pow3_subset;        // pow3_subset[mask] = sum(3^i) for i in mask (for ternary index update)
+vector<int64_t> dp_a;           // dp for states where it's A's turn, indexed by ternary idx
+vector<int64_t> dp_b;           // dp for states where it's B's turn, indexed by ternary idx
+
+// Sentinels to mark "uncomputed" in dp arrays.
+// Using different values because dp_a is maximization and dp_b is minimization.
+const int64_t SENT_A = INT64_MIN;
+const int64_t SENT_B = INT64_MAX;
+
+/*
+  Solve the game from state:
+    - A: bitmask of cities owned by A
+    - B: bitmask of cities owned by B
+    - idx: ternary-encoded ownership state (0 free, 1 A, 2 B for each city)
+    - who: 0 if it's A's turn, 1 if it's B's turn
+  Returns optimal final score = pop(A) - pop(B).
+*/
+int64_t solve_state(int A, int B, int idx, int who) {
+    // Pick the correct memo table slot depending on player to move.
+    int64_t& slot = (who == 0 ? dp_a[idx] : dp_b[idx]);
+    int64_t sent = (who == 0 ? SENT_A : SENT_B);
+
+    // If already computed, return it.
+    if (slot != sent) return slot;
+
+    // free cities are those not in A nor in B
+    int free = full_mask ^ A ^ B;
+
+    // If game ends now, this is the score.
+    int64_t terminal = total_pop[A] - total_pop[B];
+
+    // If nothing is free, no more moves exist -> terminal.
+    if (free == 0) return slot = terminal;
+
+    // We'll track whether the current player has any legal move,
+    // and whether the opponent has any legal move (for pass rule).
+    bool found_self = false;
+    bool found_other = false;
+
+    // best holds the minimax best outcome for current player.
+    // For A (maximizer) start at -inf; for B (minimizer) start at +inf.
+    int64_t best = sent;
+
+    // Enumerate all non-empty submasks c of free:
+    // Standard submask iteration: for(c=free; c; c=(c-1)&free)
+    for (int c = free; c; c = (c - 1) & free) {
+
+        // pa = population of neighbors of c that are currently in A
+        int64_t pa = total_pop[neigh_mask[c] & A];
+        // pb = population of neighbors of c that are currently in B
+        int64_t pb = total_pop[neigh_mask[c] & B];
+        // pc = population of c itself
+        int64_t pc = total_pop[c];
+
+        // Check conquest inequality for A and for B on subset c
+        bool a_valid = pa > pc + pb;
+        bool b_valid = pb > pc + pa;
+
+        if (who == 0) {
+            // A's turn: try all a_valid moves and maximize result
+            if (a_valid) {
+                found_self = true;
+
+                // Update:
+                // A gains cities in c -> A|c
+                // idx increases by pow3_subset[c] because each city digit goes 0->1
+                int64_t v = solve_state(A | c, B, idx + pow3_subset[c], 1);
+
+                // maximize
+                if (v > best) best = v;
+            }
+            // Also track if opponent (B) would have a move from here
+            if (b_valid) found_other = true;
+
+        } else {
+            // B's turn: try all b_valid moves and minimize result
+            if (b_valid) {
+                found_self = true;
+
+                // B gains cities in c -> B|c
+                // idx increases by 2*pow3_subset[c] because each city digit goes 0->2
+                int64_t v = solve_state(A, B | c, idx + 2 * pow3_subset[c], 0);
+
+                // minimize
+                if (v < best) best = v;
+            }
+            // Track if opponent (A) has a move
+            if (a_valid) found_other = true;
+        }
+    }
+
+    // If current player has at least one move, take best.
+    if (found_self) return slot = best;
+
+    // If neither player has a move, game ends now.
+    if (!found_other) return slot = terminal;
+
+    // Otherwise current player must pass; opponent moves next.
+    return slot = solve_state(A, B, idx, who ^ 1);
+}
+
+void solve() {
+    /*
+      This function sets up precomputations and runs the memoized minimax.
+      See the comments in the original code: states are ternary-encoded,
+      transitions enumerate all submasks of free cities, and the result
+      is pop(A)-pop(B) under optimal play.
+    */
+
+    full_mask = (1 << n) - 1;
+    int total = 1 << n; // number of bitmasks
+
+    // Precompute total_pop[mask] in O(2^n)
+    total_pop.assign(total, 0);
+    for (int m = 1; m < total; m++) {
+        int lo = __builtin_ctz(m); // index of least significant set bit
+        total_pop[m] = total_pop[m ^ (1 << lo)] + popul[lo];
+    }
+
+    // Precompute neigh_mask[mask] for every subset mask.
+    // For each subset, OR adjacency of all included nodes, then remove itself.
+    neigh_mask.assign(total, 0);
+    for (int m = 0; m < total; m++) {
+        int t = m;
+        int nb = 0;
+        while (t) {
+            int i = __builtin_ctz(t); // take one element from subset
+            t &= t - 1;               // remove that bit
+            nb |= adj_mask[i];        // add neighbors of i
+        }
+        neigh_mask[m] = nb & ~m;      // exclude nodes inside m
+    }
+
+    // Precompute powers of 3 up to n for ternary encoding
+    vector<int> pow3(n + 1, 1);
+    for (int i = 1; i <= n; i++) pow3[i] = pow3[i - 1] * 3;
+
+    // Precompute pow3_subset[mask] = sum_{i in mask} 3^i
+    pow3_subset.assign(total, 0);
+    for (int m = 1; m < total; m++) {
+        int lo = __builtin_ctz(m);
+        pow3_subset[m] = pow3[lo] + pow3_subset[m ^ (1 << lo)];
+    }
+
+    // Allocate DP tables for all ternary states (3^n).
+    // Initialize with sentinels meaning "uncomputed".
+    dp_a.assign(pow3[n], SENT_A);
+    dp_b.assign(pow3[n], SENT_B);
+
+    // Initial ownership: A owns src_a, B owns src_b.
+    int A0 = 1 << src_a;
+    int B0 = 1 << src_b;
+
+    // Initial ternary index: digit(src_a)=1 and digit(src_b)=2
+    int idx0 = pow3[src_a] + 2 * pow3[src_b];
+
+    // Start with A's turn (morning).
+    cout << solve_state(A0, B0, idx0, 0) << "\n";
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // problem has a single test
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+sys.setrecursionlimit(10**7)
+
+def solve():
+    input = sys.stdin.readline
+
+    n, s, t = map(int, input().split())
+    s -= 1
+    t -= 1
+
+    grid = [input().strip() for _ in range(n)]
+    pop = list(map(int, input().split()))
+
+    # Build adjacency bitmasks: adj[i] has bit j if edge i-j exists
+    adj = [0] * n
+    for i in range(n):
+        row = grid[i]
+        m = 0
+        for j, ch in enumerate(row):
+            if ch == '1':
+                m |= 1 << j
+        adj[i] = m
+
+    full_mask = (1 << n) - 1
+    total_masks = 1 << n
+
+    # total_pop[mask] = sum of populations in 'mask'
+    total_pop = [0] * total_masks
+    for m in range(1, total_masks):
+        lo_bit = m & -m
+        i = (lo_bit.bit_length() - 1)
+        total_pop[m] = total_pop[m ^ lo_bit] + pop[i]
+
+    # neigh_mask[mask] = union of neighbors of nodes in mask, excluding mask itself
+    neigh_mask = [0] * total_masks
+    for m in range(total_masks):
+        nb = 0
+        x = m
+        while x:
+            lo_bit = x & -x
+            i = lo_bit.bit_length() - 1
+            x ^= lo_bit
+            nb |= adj[i]
+        neigh_mask[m] = nb & ~m
+
+    # pow3[i] = 3^i, and pow3_subset[mask] = sum(3^i) for i in mask
+    pow3 = [1] * (n + 1)
+    for i in range(1, n + 1):
+        pow3[i] = pow3[i - 1] * 3
+
+    pow3_subset = [0] * total_masks
+    for m in range(1, total_masks):
+        lo_bit = m & -m
+        i = lo_bit.bit_length() - 1
+        pow3_subset[m] = pow3_subset[m ^ lo_bit] + pow3[i]
+
+    # DP tables indexed by ternary-encoded state.
+    # dpA[idx] stores value when it's A to move; dpB[idx] for B to move.
+    SENT_A = -(1 << 60)
+    SENT_B = (1 << 60)
+    dpA = [SENT_A] * pow3[n]
+    dpB = [SENT_B] * pow3[n]
+
+    def rec(A_mask: int, B_mask: int, idx: int, who: int) -> int:
+        """
+        Returns optimal final score pop(A) - pop(B) from state (A_mask, B_mask, who).
+        idx is the ternary encoding for memoization.
+        who: 0 -> A to move (maximize), 1 -> B to move (minimize).
+        """
+        if who == 0:
+            if dpA[idx] != SENT_A:
+                return dpA[idx]
+        else:
+            if dpB[idx] != SENT_B:
+                return dpB[idx]
+
+        free = full_mask ^ A_mask ^ B_mask
+        terminal = total_pop[A_mask] - total_pop[B_mask]
+
+        # If no free cities remain, no moves can be made.
+        if free == 0:
+            if who == 0:
+                dpA[idx] = terminal
+            else:
+                dpB[idx] = terminal
+            return terminal
+
+        found_self = False   # current player has at least one legal move
+        found_other = False  # opponent has at least one legal move (used for pass logic)
+
+        best = SENT_A if who == 0 else SENT_B
+
+        # Enumerate all non-empty submasks of free
+        c = free
+        while c:
+            # Precompute populations needed for the inequalities
+            pa = total_pop[neigh_mask[c] & A_mask]
+            pb = total_pop[neigh_mask[c] & B_mask]
+            pc = total_pop[c]
+
+            a_valid = pa > pc + pb
+            b_valid = pb > pc + pa
+
+            if who == 0:
+                # A's turn: maximize over all a_valid subsets
+                if a_valid:
+                    found_self = True
+                    val = rec(A_mask | c, B_mask, idx + pow3_subset[c], 1)
+                    if val > best:
+                        best = val
+                if b_valid:
+                    found_other = True
+            else:
+                # B's turn: minimize over all b_valid subsets
+                if b_valid:
+                    found_self = True
+                    val = rec(A_mask, B_mask | c, idx + 2 * pow3_subset[c], 0)
+                    if val < best:
+                        best = val
+                if a_valid:
+                    found_other = True
+
+            c = (c - 1) & free
+
+        # If current player can move, commit best minimax value.
+        if found_self:
+            if who == 0:
+                dpA[idx] = best
+            else:
+                dpB[idx] = best
+            return best
+
+        # If neither can move, end game now.
+        if not found_other:
+            if who == 0:
+                dpA[idx] = terminal
+            else:
+                dpB[idx] = terminal
+            return terminal
+
+        # Otherwise current player must pass.
+        val = rec(A_mask, B_mask, idx, who ^ 1)
+        if who == 0:
+            dpA[idx] = val
+        else:
+            dpB[idx] = val
+        return val
+
+    # Initial state: A owns s, B owns t, and A moves first.
+    A0 = 1 << s
+    B0 = 1 << t
+    idx0 = pow3[s] + 2 * pow3[t]
+    ans = rec(A0, B0, idx0, 0)
+    print(ans)
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Model cities as bitmasks (`n ≤ 13`). State = `(A_mask, B_mask, who)`, free = complement.
+- A may take any non-empty `C ⊆ free` if `pop(neigh(C)∩A) > pop(C) + pop(neigh(C)∩B)`; B symmetric.
+- Use minimax with memoization:
+  - A’s turn: maximize over valid `C`
+  - B’s turn: minimize over valid `C`
+  - If current player has no move but opponent has, pass; if neither has, return `pop(A)-pop(B)`.
+- Precompute:
+  - `total_pop[mask]` in `O(2^n)`
+  - `neigh_mask[mask]` = union neighbors minus mask in `O(n·2^n)`
+- Memo index via ternary encoding (each city in {free,A,B}) → `3^n` states, keep two arrays for `who`.
+  - Precompute `pow3_subset[mask]=∑3^i` for O(1) index update when adding a subset.
+- Enumerate all submasks `C` of `free` per state; overall feasible for `n ≤ 13`.

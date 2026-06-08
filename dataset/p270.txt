@@ -1,0 +1,711 @@
+## 1. Abridged problem statement
+
+There are `N` thimbles, and initially the ball is under thimble `1`. The croupier will perform exactly `M` given swap operations, each swapping two positions `Ai, Bi`, but the order of these `M` swaps can be chosen arbitrarily.
+
+Determine all positions where the ball can end up after applying all swaps in some order.
+
+Constraints: `2 ≤ N ≤ 100`, `1 ≤ M ≤ 1000`.
+
+---
+
+## 2. Detailed editorial
+
+Model the swaps as an undirected multigraph:
+
+- Vertices are thimble positions `1..N`.
+- Each swap `(a, b)` is an undirected edge between `a` and `b`.
+- Multiple swaps between the same pair become parallel edges.
+
+When a swap edge is applied:
+
+- If the ball is currently at one endpoint, the ball moves across that edge.
+- Otherwise, the ball stays where it is.
+
+So, for a chosen ordering of swaps, the edges that actually move the ball form an edge-disjoint walk, i.e. a **trail**, starting at vertex `1`. The final position is the endpoint of this trail.
+
+The remaining edges are swaps that did not move the ball. Such an unused edge `{x, y}` can be inserted at some moment only if, at that moment, the ball is at a vertex different from both `x` and `y`.
+
+Let `S(T)` be the set of vertices visited by a trail `T`.
+
+An unused edge `{x, y}` can be ignored if and only if:
+
+```text
+S(T) \ {x, y} is non-empty
+```
+
+That is, the trail visits at least one vertex other than `x` and `y`.
+
+Therefore:
+
+- If a trail visits at least `3` distinct vertices, then every unused edge can be safely inserted somewhere, because an edge has only two endpoints.
+- The hard cases are trails visiting only `1` or `2` vertices.
+
+---
+
+### Case 1: Target `u` is unreachable from `1`
+
+If `u` is not connected to `1` in the graph, no trail can reach it.
+
+So `u` is impossible.
+
+---
+
+### Case 2: `u != 1` and shortest distance from `1` to `u` is at least `2`
+
+Then there is a path:
+
+```text
+1 -> ... -> u
+```
+
+with at least two edges, hence at least three distinct vertices.
+
+This path itself is a valid trail visiting at least `3` vertices, so `u` is reachable.
+
+---
+
+### Case 3: `u != 1` and `u` is adjacent to `1`
+
+Let `x` be the number of edges between `1` and `u`.
+
+Temporarily remove all direct edges `{1, u}`.
+
+#### Subcase 3.1: `1` can still reach `u`
+
+Then there is an alternative path from `1` to `u`. Since direct edges were removed, this path has length at least `2`, so it visits at least `3` vertices.
+
+Therefore `u` is reachable.
+
+#### Subcase 3.2: `1` cannot reach `u` after removing `{1, u}`
+
+Then any trail from `1` to `u` must cross between `1` and `u` using direct `{1, u}` edges.
+
+If we use all `x` direct edges:
+
+- If `x` is odd, we end at `u`.
+- If `x` is even, we end back at `1`.
+
+So if `x` is odd, `u` is reachable by oscillating between `1` and `u` using all direct edges.
+
+If `x` is even, a simple oscillation is not enough. We need the trail to visit a third vertex. This is possible if either `1` or `u` belongs to some cycle after removing direct `{1, u}` edges.
+
+The helper function `has_cycle_through(v)` checks whether there exists a cycle through vertex `v`. It does so by trying to remove one incident edge `{v, z}` and checking whether `v` can still reach `z`. If yes, then that removed edge plus the alternate path forms a cycle.
+
+---
+
+### Case 4: Target `u = 1`
+
+We need a closed trail starting and ending at `1`.
+
+There are three possibilities.
+
+#### Possibility 1: Empty trail
+
+If no edge is incident to vertex `1`, then all swaps avoid the ball, so it stays at `1`.
+
+#### Possibility 2: Two-vertex oscillation
+
+If there is a vertex `w` such that the multiplicity of edge `{1, w}` is even and at least `2`, then we can use all those edges to oscillate:
+
+```text
+1 -> w -> 1 -> w -> ... -> 1
+```
+
+This ends at `1`.
+
+Unused edges can be inserted safely because the trail visits both `1` and `w`, and any unused edge different from `{1, w}` misses at least one of those two vertices.
+
+#### Possibility 3: Closed trail visiting at least three vertices
+
+A closed trail visiting at least three vertices exists if vertex `1` lies in a bridge-free component of size at least `3`.
+
+Why bridges matter:
+
+- A bridge cannot be part of an edge-disjoint closed trail, because crossing it would require crossing it back, reusing the same edge.
+- Therefore closed trails live inside 2-edge-connected components.
+
+The helper function `in_large_2ec(1)`:
+
+1. Finds all bridges.
+2. Removes them conceptually.
+3. BFSes from `1` using only non-bridge edges.
+4. Checks whether at least `3` vertices are reachable.
+
+If yes, position `1` is possible.
+
+---
+
+### Complexity
+
+`N ≤ 100`, so adjacency matrices are fine.
+
+The implementation uses BFS several times over an `N × N` matrix.
+
+Overall complexity is comfortably within limits, roughly polynomial around `O(N^4)` in the heaviest helper, but with `N = 100` this is fine.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std;
+
+// Pretty-print a pair as "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read all elements of a vector from input.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print all elements of a vector separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of vertices/thimbles and number of swap operations.
+int n, m;
+
+// Adjacency matrix of the multigraph.
+// g[a][b] is the number of swap edges between a and b.
+vector<vector<int>> g;
+
+// Reads the graph.
+void read() {
+    cin >> n >> m;
+
+    // Vertices are 1-indexed, so allocate n + 1.
+    g.assign(n + 1, vector<int>(n + 1, 0));
+
+    // Read all swap operations.
+    for(int i = 0; i < m; i++) {
+        int a, b;
+        cin >> a >> b;
+
+        // Add an undirected multiedge.
+        g[a][b]++;
+        g[b][a]++;
+    }
+}
+
+// Checks whether dst is reachable from src in the current graph.
+bool reaches(int src, int dst) {
+    // visited array for BFS.
+    vector<bool> vis(n + 1, false);
+
+    // BFS queue.
+    queue<int> q;
+
+    // Start from src.
+    q.push(src);
+    vis[src] = true;
+
+    // Standard BFS.
+    while(!q.empty()) {
+        int v = q.front();
+        q.pop();
+
+        // Because graph is stored as matrix, scan all possible neighbors.
+        for(int w = 1; w <= n; w++) {
+            // There is at least one edge v-w and w has not been visited.
+            if(g[v][w] > 0 && !vis[w]) {
+                vis[w] = true;
+                q.push(w);
+            }
+        }
+    }
+
+    // Return whether dst was reached.
+    return vis[dst];
+}
+
+// Computes BFS distances from src in the current graph.
+// dist[v] = shortest path length from src to v, or -1 if unreachable.
+vector<int> bfs_dist(int src) {
+    vector<int> dist(n + 1, -1);
+    queue<int> q;
+
+    // Distance to source is 0.
+    q.push(src);
+    dist[src] = 0;
+
+    // Standard BFS.
+    while(!q.empty()) {
+        int v = q.front();
+        q.pop();
+
+        // Scan all possible neighbors.
+        for(int w = 1; w <= n; w++) {
+            // If connected and not yet reached, relax distance.
+            if(g[v][w] > 0 && dist[w] == -1) {
+                dist[w] = dist[v] + 1;
+                q.push(w);
+            }
+        }
+    }
+
+    return dist;
+}
+
+// Checks if there is a cycle passing through vertex v.
+// Parallel edges count as a cycle of length 2 in this multigraph sense.
+bool has_cycle_through(int v) {
+    // Try every neighbor z of v.
+    for(int z = 1; z <= n; z++) {
+        // Skip itself and non-neighbors.
+        if(z == v || g[v][z] == 0) {
+            continue;
+        }
+
+        // Temporarily remove one edge v-z.
+        g[v][z]--;
+        g[z][v]--;
+
+        // If v can still reach z, then the removed edge plus that path
+        // forms a cycle through v.
+        bool ok = reaches(v, z);
+
+        // Restore the removed edge.
+        g[v][z]++;
+        g[z][v]++;
+
+        // Found a cycle.
+        if(ok) {
+            return true;
+        }
+    }
+
+    // No incident edge lies on a cycle.
+    return false;
+}
+
+// Checks whether vertex v lies in a bridge-free component of size at least 3.
+// This is used to decide whether there is a closed trail from v visiting
+// at least three vertices.
+bool in_large_2ec(int v) {
+    // bridge[a][b] will be true if the single edge a-b is a bridge.
+    vector<vector<bool>> bridge(n + 1, vector<bool>(n + 1, false));
+
+    // Test every unordered pair a < b.
+    for(int a = 1; a <= n; a++) {
+        for(int b = a + 1; b <= n; b++) {
+            // Only a single edge can be a bridge.
+            // If there are 0 edges, no edge exists.
+            // If there are 2+ parallel edges, removing one cannot disconnect.
+            if(g[a][b] != 1) {
+                continue;
+            }
+
+            // Temporarily remove the only edge a-b.
+            g[a][b] = g[b][a] = 0;
+
+            // Check whether a and b remain connected.
+            bool reach = reaches(a, b);
+
+            // Restore the edge.
+            g[a][b] = g[b][a] = 1;
+
+            // If not connected, this edge is a bridge.
+            if(!reach) {
+                bridge[a][b] = bridge[b][a] = true;
+            }
+        }
+    }
+
+    // Now BFS from v while ignoring bridge edges.
+    vector<bool> vis(n + 1, false);
+    queue<int> q;
+
+    q.push(v);
+    vis[v] = true;
+
+    // Count vertices in v's bridge-free component.
+    int cnt = 1;
+
+    while(!q.empty()) {
+        int u = q.front();
+        q.pop();
+
+        // Try all neighbors.
+        for(int w = 1; w <= n; w++) {
+            // We may move through existing non-bridge edges only.
+            if(g[u][w] > 0 && !bridge[u][w] && !vis[w]) {
+                vis[w] = true;
+                cnt++;
+                q.push(w);
+            }
+        }
+    }
+
+    // Need at least three distinct vertices for the easy trail condition.
+    return cnt >= 3;
+}
+
+// Main solving logic.
+void solve() {
+    // Compute shortest distances from initial position 1.
+    vector<int> dist = bfs_dist(1);
+
+    // Answer positions.
+    vector<int> ans;
+
+    // Test every possible final position u.
+    for(int u = 1; u <= n; u++) {
+        // If u is not even connected to 1, impossible.
+        if(dist[u] == -1) {
+            continue;
+        }
+
+        // Special case: final position is the starting position 1.
+        if(u == 1) {
+            // Compute degree of vertex 1, counting multiplicity.
+            int deg = 0;
+            for(int w = 1; w <= n; w++) {
+                deg += g[1][w];
+            }
+
+            // If no swap touches position 1, the ball can stay there forever.
+            if(deg == 0) {
+                ans.push_back(u);
+                continue;
+            }
+
+            // Check if there is an even positive multiplicity edge {1, w}.
+            // Then we can oscillate along all those edges and return to 1.
+            bool even_multi = false;
+            for(int w = 1; w <= n; w++) {
+                if(g[1][w] >= 2 && g[1][w] % 2 == 0) {
+                    even_multi = true;
+                    break;
+                }
+            }
+
+            // Position 1 is possible if either:
+            // - there is a valid two-vertex even oscillation, or
+            // - there is a closed trail through 1 visiting at least 3 vertices.
+            if(even_multi || in_large_2ec(1)) {
+                ans.push_back(u);
+            }
+        }
+        // If u is at distance at least 2, a shortest path visits >= 3 vertices.
+        else if(dist[u] >= 2) {
+            ans.push_back(u);
+        }
+        // Remaining case: u is adjacent to 1.
+        else {
+            // Number of direct edges between 1 and u.
+            int x = g[1][u];
+
+            // Temporarily remove all direct edges {1, u}.
+            g[1][u] = g[u][1] = 0;
+
+            // If 1 can still reach u, there is an alternate path
+            // with at least 3 vertices.
+            bool ok = reaches(1, u);
+
+            // If no alternate path, using all x direct edges ends at u
+            // exactly when x is odd.
+            if(!ok && x % 2 == 1) {
+                ok = true;
+            }
+
+            // If x is even and no alternate path exists, we need to add
+            // a closed trail through 1 or through u to visit a third vertex.
+            if(!ok && (has_cycle_through(1) || has_cycle_through(u))) {
+                ok = true;
+            }
+
+            // Restore the direct edges.
+            g[1][u] = g[u][1] = x;
+
+            // If any condition worked, u is reachable.
+            if(ok) {
+                ans.push_back(u);
+            }
+        }
+    }
+
+    // Print all reachable positions.
+    cout << ans << '\n';
+}
+
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    int T = 1;
+
+    // Process the single test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+from collections import deque
+import sys
+
+
+def main():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # First two integers are N and M.
+    n, m = data[0], data[1]
+
+    # Adjacency matrix with multiplicities.
+    # g[a][b] = number of edges/swaps between a and b.
+    g = [[0] * (n + 1) for _ in range(n + 1)]
+
+    idx = 2
+
+    # Read M swap operations.
+    for _ in range(m):
+        a = data[idx]
+        b = data[idx + 1]
+        idx += 2
+
+        # Add undirected multiedge.
+        g[a][b] += 1
+        g[b][a] += 1
+
+    def reaches(src, dst):
+        """
+        Return True if dst is reachable from src in the current graph.
+        """
+        visited = [False] * (n + 1)
+        q = deque([src])
+        visited[src] = True
+
+        while q:
+            v = q.popleft()
+
+            # Scan all possible neighbors because we use adjacency matrix.
+            for w in range(1, n + 1):
+                if g[v][w] > 0 and not visited[w]:
+                    visited[w] = True
+                    q.append(w)
+
+        return visited[dst]
+
+    def bfs_dist(src):
+        """
+        Return shortest path distances from src.
+        dist[v] == -1 means unreachable.
+        """
+        dist = [-1] * (n + 1)
+        q = deque([src])
+        dist[src] = 0
+
+        while q:
+            v = q.popleft()
+
+            for w in range(1, n + 1):
+                if g[v][w] > 0 and dist[w] == -1:
+                    dist[w] = dist[v] + 1
+                    q.append(w)
+
+        return dist
+
+    def has_cycle_through(v):
+        """
+        Check whether there is a cycle passing through vertex v.
+
+        For every incident edge v-z, remove one copy.
+        If v can still reach z, then that path plus the removed edge
+        forms a cycle through v.
+        """
+        for z in range(1, n + 1):
+            # Skip self and non-neighbors.
+            if z == v or g[v][z] == 0:
+                continue
+
+            # Remove one copy of edge v-z.
+            g[v][z] -= 1
+            g[z][v] -= 1
+
+            # If v still reaches z, the removed edge lies on a cycle.
+            ok = reaches(v, z)
+
+            # Restore the edge.
+            g[v][z] += 1
+            g[z][v] += 1
+
+            if ok:
+                return True
+
+        return False
+
+    def in_large_2ec(v):
+        """
+        Check whether v belongs to a bridge-free component of size >= 3.
+
+        Such a component allows a closed trail through v visiting at least
+        three distinct vertices.
+        """
+        bridge = [[False] * (n + 1) for _ in range(n + 1)]
+
+        # Detect bridges naively.
+        for a in range(1, n + 1):
+            for b in range(a + 1, n + 1):
+                # Only single edges can be bridges.
+                # Parallel edges cannot be bridges.
+                if g[a][b] != 1:
+                    continue
+
+                # Temporarily remove edge a-b.
+                g[a][b] = 0
+                g[b][a] = 0
+
+                # If endpoints become disconnected, it is a bridge.
+                if not reaches(a, b):
+                    bridge[a][b] = True
+                    bridge[b][a] = True
+
+                # Restore edge.
+                g[a][b] = 1
+                g[b][a] = 1
+
+        # BFS using only non-bridge edges.
+        visited = [False] * (n + 1)
+        q = deque([v])
+        visited[v] = True
+        count = 1
+
+        while q:
+            u = q.popleft()
+
+            for w in range(1, n + 1):
+                if g[u][w] > 0 and not bridge[u][w] and not visited[w]:
+                    visited[w] = True
+                    count += 1
+                    q.append(w)
+
+        return count >= 3
+
+    # Distances from starting position 1.
+    dist = bfs_dist(1)
+
+    answer = []
+
+    # Test every possible final position.
+    for u in range(1, n + 1):
+        # Unreachable vertices are impossible.
+        if dist[u] == -1:
+            continue
+
+        # Special case: final position is 1.
+        if u == 1:
+            # Degree of vertex 1, counting multiplicities.
+            deg = sum(g[1][w] for w in range(1, n + 1))
+
+            # If no swap touches 1, the ball can remain at 1.
+            if deg == 0:
+                answer.append(u)
+                continue
+
+            # Check for even multiplicity edge {1, w}.
+            even_multi = False
+            for w in range(1, n + 1):
+                if g[1][w] >= 2 and g[1][w] % 2 == 0:
+                    even_multi = True
+                    break
+
+            # Either a two-vertex even oscillation works,
+            # or a larger closed trail through 1 works.
+            if even_multi or in_large_2ec(1):
+                answer.append(u)
+
+        # If u is at distance >= 2, a path to it visits at least 3 vertices.
+        elif dist[u] >= 2:
+            answer.append(u)
+
+        # Remaining case: u is directly adjacent to 1.
+        else:
+            # Multiplicity of edge {1, u}.
+            x = g[1][u]
+
+            # Remove all direct edges between 1 and u.
+            g[1][u] = 0
+            g[u][1] = 0
+
+            # Alternative path from 1 to u gives a 3-vertex trail.
+            ok = reaches(1, u)
+
+            # If no alternative path, using all direct edges ends at u
+            # exactly when their count is odd.
+            if not ok and x % 2 == 1:
+                ok = True
+
+            # If direct count is even, we need a cycle on either side
+            # to visit a third vertex.
+            if not ok and (has_cycle_through(1) or has_cycle_through(u)):
+                ok = True
+
+            # Restore direct edges.
+            g[1][u] = x
+            g[u][1] = x
+
+            if ok:
+                answer.append(u)
+
+    # Output positions in any order.
+    print(*answer)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+Represent swaps as edges of an undirected multigraph. The ball moves exactly along the edges incident to its current vertex; these moving edges form a trail from `1` to the final vertex.
+
+A trail `T` can be extended to an ordering of all swaps if every unused edge `{x,y}` can be performed while the ball is at some visited vertex not equal to `x` or `y`. If `T` visits at least `3` vertices, this is always true.
+
+Therefore:
+
+- If `u` is unreachable from `1`, impossible.
+- If `u != 1` and `dist(1,u) >= 2`, possible.
+- If `u` is adjacent to `1`:
+  - Remove all `{1,u}` edges.
+  - If `1` still reaches `u`, possible.
+  - Else if multiplicity of `{1,u}` is odd, possible.
+  - Else possible only if `1` or `u` lies on a cycle after removal.
+- If `u = 1`:
+  - Possible if `deg(1) = 0`.
+  - Or if some edge `{1,w}` has even multiplicity at least `2`.
+  - Or if `1` lies in a bridge-free component of size at least `3`.
+
+Use BFS for reachability/distances, test cycles by removing one incident edge, and find bridge-free components by checking bridges.

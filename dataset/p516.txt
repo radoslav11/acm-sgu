@@ -1,0 +1,1064 @@
+## 1. Abridged problem statement
+
+At every moment exactly one guardian is assigned to guard the king. A schedule is described by time points where the active guardian changes. Then several updates arrive over time; each update, when it becomes active, overwrites a time interval `[B, E)` of the schedule with one guardian.
+
+For a fixed observation interval `[T1, T2)`, determine the fraction of time during which the **current whole schedule** is valid.
+
+A schedule is valid if, considering only duties inside `[T1, T2)`, no guardian works more than `T` hours of **non-working time** in any calendar week. Working time is Monday–Friday, 09:00–18:00. A week starts Monday 00:00.
+
+Dates are in year 2009. Output the valid-time fraction.
+
+
+
+## 2. Detailed editorial
+
+### Key observations
+
+We need to track a changing schedule. At any wall-clock moment, there is a current version of the schedule. That version is valid if, after looking at all duty intervals inside `[T1, T2)`, every guardian has at most `T` non-working hours in each calendar week.
+
+Updates are given in non-decreasing activation time `A_i`, so we can sweep them chronologically.
+
+Between two consecutive update activation times, the schedule does not change. Therefore, if the current schedule is valid, the entire time segment between these updates contributes to the answer.
+
+So the problem becomes:
+
+1. Maintain the current piecewise-constant schedule under interval assignment updates.
+2. Quickly know whether the schedule is valid.
+3. Sweep update times and accumulate durations when the schedule is valid.
+
+---
+
+### Date representation
+
+All dates are in 2009. Convert every date-time into the number of minutes since:
+
+```text
+2009-01-01 00:00
+```
+
+For example:
+
+```cpp
+minute = day_of_year * 1440 + hour * 60 + minute
+```
+
+2009-01-01 was a Thursday. If Monday is weekday `0`, then Jan 1 has weekday `3`.
+
+---
+
+### Counting non-working minutes
+
+Working hours are:
+
+```text
+Monday-Friday, 09:00-18:00
+```
+
+Each working day has `9 * 60 = 540` working minutes.
+
+Define:
+
+```cpp
+working_prefix(t)
+```
+
+as the number of working minutes in `[0, t)`.
+
+Then for any interval `[l, r)`:
+
+```cpp
+nonworking(l, r) = (r - l) - (working_prefix(r) - working_prefix(l))
+```
+
+This allows us to compute non-working minutes in `O(1)`.
+
+---
+
+### Weekly constraints
+
+The rule is per guardian per calendar week.
+
+For every guardian `g` and week `w`, maintain:
+
+```cpp
+acc[g, w] = number of non-working duty minutes of guardian g in week w
+```
+
+The schedule is valid iff:
+
+```cpp
+acc[g, w] <= T * 60
+```
+
+for every pair `(g, w)`.
+
+Instead of checking all pairs after every update, maintain:
+
+```cpp
+bad_count = number of pairs (g, w) where acc[g, w] > T * 60
+```
+
+Then the schedule is valid exactly when:
+
+```cpp
+bad_count == 0
+```
+
+When an interval contribution is added or removed, update `bad_count` by comparing whether the value was above the threshold before and after the modification.
+
+---
+
+### Maintaining the schedule
+
+The current schedule is piecewise constant. Store it in a map:
+
+```cpp
+mp[start_time] = guardian_id
+```
+
+This means that the guardian assigned on interval:
+
+```cpp
+[start_time, next_start_time)
+```
+
+is `guardian_id`.
+
+For example:
+
+```text
+mp[09:00] = Vasya
+mp[14:00] = Vanya
+```
+
+means Vasya works until 14:00, then Vanya starts.
+
+This structure is often called an ordered disjoint interval tree.
+
+---
+
+### Applying an interval assignment update
+
+An update says:
+
+```text
+From B to E, assign guardian G.
+```
+
+To apply it:
+
+1. Split the map at `B`.
+2. Split the map at `E`.
+
+Now all intervals fully inside `[B, E)` are aligned to map boundaries.
+
+For every erased old interval `[l, r)`:
+
+```cpp
+subtract its contribution from acc
+```
+
+Then erase those intervals and insert:
+
+```cpp
+mp[B] = G
+```
+
+Finally add the contribution of `[B, E)` assigned to `G`.
+
+---
+
+### Adding/removing interval contribution
+
+When a schedule interval `[l, r)` assigned to guardian `g` is added or removed, only its intersection with `[T1, T2)` matters.
+
+So first clip it:
+
+```cpp
+cl = max(l, T1)
+cr = min(r, T2)
+```
+
+If `cl >= cr`, it contributes nothing.
+
+Because the limit is weekly, split this clipped interval by calendar weeks. For each week segment, compute its non-working minutes and update:
+
+```cpp
+acc[g, week] += delta * nonworking(segment)
+```
+
+where `delta` is `+1` for adding and `-1` for removing.
+
+There are at most about 53 weeks in 2009, so this splitting is effectively constant time.
+
+---
+
+### Sweeping update times
+
+Initialize the schedule from the initial entries and compute all initial contributions.
+
+Let:
+
+```cpp
+prev = T1
+valid = 0
+```
+
+For each update in order:
+
+1. The current schedule is active during `[prev, A_i)`.
+2. Intersect this interval with `[T1, T2)`.
+3. If `bad_count == 0`, add its length to `valid`.
+4. Apply the update.
+5. Set `prev = A_i`.
+
+After all updates, also process `[prev, T2)`.
+
+Finally output:
+
+```cpp
+valid / (T2 - T1)
+```
+
+---
+
+### Complexity
+
+Let `K` be the total number of schedule intervals created/erased. Each update creates at most a constant number of new boundaries and erases intervals inside the assigned range.
+
+The total complexity is approximately:
+
+```text
+O((N + M + K) log(N + M))
+```
+
+with a small constant factor for weekly splitting.
+
+Memory usage is:
+
+```text
+O(N + M)
+```
+
+
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std;
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    // Read every element of the vector.
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    // Print elements separated by spaces.
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of minutes in one week.
+const int WEEK_MIN = 7 * 24 * 60;
+
+// 2009-01-01 was Thursday.
+// If Monday is weekday 0, then Thursday is 3.
+// This offset helps map minutes since Jan 1 to calendar weeks starting Monday.
+const int WEEK_OFFSET = 3 * 24 * 60;
+
+// Artificial end of the represented time domain.
+// Year 2009 has only 525600 minutes, so 600000 is safely after all dates.
+const int DOMAIN_END = 600000;
+
+// Special value meaning no real guardian.
+// Contributions of negative guardian ids are ignored.
+const int NOBODY = -2;
+
+// Number of initial schedule entries, updates, and allowed hours.
+int n, m, t_hours;
+
+// Observation interval [t1, t2).
+int t1, t2;
+
+// Allowed non-working minutes per guardian per week.
+int64_t thr;
+
+// Initial schedule start times and guardian ids.
+vector<int> d_start, d_gid;
+
+// Update activation times, assigned interval starts/ends, and guardian ids.
+vector<int> up_a, up_b, up_e, up_gid;
+
+// Maps guardian names to compact integer ids.
+unordered_map<string, int> name_id;
+
+// Current schedule representation.
+// mp[x] = guardian assigned on interval [x, next_key).
+map<int, int> mp;
+
+// acc[(guardian, week)] = non-working minutes accumulated for that pair.
+// The key is encoded as guardian * 64 + week.
+// 64 is enough because there are fewer than 64 weeks in a year.
+unordered_map<int64_t, int64_t> acc;
+
+// Number of guardian/week pairs whose accumulated value exceeds thr.
+int bad_count = 0;
+
+// Return integer id for a guardian name, creating a new one if needed.
+int get_gid(const string& name) {
+    // Try to find already existing id.
+    auto it = name_id.find(name);
+
+    // If found, return it.
+    if(it != name_id.end()) {
+        return it->second;
+    }
+
+    // Otherwise assign the next available id.
+    int id = (int)name_id.size();
+
+    // Store mapping.
+    name_id[name] = id;
+
+    // Return new id.
+    return id;
+}
+
+// Parse a date and time into minutes since 2009-01-01 00:00.
+int parse_dt(const string& date, const string& time) {
+    // Cumulative days before each month in a non-leap year.
+    static const int cum[12] = {0,   31,  59,  90,  120, 151,
+                                181, 212, 243, 273, 304, 334};
+
+    // Extract month from YYYY-MM-DD.
+    int mon = stoi(date.substr(5, 2));
+
+    // Extract day from YYYY-MM-DD.
+    int day = stoi(date.substr(8, 2));
+
+    // Extract hour from hh:mm.
+    int hh = stoi(time.substr(0, 2));
+
+    // Extract minute from hh:mm.
+    int mm = stoi(time.substr(3, 2));
+
+    // Convert month/day to zero-based day of year.
+    int doy = cum[mon - 1] + (day - 1);
+
+    // Convert day/hour/minute to total minutes since year start.
+    return doy * 1440 + hh * 60 + mm;
+}
+
+// Read one date-time pair from input.
+int read_dt() {
+    // Date token, e.g. 2009-12-07.
+    string date;
+
+    // Time token, e.g. 09:00.
+    string time;
+
+    // Read both tokens.
+    cin >> date >> time;
+
+    // Convert to minute index.
+    return parse_dt(date, time);
+}
+
+// Count working days among the first d days starting from 2009-01-01.
+int64_t count_working_days(int64_t d) {
+    // Number of complete 7-day blocks.
+    int64_t full_weeks = d / 7;
+
+    // Remaining days after complete weeks.
+    int64_t rem = d % 7;
+
+    // Each complete week has 5 working days.
+    int64_t c = full_weeks * 5;
+
+    // Check each remaining day individually.
+    for(int j = 0; j < rem; j++) {
+        // Day 0 of 2009 is Thursday, weekday index 3.
+        // Weekdays 0..4 are Monday-Friday.
+        if((3 + j) % 7 < 5) {
+            c++;
+        }
+    }
+
+    // Return number of working days.
+    return c;
+}
+
+// Number of working minutes in [0, t).
+int64_t working_prefix(int64_t t) {
+    // Full days before time t.
+    int64_t days = t / 1440;
+
+    // Minutes elapsed in the current day.
+    int64_t rem = t % 1440;
+
+    // Full working days contribute 540 minutes each.
+    int64_t c = count_working_days(days) * 540;
+
+    // If current day is Monday-Friday, add working minutes inside this day.
+    if((days + 3) % 7 < 5) {
+        // Workday interval is [09:00, 18:00) = [540, 1080).
+        c += max(int64_t(0), min(rem, int64_t(1080)) - 540);
+    }
+
+    // Return total working minutes before t.
+    return c;
+}
+
+// Number of non-working minutes in [l, r).
+int64_t nonworking(int l, int r) {
+    // Total minutes minus working minutes.
+    return (int64_t)(r - l) - (working_prefix(r) - working_prefix(l));
+}
+
+// Add or remove contribution of interval [l, r) assigned to guardian g.
+// delta = +1 means add this interval.
+// delta = -1 means remove this interval.
+void add_interval(int g, int l, int r, int delta) {
+    // Ignore artificial/no-guardian intervals.
+    if(g < 0) {
+        return;
+    }
+
+    // Only duties inside [t1, t2) matter.
+    int cl = max(l, t1);
+    int cr = min(r, t2);
+
+    // Empty intersection contributes nothing.
+    if(cl >= cr) {
+        return;
+    }
+
+    // First calendar week touched by [cl, cr).
+    int w0 = (cl + WEEK_OFFSET) / WEEK_MIN;
+
+    // Last calendar week touched by [cl, cr).
+    int w1 = (cr - 1 + WEEK_OFFSET) / WEEK_MIN;
+
+    // Process week by week because the limit is weekly.
+    for(int w = w0; w <= w1; w++) {
+        // Start time of week w in our minute coordinate.
+        int64_t ws = (int64_t)w * WEEK_MIN - WEEK_OFFSET;
+
+        // Clip interval to this week.
+        int seg_l = max((int64_t)cl, ws);
+        int seg_r = min((int64_t)cr, ws + WEEK_MIN);
+
+        // Skip empty segment.
+        if(seg_l >= seg_r) {
+            continue;
+        }
+
+        // Encode pair (guardian, week) into one integer key.
+        int64_t key = (int64_t)g * 64 + w;
+
+        // Previous accumulated non-working minutes.
+        int64_t before = acc[key];
+
+        // New accumulated value after adding/removing this interval.
+        int64_t after = before + (int64_t)delta * nonworking(seg_l, seg_r);
+
+        // bad_count changes if this pair crosses the threshold.
+        bad_count += (after > thr) - (before > thr);
+
+        // Store updated value.
+        acc[key] = after;
+    }
+}
+
+// Ensure there is a boundary at position pos in the schedule map.
+// Returns iterator to mp[pos].
+map<int, int>::iterator split(int pos) {
+    // Find first key not less than pos.
+    auto it = mp.lower_bound(pos);
+
+    // If pos is already a boundary, return it.
+    if(it != mp.end() && it->first == pos) {
+        return it;
+    }
+
+    // Otherwise previous interval contains pos.
+    --it;
+
+    // Insert a new boundary with the same guardian as the containing interval.
+    mp[pos] = it->second;
+
+    // Return iterator to newly inserted boundary.
+    return mp.find(pos);
+}
+
+// Assign guardian g to entire interval [b, e).
+void assign(int b, int e, int g) {
+    // Make sure e is a boundary.
+    auto it_r = split(e);
+
+    // Make sure b is a boundary.
+    auto it_l = split(b);
+
+    // Remove contributions of old intervals inside [b, e).
+    for(auto it = it_l; it != it_r; ++it) {
+        // Current interval is [it->first, next(it)->first).
+        add_interval(it->second, it->first, next(it)->first, -1);
+    }
+
+    // Erase all old schedule intervals in [b, e).
+    mp.erase(it_l, it_r);
+
+    // Insert new assigned interval.
+    mp[b] = g;
+
+    // Add contribution of the new interval.
+    add_interval(g, b, e, +1);
+}
+
+// Read input.
+void read() {
+    // Read sizes and threshold in hours.
+    cin >> n >> m >> t_hours;
+
+    // Convert allowed hours to allowed minutes.
+    thr = (int64_t)t_hours * 60;
+
+    // Read observation interval.
+    t1 = read_dt();
+    t2 = read_dt();
+
+    // Resize initial schedule arrays.
+    d_start.resize(n);
+    d_gid.resize(n);
+
+    // Read initial schedule entries.
+    for(int i = 0; i < n; i++) {
+        // Start time of this guardian's duty.
+        d_start[i] = read_dt();
+
+        // Guardian name.
+        string name;
+        cin >> name;
+
+        // Convert name to id.
+        d_gid[i] = get_gid(name);
+    }
+
+    // Resize update arrays.
+    up_a.resize(m);
+    up_b.resize(m);
+    up_e.resize(m);
+    up_gid.resize(m);
+
+    // Read updates.
+    for(int i = 0; i < m; i++) {
+        // Time when update becomes active.
+        up_a[i] = read_dt();
+
+        // Beginning of overwritten duty interval.
+        up_b[i] = read_dt();
+
+        // End of overwritten duty interval.
+        up_e[i] = read_dt();
+
+        // Assigned guardian name.
+        string name;
+        cin >> name;
+
+        // Convert name to id.
+        up_gid[i] = get_gid(name);
+    }
+}
+
+// Main solving procedure.
+void solve() {
+    // Reset schedule map.
+    mp.clear();
+
+    // Reset accumulated guardian/week non-working minutes.
+    acc.clear();
+
+    // Reset number of invalid guardian/week pairs.
+    bad_count = 0;
+
+    // Before any known schedule entry, nobody is assigned.
+    mp[0] = NOBODY;
+
+    // Insert initial schedule change points.
+    for(int i = 0; i < n; i++) {
+        mp[d_start[i]] = d_gid[i];
+    }
+
+    // Add sentinel boundary after all possible dates.
+    mp[DOMAIN_END] = -1;
+
+    // Build initial accumulated contributions.
+    for(auto it = mp.begin(); next(it) != mp.end(); ++it) {
+        // Interval [it->first, next(it)->first) has guardian it->second.
+        add_interval(it->second, it->first, next(it)->first, +1);
+    }
+
+    // Total number of valid minutes inside [t1, t2).
+    int64_t valid = 0;
+
+    // Start of current schedule-version time segment.
+    int prev = t1;
+
+    // Process updates in activation order.
+    for(int i = 0; i < m; i++) {
+        // Current schedule was active during [prev, up_a[i]).
+        int seg_l = max(t1, prev);
+        int seg_r = min(t2, up_a[i]);
+
+        // If this time segment is non-empty and schedule is valid, count it.
+        if(seg_r > seg_l && bad_count == 0) {
+            valid += seg_r - seg_l;
+        }
+
+        // If update happens at or after t2, it cannot affect observed time.
+        if(up_a[i] >= t2) {
+            prev = t2;
+            break;
+        }
+
+        // Apply the schedule update.
+        assign(up_b[i], up_e[i], up_gid[i]);
+
+        // Next segment starts at this update activation time.
+        prev = up_a[i];
+    }
+
+    // Process time after the last considered update.
+    int seg_l = max(t1, prev);
+    int seg_r = t2;
+
+    // Add final valid segment if applicable.
+    if(seg_r > seg_l && bad_count == 0) {
+        valid += seg_r - seg_l;
+    }
+
+    // Output fraction of observed time during which schedule was valid.
+    cout << setprecision(17) << (double)valid / (double)(t2 - t1) << '\n';
+}
+
+// Program entry point.
+int main() {
+    // Speed up C++ input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    int T = 1;
+
+    // Process test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    // Successful termination.
+    return 0;
+}
+```
+
+
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+# Increase recursion limit because treap operations are recursive.
+sys.setrecursionlimit(1_000_000)
+
+# Constants.
+WEEK_MIN = 7 * 24 * 60
+WEEK_OFFSET = 3 * 24 * 60  # 2009-01-01 was Thursday, weekday index 3.
+DOMAIN_END = 600000
+NOBODY = -2
+
+# Cumulative days before each month in 2009, a non-leap year.
+CUM_DAYS = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+
+
+def parse_dt(date, time):
+    """Convert YYYY-MM-DD hh:mm to minutes since 2009-01-01 00:00."""
+    month = int(date[5:7])
+    day = int(date[8:10])
+    hour = int(time[0:2])
+    minute = int(time[3:5])
+
+    day_of_year = CUM_DAYS[month - 1] + (day - 1)
+    return day_of_year * 1440 + hour * 60 + minute
+
+
+def count_working_days(days):
+    """Count Monday-Friday days among first `days` days since 2009-01-01."""
+    full_weeks = days // 7
+    rem = days % 7
+
+    # Every full week has 5 working days.
+    ans = full_weeks * 5
+
+    # Jan 1, 2009 was Thursday, weekday index 3 if Monday is 0.
+    for j in range(rem):
+        if (3 + j) % 7 < 5:
+            ans += 1
+
+    return ans
+
+
+def working_prefix(t):
+    """Return number of working minutes in [0, t)."""
+    days = t // 1440
+    rem = t % 1440
+
+    # Full working days contribute 9 hours = 540 minutes.
+    ans = count_working_days(days) * 540
+
+    # Current weekday: Monday-Friday have indices 0..4.
+    if (days + 3) % 7 < 5:
+        # Working interval inside a day is [09:00, 18:00) = [540, 1080).
+        ans += max(0, min(rem, 1080) - 540)
+
+    return ans
+
+
+def nonworking(l, r):
+    """Return number of non-working minutes in [l, r)."""
+    return (r - l) - (working_prefix(r) - working_prefix(l))
+
+
+# ----------------------------------------------------------------------
+# Treap implementation for an ordered map start_time -> guardian_id.
+# It replaces std::map from the C++ solution.
+# ----------------------------------------------------------------------
+
+MASK = (1 << 64) - 1
+
+
+def priority_for_key(x):
+    """
+    Deterministically generate a pseudo-random priority from a key.
+    This keeps the treap balanced without using Python's random module.
+    """
+    x = (x + 0x9E3779B97F4A7C15) & MASK
+    x = ((x ^ (x >> 30)) * 0xBF58476D1CE4E5B9) & MASK
+    x = ((x ^ (x >> 27)) * 0x94D049BB133111EB) & MASK
+    return x ^ (x >> 31)
+
+
+class Node:
+    """Treap node storing one map entry."""
+    __slots__ = ("key", "val", "prio", "left", "right")
+
+    def __init__(self, key, val):
+        self.key = key
+        self.val = val
+        self.prio = priority_for_key(key)
+        self.left = None
+        self.right = None
+
+
+def merge(a, b):
+    """Merge two treaps where all keys in a are smaller than all keys in b."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+
+    # Larger priority becomes root.
+    if a.prio > b.prio:
+        a.right = merge(a.right, b)
+        return a
+    else:
+        b.left = merge(a, b.left)
+        return b
+
+
+def split(root, key):
+    """
+    Split treap into:
+    left:  keys < key
+    right: keys >= key
+    """
+    if root is None:
+        return None, None
+
+    if root.key < key:
+        a, b = split(root.right, key)
+        root.right = a
+        return root, b
+    else:
+        a, b = split(root.left, key)
+        root.left = b
+        return a, root
+
+
+def has_key(root, key):
+    """Check whether key exists in treap."""
+    while root is not None:
+        if key == root.key:
+            return True
+        if key < root.key:
+            root = root.left
+        else:
+            root = root.right
+    return False
+
+
+def predecessor_value(root, key):
+    """Return value belonging to the greatest map key strictly smaller than key."""
+    ans = None
+    while root is not None:
+        if root.key < key:
+            ans = root.val
+            root = root.right
+        else:
+            root = root.left
+    return ans
+
+
+def insert_node(root, node):
+    """Insert a new node. Assumes the key is not already present."""
+    left, right = split(root, node.key)
+    return merge(merge(left, node), right)
+
+
+def collect_inorder(root, out):
+    """Collect treap entries in increasing key order."""
+    if root is None:
+        return
+    collect_inorder(root.left, out)
+    out.append((root.key, root.val))
+    collect_inorder(root.right, out)
+
+
+# ----------------------------------------------------------------------
+# Main solver.
+# ----------------------------------------------------------------------
+
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+    t_hours = int(next(it))
+
+    threshold = t_hours * 60
+
+    t1 = parse_dt(next(it), next(it))
+    t2 = parse_dt(next(it), next(it))
+
+    name_id = {}
+
+    def get_gid(name):
+        """Map guardian name to compact integer id."""
+        if name not in name_id:
+            name_id[name] = len(name_id)
+        return name_id[name]
+
+    initial = []
+
+    for _ in range(n):
+        d = parse_dt(next(it), next(it))
+        name = next(it)
+        initial.append((d, get_gid(name)))
+
+    updates = []
+
+    for _ in range(m):
+        a = parse_dt(next(it), next(it))
+        b = parse_dt(next(it), next(it))
+        e = parse_dt(next(it), next(it))
+        name = next(it)
+        updates.append((a, b, e, get_gid(name)))
+
+    # acc[(guardian, week)] = non-working minutes.
+    acc = {}
+
+    # bad_count is stored in a list so nested functions can modify it.
+    bad_count = [0]
+
+    def add_interval(g, l, r, delta):
+        """
+        Add or remove schedule interval [l, r) assigned to guardian g.
+        delta = +1 adds contribution, delta = -1 removes contribution.
+        """
+        if g < 0:
+            return
+
+        # Only intersection with observation interval matters.
+        cl = max(l, t1)
+        cr = min(r, t2)
+
+        if cl >= cr:
+            return
+
+        # Calendar weeks touched by [cl, cr).
+        w0 = (cl + WEEK_OFFSET) // WEEK_MIN
+        w1 = (cr - 1 + WEEK_OFFSET) // WEEK_MIN
+
+        for w in range(w0, w1 + 1):
+            week_start = w * WEEK_MIN - WEEK_OFFSET
+
+            seg_l = max(cl, week_start)
+            seg_r = min(cr, week_start + WEEK_MIN)
+
+            if seg_l >= seg_r:
+                continue
+
+            key = (g, w)
+
+            before = acc.get(key, 0)
+            after = before + delta * nonworking(seg_l, seg_r)
+
+            # Track whether this pair crosses the allowed threshold.
+            bad_count[0] += int(after > threshold) - int(before > threshold)
+
+            if after:
+                acc[key] = after
+            else:
+                acc.pop(key, None)
+
+    # Build initial schedule treap.
+    # Use a dictionary first to mimic std::map overwriting duplicate keys.
+    entries = {0: NOBODY, DOMAIN_END: -1}
+
+    for d, g in initial:
+        entries[d] = g
+
+    root = None
+
+    for key in sorted(entries):
+        root = merge(root, Node(key, entries[key]))
+
+    def ensure_boundary(pos):
+        """
+        Ensure the schedule has a boundary at pos.
+        Equivalent to C++ split(pos) for the map-based interval structure.
+        """
+        nonlocal root
+
+        if has_key(root, pos):
+            return
+
+        val = predecessor_value(root, pos)
+        root = insert_node(root, Node(pos, val))
+
+    def assign(b, e, g):
+        """Assign guardian g to interval [b, e)."""
+        nonlocal root
+
+        # Align interval endpoints with map boundaries.
+        ensure_boundary(e)
+        ensure_boundary(b)
+
+        # Cut out all starts in [b, e).
+        left, mid_right = split(root, b)
+        mid, right = split(mid_right, e)
+
+        # Remove contributions of old intervals inside [b, e).
+        old_entries = []
+        collect_inorder(mid, old_entries)
+
+        for i, (start, guard) in enumerate(old_entries):
+            end = old_entries[i + 1][0] if i + 1 < len(old_entries) else e
+            add_interval(guard, start, end, -1)
+
+        # Discard old middle treap and insert the new interval start.
+        root = merge(merge(left, Node(b, g)), right)
+
+        # Add contribution of new assigned interval.
+        add_interval(g, b, e, +1)
+
+    # Add initial schedule contributions.
+    all_entries = []
+    collect_inorder(root, all_entries)
+
+    for i in range(len(all_entries) - 1):
+        start, guard = all_entries[i]
+        end = all_entries[i + 1][0]
+        add_interval(guard, start, end, +1)
+
+    valid = 0
+    prev = t1
+
+    # Sweep update activation times.
+    for a, b, e, g in updates:
+        seg_l = max(t1, prev)
+        seg_r = min(t2, a)
+
+        if seg_r > seg_l and bad_count[0] == 0:
+            valid += seg_r - seg_l
+
+        if a >= t2:
+            prev = t2
+            break
+
+        assign(b, e, g)
+        prev = a
+
+    # Final segment after last update.
+    seg_l = max(t1, prev)
+    seg_r = t2
+
+    if seg_r > seg_l and bad_count[0] == 0:
+        valid += seg_r - seg_l
+
+    print("{:.17f}".format(valid / (t2 - t1)))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+
+
+## 5. Compressed editorial
+
+Convert all date-times to minutes since `2009-01-01 00:00`.
+
+Maintain the current schedule as disjoint intervals in an ordered map:
+
+```text
+start_time -> guardian
+```
+
+For each guardian/week pair, maintain how many non-working minutes that guardian is assigned inside `[T1, T2)`. Also maintain `bad_count`, the number of guardian/week pairs exceeding `T * 60` minutes. The schedule is valid iff `bad_count == 0`.
+
+For an interval `[l, r)` assigned to guardian `g`, clip it to `[T1, T2)`, split it by calendar weeks, compute non-working minutes using a prefix function, and add/remove its contribution from the corresponding guardian/week totals.
+
+To process an update `[B, E) -> G`, split the interval map at `B` and `E`, remove contributions of the old intervals in `[B, E)`, erase them, insert the new interval, and add its contribution.
+
+Since update activation times are sorted, sweep them. Between two activation times the schedule is unchanged. If `bad_count == 0`, add that duration to the valid total. The answer is:
+
+```text
+valid_minutes / (T2 - T1)
+```
+
+This gives approximately `O((N + M) log(N + M))` behavior with small constant weekly splitting.

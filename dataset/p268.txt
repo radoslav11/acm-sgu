@@ -1,0 +1,761 @@
+## 1. Abridged Problem Statement
+
+Given `N` and two different permutations `S1`, `S2` of the first `N` uppercase letters, output a shortest string that:
+
+- contains both `S1` and `S2` as substrings;
+- is **hyper almost permutative**: every substring of length `N + 1` can become a permutation of the first `N` uppercase letters after deleting exactly one character.
+
+If multiple shortest answers exist, output any one.
+
+Constraints: `2 <= N <= 26`.
+
+---
+
+## 2. Detailed Editorial
+
+### Key observation: valid strings can be seen as paths between permutations
+
+A length-`N` substring that is a permutation of the first `N` letters will be called a **stable window**.
+
+Suppose the current suffix of the answer is a stable window
+
+```text
+W = w1 w2 ... wn
+```
+
+We want to append characters while keeping every length-`N+1` window almost permutative, until the suffix of length `N` again becomes a permutation.
+
+If we append `wp`, then the length-`N+1` window has one duplicate letter `wp`, so it is almost permutative. After that, the next forced appended letters are:
+
+```text
+w1, w2, ..., w(p-1)
+```
+
+After appending these `p` characters total, the new stable window becomes:
+
+```text
+w(p+1) ... wn wp w1 ... w(p-1)
+```
+
+So one transition is determined by a split point `p`, costs `p` appended characters, and transforms the current permutation window.
+
+Example:
+
+```text
+W = ABC, p = 2
+append B A
+new stable window = CBA
+```
+
+---
+
+### Virtual zero model
+
+Introduce a virtual symbol `0` before the current permutation:
+
+```text
+0 w1 w2 ... wn
+```
+
+Positions are considered on a cycle of length `N + 1`.
+
+The transition with split `p` is equivalent to moving/swapping the virtual `0` with the element at distance `p` clockwise. The cost of the move is exactly that clockwise distance.
+
+Therefore, the problem becomes:
+
+> Transform the cyclic arrangement corresponding to `S1` into one corresponding to `S2`, using swaps with `0`, minimizing the total clockwise distance.
+
+Because `S2` may appear with the virtual zero inserted at any place around it, we try all cyclic rotations of:
+
+```text
+0 + S2
+```
+
+Also, the final answer may start with `S1` and reach `S2`, or start with `S2` and reach `S1`, so both directions are tried.
+
+---
+
+### Permutation cycles
+
+For a fixed initial arrangement `a` and target arrangement `b`, define:
+
+```cpp
+perm[i] = target position of value currently at position i
+```
+
+This is a permutation of positions `0..N`.
+
+We decompose `perm` into cycles.
+
+---
+
+### Cycle containing zero
+
+Suppose the cycle containing `0` is:
+
+```text
+0 -> p1 -> p2 -> ... -> pt -> 0
+```
+
+To fix this cycle using swaps with zero, we walk through it in reverse order:
+
+```text
+0, pt, p(t-1), ..., p1
+```
+
+Each step costs the clockwise distance between consecutive positions.
+
+After this, zero ends at `perm[0]`.
+
+---
+
+### Cycles not containing zero
+
+Let `z = perm[0]` be where zero currently sits after fixing the zero-cycle.
+
+For a non-zero cycle:
+
+```text
+c0 -> c1 -> ... -> c(k-1) -> c0
+```
+
+zero must enter the cycle, traverse it in reverse order, then return to `z`.
+
+For some starting index `s`, the walk is:
+
+```text
+z -> cs -> c(s-1) -> ... -> c(s+1) -> z
+```
+
+The algorithm chooses `s` so that this walk has minimum possible cost. Geometrically, this can be achieved by choosing an edge of the cycle whose clockwise arc does not contain `z`.
+
+The implementation scans all edges and selects such a start.
+
+---
+
+### Reconstructing the answer
+
+After finding the cheapest sequence of moves:
+
+1. Output the starting permutation.
+2. For every move of distance `p`, append the `p` forced characters:
+
+```text
+a[p], a[1], ..., a[p-1]
+```
+
+3. Update the current stable window.
+
+The produced string is shortest because the chosen path has minimum total appended length.
+
+Complexity is tiny:
+
+```text
+O(N^2)
+```
+
+with `N <= 26`.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Avoid writing std:: before standard library names.
+
+// Output operator for pairs. Not actually needed by this solution,
+// but included in the original template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs. Also part of the author's template.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors. Reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors. Prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of letters.
+int n;
+
+// Input permutations.
+string s1, s2;
+
+// Arrays representing cyclic arrangements.
+// Position 0 stores the virtual symbol 0.
+// Positions 1..n store actual letters encoded as 1..n.
+array<int, 27> a{}, b{};
+
+// The sequence of move lengths chosen by compute_cost().
+vector<int> move_costs;
+
+// Reads input.
+void read() {
+    cin >> n >> s1 >> s2;
+}
+
+// Records one move from position `from` to position `to` on a cycle
+// of length n + 1, and returns its clockwise distance.
+int push_step(int from, int to) {
+    // Clockwise modular distance from `from` to `to`.
+    int d = (to - from + n + 1) % (n + 1);
+
+    // Save this move for later reconstruction.
+    move_costs.push_back(d);
+
+    // Return its cost.
+    return d;
+}
+
+// Computes the minimum cost to transform current cyclic arrangement `a`
+// into target cyclic arrangement `b`.
+int compute_cost() {
+    // Clear previously recorded moves.
+    move_costs.clear();
+
+    // Total cost of all moves.
+    int total = 0;
+
+    // pos_in_b[value] = position where this value must be in target b.
+    array<int, 27> pos_in_b{}, perm{};
+
+    // Build inverse map of b.
+    for(int i = 0; i <= n; i++) {
+        pos_in_b[b[i]] = i;
+    }
+
+    // perm[i] tells where the value currently at position i in a
+    // must go in b.
+    for(int i = 0; i <= n; i++) {
+        perm[i] = pos_in_b[a[i]];
+    }
+
+    // Marks visited positions while decomposing perm into cycles.
+    array<bool, 27> visited{};
+
+    // Process every cycle of the permutation perm.
+    for(int i = 0; i <= n; i++) {
+        // Already processed this position.
+        if(visited[i]) {
+            continue;
+        }
+
+        // Mark current position visited.
+        visited[i] = true;
+
+        // Fixed point: value is already in the right position.
+        if(perm[i] == i) {
+            continue;
+        }
+
+        // Collect the current cycle.
+        vector<int> cycle = {i};
+
+        // Follow perm until returning to i.
+        for(int x = perm[i]; x != i; x = perm[x]) {
+            cycle.push_back(x);
+            visited[x] = true;
+        }
+
+        // Length of this cycle.
+        int cnt = (int)cycle.size();
+
+        // Case 1: the cycle contains zero.
+        // Since cycles are discovered starting from smallest unvisited i,
+        // this happens exactly when i == 0.
+        if(i == 0) {
+            // We need to walk through the cycle in reverse order,
+            // keeping 0 as the first element.
+            reverse(cycle.begin() + 1, cycle.end());
+
+            // Add moves along that reversed walk.
+            for(int j = 1; j < cnt; j++) {
+                total += push_step(cycle[j - 1], cycle[j]);
+            }
+        } else {
+            // Case 2: a cycle not containing zero.
+            // zero currently sits at position perm[0].
+            int start = 0;
+
+            // Choose the best place to enter this cycle.
+            for(int j = 0; j < cnt; j++) {
+                int x = cycle[j];
+                int y = cycle[(j + 1) % cnt];
+
+                // We want zero not to lie on the open clockwise arc x -> y.
+                // If x < y, the arc is non-wrapping: (x, y).
+                bool zero_outside = x < y && (perm[0] < x || perm[0] > y);
+
+                // If x > y, the arc wraps around through 0.
+                // Then zero is outside the arc exactly when y < zero < x.
+                bool zero_inside_wrap = y < perm[0] && perm[0] < x;
+
+                // This edge is suitable.
+                if(zero_outside || zero_inside_wrap) {
+                    start = j;
+                }
+            }
+
+            // Rotate the cycle so that the chosen starting vertex is first.
+            rotate(cycle.begin(), cycle.begin() + start, cycle.end());
+
+            // Walk the rest of the cycle in reverse order.
+            reverse(cycle.begin() + 1, cycle.end());
+
+            // Enter the cycle from zero's current position.
+            total += push_step(perm[0], cycle[0]);
+
+            // Traverse the cycle.
+            for(int j = 1; j < cnt; j++) {
+                total += push_step(cycle[j - 1], cycle[j]);
+            }
+
+            // Return to zero's position.
+            total += push_step(cycle.back(), perm[0]);
+        }
+    }
+
+    // Return total movement cost.
+    return total;
+}
+
+// Applies one real move of length p to the current stable window a[1..n].
+// This corresponds to appending:
+// a[p], a[1], ..., a[p-1]
+void apply_move(int p) {
+    // Temporary array for the next stable window.
+    array<int, 27> next_a{};
+
+    // Elements after p shift to the front.
+    for(int i = p + 1; i <= n; i++) {
+        next_a[i - p] = a[i];
+    }
+
+    // Element at p comes next.
+    next_a[n - p + 1] = a[p];
+
+    // Elements before p follow.
+    for(int i = 1; i < p; i++) {
+        next_a[n - p + 1 + i] = a[i];
+    }
+
+    // Copy the new stable window back into a.
+    for(int i = 1; i <= n; i++) {
+        a[i] = next_a[i];
+    }
+}
+
+// Main solving function.
+void solve() {
+    // Initialize virtual cyclic arrangements.
+    // 0 is the virtual separator.
+    a[0] = b[0] = 0;
+
+    // Encode S1 into a[1..n].
+    // 'A' becomes 1, 'B' becomes 2, etc.
+    for(int i = 0; i < n; i++) {
+        a[i + 1] = s1[i] - 'A' + 1;
+        b[i + 1] = s2[i] - 'A' + 1;
+    }
+
+    // Best direction:
+    // 0 means output starts with S1 and reaches S2.
+    // 1 means output starts with S2 and reaches S1.
+    int best_dir = 0;
+
+    // Best cyclic rotation of the target arrangement.
+    int best_rot = 0;
+
+    // Best total appended length found so far.
+    int best_cost = INT_MAX;
+
+    // Try both directions.
+    for(int dir = 0; dir < 2; dir++) {
+        // Try every possible position of the virtual zero in the target.
+        for(int r = 0; r <= n; r++) {
+            // Compute cost for current a and current rotation of b.
+            int c = compute_cost();
+
+            // Save the best option.
+            if(c < best_cost) {
+                best_cost = c;
+                best_dir = dir;
+                best_rot = r;
+            }
+
+            // Rotate target cyclic arrangement by one position.
+            rotate(b.begin(), b.begin() + 1, b.begin() + n + 1);
+        }
+
+        // Swap start and target to try the opposite direction.
+        swap(a, b);
+    }
+
+    // After the loop, a and b are back to original orientation.
+    // If the best answer starts from S2, swap them.
+    if(best_dir == 1) {
+        swap(a, b);
+    }
+
+    // Apply the best rotation to the target.
+    rotate(b.begin(), b.begin() + best_rot, b.begin() + n + 1);
+
+    // Recompute cost to restore the corresponding move list.
+    compute_cost();
+
+    // The answer starts with the chosen starting permutation.
+    string result;
+
+    // Append current stable window to result.
+    for(int i = 1; i <= n; i++) {
+        result += (char)('A' + a[i] - 1);
+    }
+
+    // Replay every move and append the forced characters.
+    for(int p: move_costs) {
+        // Distance 0 means no actual character is appended.
+        if(p == 0) {
+            continue;
+        }
+
+        // First append a[p].
+        result += (char)('A' + a[p] - 1);
+
+        // Then append a[1], ..., a[p-1].
+        for(int i = 1; i < p; i++) {
+            result += (char)('A' + a[i] - 1);
+        }
+
+        // Update current stable window.
+        apply_move(p);
+    }
+
+    // Print any shortest valid answer.
+    cout << result << '\n';
+}
+
+// Program entry point.
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Only one test case.
+    int T = 1;
+
+    // The original template supports multiple tests, but this problem has one.
+    // cin >> T;
+
+    // Solve all test cases.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def clockwise_distance(frm, to, n):
+    """
+    Clockwise distance from position frm to position to
+    on a cycle of length n + 1.
+    """
+    return (to - frm + n + 1) % (n + 1)
+
+
+def compute_cost(a, b, n):
+    """
+    Compute the minimum cost to transform cyclic arrangement a into b.
+
+    a and b are lists of length n + 1.
+    Position 0 is the virtual zero.
+    Positions 1..n are letters encoded as integers 1..n.
+
+    Returns:
+        total_cost, moves
+    where moves is the sequence of clockwise distances.
+    """
+
+    # Recorded move lengths.
+    moves = []
+
+    # Total cost.
+    total = 0
+
+    # pos_in_b[value] = position of value in target arrangement b.
+    pos_in_b = [0] * (n + 1)
+
+    for i in range(n + 1):
+        pos_in_b[b[i]] = i
+
+    # perm[i] = where the value currently at position i must go.
+    perm = [0] * (n + 1)
+
+    for i in range(n + 1):
+        perm[i] = pos_in_b[a[i]]
+
+    # Helper to add one move.
+    def push_step(frm, to):
+        nonlocal total
+
+        # Compute clockwise distance.
+        d = clockwise_distance(frm, to, n)
+
+        # Store this move for reconstruction.
+        moves.append(d)
+
+        # Add to total cost.
+        total += d
+
+    # Used for cycle decomposition.
+    visited = [False] * (n + 1)
+
+    # Process all cycles of perm.
+    for i in range(n + 1):
+        if visited[i]:
+            continue
+
+        visited[i] = True
+
+        # Fixed point, no operation needed.
+        if perm[i] == i:
+            continue
+
+        # Build current cycle.
+        cycle = [i]
+        x = perm[i]
+
+        while x != i:
+            cycle.append(x)
+            visited[x] = True
+            x = perm[x]
+
+        cnt = len(cycle)
+
+        # Cycle containing zero.
+        if i == 0:
+            # Walk through the cycle in reverse order, keeping zero first.
+            cycle = [cycle[0]] + list(reversed(cycle[1:]))
+
+            # Add consecutive moves.
+            for j in range(1, cnt):
+                push_step(cycle[j - 1], cycle[j])
+
+        else:
+            # Non-zero cycle.
+            # After the zero-cycle is fixed, zero sits at perm[0].
+            z = perm[0]
+
+            # Choose a good entry point into this cycle.
+            start = 0
+
+            for j in range(cnt):
+                x = cycle[j]
+                y = cycle[(j + 1) % cnt]
+
+                # If x < y, arc x -> y does not wrap.
+                # We need z outside the open arc.
+                zero_outside = x < y and (z < x or z > y)
+
+                # If x > y, arc x -> y wraps around.
+                # Then z is outside iff y < z < x.
+                zero_inside_wrap = y < z < x
+
+                if zero_outside or zero_inside_wrap:
+                    start = j
+
+            # Rotate cycle so chosen start is first.
+            cycle = cycle[start:] + cycle[:start]
+
+            # Walk the rest in reverse order.
+            cycle = [cycle[0]] + list(reversed(cycle[1:]))
+
+            # Enter the cycle from z.
+            push_step(z, cycle[0])
+
+            # Traverse the cycle.
+            for j in range(1, cnt):
+                push_step(cycle[j - 1], cycle[j])
+
+            # Return to z.
+            push_step(cycle[-1], z)
+
+    return total, moves
+
+
+def apply_move(a, p, n):
+    """
+    Apply one real move of length p to current stable window a[1..n].
+
+    This corresponds to appending:
+        a[p], a[1], ..., a[p-1]
+
+    The new stable window becomes:
+        a[p+1], ..., a[n], a[p], a[1], ..., a[p-1]
+    """
+
+    # Temporary array.
+    nxt = [0] * (n + 1)
+
+    # Elements after p move to the front.
+    for i in range(p + 1, n + 1):
+        nxt[i - p] = a[i]
+
+    # Element p follows.
+    nxt[n - p + 1] = a[p]
+
+    # Elements before p follow.
+    for i in range(1, p):
+        nxt[n - p + 1 + i] = a[i]
+
+    # Keep virtual zero at position 0.
+    nxt[0] = 0
+
+    return nxt
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+
+    n = int(data[0])
+    s1 = data[1]
+    s2 = data[2]
+
+    # Encode S1 and S2.
+    # 0 is the virtual separator.
+    a = [0] + [ord(ch) - ord('A') + 1 for ch in s1]
+    b = [0] + [ord(ch) - ord('A') + 1 for ch in s2]
+
+    best_cost = 10**9
+    best_dir = 0
+    best_rot = 0
+
+    # Try both directions:
+    # dir = 0: start with S1, reach S2.
+    # dir = 1: start with S2, reach S1.
+    for direction in range(2):
+        # Try all cyclic rotations of target.
+        for r in range(n + 1):
+            cost, _ = compute_cost(a, b, n)
+
+            if cost < best_cost:
+                best_cost = cost
+                best_dir = direction
+                best_rot = r
+
+            # Rotate b left by one.
+            b = b[1:] + b[:1]
+
+        # Swap start and target.
+        a, b = b, a
+
+    # After two swaps, a and b are back to original.
+    # If best direction starts from S2, swap once more.
+    if best_dir == 1:
+        a, b = b, a
+
+    # Apply best target rotation.
+    b = b[best_rot:] + b[:best_rot]
+
+    # Recompute moves for the chosen optimal configuration.
+    _, moves = compute_cost(a, b, n)
+
+    # Build output starting from the chosen initial permutation.
+    result = []
+
+    for i in range(1, n + 1):
+        result.append(chr(ord('A') + a[i] - 1))
+
+    # Replay all moves.
+    for p in moves:
+        # No characters appended for zero-distance moves.
+        if p == 0:
+            continue
+
+        # Append a[p].
+        result.append(chr(ord('A') + a[p] - 1))
+
+        # Append a[1], ..., a[p-1].
+        for i in range(1, p):
+            result.append(chr(ord('A') + a[i] - 1))
+
+        # Update current stable window.
+        a = apply_move(a, p, n)
+
+    print(''.join(result))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Represent a current permutative substring `w1...wn` as a cycle:
+
+```text
+0 w1 w2 ... wn
+```
+
+where `0` is virtual. A valid extension from one permutation window to the next is determined by choosing a distance `p`: append
+
+```text
+wp w1 ... w(p-1)
+```
+
+and the new window becomes
+
+```text
+w(p+1) ... wn wp w1 ... w(p-1)
+```
+
+This is equivalent to moving/swapping `0` clockwise by distance `p`, with cost `p`.
+
+Thus, minimize the cost to transform the cyclic permutation for `S1` into one for `S2`. Since the virtual zero may be placed anywhere relative to `S2`, try all `N+1` rotations of `0 + S2`. Also try both directions: `S1 -> S2` and `S2 -> S1`.
+
+For a fixed start/target, define:
+
+```text
+perm[i] = target position of value currently at i
+```
+
+Decompose `perm` into cycles.
+
+- For the cycle containing zero, walk it in reverse order.
+- For every other cycle, let `z = perm[0]`; enter the cycle from `z`, traverse it in reverse order, and return to `z`. Choose the entry edge so that `z` is not on the open clockwise arc of that edge, giving minimum cost.
+
+Record the move distances, choose the globally best rotation/direction, then replay the moves to construct the answer.
+
+Complexity: `O(N^2)`, with `N <= 26`.

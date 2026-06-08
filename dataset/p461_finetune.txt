@@ -1,0 +1,327 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+461. Wiki Lists
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+In this task you need to write a small part of wiki-to-HTML translator. You have to deal only with enumerated and regular lists.
+
+Wiki dialect in this task defines lists as follows — the character "#" defines an enumerated list and "*" defines a regular list. These symbols are called list markers.
+
+Wiki-text should be processed line by line. A group of two or more consecutive lines should be treated as elements of the same list (enumerated, or regular) if these lines start with the same list marker symbol.
+
+A group of two or more consecutive list elements should be considered as a nested list if these elements start with the same list marker symbol. This rule should be applied recursively.
+
+HTML equivalent of a wiki-text is formed using the well-known HTML syntax. An enumerated list starts with "<ol>", then all list elements are written, and then the list ends with "</ol>". HTML equivalent of a regular list is similar to the one for enumerated list, but it starts with "<ul>" and ends with "</ul>". An element of any list is represented by "<li>", then the contents of the element are written followed by "</li>".
+
+The rules given above unambiguously define the way to make HTML from wiki-text. Please refer to the sample tests for clarifications.
+
+Input
+Input contains a wiki-text with no less than 1 and no more than 1000 lines. The total length of all input lines is not greater than 1000 characters. The depth of nested lists is not limited. Input contains only lowercase and uppercase Latin letters, digits, symbols "*" and "#", and line breaks. Each line contains at least one character different from "*" and "#", so there will be no empty lines in the output.
+
+Output
+Print HTML equivalent of the given wiki-text to the output. All tags should be placed on separate lines with no spaces.
+
+Example(s)
+sample input
+sample output
+FirstLine
+*ItemX
+*ItemY
+#Item1
+#Item2
+*ItemZ
+FirstLine
+<ul>
+<li>
+ItemX
+</li>
+<li>
+ItemY
+</li>
+</ul>
+<ol>
+<li>
+Item1
+</li>
+<li>
+Item2
+</li>
+</ol>
+*ItemZ
+
+sample input
+sample output
+*ab
+*x#x
+*#1
+*#2
+#3
+<ul>
+<li>
+ab
+</li>
+<li>
+x#x
+</li>
+<li>
+<ol>
+<li>
+1
+</li>
+<li>
+2
+</li>
+</ol>
+</li>
+</ul>
+#3
+
+sample input
+sample output
+***1
+**2
+<ul>
+<li>
+<ul>
+<li>
+*1
+</li>
+<li>
+2
+</li>
+</ul>
+</li>
+</ul>
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given 1…1000 lines of a simplified wiki text.
+
+- A line may start with `*` (unordered list marker) or `#` (ordered list marker), or with any other character (plain text).
+- **A list** is a maximal block of **≥ 2 consecutive lines** that start with the **same marker** (`*` or `#`).
+  - `*` list → `<ul> ... </ul>`
+  - `#` list → `<ol> ... </ol>`
+- Inside an HTML list, each element is wrapped as:
+  ```
+  <li>
+  CONTENT
+  </li>
+  ```
+- **Nested lists**: inside a list, if there is a block of **≥ 2 consecutive elements** whose content starts with the same marker, it becomes a nested list. This rule is applied **recursively**.
+- Output the resulting HTML with **each tag and each text line on its own line**, with **no extra spaces**.
+
+---
+
+## 2) Key observations
+
+1. The rule “two or more consecutive lines starting with the same marker become a list” is the core parsing rule.
+2. Nesting uses the *same* rule, but applied to the list items’ contents after removing one leading marker character.
+3. Therefore, the process is naturally **recursive**:
+   - Detect list blocks (size ≥ 2).
+   - Emit `<ul>`/`<ol>`.
+   - Recurse on stripped lines (remove one leading marker) to build inner structure.
+4. A single line starting with `*` or `#` is **not** a list by itself (needs at least 2), so it must be printed literally (or as a `<li>` item when already inside a list).
+5. We need a mode flag: “are we currently inside an HTML list?”  
+   - If yes, every produced item at this level must be wrapped in `<li> ... </li>`.
+   - If no (top level), lines are printed as-is unless they form a list block.
+
+---
+
+## 3) Full solution approach
+
+We read all input lines into an array `lines`. Then we run a recursive function:
+
+`process(items, wrap_in_li)`
+
+- `items`: list of strings to translate at the current nesting level.
+- `wrap_in_li`:
+  - `false` at top level (don’t wrap plain text in `<li>`).
+  - `true` when processing inside a `<ul>`/`<ol>` (each element becomes `<li>...</li>`).
+
+Algorithm inside `process`:
+
+1. Scan `items` from left to right using index `i`.
+2. If `items[i]` begins with `*` or `#`, try to extend a maximal block `[i, j)` of consecutive lines that start with the same marker.
+3. If the block length `j - i >= 2`, this block must become an HTML list:
+   - If `wrap_in_li` is true, first print `<li>`.
+   - Print `<ul>` (for `*`) or `<ol>` (for `#`).
+   - Create `stripped`: for each line in the block, remove its first character (`substr(1)` / slicing `[1:]`).
+   - Recurse: `process(stripped, true)` because inside HTML lists, elements are `<li>`-wrapped.
+   - Print `</ul>` or `</ol>`.
+   - If `wrap_in_li` is true, print `</li>`.
+   - Set `i = j` and continue.
+4. Otherwise (not a list block):
+   - If `wrap_in_li` is true: output `<li>`, then the line as-is, then `</li>`.
+   - Else: output the line as-is.
+   - Increment `i`.
+
+This exactly implements:
+- list formation from groups of ≥2 consecutive lines,
+- recursive nesting after stripping one marker,
+- and correct `<li>` wrapping at list levels.
+
+Complexity is small: total input size ≤ 1000 characters, recursion depth can be large but total work remains easily within limits.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  process(items, wrap_in_li):
+
+  items       : lines to process at this "nesting level"
+  wrap_in_li  : if true, every produced element here must be wrapped
+                in <li> ... </li>.
+               - false at top level (plain text stays plain)
+               - true inside <ul>/<ol>
+*/
+static void process(const vector<string>& items, bool wrap_in_li) {
+    int n = (int)items.size();
+    int i = 0;
+
+    while (i < n) {
+        char c = items[i][0];
+
+        // Try to detect a list block: consecutive lines starting with same marker.
+        if (c == '*' || c == '#') {
+            int j = i;
+            while (j < n && !items[j].empty() && items[j][0] == c) {
+                ++j;
+            }
+
+            // A block is a list only if its size is at least 2.
+            if (j - i >= 2) {
+                // If this entire list is itself an element of a parent list,
+                // it must be wrapped into <li> ... </li>.
+                if (wrap_in_li) cout << "<li>\n";
+
+                // Open <ul> for '*', <ol> for '#'
+                cout << (c == '*' ? "<ul>\n" : "<ol>\n");
+
+                // Strip one leading marker from each line for recursive processing.
+                vector<string> stripped;
+                stripped.reserve(j - i);
+                for (int k = i; k < j; ++k) {
+                    stripped.push_back(items[k].substr(1));
+                }
+
+                // Inside a list, each produced element must be <li>-wrapped.
+                process(stripped, true);
+
+                // Close the list tag.
+                cout << (c == '*' ? "</ul>\n" : "</ol>\n");
+
+                if (wrap_in_li) cout << "</li>\n";
+
+                i = j;          // consume the whole block
+                continue;       // continue scanning after the block
+            }
+        }
+
+        // Not a list block (either plain text line or single '*'/'#' line).
+        if (wrap_in_li) cout << "<li>\n";
+        cout << items[i] << "\n";
+        if (wrap_in_li) cout << "</li>\n";
+
+        ++i;
+    }
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Read all lines until EOF
+    vector<string> lines;
+    string line;
+    while (getline(cin, line)) {
+        lines.push_back(line);
+    }
+
+    // Top level: do not wrap lines in <li>
+    process(lines, false);
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+```python
+import sys
+
+def process(items, wrap_in_li):
+    """
+    items: list of strings at the current nesting level
+    wrap_in_li:
+      - False at top level (plain lines printed as-is)
+      - True inside <ul>/<ol> (every element must be wrapped by <li>)
+    """
+    n = len(items)
+    i = 0
+
+    while i < n:
+        c = items[i][0]
+
+        # Attempt to form a list block starting at i
+        if c in ('*', '#'):
+            j = i
+            while j < n and items[j] and items[j][0] == c:
+                j += 1
+
+            # Block forms a list only if it has at least 2 lines
+            if j - i >= 2:
+                # If we are inside a parent list, this list is a list item
+                if wrap_in_li:
+                    print("<li>")
+
+                # Open list tag
+                print("<ul>" if c == '*' else "<ol>")
+
+                # Strip exactly one marker character and recurse
+                stripped = [items[k][1:] for k in range(i, j)]
+                process(stripped, True)
+
+                # Close list tag
+                print("</ul>" if c == '*' else "</ol>")
+
+                if wrap_in_li:
+                    print("</li>")
+
+                i = j
+                continue
+
+        # Not a list block => output single line, optionally as <li>
+        if wrap_in_li:
+            print("<li>")
+        print(items[i])
+        if wrap_in_li:
+            print("</li>")
+
+        i += 1
+
+
+def main():
+    # Read all lines, removing only trailing '\n'
+    lines = [line.rstrip('\n') for line in sys.stdin]
+    process(lines, False)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+These implementations follow the statement rules exactly: detect maximal blocks of ≥2 same-marker lines, recursively process stripped contents to build nested lists, and ensure every tag/text is on its own output line.

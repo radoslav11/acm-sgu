@@ -1,0 +1,404 @@
+## 1) Abridged problem statement
+
+He will write a known sequence `s` of length `2n−1` (letters are only `Q` or `C`) onto a fence, one letter per turn, appending to the end.
+
+Qc moves after each letter He writes. On each Qc turn, Qc may either:
+- swap any two positions among the letters already written, or
+- do nothing (`0 0`).
+
+Qc’s requirement: **after each of Qc’s odd-numbered turns (1st, 3rd, 5th, …)**, the current written prefix must be a **palindrome**.
+
+Given `n` and `s`, output:
+- `"He"` if impossible, otherwise
+- `"Qc"` and then `2n−1` lines describing Qc’s actions each turn (`0 0` or `i j` swap, 1-indexed).
+
+Any valid sequence is accepted.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution)
+
+### Key observations
+
+Let the fence length after Qc’s odd turn `k` be odd: `1, 3, 5, ..., 2n−1`.
+Specifically, after Qc’s odd turn number `2i+1` (0-based stage `i`), the fence contains the prefix `s[0..2i]` of length `2i+1`.
+
+For a palindrome of **odd length** over a binary alphabet `{Q,C}`, a multiset of letters is palindrome-feasible iff **at most one letter has odd count**. With two letters, that means **exactly one odd count** (since length is odd). Therefore:
+- the **center character is forced**: it must be the letter whose count is odd.
+
+However, the *arrangement* of the remaining letters is not unique. The solution constructs a specific **canonical target palindrome** for every odd length, and ensures the real fence equals that target after each odd Qc turn.
+
+---
+
+### Canonical target palindrome construction
+
+Suppose at stage `i` we have counts:
+- `q_count` = number of `Q` in `s[0..2i]`
+- `c_count` = number of `C` in `s[0..2i]`
+
+1) **Center**:  
+`target[i] = 'Q' if q_count is odd else 'C'`.
+
+2) Remove one occurrence of the center letter from remaining counts:
+- if `q_count` odd: `rem_q = q_count - 1`, `rem_c = c_count`
+- else: `rem_q = q_count`, `rem_c = c_count - 1`
+
+Now `rem_q` and `rem_c` are both even, and must be placed symmetrically.
+
+3) Place as many alternating `QC` pairs from both ends inward as possible:
+- `alt_per_side = min(rem_q, rem_c)`
+- for `j = 0,2,4,...,alt_per_side-2`:
+  - `target[j] = target[2i-j] = 'Q'`
+  - `target[j+1] = target[2i-j-1] = 'C'`
+
+4) Fill the remaining inner symmetric slots with the majority letter (`Q` if `rem_q > rem_c` else `C`).
+
+This yields a deterministic “shape” like:
+
+```
+QCQC... [filler filler ...] [center] [filler ...] ...CQCQ
+```
+
+---
+
+### Maintaining the invariant with limited swaps
+
+Between two consecutive odd palindromic checkpoints:
+
+- At stage `i-1`, after Qc’s odd move, fence equals `target_old` of length `2(i-1)+1`.
+- Then He appends **two letters** (one before Qc’s even move, one before Qc’s next odd move), extending length by 2 to `2i+1`.
+- Qc gets **exactly two turns** between checkpoints: one even-numbered Qc turn and the next odd-numbered Qc turn.
+- Each Qc turn allows **at most one swap**.
+
+So we have a budget of **two swaps** to convert the current fence (which is `target_old` plus two appended letters) into `target_new`.
+
+The code relies on two facts:
+
+#### Fact A: The canonical target changes only slightly
+When adding two letters, counts change by ±2 in total. The canonical pattern changes in a very local way:
+- the alternating prefix might extend by one `QC` pair,
+- filler region shifts a bit,
+- center might flip if parity changes.
+
+As implemented/assumed here, the resulting `target_new` differs from the current fence in **at most 4 positions**. If it ever differs by more than 4, the solution declares impossible.
+
+#### Fact B: With two letters, ≤4 mismatches can always be fixed in ≤2 swaps
+Alphabet size is 2 and both strings have the same multiset (both are permutations of the same prefix letters). For such binary strings, if the Hamming distance is 4, the differing indices split into two swap pairs; with distance 2, one swap fixes it; with distance 0, no swaps.
+
+So algorithm per stage `i`:
+1) Build `target` for prefix length `2i+1`.
+2) Compute mismatch positions between `fence[0..2i]` and `target[0..2i]`.
+3) If mismatches > 4 → output `"He"`.
+4) Else:
+   - 0 mismatches: output `0 0` for both turns.
+   - 2 mismatches: output `0 0` then swap those two on odd turn.
+   - 4 mismatches: swap first pair on even turn, second pair on odd turn.
+5) Set `fence = target` for the prefix to maintain the invariant going forward.
+
+Complexity:
+- For each `i`, we may fill/build up to `O(i)` positions and scan mismatches up to `O(i)`.
+- Total `O(n^2)` time, `O(n)` memory, fits for `n ≤ 2005`.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector from input (assumes size already set)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;        // given n: total letters He writes is m = 2n-1
+string s;     // the full sequence He will write, length 2n-1
+
+// Read input
+void read() { cin >> n >> s; }
+
+void solve() {
+    // m is total length after the whole game
+    int m = 2 * n - 1;
+
+    // fence = our simulated current fence string (will be maintained equal
+    //         to the chosen target after each odd checkpoint)
+    // target = constructed canonical palindrome for current odd length
+    string fence(m, ' '), target(m, ' ');
+
+    // counts of letters in the current prefix s[0..2i]
+    int q_count = 0, c_count = 0;
+
+    // actions: one pair per Qc turn (total 2n-1 turns)
+    // (0,0) means pass; (a,b) means swap positions a and b (1-indexed)
+    vector<pair<int, int>> actions;
+
+    // helper to update counts
+    auto add_letter = [&](char c) { (c == 'Q' ? q_count : c_count)++; };
+
+    // Initially, He writes s[0] (length becomes 1).
+    // Qc's first turn is forced to be pass (as statement says).
+    fence[0] = s[0];
+    add_letter(s[0]);
+    actions.emplace_back(0, 0);
+
+    // Now process stages i = 1..n-1.
+    // Each stage adds two letters (positions 2i-1 and 2i),
+    // and we must restore palindrome at length 2i+1.
+    for(int i = 1; i < n; i++) {
+        // He writes two letters between palindromic checkpoints:
+        // one before Qc's even turn, one before Qc's odd turn.
+        char c_even = s[2 * i - 1], c_odd = s[2 * i];
+
+        // Append them into our fence simulation
+        fence[2 * i - 1] = c_even;
+        fence[2 * i] = c_odd;
+
+        // Update counts for the new prefix s[0..2i]
+        add_letter(c_even);
+        add_letter(c_odd);
+
+        // ----- Build canonical target palindrome of length (2*i+1) -----
+
+        // Center index is i.
+        // For odd length, exactly one letter count is odd; that letter must be center.
+        target[i] = (q_count & 1) ? 'Q' : 'C';
+
+        // Remaining counts after placing the center letter:
+        int rem_q = q_count, rem_c = c_count;
+        // Decrement the odd-count letter to make both rem_q and rem_c even
+        (rem_q & 1) ? --rem_q : --rem_c;
+
+        // Use as many Q/C pairs as possible in an alternating prefix/suffix.
+        // alt_per_side counts how many letters (total) can participate in the
+        // alternating region on EACH side combined (it is even).
+        int alt_per_side = min(rem_q, rem_c);
+
+        // Fill: QCQC... from the outside inward, symmetrically.
+        // We place two letters per step (j and j+1) mirrored on the other side.
+        for(int j = 0; j < alt_per_side; j += 2) {
+            target[j] = target[2 * i - j] = 'Q';
+            target[j + 1] = target[2 * i - j - 1] = 'C';
+        }
+
+        // Decide which letter is the "filler" in the middle region (the majority one)
+        char filler = (rem_q > rem_c) ? 'Q' : 'C';
+
+        // The remaining difference abs(rem_q - rem_c) is even.
+        // Each symmetric placement consumes 2 of that remaining count.
+        for(int j = alt_per_side, k = abs(rem_q - rem_c); k > 0; ++j, k -= 2) {
+            target[j] = target[2 * i - j] = filler;
+        }
+
+        // ----- Find mismatches between current fence and desired target -----
+
+        vector<int> mismatches;
+        for(int j = 0; j <= 2 * i; j++) {
+            if(fence[j] != target[j]) {
+                // Store 1-indexed positions, because output is 1-indexed
+                mismatches.push_back(j + 1);
+            }
+        }
+
+        // This solution assumes the canonical target differs by at most 4 positions.
+        // If not, declare impossible.
+        if((int)mismatches.size() > 4) {
+            cout << "He\n";
+            return;
+        }
+
+        // Plan two moves (even turn then odd turn) to fix to target.
+
+        if(mismatches.empty()) {
+            // Already equals target: pass twice
+            actions.emplace_back(0, 0);
+            actions.emplace_back(0, 0);
+        } else if(mismatches.size() == 2) {
+            // One swap suffices: do it on the odd turn, pass on the even turn.
+            actions.emplace_back(0, 0);
+            actions.emplace_back(mismatches[0], mismatches[1]);
+        } else {
+            // 4 mismatches: fix with two swaps.
+            // Swap first pair on even turn, second pair on odd turn.
+            actions.emplace_back(mismatches[0], mismatches[1]);
+            actions.emplace_back(mismatches[2], mismatches[3]);
+        }
+
+        // After the two turns, fence should equal target on [0..2i].
+        // We commit our simulated fence to the target for the next stage.
+        copy_n(target.begin(), 2 * i + 1, fence.begin());
+    }
+
+    // If we finished all stages, we found a full valid action sequence
+    cout << "Qc\n";
+    for(auto& [a, b]: actions) {
+        cout << a << ' ' << b << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;  // not used here
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    s = data[1]
+    m = 2 * n - 1
+
+    # fence: current simulated fence contents
+    # target: canonical palindrome for current odd length
+    fence = [' '] * m
+    target = [' '] * m
+
+    q_count = 0
+    c_count = 0
+
+    actions = []  # list of (a,b), 1-indexed swaps, or (0,0) pass
+
+    def add_letter(ch: str):
+        nonlocal q_count, c_count
+        if ch == 'Q':
+            q_count += 1
+        else:
+            c_count += 1
+
+    # Initial move: He writes s[0], Qc must pass
+    fence[0] = s[0]
+    add_letter(s[0])
+    actions.append((0, 0))
+
+    # Process stages i = 1..n-1 (each stage adds two letters)
+    for i in range(1, n):
+        c_even = s[2 * i - 1]
+        c_odd = s[2 * i]
+
+        fence[2 * i - 1] = c_even
+        fence[2 * i] = c_odd
+
+        add_letter(c_even)
+        add_letter(c_odd)
+
+        # --- build canonical target palindrome for length 2*i+1 ---
+
+        # center forced by which count is odd
+        target[i] = 'Q' if (q_count & 1) else 'C'
+
+        rem_q = q_count
+        rem_c = c_count
+
+        # remove one instance of the center letter
+        if rem_q & 1:
+            rem_q -= 1
+        else:
+            rem_c -= 1
+
+        # alternating region length (even number)
+        alt = min(rem_q, rem_c)
+
+        # fill alternating QC... from outside in, symmetrically
+        j = 0
+        while j < alt:
+            target[j] = 'Q'
+            target[2 * i - j] = 'Q'
+            target[j + 1] = 'C'
+            target[2 * i - j - 1] = 'C'
+            j += 2
+
+        # fill the remaining symmetric middle area with the majority letter
+        filler = 'Q' if rem_q > rem_c else 'C'
+        diff = abs(rem_q - rem_c)  # even
+
+        # each step places 2 filler letters (one on each side)
+        j = alt
+        while diff > 0:
+            target[j] = filler
+            target[2 * i - j] = filler
+            j += 1
+            diff -= 2
+
+        # --- find mismatches in prefix [0..2*i] ---
+        mismatches = []
+        for pos in range(0, 2 * i + 1):
+            if fence[pos] != target[pos]:
+                mismatches.append(pos + 1)  # 1-indexed for output
+
+        if len(mismatches) > 4:
+            sys.stdout.write("He\n")
+            return
+
+        # schedule two actions (even then odd turn)
+        if len(mismatches) == 0:
+            actions.append((0, 0))
+            actions.append((0, 0))
+        elif len(mismatches) == 2:
+            actions.append((0, 0))
+            actions.append((mismatches[0], mismatches[1]))
+        else:  # len == 4
+            actions.append((mismatches[0], mismatches[1]))
+            actions.append((mismatches[2], mismatches[3]))
+
+        # commit: after these two turns, fence becomes target on this prefix
+        for pos in range(0, 2 * i + 1):
+            fence[pos] = target[pos]
+
+    # Output actions
+    out = ["Qc"]
+    out.extend(f"{a} {b}" for (a, b) in actions)
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+Maintain that after each odd Qc turn the fence equals a chosen canonical palindrome built from the current prefix multiset. For each odd length `2i+1`, the center is forced by the odd-count letter. Build a deterministic target: put as many `QC` pairs as possible from both ends inward, then fill remaining symmetric slots with the majority letter, plus the forced center.
+
+Between consecutive odd checkpoints, He appends 2 letters and Qc has 2 swaps total. The canonical target changes only locally, so the current fence and the new target differ in ≤4 positions; if ever >4, answer `"He"`. With a binary alphabet and equal multisets, Hamming distance 0/2/4 can be fixed with 0/1/2 swaps respectively: output passes or swap mismatch indices in pairs across the two turns. This yields an `O(n^2)` constructive solution.

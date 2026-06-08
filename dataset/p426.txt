@@ -1,0 +1,949 @@
+## 1. Abridged problem statement
+
+Given an array `a[1..n]`, where `0 ≤ a[i] < m`, define for every shift value `t = 0, 1, ..., m-1` a new array
+
+\[
+b_t[i] = (a[i] + t) \bmod m.
+\]
+
+For each `t`, consider all cyclic rotations of `b_t` and choose the lexicographically smallest one. Output the `k`-th element of that smallest cyclic rotation, for every `t = 0..m-1`.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+For a fixed `t`, every value of the array is transformed as:
+
+\[
+a_i \mapsto (a_i + t) \bmod m
+\]
+
+As `t` increases, all values increase together modulo `m`. The relative order of values changes only when some value wraps from `m - 1` to `0`.
+
+For an original value `v`, this wrap happens when:
+
+\[
+(v + t) \bmod m = 0
+\]
+
+so
+
+\[
+t = (m - v) \bmod m.
+\]
+
+These special times are called **wrap points**.
+
+Between two consecutive wrap points, no value wraps. Therefore, the relative ordering of all values present in the array stays unchanged. That means the lexicographically smallest cyclic shift also stays the same throughout such an interval.
+
+---
+
+### Phases
+
+Let the sorted wrap points be:
+
+```text
+w[0] < w[1] < ... < w[cnt - 1]
+```
+
+They split the circular interval `[0, m)` into phases:
+
+```text
+[w[0], w[1]), [w[1], w[2]), ..., [w[cnt-1], w[0] + m)
+```
+
+Inside one phase starting at `L`, the smallest transformed value comes from the original value
+
+\[
+v = (m - L) \bmod m.
+\]
+
+Indeed, at time `L`, all positions with `a[i] = v` become `0`, which is the smallest possible value.
+
+Therefore, in that phase, the lexicographically smallest rotation must start at some position `i` such that:
+
+```cpp
+a[i] == v
+```
+
+So for each distinct value `v` appearing in `a`, we need to find the best cyclic rotation starting from one of the positions where `a[i] = v`.
+
+---
+
+### Comparing two cyclic rotations efficiently
+
+Suppose we compare two cyclic rotations starting at positions `p` and `q`, both having `a[p] = a[q] = v`.
+
+At the phase where value `v` is mapped to `0`, comparison is done under the transformed alphabet:
+
+\[
+x \mapsto (x - v + m) \bmod m
+\]
+
+because value `v` becomes `0`, value `v+1` becomes `1`, and so on.
+
+To compare rotations starting at `p` and `q`:
+
+1. Find their longest common prefix length `l`.
+2. If `l >= n`, the rotations are identical.
+3. Otherwise compare:
+
+\[
+(a[p+l] - v + m) \bmod m
+\]
+
+and
+
+\[
+(a[q+l] - v + m) \bmod m
+\]
+
+The smaller transformed value determines the lexicographically smaller rotation.
+
+---
+
+### How to get longest common prefixes
+
+Cyclic rotations of length `n` can be represented as substrings of length `n` in the doubled array:
+
+```text
+a + a
+```
+
+For example, the cyclic rotation starting at `p` is:
+
+```text
+a[p], a[p+1], ..., a[p+n-1]
+```
+
+inside the doubled array.
+
+We build a suffix array on `a + a`.
+
+Using the suffix array and its LCP array, the LCP of suffixes starting at `p` and `q` can be answered by RMQ:
+
+```cpp
+LCP(p, q) = min(lcp[rank[p] + 1 ... rank[q]])
+```
+
+where `rank[p] < rank[q]`.
+
+We cap the answer by `n`, because cyclic rotations only have length `n`.
+
+---
+
+### Finding the best start for each value
+
+For every value `v`, collect all positions where `a[i] = v`.
+
+Then scan through this group and keep the best start:
+
+```cpp
+best = first position with value v
+
+for every other position c with value v:
+    compare rotation c with rotation best
+    if c is smaller:
+        best = c
+```
+
+After finding `best`, the `k`-th element of that rotation before applying shift `t` is:
+
+```cpp
+base[v] = a[(best + k - 1) % n]
+```
+
+For any `t` in the phase belonging to `v`, the required answer is:
+
+```cpp
+(base[v] + t) % m
+```
+
+---
+
+### Complexity
+
+Let `N = 2n`.
+
+The provided suffix array implementation uses doubling with `std::sort`, so its complexity is approximately:
+
+\[
+O(N \log^2 N)
+\]
+
+The remaining work is:
+
+\[
+O(n + m)
+\]
+
+The RMQ sparse table uses:
+
+\[
+O(N \log N)
+\]
+
+memory.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+// #include <coding_library/data_structures/sparse_table.hpp>
+// #include <coding_library/strings/suffix_array.hpp>
+
+using namespace std; // Avoid writing std:: before standard library names.
+
+/*
+    Output operator for pairs.
+    Prints pair.first and pair.second separated by a space.
+*/
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+/*
+    Input operator for pairs.
+    Reads pair.first and pair.second.
+*/
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+/*
+    Input operator for vectors.
+    Reads every element of the vector.
+*/
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+/*
+    Output operator for vectors.
+    Prints all elements separated by spaces.
+*/
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+/*
+    Generic sparse table.
+
+    T is the stored type.
+    merge is an idempotent associative operation, such as min or max.
+
+    Here it is used for range minimum query on the LCP array.
+*/
+template<class T, T (*merge)(T, T)>
+class SparseTable {
+  private:
+    int n; // Size of the original array.
+
+    // dp[j][i] stores the merge over interval [i, i + 2^j - 1].
+    vector<vector<T>> dp;
+
+    // prec_lg2[x] stores floor(log2(x)).
+    vector<int> prec_lg2;
+
+  public:
+    /*
+        Default constructor.
+        Creates an empty sparse table.
+    */
+    SparseTable() {
+        n = 0;
+        dp.clear();
+        prec_lg2.clear();
+    }
+
+    /*
+        Builds the sparse table from array a.
+    */
+    void init(const vector<T>& a) {
+        n = a.size(); // Store array size.
+
+        prec_lg2.resize(n + 1); // Need logs from 0 to n.
+
+        // Precompute floor(log2(i)).
+        for(int i = 2; i <= n; i++) {
+            prec_lg2[i] = prec_lg2[i >> 1] + 1;
+        }
+
+        // Number of levels is floor(log2(n)) + 1.
+        dp.assign(prec_lg2[n] + 1, vector<T>(n));
+
+        // Level 0 stores intervals of length 1.
+        dp[0] = a;
+
+        // Build larger intervals from two halves.
+        for(int j = 1; (1 << j) <= n; j++) {
+            for(int i = 0; i + (1 << j) <= n; i++) {
+                dp[j][i] = merge(
+                    dp[j - 1][i],
+                    dp[j - 1][i + (1 << (j - 1))]
+                );
+            }
+        }
+    }
+
+    /*
+        Query merge over inclusive range [l, r].
+        Works in O(1) for idempotent operations like min.
+    */
+    T query(int l, int r) {
+        int k = prec_lg2[r - l + 1]; // Largest power of two fitting range.
+
+        return merge(
+            dp[k][l],
+            dp[k][r - (1 << k) + 1]
+        );
+    }
+};
+
+/*
+    Suffix array implementation.
+
+    It works not only on strings, but also on vector<int>,
+    which is exactly what we need for the doubled array a + a.
+*/
+template<class T = string>
+class SuffixArray {
+  private:
+    /*
+        Determine the element type of T.
+        For string it is char.
+        For vector<int> it is int.
+    */
+    using G = conditional_t<
+        is_same_v<T, const char*> || is_same_v<T, char*> || is_array_v<T>, char,
+        typename T::value_type>;
+
+    /*
+        Builds suffix array using the doubling algorithm.
+    */
+    void build_sa(const T& s) {
+        sa.resize(n);       // sa[i] = starting index of i-th suffix.
+        rnk.resize(n);      // rnk[i] = rank of suffix starting at i.
+        vector<int> tmp(n); // Temporary ranks.
+
+        // Initially sort by first character/value.
+        for(int i = 0; i < n; i++) {
+            sa[i] = i;
+            rnk[i] = (int)s[i];
+        }
+
+        // k is the currently compared prefix length.
+        for(int k = 1; k < n; k <<= 1) {
+            /*
+                Compare suffixes x and y by:
+                1. rank of first k elements
+                2. rank of next k elements
+            */
+            auto cmp = [&](int x, int y) {
+                if(rnk[x] != rnk[y]) {
+                    return rnk[x] < rnk[y];
+                }
+
+                int rx = x + k < n ? rnk[x + k] : -1;
+                int ry = y + k < n ? rnk[y + k] : -1;
+
+                return rx < ry;
+            };
+
+            // Sort suffixes according to current doubled length.
+            sort(sa.begin(), sa.end(), cmp);
+
+            // Assign new ranks.
+            tmp[sa[0]] = 0;
+
+            for(int i = 1; i < n; i++) {
+                tmp[sa[i]] =
+                    tmp[sa[i - 1]] +
+                    (cmp(sa[i - 1], sa[i]) ? 1 : 0);
+            }
+
+            // Replace old ranks with new ranks.
+            rnk = tmp;
+
+            // If all suffixes have distinct ranks, stop early.
+            if(rnk[sa[n - 1]] == n - 1) {
+                break;
+            }
+        }
+    }
+
+    /*
+        Builds LCP array using Kasai's algorithm.
+
+        lcp[i] = longest common prefix of suffixes:
+                 sa[i] and sa[i - 1]
+    */
+    void build_lcp(const T& s) {
+        lcp.assign(n, 0); // Initialize all LCP values to 0.
+
+        int h = 0; // Current LCP length.
+
+        // Iterate over suffix starting positions.
+        for(int i = 0; i < n; i++) {
+            // If suffix i is not the first in suffix-array order.
+            if(rnk[i] > 0) {
+                int j = sa[rnk[i] - 1]; // Previous suffix in suffix-array order.
+
+                // Extend LCP while values match.
+                while(i + h < n && j + h < n && s[i + h] == s[j + h]) {
+                    h++;
+                }
+
+                // Store LCP with previous suffix.
+                lcp[rnk[i]] = h;
+
+                // Next suffix loses at most one matching character.
+                if(h > 0) {
+                    h--;
+                }
+            } else {
+                // First suffix has no previous suffix.
+                h = 0;
+            }
+        }
+    }
+
+  public:
+    int n;              // Length of processed sequence.
+    vector<int> sa;     // Suffix array.
+    vector<int> rnk;    // Rank array.
+    vector<int> lcp;    // LCP array.
+
+    // Empty constructor.
+    SuffixArray() : n(0) {}
+
+    // Constructor that immediately builds suffix array.
+    SuffixArray(const T& s) { init(s); }
+
+    // Clears all internal data.
+    void clear() {
+        n = 0;
+        sa.clear();
+        rnk.clear();
+        lcp.clear();
+    }
+
+    // Initializes suffix array and LCP for sequence s.
+    void init(const T& s) {
+        clear();
+
+        n = (int)size(s); // Store length.
+
+        // Empty sequence case.
+        if(n == 0) {
+            return;
+        }
+
+        build_sa(s);  // Build suffix array.
+        build_lcp(s); // Build LCP array.
+    }
+};
+
+// Merge function for sparse table: range minimum query.
+int min_custom(int a, int b) {
+    return min(a, b);
+}
+
+int n, m, k;     // n = array size, m = modulo, k = requested position.
+vector<int> a;   // Original array.
+
+/*
+    Reads input.
+*/
+void read() {
+    cin >> n >> m >> k;
+
+    a.resize(n);
+
+    cin >> a;
+}
+
+/*
+    Main solving function.
+*/
+void solve() {
+    /*
+        For every t, we consider b_t[i] = (a[i] + t) mod m.
+
+        The lexicographically smallest rotation changes only when some value
+        wraps around to 0. For value v, this happens at t = (m - v) mod m.
+
+        Between two wrap points, the best starting index is constant.
+    */
+
+    // Build doubled array a + a so every cyclic rotation is a substring.
+    vector<int> doubled(2 * n);
+
+    for(int i = 0; i < 2 * n; i++) {
+        doubled[i] = a[i % n];
+    }
+
+    // Build suffix array on doubled array.
+    SuffixArray<vector<int>> sa;
+    sa.init(doubled);
+
+    // Build RMQ over LCP array to answer LCP of any two suffixes.
+    SparseTable<int, min_custom> rmq;
+    rmq.init(sa.lcp);
+
+    /*
+        Returns LCP length of cyclic rotations starting at p and q,
+        capped at n.
+    */
+    auto cyclic_lcp = [&](int p, int q) {
+        // Same starting position means identical rotation.
+        if(p == q) {
+            return n;
+        }
+
+        // Get suffix-array ranks.
+        int rp = sa.rnk[p], rq = sa.rnk[q];
+
+        // Ensure rp < rq.
+        if(rp > rq) {
+            swap(rp, rq);
+        }
+
+        // LCP of suffixes is min lcp[rp + 1 ... rq].
+        return min(n, rmq.query(rp + 1, rq));
+    };
+
+    // groups[v] contains all positions i where a[i] == v.
+    vector<vector<int>> groups(m);
+
+    for(int i = 0; i < n; i++) {
+        groups[a[i]].push_back(i);
+    }
+
+    /*
+        base[v] will store:
+        the original value located at the k-th position of the best rotation
+        for the phase where original value v is the smallest value.
+    */
+    vector<int> base(m, 0);
+
+    // All wrap points caused by values that actually occur in a.
+    vector<int> wraps;
+    wraps.reserve(min(n, m));
+
+    // Process every possible original value v.
+    for(int v = 0; v < m; v++) {
+        // If v does not occur, it creates no useful phase.
+        if(groups[v].empty()) {
+            continue;
+        }
+
+        // Value v becomes 0 at this shift.
+        wraps.push_back((m - v) % m);
+
+        // Start with the first occurrence as current best.
+        int best = groups[v][0];
+
+        // Compare all other starts with the current best.
+        for(int idx = 1; idx < (int)groups[v].size(); idx++) {
+            int c = groups[v][idx];
+
+            // Length of common prefix of the two cyclic rotations.
+            int l = cyclic_lcp(c, best);
+
+            // If full rotations are equal, no need to update.
+            if(l >= n) {
+                continue;
+            }
+
+            /*
+                Compare the first differing value under the transformed order
+                where original value v becomes 0.
+
+                Transformed value of x is:
+                    (x - v + m) % m
+            */
+            int ca = (a[(c + l) % n] - v + m) % m;
+            int cb = (a[(best + l) % n] - v + m) % m;
+
+            // If candidate rotation is smaller, update best.
+            if(ca < cb) {
+                best = c;
+            }
+        }
+
+        // Store the original array value at the k-th element of best rotation.
+        base[v] = a[(best + k - 1) % n];
+    }
+
+    // Sort wrap points to form phases.
+    sort(wraps.begin(), wraps.end());
+
+    // ans[t] will be the required output for shift t.
+    vector<int> ans(m);
+
+    int w = (int)wraps.size();
+
+    // Process every phase.
+    for(int i = 0; i < w; i++) {
+        int L = wraps[i]; // Start of phase.
+
+        /*
+            End of phase.
+            Last phase wraps around, so we use wraps[0] + m.
+        */
+        int R = (i + 1 < w) ? wraps[i + 1] : wraps[0] + m;
+
+        // Original value that is smallest in this phase.
+        int v = (m - L) % m;
+
+        // k-th original value of the best rotation for this phase.
+        int bv = base[v];
+
+        // Fill all shift values inside the phase.
+        for(int t = L; t < R; t++) {
+            int tt = t % m; // Convert back into range [0, m).
+
+            // Apply actual shift t to the stored original value.
+            ans[tt] = (bv + tt) % m;
+        }
+    }
+
+    // Print answers for t = 0, 1, ..., m - 1.
+    for(int t = 0; t < m; t++) {
+        cout << ans[t] << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O.
+    cin.tie(nullptr);                 // Untie cin from cout.
+
+    int T = 1; // Only one test case.
+
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def build_suffix_array(s):
+    """
+    Builds suffix array for a list of integers s using the doubling algorithm.
+
+    sa[i] = starting position of the i-th suffix in sorted order
+    rank[pos] = position/rank of suffix starting at pos
+    """
+
+    n = len(s)
+
+    # Initially suffixes are identified by their first value.
+    sa = list(range(n))
+    rank = s[:]
+
+    # Temporary array for updated ranks.
+    tmp = [0] * n
+
+    k = 1
+
+    while k < n:
+        # Sort suffixes by pair:
+        # (rank of first k values, rank of next k values)
+        sa.sort(key=lambda i: (rank[i], rank[i + k] if i + k < n else -1))
+
+        # First suffix in sorted order gets rank 0.
+        tmp[sa[0]] = 0
+
+        # Assign ranks to all suffixes.
+        for i in range(1, n):
+            prev = sa[i - 1]
+            cur = sa[i]
+
+            prev_key = (
+                rank[prev],
+                rank[prev + k] if prev + k < n else -1
+            )
+
+            cur_key = (
+                rank[cur],
+                rank[cur + k] if cur + k < n else -1
+            )
+
+            # Increase rank when key changes.
+            tmp[cur] = tmp[prev] + (1 if prev_key != cur_key else 0)
+
+        # Swap rank and tmp.
+        rank, tmp = tmp, rank
+
+        # If all suffixes have unique ranks, we are done.
+        if rank[sa[-1]] == n - 1:
+            break
+
+        # Double compared prefix length.
+        k <<= 1
+
+    return sa, rank
+
+
+def build_lcp(s, sa, rank):
+    """
+    Kasai algorithm.
+
+    lcp[i] = LCP of suffixes sa[i] and sa[i - 1].
+    lcp[0] = 0.
+    """
+
+    n = len(s)
+    lcp = [0] * n
+
+    h = 0
+
+    for i in range(n):
+        r = rank[i]
+
+        if r == 0:
+            h = 0
+            continue
+
+        # Previous suffix in suffix-array order.
+        j = sa[r - 1]
+
+        # Extend while equal.
+        while i + h < n and j + h < n and s[i + h] == s[j + h]:
+            h += 1
+
+        lcp[r] = h
+
+        # For next suffix, LCP decreases by at most one.
+        if h:
+            h -= 1
+
+    return lcp
+
+
+class SegmentTreeMin:
+    """
+    Segment tree for range minimum queries.
+
+    It is used instead of a sparse table to keep the Python implementation
+    memory-friendly.
+
+    Query range is inclusive: query(l, r).
+    """
+
+    def __init__(self, arr):
+        n = len(arr)
+
+        self.size = 1
+        while self.size < n:
+            self.size <<= 1
+
+        self.inf = 10 ** 18
+        self.tree = [self.inf] * (2 * self.size)
+
+        # Put original values at leaves.
+        for i, x in enumerate(arr):
+            self.tree[self.size + i] = x
+
+        # Build internal nodes.
+        for i in range(self.size - 1, 0, -1):
+            self.tree[i] = min(self.tree[2 * i], self.tree[2 * i + 1])
+
+    def query(self, l, r):
+        """
+        Returns min over inclusive interval [l, r].
+        """
+
+        l += self.size
+        r += self.size
+
+        ans = self.inf
+
+        while l <= r:
+            if l & 1:
+                ans = min(ans, self.tree[l])
+                l += 1
+
+            if not (r & 1):
+                ans = min(ans, self.tree[r])
+                r -= 1
+
+            l >>= 1
+            r >>= 1
+
+        return ans
+
+
+def solve():
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    n, m, k = data[0], data[1], data[2]
+    a = data[3:3 + n]
+
+    # Build doubled array so cyclic rotations become ordinary substrings.
+    doubled = [a[i % n] for i in range(2 * n)]
+
+    # Build suffix array and rank array.
+    sa, rank = build_suffix_array(doubled)
+
+    # Build LCP array.
+    lcp = build_lcp(doubled, sa, rank)
+
+    # RMQ over LCP array.
+    rmq = SegmentTreeMin(lcp)
+
+    def cyclic_lcp(p, q):
+        """
+        LCP of cyclic rotations starting at p and q, capped by n.
+        """
+
+        if p == q:
+            return n
+
+        rp = rank[p]
+        rq = rank[q]
+
+        if rp > rq:
+            rp, rq = rq, rp
+
+        # LCP of suffixes p and q is min lcp[rp + 1 ... rq].
+        return min(n, rmq.query(rp + 1, rq))
+
+    # groups[v] = all positions i where a[i] == v.
+    groups = [[] for _ in range(m)]
+
+    for i, x in enumerate(a):
+        groups[x].append(i)
+
+    # base[v] stores the original value at the k-th position of the best
+    # rotation for the phase where original value v is the smallest.
+    base = [0] * m
+
+    # Wrap points caused by values that actually appear.
+    wraps = []
+
+    for v in range(m):
+        if not groups[v]:
+            continue
+
+        # Value v becomes 0 at this shift.
+        wraps.append((m - v) % m)
+
+        # Find best cyclic rotation among starts with a[start] == v.
+        best = groups[v][0]
+
+        for c in groups[v][1:]:
+            l = cyclic_lcp(c, best)
+
+            # Equal rotations.
+            if l >= n:
+                continue
+
+            # Compare first differing values after relabeling so v becomes 0.
+            ca = (a[(c + l) % n] - v) % m
+            cb = (a[(best + l) % n] - v) % m
+
+            if ca < cb:
+                best = c
+
+        # k-th original value of that best rotation.
+        base[v] = a[(best + k - 1) % n]
+
+    # Sort phase starts.
+    wraps.sort()
+
+    ans = [0] * m
+    w = len(wraps)
+
+    # Fill answers phase by phase.
+    for i in range(w):
+        L = wraps[i]
+
+        # Circular next wrap.
+        R = wraps[i + 1] if i + 1 < w else wraps[0] + m
+
+        # Original value that maps to 0 at L.
+        v = (m - L) % m
+
+        # Original k-th value in best rotation.
+        bv = base[v]
+
+        # For every t in this phase, answer is shifted by t modulo m.
+        for t in range(L, R):
+            tt = t % m
+            ans[tt] = (bv + tt) % m
+
+    sys.stdout.write("\n".join(map(str, ans)))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+For shift `t`, values become `(a[i] + t) % m`. Their relative order changes only when some value wraps to `0`, i.e. at
+
+\[
+t = (m - a[i]) \bmod m.
+\]
+
+Sort all such wrap points. Between two consecutive wrap points, the lexicographically smallest cyclic rotation is fixed.
+
+In the phase starting at `L`, the smallest present original value is
+
+\[
+v = (m - L) \bmod m.
+\]
+
+So the best rotation must start at a position where `a[i] = v`.
+
+For every value `v`, compare all rotations starting at occurrences of `v`. To compare two starts quickly, build a suffix array on `a + a`; then use RMQ over the LCP array to get their common prefix length. The first differing element is compared after relabeling:
+
+\[
+x \mapsto (x - v + m) \bmod m.
+\]
+
+Once the best start for value `v` is known, store:
+
+```text
+base[v] = a[(best + k - 1) % n]
+```
+
+Then for every shift `t` in the corresponding phase:
+
+```text
+answer[t] = (base[v] + t) % m
+```
+
+This gives all `m` answers efficiently.

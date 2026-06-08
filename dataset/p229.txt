@@ -1,0 +1,608 @@
+## 1. Abridged problem statement
+
+Given an `N × N` grid (`1 ≤ N ≤ 20`) containing a set `Q` of marked cells (`1`), decide whether `Q` can be divided into two disjoint subsets `A` and `B` such that one subset can be transformed into the other by:
+
+- rotating by `0`, `90`, `180`, or `270` degrees,
+- then shifting by some vector.
+
+If possible, print `YES` and output one valid subset `A` as an `N × N` binary grid. Otherwise print `NO`.
+
+---
+
+## 2. Detailed editorial
+
+We need split the marked cells `Q` into two parts `A` and `B` such that:
+
+```text
+B = f(A)
+```
+
+where `f` is one of the allowed transformations: a rotation by a multiple of `90°`, followed by a translation.
+
+Since `A` and `B` form a partition of `Q`, they must have equal size. Therefore, if `|Q|` is odd, the answer is immediately `NO`.
+
+### Representing transformations
+
+Use grid coordinates `(r, c)`.
+
+The four rotations around the origin can be represented as:
+
+```text
+0°:   (r, c)
+90°:  (c, -r)
+180°: (-r, -c)
+270°: (-c, r)
+```
+
+After rotation, we add a translation vector `(dr, dc)`.
+
+So every transformation has the form:
+
+```text
+f(cell) = rotate(cell) + shift
+```
+
+### Reducing the number of transformations
+
+There are infinitely many possible shifts, but we only need to try finitely many.
+
+Let `c0` be any marked cell, for example the first one in row-major order.
+
+Assume `c0 ∈ A`. Then `f(c0)` must be some other marked cell in `Q`.
+
+So, for each rotation, we can try all shifts that map `c0` to another marked cell.
+
+What if in the true solution `c0 ∈ B` instead? Then using the inverse transformation swaps the roles of `A` and `B`, so we still find a valid solution.
+
+Thus, we try at most:
+
+```text
+4 * |Q|
+```
+
+candidate transformations.
+
+Since `N ≤ 20`, `|Q| ≤ 400`, this is easily small enough.
+
+### Checking one fixed transformation
+
+For a fixed transformation `f`, we need know whether there exists a subset `A` such that:
+
+```text
+Q = A ∪ f(A)
+A ∩ f(A) = ∅
+```
+
+Build a directed graph on cells of `Q`:
+
+- each cell `x` points to `f(x)` if `f(x)` is also in `Q`.
+
+Because `f` is bijective on the infinite grid, every cell has:
+
+- out-degree at most `1`,
+- in-degree at most `1`.
+
+Therefore, connected components are only:
+
+- paths,
+- cycles.
+
+Along such a component, cells must alternate between `A` and `B`.
+
+For a path:
+
+```text
+v1 -> v2 -> v3 -> ... -> vk
+```
+
+- `v1` has no predecessor, so it cannot be in `B`; it must be in `A`.
+- `vk` has no successor, so it cannot be in `A`; it must be in `B`.
+
+Thus the path length must be even.
+
+For a cycle, alternating is possible iff the cycle length is even.
+
+So for each component, we color cells alternately `0/1`. If a component has odd length, this transformation fails.
+
+If all components have even length, all cells colored `0` form one valid subset `A`.
+
+### Complexity
+
+Let `M = |Q| ≤ 400`.
+
+There are `O(M)` transformations to try, and each check takes `O(N²)` or `O(M)` time.
+
+Total complexity:
+
+```text
+O(M * N²)
+```
+
+which is tiny for `N ≤ 20`.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using std:: names without prefix.
+
+// Output operator for pairs, useful for debugging.
+// Not essential for this problem.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+// Not essential for this problem.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+// Reads all elements of the vector from input.
+// This is used to read the grid strings.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+// Not essential for this problem.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;              // Size of the grid.
+vector<string> g;   // The input grid.
+
+// Reads input.
+void read() {
+    cin >> n;              // Read grid size.
+    g.assign(n, "");       // Create n empty strings.
+    cin >> g;              // Read n grid rows using overloaded vector input.
+}
+
+void solve() {
+    // Store all marked cells of Q.
+    vector<pair<int, int>> cells;
+
+    // Scan the grid.
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            // A cell belongs to Q iff it contains '1'.
+            if(g[i][j] == '1') {
+                cells.push_back({i, j});
+            }
+        }
+    }
+
+    // Number of marked cells.
+    int total = cells.size();
+
+    // Empty set can be split into two empty sets.
+    if(total == 0) {
+        cout << "YES" << '\n';
+
+        // Output an empty subset.
+        for(int i = 0; i < n; i++) {
+            cout << string(n, '0') << '\n';
+        }
+
+        return;
+    }
+
+    // The two parts must have equal size.
+    // Therefore the total number of cells must be even.
+    if(total % 2 != 0) {
+        cout << "NO" << '\n';
+        return;
+    }
+
+    // Rotate point (r, c) by k * 90 degrees around the origin.
+    // k = 0: identity
+    // k = 1: 90 degrees
+    // k = 2: 180 degrees
+    // k = 3: 270 degrees
+    auto rotate_k = [](int r, int c, int k) {
+        // Apply 90-degree rotation k times.
+        for(int i = 0; i < k; i++) {
+            // 90-degree rotation: (r, c) -> (c, -r).
+            int nr = c, nc = -r;
+
+            // Update coordinates.
+            r = nr;
+            c = nc;
+        }
+
+        // Return rotated coordinates.
+        return make_pair(r, c);
+    };
+
+    // Checks whether cell (r, c) is inside the grid and belongs to Q.
+    auto in_q = [&](int r, int c) {
+        return 0 <= r && r < n && 0 <= c && c < n && g[r][c] == '1';
+    };
+
+    // Choose an anchor cell.
+    // If a valid partition exists, either this cell is in A,
+    // or it is in B and the inverse transformation will handle it.
+    auto [c0r, c0c] = cells[0];
+
+    // Tries one fixed transformation:
+    // rotate by k * 90 degrees, then shift by (dr, dc).
+    auto try_transform = [&](int k, int dr, int dc) -> bool {
+        // Transformation f.
+        auto f = [&](int r, int c) {
+            // First rotate.
+            auto [nr, nc] = rotate_k(r, c, k);
+
+            // Then translate.
+            return make_pair(nr + dr, nc + dc);
+        };
+
+        // Inverse transformation f^{-1}.
+        auto f_inv = [&](int r, int c) {
+            // First undo the translation.
+            r -= dr;
+            c -= dc;
+
+            // Then undo the rotation.
+            // The inverse of rotation k is rotation (4 - k) % 4.
+            auto [nr, nc] = rotate_k(r, c, (4 - k) % 4);
+
+            return make_pair(nr, nc);
+        };
+
+        // color[r][c]:
+        // -1 = unvisited
+        //  0 = chosen subset A
+        //  1 = other subset B
+        vector<vector<int>> color(n, vector<int>(n, -1));
+
+        // Visit every cell of Q.
+        for(int i = 0; i < n; i++) {
+            for(int j = 0; j < n; j++) {
+                // Ignore non-Q cells and already processed cells.
+                if(g[i][j] != '1' || color[i][j] != -1) {
+                    continue;
+                }
+
+                // We need to find the beginning of this path component.
+                // If the component is a cycle, this loop eventually detects it.
+                int sr = i, sc = j;
+
+                while(true) {
+                    // Look at predecessor under f.
+                    auto [pr, pc] = f_inv(sr, sc);
+
+                    // If predecessor is not in Q, we found path start.
+                    // If predecessor is the original cell, we detected a cycle.
+                    if(!in_q(pr, pc) || (pr == i && pc == j)) {
+                        break;
+                    }
+
+                    // Move one step backward.
+                    sr = pr;
+                    sc = pc;
+                }
+
+                // Alternately color the component starting from (sr, sc).
+                int col = 0;      // Start with color 0, meaning subset A.
+                int length = 0;   // Number of cells in this component.
+
+                int cr = sr, cc = sc;
+
+                // Traverse forward until leaving Q or returning to a colored cell.
+                while(color[cr][cc] == -1) {
+                    // Assign current color.
+                    color[cr][cc] = col;
+
+                    // Alternate color for next cell.
+                    col ^= 1;
+
+                    // Increase component length.
+                    length++;
+
+                    // Move forward by f.
+                    auto [nr, nc] = f(cr, cc);
+
+                    // If next cell is not in Q, this path ends.
+                    if(!in_q(nr, nc)) {
+                        break;
+                    }
+
+                    // Continue from next cell.
+                    cr = nr;
+                    cc = nc;
+                }
+
+                // Odd-length path or cycle cannot be split alternately.
+                if(length % 2 != 0) {
+                    return false;
+                }
+            }
+        }
+
+        // If all components have even length, we found a valid split.
+        cout << "YES" << '\n';
+
+        // Output all cells colored 0 as the first subset.
+        for(int i = 0; i < n; i++) {
+            for(int j = 0; j < n; j++) {
+                // Print 1 only for cells in Q and in subset A.
+                if(g[i][j] == '1' && color[i][j] == 0) {
+                    cout << '1';
+                } else {
+                    cout << '0';
+                }
+            }
+
+            cout << '\n';
+        }
+
+        return true;
+    };
+
+    // Try all four rotations.
+    for(int k = 0; k < 4; k++) {
+        // Rotate the anchor cell.
+        auto [rr, rc] = rotate_k(c0r, c0c, k);
+
+        // Try mapping the anchor cell to every other marked cell.
+        for(auto [tr, tc]: cells) {
+            // The anchor cannot map to itself in a valid disjoint partition.
+            if(tr == c0r && tc == c0c) {
+                continue;
+            }
+
+            // Compute the shift needed to send rotated c0 to target cell.
+            int dr = tr - rr;
+            int dc = tc - rc;
+
+            // If this transformation works, we are done.
+            if(try_transform(k, dr, dc)) {
+                return;
+            }
+        }
+    }
+
+    // No transformation worked.
+    cout << "NO" << '\n';
+}
+
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // Only one test case.
+    int T = 1;
+
+    // Process test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def rotate_k(r, c, k):
+    """
+    Rotate point (r, c) by k * 90 degrees around the origin.
+
+    k = 0: (r, c)
+    k = 1: (c, -r)
+    k = 2: (-r, -c)
+    k = 3: (-c, r)
+    """
+    for _ in range(k):
+        r, c = c, -r
+    return r, c
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+
+    # Read N.
+    n = int(data[0])
+
+    # Read grid.
+    grid = data[1:1 + n]
+
+    # Collect all cells belonging to Q.
+    cells = []
+    for r in range(n):
+        for c in range(n):
+            if grid[r][c] == '1':
+                cells.append((r, c))
+
+    total = len(cells)
+
+    # Empty set is trivially splittable.
+    if total == 0:
+        print("YES")
+        for _ in range(n):
+            print("0" * n)
+        return
+
+    # Two congruent parts must have equal size.
+    if total % 2 == 1:
+        print("NO")
+        return
+
+    # Check whether a cell is inside Q.
+    def in_q(r, c):
+        return 0 <= r < n and 0 <= c < n and grid[r][c] == '1'
+
+    # Use the first marked cell as anchor.
+    c0r, c0c = cells[0]
+
+    def try_transform(k, dr, dc):
+        """
+        Try transformation:
+            f(x) = rotate_k(x, k) + (dr, dc)
+
+        Return the resulting subset grid if valid, otherwise None.
+        """
+
+        def f(r, c):
+            # Apply rotation.
+            nr, nc = rotate_k(r, c, k)
+
+            # Apply translation.
+            return nr + dr, nc + dc
+
+        def f_inv(r, c):
+            # Undo translation.
+            r -= dr
+            c -= dc
+
+            # Undo rotation.
+            return rotate_k(r, c, (4 - k) % 4)
+
+        # color[r][c]:
+        # -1 means unvisited,
+        #  0 means chosen subset A,
+        #  1 means transformed subset B.
+        color = [[-1] * n for _ in range(n)]
+
+        # Process every marked cell.
+        for i in range(n):
+            for j in range(n):
+                # Skip cells not in Q or already visited.
+                if grid[i][j] != '1' or color[i][j] != -1:
+                    continue
+
+                # Find start of the component.
+                sr, sc = i, j
+
+                while True:
+                    pr, pc = f_inv(sr, sc)
+
+                    # If predecessor is outside Q, this is path start.
+                    # If predecessor is the original cell, this is a cycle.
+                    if not in_q(pr, pc) or (pr == i and pc == j):
+                        break
+
+                    sr, sc = pr, pc
+
+                # Traverse forward and color alternately.
+                cr, cc = sr, sc
+                current_color = 0
+                length = 0
+
+                while color[cr][cc] == -1:
+                    # Assign color.
+                    color[cr][cc] = current_color
+
+                    # Alternate between 0 and 1.
+                    current_color ^= 1
+
+                    # Count component size.
+                    length += 1
+
+                    # Move to next cell under f.
+                    nr, nc = f(cr, cc)
+
+                    # Stop if next cell is outside Q.
+                    if not in_q(nr, nc):
+                        break
+
+                    cr, cc = nr, nc
+
+                # Odd component cannot be alternately split.
+                if length % 2 == 1:
+                    return None
+
+        # Build output subset: cells colored 0.
+        answer = []
+        for r in range(n):
+            row = []
+            for c in range(n):
+                if grid[r][c] == '1' and color[r][c] == 0:
+                    row.append('1')
+                else:
+                    row.append('0')
+            answer.append(''.join(row))
+
+        return answer
+
+    # Try all four rotations.
+    for k in range(4):
+        # Anchor after rotation.
+        rr, rc = rotate_k(c0r, c0c, k)
+
+        # Try mapping anchor to every other marked cell.
+        for tr, tc in cells:
+            if tr == c0r and tc == c0c:
+                continue
+
+            # Translation needed.
+            dr = tr - rr
+            dc = tc - rc
+
+            result = try_transform(k, dr, dc)
+
+            # If valid, print answer.
+            if result is not None:
+                print("YES")
+                print("\n".join(result))
+                return
+
+    # Nothing worked.
+    print("NO")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Let `Q` be the set of marked cells. If `|Q|` is odd, answer is `NO`.
+
+Try all transformations of the form:
+
+```text
+f(x) = rotation(x) + shift
+```
+
+There are four rotations. To limit shifts, pick one marked anchor cell `c0`. In a valid solution, either `c0` belongs to the first part, or the inverse transformation handles the case. Therefore, for each rotation, try shifts that map `c0` to every other marked cell.
+
+For a fixed transformation `f`, create directed edges:
+
+```text
+x -> f(x)
+```
+
+whenever both cells are in `Q`.
+
+Since `f` is bijective, every vertex has in-degree and out-degree at most one, so components are paths or cycles. A valid partition exists exactly when every component has even length, because cells must alternate between the two subsets.
+
+If all components are even, color them alternately and output one color class. If no transformation works, output `NO`.
+
+Complexity is small: at most `4|Q|` transformations, each checked in `O(N²)`, with `N ≤ 20`.

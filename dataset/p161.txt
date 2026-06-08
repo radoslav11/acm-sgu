@@ -1,0 +1,1212 @@
+## 1. Abridged problem statement
+
+Given a DAG with `N ≤ 100`, define a partial order: `x ≤ y` iff there is a path from `x` to `y`. From this poset, build a finite intuitionistic logic algebra whose elements are antichains of the poset, with operations `0`, `1`, `~`, `&`, `|`, `=>`, and `=` defined as in the statement.
+
+You are given up to `20` logical formulae using constants `0`, `1`, variables `A..Z`, parentheses, negation `~`, conjunction `&`, disjunction `|`, implication `=>`, and equivalence `=`.
+
+A formula is **valid** if, for every possible substitution of algebra elements for its variables, the formula evaluates to `1`.
+
+For each formula, output `valid` or `invalid`.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation: antichains and ideals
+
+The statement defines the algebra elements as antichains of the poset. Directly working with antichains is possible, but there is a much cleaner equivalent representation.
+
+For an antichain `a`, define its downward closure:
+
+```text
+Down(a) = { x : exists y in a such that x ≤ y }
+```
+
+This is an order ideal, i.e. a downward-closed subset of the poset.
+
+Conversely, every order ideal is uniquely determined by its maximal elements, which form an antichain.
+
+So instead of storing an algebra element as an antichain, we store it as the corresponding downward-closed set.
+
+Since the statement guarantees `|H| ≤ 100`, there are at most `100` such ideals.
+
+---
+
+### Constants
+
+In the statement:
+
+```text
+1 = empty antichain
+0 = Max(X)
+```
+
+Under the ideal representation:
+
+```text
+1 = empty ideal
+0 = full set of all vertices
+```
+
+This may look reversed compared to Boolean logic, but it matches the ordering of this Heyting algebra.
+
+---
+
+### Computing reachability
+
+We first compute the transitive closure of the DAG.
+
+Let:
+
+```text
+up[x]   = set of vertices y such that x ≤ y
+down[x] = set of vertices y such that y ≤ x
+```
+
+Both can be represented as bitsets.
+
+The transitive closure can be computed using Floyd-Warshall style bitset propagation:
+
+```cpp
+for k:
+    for i:
+        if i reaches k:
+            up[i] |= up[k]
+```
+
+---
+
+### Enumerating all ideals
+
+Start with the empty ideal.
+
+An element `x` can be added to an ideal `I` if all elements below `x`, except `x` itself, are already in `I`.
+
+Equivalently:
+
+```text
+down[x] \ I = {x}
+```
+
+In bitset form:
+
+```cpp
+need = down[x] & ~I
+need.count() == 1
+```
+
+Repeatedly adding such vertices enumerates all ideals.
+
+Because the number of ideals is at most `100`, this is efficient.
+
+---
+
+### Operations on ideals
+
+Suppose algebra elements `a` and `b` are represented by ideals `A` and `B`.
+
+#### Conjunction
+
+The statement defines:
+
+```text
+a & b = Max(a ∪ b)
+```
+
+In ideal representation:
+
+```text
+A & B = A ∪ B
+```
+
+So:
+
+```cpp
+and_tbl[i][j] = index[H[i] | H[j]]
+```
+
+---
+
+#### Disjunction
+
+The statement defines disjunction using common lower bounds.
+
+In ideal representation, this becomes:
+
+```text
+A | B = A ∩ B
+```
+
+So:
+
+```cpp
+or_tbl[i][j] = index[H[i] & H[j]]
+```
+
+---
+
+#### Implication
+
+The statement defines:
+
+```text
+a => b = { x in b : no y in a satisfies x ≤ y }
+```
+
+In ideal representation, this means:
+
+Take the maximal elements of `B` that are not already contained in `A`, then take their downward closure.
+
+The implementation checks every vertex `x` such that:
+
+1. `x ∈ B`
+2. `x ∉ A`
+3. `x` is maximal inside `B`
+
+A vertex `x` is maximal inside `B` if:
+
+```cpp
+(up[x] & B).count() == 1
+```
+
+because only `x` itself among vertices reachable upward from `x` belongs to `B`.
+
+Then:
+
+```cpp
+res |= down[x]
+```
+
+---
+
+#### Negation
+
+Negation is defined as:
+
+```text
+~a = a => 0
+```
+
+So after computing implication:
+
+```cpp
+not_tbl[i] = imp_tbl[i][zero_idx]
+```
+
+---
+
+#### Equivalence
+
+Equivalence is:
+
+```text
+a = b = (a => b) & (b => a)
+```
+
+So:
+
+```cpp
+eq_tbl[i][j] = and_tbl[imp_tbl[i][j]][imp_tbl[j][i]]
+```
+
+---
+
+### Parsing formulae
+
+The operators have the following precedence, from highest to lowest:
+
+1. Parentheses, constants, variables
+2. Negation `~`
+3. Conjunction `&`, left-associative
+4. Disjunction `|`, left-associative
+5. Implication `=>`, right-associative
+6. Equivalence `=`, lowest priority
+
+Implication is right-associative:
+
+```text
+A => B => C = A => (B => C)
+```
+
+Equivalence chains are expanded into conjunctions of pairwise equivalences:
+
+```text
+A = B = C
+```
+
+becomes:
+
+```text
+(A = B) & (B = C)
+```
+
+A recursive descent parser is natural here.
+
+---
+
+### Checking validity
+
+For each formula:
+
+1. Parse it into an expression tree.
+2. Collect variables used in the formula.
+3. Try every assignment of those variables to one of the `D = |H|` ideals.
+4. Evaluate the expression using precomputed operation tables.
+5. If every assignment evaluates to `1`, output `valid`; otherwise output `invalid`.
+
+The statement guarantees the total work over all formulae is small enough.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std::.
+
+// Generic output operator for pairs; not essential for this solution.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Generic input operator for pairs; not essential for this solution.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Generic input operator for vectors; not essential for this solution.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x; // Read each element.
+    }
+    return in; // Return the input stream.
+};
+
+// Generic output operator for vectors; not essential for this solution.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Iterate over all elements.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out; // Return the output stream.
+};
+
+const int MAXN = 100; // Maximum number of graph vertices.
+using BS = bitset<MAXN>; // Bitset type used to represent vertex subsets.
+
+int n, m, K; // Number of vertices, edges, and formulae.
+vector<string> formulas; // Stores all input formula strings.
+vector<BS> up, down; // up[x]: vertices reachable from x; down[x]: vertices reaching x.
+
+void read() {
+    cin >> n >> m; // Read graph size.
+    up.assign(n, BS()); // Initialize n empty reachability bitsets.
+
+    for(int i = 0; i < n; i++) {
+        up[i][i] = 1; // Every vertex reaches itself.
+    }
+
+    for(int i = 0; i < m; i++) {
+        int s, t; // Edge from s to t.
+        cin >> s >> t; // Read the directed edge.
+        up[s - 1][t - 1] = 1; // Convert to 0-based indexing and mark reachability.
+    }
+
+    // Compute transitive closure using bitset Floyd-Warshall.
+    for(int k = 0; k < n; k++) {
+        for(int i = 0; i < n; i++) {
+            if(up[i][k]) { // If i can reach k,
+                up[i] |= up[k]; // then i can reach everything k can reach.
+            }
+        }
+    }
+
+    down.assign(n, BS()); // Initialize downward reachability sets.
+    for(int x = 0; x < n; x++) {
+        for(int z = 0; z < n; z++) {
+            if(up[z][x]) { // If z <= x,
+                down[x][z] = 1; // then z belongs to down[x].
+            }
+        }
+    }
+
+    cin >> K; // Read number of formulae.
+    string line; // Temporary line buffer.
+    getline(cin, line); // Consume endline after K.
+
+    // Read K non-empty formula lines.
+    while((int)formulas.size() < K && getline(cin, line)) {
+        if(line.find_first_not_of(" \t\r") != string::npos) { // Ignore blank lines.
+            formulas.push_back(line); // Store the formula.
+        }
+    }
+}
+
+vector<BS> H; // All algebra elements, represented as ideals.
+map<string, int> h_index; // Maps bitset string representation to its index in H.
+
+vector<vector<int>> and_tbl, or_tbl, imp_tbl, eq_tbl; // Operation tables.
+vector<int> not_tbl; // Negation table.
+int zero_idx, one_idx; // Indices of logical 0 and logical 1.
+
+// Token types used by the lexer/parser.
+enum {
+    T_ZERO, // Constant 0.
+    T_ONE,  // Constant 1.
+    T_VAR,  // Variable A..Z.
+    T_LPAR, // '('.
+    T_RPAR, // ')'.
+    T_NOT,  // '~'.
+    T_AND,  // '&'.
+    T_OR,   // '|'.
+    T_IMP,  // '=>'.
+    T_EQ    // '='.
+};
+
+// Expression-tree operation types.
+enum {
+    OP_CONST, // Constant node.
+    OP_VAR,   // Variable node.
+    OP_NOT,   // Negation node.
+    OP_AND,   // Conjunction node.
+    OP_OR,    // Disjunction node.
+    OP_IMP,   // Implication node.
+    OP_EQ     // Equivalence node.
+};
+
+// One lexical token.
+struct Token {
+    int type, var; // Token type and variable number if applicable.
+};
+
+// One expression-tree node.
+struct Node {
+    int op, a, b; // Operation type and child/value fields.
+};
+
+vector<Token> toks; // Current token stream.
+int pos; // Current parser position.
+vector<Node> nodes; // Expression tree nodes.
+bool used[26]; // Marks which variables occur in current formula.
+
+int make_node(int op, int a, int b) {
+    nodes.push_back({op, a, b}); // Append a new node.
+    return (int)nodes.size() - 1; // Return its index.
+}
+
+int parse_equiv(); // Forward declaration because parentheses may parse full expressions.
+
+// Parse constants, variables, and parenthesized expressions.
+int parse_atom() {
+    Token t = toks[pos]; // Look at current token.
+
+    if(t.type == T_LPAR) { // Parenthesized expression.
+        pos++; // Skip '('.
+        int e = parse_equiv(); // Parse expression inside parentheses.
+        pos++; // Skip ')'.
+        return e; // Return parsed subtree.
+    }
+
+    if(t.type == T_ZERO) { // Constant 0.
+        pos++; // Consume token.
+        return make_node(OP_CONST, zero_idx, 0); // Node stores index of algebraic 0.
+    }
+
+    if(t.type == T_ONE) { // Constant 1.
+        pos++; // Consume token.
+        return make_node(OP_CONST, one_idx, 0); // Node stores index of algebraic 1.
+    }
+
+    // Otherwise it must be a variable.
+    pos++; // Consume variable token.
+    used[t.var] = true; // Mark this variable as used.
+    return make_node(OP_VAR, t.var, 0); // Create variable node.
+}
+
+// Parse negation, which has high priority and is unary.
+int parse_neg() {
+    if(toks[pos].type == T_NOT) { // If current token is '~',
+        pos++; // consume it,
+        return make_node(OP_NOT, parse_neg(), 0); // parse another negation expression recursively.
+    }
+    return parse_atom(); // Otherwise parse an atom.
+}
+
+// Parse conjunction, left-associative.
+int parse_conj() {
+    int left = parse_neg(); // Parse first operand.
+
+    while(toks[pos].type == T_AND) { // While there is '&',
+        pos++; // consume '&',
+        left = make_node(OP_AND, left, parse_neg()); // combine left with next operand.
+    }
+
+    return left; // Return resulting subtree.
+}
+
+// Parse disjunction, left-associative.
+int parse_disj() {
+    int left = parse_conj(); // Parse first operand.
+
+    while(toks[pos].type == T_OR) { // While there is '|',
+        pos++; // consume '|',
+        left = make_node(OP_OR, left, parse_conj()); // combine left with next operand.
+    }
+
+    return left; // Return resulting subtree.
+}
+
+// Parse implication, right-associative.
+int parse_impl() {
+    int left = parse_disj(); // Parse left operand.
+
+    if(toks[pos].type == T_IMP) { // If there is '=>',
+        pos++; // consume it,
+        return make_node(OP_IMP, left, parse_impl()); // recursively parse right operand.
+    }
+
+    return left; // No implication, return left operand.
+}
+
+// Parse equivalence, the lowest-precedence operation.
+int parse_equiv() {
+    vector<int> terms = {parse_impl()}; // Parse the first implication-level term.
+
+    while(toks[pos].type == T_EQ) { // While there is '=',
+        pos++; // consume '=',
+        terms.push_back(parse_impl()); // parse the next term.
+    }
+
+    if(terms.size() == 1) { // If there was no '=',
+        return terms[0]; // return the single term.
+    }
+
+    // Expand A=B=C into (A=B)&(B=C).
+    int node = make_node(OP_EQ, terms[0], terms[1]); // First pairwise equivalence.
+
+    for(int i = 2; i < (int)terms.size(); i++) {
+        node = make_node(
+            OP_AND, // Combine previous result by conjunction,
+            node,   // previous chain result,
+            make_node(OP_EQ, terms[i - 1], terms[i]) // next pairwise equivalence.
+        );
+    }
+
+    return node; // Return expanded equivalence-chain subtree.
+}
+
+int cur_assign[26]; // Current assignment: variable -> algebra element index.
+
+// Evaluate an expression-tree node under current variable assignment.
+int eval(int u) {
+    Node nd = nodes[u]; // Fetch node.
+
+    switch(nd.op) {
+        case OP_CONST:
+            return nd.a; // Constant stores algebra element index directly.
+
+        case OP_VAR:
+            return cur_assign[nd.a]; // Variable value from current assignment.
+
+        case OP_NOT:
+            return not_tbl[eval(nd.a)]; // Evaluate child and apply negation table.
+
+        case OP_AND:
+            return and_tbl[eval(nd.a)][eval(nd.b)]; // Evaluate both children and apply conjunction.
+
+        case OP_OR:
+            return or_tbl[eval(nd.a)][eval(nd.b)]; // Evaluate both children and apply disjunction.
+
+        case OP_IMP:
+            return imp_tbl[eval(nd.a)][eval(nd.b)]; // Evaluate both children and apply implication.
+
+        default:
+            return eq_tbl[eval(nd.a)][eval(nd.b)]; // Remaining case is equivalence.
+    }
+}
+
+void solve() {
+    H.clear(); // Clear list of ideals.
+    h_index.clear(); // Clear index map.
+
+    BS empty; // Empty bitset representing empty ideal.
+    H.push_back(empty); // Add empty ideal.
+    h_index[empty.to_string()] = 0; // Its index is 0.
+
+    // Enumerate all ideals by repeatedly adding available vertices.
+    for(size_t front = 0; front < H.size(); front++) {
+        BS cur = H[front]; // Current ideal.
+
+        for(int x = 0; x < n; x++) {
+            if(cur[x]) { // If x is already in the ideal,
+                continue; // skip it.
+            }
+
+            BS need = down[x] & ~cur; // Vertices below x not yet in cur.
+
+            if(need.count() != 1) { // Can add x only if the only missing lower vertex is x itself.
+                continue; // Otherwise adding x would violate downward-closedness.
+            }
+
+            BS nxt = cur; // Copy current ideal.
+            nxt[x] = 1; // Add x.
+
+            string key = nxt.to_string(); // Convert bitset to string for map key.
+
+            if(h_index.find(key) == h_index.end()) { // If this ideal was not seen,
+                h_index[key] = (int)H.size(); // assign it a new index,
+                H.push_back(nxt); // and store it.
+            }
+        }
+    }
+
+    int d = (int)H.size(); // Number of algebra elements.
+
+    BS full; // Full ideal, containing all vertices.
+    for(int i = 0; i < n; i++) {
+        full[i] = 1; // Mark every vertex.
+    }
+
+    one_idx = h_index[empty.to_string()]; // Logical 1 is empty ideal.
+    zero_idx = h_index[full.to_string()]; // Logical 0 is full ideal.
+
+    and_tbl.assign(d, vector<int>(d)); // Allocate conjunction table.
+    or_tbl.assign(d, vector<int>(d)); // Allocate disjunction table.
+    imp_tbl.assign(d, vector<int>(d)); // Allocate implication table.
+    eq_tbl.assign(d, vector<int>(d)); // Allocate equivalence table.
+    not_tbl.assign(d, 0); // Allocate negation table.
+
+    // Precompute binary operations.
+    for(int i = 0; i < d; i++) {
+        for(int j = 0; j < d; j++) {
+            and_tbl[i][j] = h_index[(H[i] | H[j]).to_string()]; // & is union of ideals.
+            or_tbl[i][j] = h_index[(H[i] & H[j]).to_string()]; // | is intersection of ideals.
+
+            BS res; // Result ideal for implication i => j.
+
+            for(int x = 0; x < n; x++) {
+                // x must be in H[j], not in H[i], and maximal in H[j].
+                if(H[j][x] && !H[i][x] && (up[x] & H[j]).count() == 1) {
+                    res |= down[x]; // Add all vertices below x.
+                }
+            }
+
+            imp_tbl[i][j] = h_index[res.to_string()]; // Store implication result.
+        }
+    }
+
+    // Negation is implication to 0.
+    for(int i = 0; i < d; i++) {
+        not_tbl[i] = imp_tbl[i][zero_idx]; // ~i = i => 0.
+    }
+
+    // Equivalence is mutual implication combined by conjunction.
+    for(int i = 0; i < d; i++) {
+        for(int j = 0; j < d; j++) {
+            eq_tbl[i][j] = and_tbl[imp_tbl[i][j]][imp_tbl[j][i]]; // i=j = (i=>j)&(j=>i).
+        }
+    }
+
+    // Process each formula independently.
+    for(const string& formula: formulas) {
+        toks.clear(); // Clear token stream.
+
+        // Tokenize formula string.
+        for(size_t i = 0; i < formula.size(); i++) {
+            char c = formula[i]; // Current character.
+
+            if(c == ' ' || c == '\t' || c == '\r') {
+                continue; // Ignore whitespace.
+            }
+
+            if(c == '0') {
+                toks.push_back({T_ZERO, 0}); // Constant 0.
+            } else if(c == '1') {
+                toks.push_back({T_ONE, 0}); // Constant 1.
+            } else if(c >= 'A' && c <= 'Z') {
+                toks.push_back({T_VAR, c - 'A'}); // Variable token.
+            } else if(c == '(') {
+                toks.push_back({T_LPAR, 0}); // Left parenthesis.
+            } else if(c == ')') {
+                toks.push_back({T_RPAR, 0}); // Right parenthesis.
+            } else if(c == '~') {
+                toks.push_back({T_NOT, 0}); // Negation.
+            } else if(c == '&') {
+                toks.push_back({T_AND, 0}); // Conjunction.
+            } else if(c == '|') {
+                toks.push_back({T_OR, 0}); // Disjunction.
+            } else if(c == '=') {
+                if(i + 1 < formula.size() && formula[i + 1] == '>') {
+                    toks.push_back({T_IMP, 0}); // Implication token.
+                    i++; // Skip '>'.
+                } else {
+                    toks.push_back({T_EQ, 0}); // Equivalence token.
+                }
+            }
+        }
+
+        toks.push_back({-1, 0}); // Sentinel token marking end of input.
+
+        nodes.clear(); // Clear expression tree nodes.
+        memset(used, 0, sizeof(used)); // No variables seen yet.
+        pos = 0; // Start parsing at first token.
+
+        int root = parse_equiv(); // Parse whole formula.
+
+        vector<int> vars; // List of used variables.
+        for(int v = 0; v < 26; v++) {
+            if(used[v]) { // If variable v occurs,
+                vars.push_back(v); // add it to assignment list.
+            }
+        }
+
+        memset(cur_assign, 0, sizeof(cur_assign)); // Initialize assignments to zero.
+        vector<int> digit(vars.size(), 0); // Mixed-radix counter over D possible values.
+        bool valid = true; // Assume formula is valid until counterexample is found.
+
+        while(true) {
+            // Decode current counter digits into variable assignments.
+            for(size_t p = 0; p < vars.size(); p++) {
+                cur_assign[vars[p]] = digit[p]; // Assign variable vars[p] to algebra element digit[p].
+            }
+
+            if(eval(root) != one_idx) { // Formula must evaluate to logical 1.
+                valid = false; // Found a counterexample assignment.
+                break; // Stop checking this formula.
+            }
+
+            // Increment mixed-radix counter.
+            size_t i = 0;
+            for(; i < vars.size(); i++) {
+                if(++digit[i] < d) { // Increase digit; if still valid,
+                    break; // no carry needed.
+                }
+                digit[i] = 0; // Carry to next digit.
+            }
+
+            if(i == vars.size()) { // All assignments have been processed.
+                break; // Formula is valid.
+            }
+        }
+
+        cout << (valid ? "valid" : "invalid") << '\n'; // Output result.
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+    cin.tie(nullptr); // Untie cin from cout.
+
+    int T = 1; // There is only one test case.
+    // cin >> T; // Multi-test input is not used.
+
+    for(int test = 1; test <= T; test++) {
+        read(); // Read input.
+        solve(); // Solve the instance.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from itertools import product
+
+
+# Token constants.
+T_ZERO = 0
+T_ONE = 1
+T_VAR = 2
+T_LPAR = 3
+T_RPAR = 4
+T_NOT = 5
+T_AND = 6
+T_OR = 7
+T_IMP = 8
+T_EQ = 9
+
+# Expression node operation constants.
+OP_CONST = 0
+OP_VAR = 1
+OP_NOT = 2
+OP_AND = 3
+OP_OR = 4
+OP_IMP = 5
+OP_EQ = 6
+
+
+class Parser:
+    def __init__(self, tokens, zero_idx, one_idx):
+        # Token list of the current formula.
+        self.tokens = tokens
+
+        # Current parser position.
+        self.pos = 0
+
+        # Expression tree nodes.
+        # Each node is a tuple: (operation, first_field, second_field).
+        self.nodes = []
+
+        # Algebra index of logical 0.
+        self.zero_idx = zero_idx
+
+        # Algebra index of logical 1.
+        self.one_idx = one_idx
+
+        # Variables used in this formula.
+        self.used = [False] * 26
+
+    def make_node(self, op, a, b=0):
+        # Append a new expression-tree node.
+        self.nodes.append((op, a, b))
+
+        # Return index of the new node.
+        return len(self.nodes) - 1
+
+    def parse_atom(self):
+        # Read current token.
+        typ, val = self.tokens[self.pos]
+
+        if typ == T_LPAR:
+            # Skip '('.
+            self.pos += 1
+
+            # Parse full expression inside parentheses.
+            node = self.parse_equiv()
+
+            # Skip ')'.
+            self.pos += 1
+
+            # Return parsed subtree.
+            return node
+
+        if typ == T_ZERO:
+            # Skip constant token.
+            self.pos += 1
+
+            # Store algebra element index of logical 0.
+            return self.make_node(OP_CONST, self.zero_idx)
+
+        if typ == T_ONE:
+            # Skip constant token.
+            self.pos += 1
+
+            # Store algebra element index of logical 1.
+            return self.make_node(OP_CONST, self.one_idx)
+
+        # Otherwise this must be a variable.
+        self.pos += 1
+
+        # Mark variable as used.
+        self.used[val] = True
+
+        # Create variable node.
+        return self.make_node(OP_VAR, val)
+
+    def parse_neg(self):
+        # Negation is unary and has high precedence.
+        typ, _ = self.tokens[self.pos]
+
+        if typ == T_NOT:
+            # Skip '~'.
+            self.pos += 1
+
+            # Parse another negation-expression recursively.
+            return self.make_node(OP_NOT, self.parse_neg())
+
+        # If there is no '~', parse an atom.
+        return self.parse_atom()
+
+    def parse_conj(self):
+        # Parse first operand.
+        left = self.parse_neg()
+
+        # Conjunction is left-associative.
+        while self.tokens[self.pos][0] == T_AND:
+            # Skip '&'.
+            self.pos += 1
+
+            # Combine current left expression with next operand.
+            left = self.make_node(OP_AND, left, self.parse_neg())
+
+        return left
+
+    def parse_disj(self):
+        # Parse first operand.
+        left = self.parse_conj()
+
+        # Disjunction is left-associative.
+        while self.tokens[self.pos][0] == T_OR:
+            # Skip '|'.
+            self.pos += 1
+
+            # Combine current left expression with next operand.
+            left = self.make_node(OP_OR, left, self.parse_conj())
+
+        return left
+
+    def parse_impl(self):
+        # Parse left operand.
+        left = self.parse_disj()
+
+        # Implication is right-associative.
+        if self.tokens[self.pos][0] == T_IMP:
+            # Skip '=>'.
+            self.pos += 1
+
+            # Recursively parse the right side.
+            return self.make_node(OP_IMP, left, self.parse_impl())
+
+        return left
+
+    def parse_equiv(self):
+        # Parse first term.
+        terms = [self.parse_impl()]
+
+        # Equivalence has lowest precedence.
+        while self.tokens[self.pos][0] == T_EQ:
+            # Skip '='.
+            self.pos += 1
+
+            # Parse next term.
+            terms.append(self.parse_impl())
+
+        # If there was no equivalence, return the single term.
+        if len(terms) == 1:
+            return terms[0]
+
+        # Expand A=B=C into (A=B)&(B=C).
+        node = self.make_node(OP_EQ, terms[0], terms[1])
+
+        for i in range(2, len(terms)):
+            pair_eq = self.make_node(OP_EQ, terms[i - 1], terms[i])
+            node = self.make_node(OP_AND, node, pair_eq)
+
+        return node
+
+
+def tokenize(s):
+    # Result token list.
+    tokens = []
+
+    # Current character index.
+    i = 0
+
+    while i < len(s):
+        c = s[i]
+
+        # Ignore whitespace.
+        if c in " \t\r\n":
+            i += 1
+            continue
+
+        if c == "0":
+            tokens.append((T_ZERO, 0))
+        elif c == "1":
+            tokens.append((T_ONE, 0))
+        elif "A" <= c <= "Z":
+            tokens.append((T_VAR, ord(c) - ord("A")))
+        elif c == "(":
+            tokens.append((T_LPAR, 0))
+        elif c == ")":
+            tokens.append((T_RPAR, 0))
+        elif c == "~":
+            tokens.append((T_NOT, 0))
+        elif c == "&":
+            tokens.append((T_AND, 0))
+        elif c == "|":
+            tokens.append((T_OR, 0))
+        elif c == "=":
+            # Either implication '=>' or equivalence '='.
+            if i + 1 < len(s) and s[i + 1] == ">":
+                tokens.append((T_IMP, 0))
+                i += 1
+            else:
+                tokens.append((T_EQ, 0))
+
+        i += 1
+
+    # Sentinel token.
+    tokens.append((-1, 0))
+
+    return tokens
+
+
+def evaluate(root, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl):
+    # Recursive evaluator of expression tree.
+    op, a, b = nodes[root]
+
+    if op == OP_CONST:
+        # Constant stores algebra index directly.
+        return a
+
+    if op == OP_VAR:
+        # Variable value comes from current assignment.
+        return assignment[a]
+
+    if op == OP_NOT:
+        # Evaluate child and apply negation table.
+        return not_tbl[evaluate(a, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)]
+
+    if op == OP_AND:
+        # Evaluate both operands and use precomputed conjunction table.
+        x = evaluate(a, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        y = evaluate(b, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        return and_tbl[x][y]
+
+    if op == OP_OR:
+        # Evaluate both operands and use precomputed disjunction table.
+        x = evaluate(a, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        y = evaluate(b, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        return or_tbl[x][y]
+
+    if op == OP_IMP:
+        # Evaluate both operands and use precomputed implication table.
+        x = evaluate(a, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        y = evaluate(b, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+        return imp_tbl[x][y]
+
+    # Remaining operation is equivalence.
+    x = evaluate(a, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+    y = evaluate(b, nodes, assignment, not_tbl, and_tbl, or_tbl, imp_tbl, eq_tbl)
+    return eq_tbl[x][y]
+
+
+def main():
+    data = sys.stdin.read().splitlines()
+
+    # Read first line.
+    ptr = 0
+    n, m = map(int, data[ptr].split())
+    ptr += 1
+
+    # up[x] is a bitmask of vertices reachable from x.
+    up = [0] * n
+
+    # Every vertex reaches itself.
+    for i in range(n):
+        up[i] |= 1 << i
+
+    # Read edges.
+    for _ in range(m):
+        s, t = map(int, data[ptr].split())
+        ptr += 1
+        s -= 1
+        t -= 1
+        up[s] |= 1 << t
+
+    # Compute transitive closure.
+    for k in range(n):
+        bit_k = 1 << k
+        for i in range(n):
+            if up[i] & bit_k:
+                up[i] |= up[k]
+
+    # down[x] is a bitmask of vertices z such that z <= x.
+    down = [0] * n
+
+    for x in range(n):
+        mask = 0
+        for z in range(n):
+            if up[z] & (1 << x):
+                mask |= 1 << z
+        down[x] = mask
+
+    # Read number of formulae.
+    K = int(data[ptr].strip())
+    ptr += 1
+
+    # Read formula lines.
+    formulas = []
+    while len(formulas) < K and ptr < len(data):
+        line = data[ptr]
+        ptr += 1
+        if line.strip():
+            formulas.append(line)
+
+    # Full vertex set.
+    full = (1 << n) - 1
+
+    # Enumerate all ideals.
+    H = [0]
+
+    # Map ideal bitmask to its index.
+    index = {0: 0}
+
+    front = 0
+
+    while front < len(H):
+        cur = H[front]
+        front += 1
+
+        for x in range(n):
+            bit_x = 1 << x
+
+            # Skip already present vertices.
+            if cur & bit_x:
+                continue
+
+            # Vertices below x that are not yet in current ideal.
+            need = down[x] & (full ^ cur)
+
+            # We may add x iff the only missing predecessor is x itself.
+            if need.bit_count() != 1:
+                continue
+
+            # Add x to form a new ideal.
+            nxt = cur | bit_x
+
+            # Store if unseen.
+            if nxt not in index:
+                index[nxt] = len(H)
+                H.append(nxt)
+
+    # Number of algebra elements.
+    d = len(H)
+
+    # Logical 1 is empty ideal; logical 0 is full ideal.
+    one_idx = index[0]
+    zero_idx = index[full]
+
+    # Allocate operation tables.
+    and_tbl = [[0] * d for _ in range(d)]
+    or_tbl = [[0] * d for _ in range(d)]
+    imp_tbl = [[0] * d for _ in range(d)]
+    eq_tbl = [[0] * d for _ in range(d)]
+    not_tbl = [0] * d
+
+    # Precompute conjunction, disjunction, and implication.
+    for i in range(d):
+        A = H[i]
+
+        for j in range(d):
+            B = H[j]
+
+            # Conjunction corresponds to union of ideals.
+            and_tbl[i][j] = index[A | B]
+
+            # Disjunction corresponds to intersection of ideals.
+            or_tbl[i][j] = index[A & B]
+
+            # Compute implication.
+            res = 0
+
+            for x in range(n):
+                bit_x = 1 << x
+
+                # x must be in B.
+                if not (B & bit_x):
+                    continue
+
+                # x must not be in A.
+                if A & bit_x:
+                    continue
+
+                # x must be maximal in B.
+                if (up[x] & B).bit_count() != 1:
+                    continue
+
+                # Add downward closure of x.
+                res |= down[x]
+
+            imp_tbl[i][j] = index[res]
+
+    # Negation is implication to zero.
+    for i in range(d):
+        not_tbl[i] = imp_tbl[i][zero_idx]
+
+    # Equivalence is mutual implication plus conjunction.
+    for i in range(d):
+        for j in range(d):
+            eq_tbl[i][j] = and_tbl[imp_tbl[i][j]][imp_tbl[j][i]]
+
+    output = []
+
+    # Process formulae.
+    for formula in formulas:
+        # Convert string to tokens.
+        tokens = tokenize(formula)
+
+        # Parse expression.
+        parser = Parser(tokens, zero_idx, one_idx)
+        root = parser.parse_equiv()
+
+        # Extract used variables.
+        vars_used = [v for v in range(26) if parser.used[v]]
+
+        # Current variable assignment.
+        assignment = [0] * 26
+
+        # Initially assume valid.
+        valid = True
+
+        # Try all assignments of used variables to algebra elements.
+        for values in product(range(d), repeat=len(vars_used)):
+            # Fill assignment array.
+            for var, value in zip(vars_used, values):
+                assignment[var] = value
+
+            # Formula must evaluate to logical 1.
+            result = evaluate(
+                root,
+                parser.nodes,
+                assignment,
+                not_tbl,
+                and_tbl,
+                or_tbl,
+                imp_tbl,
+                eq_tbl,
+            )
+
+            if result != one_idx:
+                valid = False
+                break
+
+        output.append("valid" if valid else "invalid")
+
+    print("\n".join(output))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+Represent every antichain by its downward closure, i.e. by an order ideal. This gives a bijection because each ideal is determined by its maximal elements.
+
+Compute reachability in the DAG to know the partial order. Enumerate all ideals starting from the empty ideal; a vertex `x` may be added to an ideal `I` iff all elements below `x` except `x` itself are already in `I`.
+
+Under the ideal representation:
+
+```text
+1 = empty ideal
+0 = full ideal
+a & b = a ∪ b
+a | b = a ∩ b
+~a = a => 0
+a = b = (a => b) & (b => a)
+```
+
+For implication `A => B`, take all maximal vertices of `B` that are not in `A`, and return their downward closure.
+
+Precompute operation tables for all algebra elements. Then parse each formula using recursive descent according to precedence:
+
+```text
+~ > & > | > => > =
+```
+
+with `=>` right-associative and `=` expanded into conjunctions of pairwise equivalences.
+
+For each formula, enumerate all assignments of its variables to algebra elements. If every assignment evaluates to `1`, print `valid`; otherwise print `invalid`.

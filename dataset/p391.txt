@@ -1,0 +1,666 @@
+## 1. Abridged Problem Statement
+
+You are given an `n × m` grid of cells, with `k` marked cells. You may repeatedly fold the paper along a line between two adjacent rows or between two adjacent columns. After each fold, the folded paper is treated as the new paper.
+
+Determine whether it is possible to perform folds so that all marked cells end up exactly on top of each other, and no unmarked cell is in that same stack.
+
+Output `"YES"` if possible, otherwise `"NO"`.
+
+---
+
+## 2. Detailed Editorial
+
+### Key observation: rows and columns are independent
+
+A fold along a horizontal line affects only row indices.  
+A fold along a vertical line affects only column indices.
+
+Suppose all marked cells finally lie in one stack. Then:
+
+- all marked rows must be foldable into one row stack,
+- all marked columns must be foldable into one column stack.
+
+However, there is one more important condition.
+
+Let:
+
+- `R` be the set of row indices that contain at least one marked cell,
+- `C` be the set of column indices that contain at least one marked cell.
+
+If all rows in `R` are folded together and all columns in `C` are folded together, then every original cell in `R × C` will end up in the final marked stack.
+
+Therefore, every cell in the Cartesian product `R × C` must be marked.
+
+So the problem reduces to:
+
+1. Check whether the set of marked rows is foldable in 1D.
+2. Check whether the set of marked columns is foldable in 1D.
+3. Check whether the marked cells form exactly the full grid product `R × C`.
+
+---
+
+### The 1D problem
+
+We are given a strip of length `lim`, and a sorted set of marked positions `v`.
+
+We need to know if all marked positions can be folded into one stack without including any unmarked position.
+
+The function `foldable_1d(v, lim)` checks this.
+
+---
+
+### Necessary parity condition
+
+When folding between two adjacent cells, the reflection maps a position `x` to:
+
+```text
+x' = constant - x
+```
+
+The two reflected positions always have an odd sum, meaning their distance is odd.
+
+Therefore, two consecutive marked positions must be separated by an odd distance.
+
+If any consecutive difference is even, folding is impossible.
+
+Example:
+
+```text
+marked positions: 1 and 3
+distance = 2
+```
+
+There is one unmarked cell between them, and they cannot be merged without including it.
+
+---
+
+### Removing border runs
+
+If marked cells form a consecutive run starting from the left border:
+
+```text
+1, 2, 3, ...
+```
+
+they can be folded inward safely.
+
+Similarly, a consecutive run touching the right border:
+
+```text
+..., lim - 2, lim - 1, lim
+```
+
+can be removed from consideration.
+
+The algorithm removes such border-touching marked runs.
+
+---
+
+### Internal runs
+
+After removing border runs, the remaining marked positions are split into runs of consecutive marked cells.
+
+Example:
+
+```text
+marked positions: 4 5 8 12 13
+runs: [4,5], [8], [12,13]
+run lengths: 2, 1, 2
+gaps: 3, 4
+```
+
+An internal consecutive run of marked cells with length greater than `1` must have even length.
+
+Why?
+
+An even-length internal run can be folded around its center line, which lies between two cells.
+
+An odd-length internal run would have its center on a cell, not between cells, so it cannot be folded symmetrically without mixing marked and unmarked cells.
+
+Thus:
+
+```cpp
+if(run_len > 1 && run_len is odd)
+    impossible
+```
+
+---
+
+### Isolated single marked cells
+
+The difficult case is isolated marked cells, that is, internal runs of length `1`.
+
+Between two consecutive isolated single marked cells, the sequence of runs and gaps between them must be a palindrome.
+
+Why?
+
+If two isolated marks are to be merged, the fold line must be exactly halfway between them. This reflection maps the structure between them onto itself. Therefore, the pattern of marked runs and gaps between them must be symmetric.
+
+The algorithm builds a sequence like:
+
+```text
+run_length, gap, run_length, gap, run_length, ...
+```
+
+Then for each pair of consecutive `run_length == 1`, it checks that the part between them is palindromic.
+
+If all these checks pass, the 1D set is foldable.
+
+---
+
+### Final rectangular-product check
+
+Even if row and column sets are individually foldable, the marked cells must form a complete rectangle over those row and column sets.
+
+For example:
+
+```text
+marked cells:
+(1,1), (1,4), (4,1), (4,4)
+```
+
+Rows are `{1,4}`, columns are `{1,4}`, and all four combinations exist, so the answer is `"YES"`.
+
+But:
+
+```text
+marked cells:
+(1,1), (1,4), (4,1)
+```
+
+Rows are `{1,4}`, columns are `{1,4}`, but `(4,4)` is missing, so folding would put an unmarked cell into the marked stack. The answer is `"NO"`.
+
+---
+
+### Complexity
+
+Let `k` be the number of marked cells.
+
+Sorting rows, columns, and cells dominates the complexity.
+
+```text
+Time complexity:  O(k log k)
+Memory complexity: O(k)
+```
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs.
+// Prints pair as: first second
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+// Reads pair as: first second
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+// Reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate by reference over all elements.
+        in >> x;      // Read current element.
+    }
+    return in;        // Return input stream.
+}
+
+// Output operator for vectors.
+// Prints all elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {      // Iterate over all elements.
+        out << x << ' ';  // Print current element followed by space.
+    }
+    return out;           // Return output stream.
+}
+
+int n, m, k; // n = number of rows, m = number of columns, k = marked cells.
+
+// Stores the marked cells as pairs: (row, column).
+vector<pair<int, int>> pts;
+
+// Reads input.
+void read() {
+    cin >> n >> m >> k; // Read grid dimensions and number of marked cells.
+    pts.resize(k);      // Allocate space for k marked cells.
+    cin >> pts;         // Read all marked cells using overloaded vector input.
+}
+
+// Checks whether a set of marked positions in a 1D strip can be folded together.
+// v   = sorted unique marked positions.
+// lim = length of the strip.
+bool foldable_1d(vector<int>& v, int lim) {
+    int s = (int)v.size(); // Number of marked positions.
+
+    // Zero or one marked position is always foldable.
+    if(s < 2) {
+        return true;
+    }
+
+    // Consecutive marked positions must differ by an odd number.
+    // If a gap is even, folding them together without unmarked cells is impossible.
+    for(int i = 1; i < s; i++) {
+        if(((v[i] - v[i - 1]) & 1) == 0) { // Difference is even.
+            return false;
+        }
+    }
+
+    int low = 0;       // First still-unprocessed marked position.
+    int high = s;      // One past the last still-unprocessed marked position.
+
+    int left_border = 1;    // Current left border position of the strip.
+    int right_border = lim; // Current right border position of the strip.
+
+    // Remove a consecutive marked run touching the left border:
+    // positions 1, 2, 3, ...
+    while(low < high && v[low] == left_border) {
+        low++;          // Ignore this border marked cell.
+        left_border++;  // Move the effective left border inward.
+    }
+
+    // Remove a consecutive marked run touching the right border:
+    // positions ..., lim - 2, lim - 1, lim
+    while(low < high && v[high - 1] == right_border) {
+        high--;          // Ignore this border marked cell.
+        right_border--;  // Move the effective right border inward.
+    }
+
+    // This sequence will store alternating:
+    // run length of consecutive marked cells,
+    // gap size between this run and the next run.
+    vector<int> seq;
+
+    // Process remaining internal marked positions.
+    for(int i = low; i < high;) {
+        int j = i; // j will become the end index of the current consecutive run.
+
+        // Extend current run while marked positions are consecutive.
+        while(j + 1 < high && v[j + 1] == v[j] + 1) {
+            j++;
+        }
+
+        // Length of this consecutive marked run.
+        int run_len = j - i + 1;
+
+        // Internal marked runs longer than 1 must have even length.
+        // Odd internal runs cannot be folded symmetrically.
+        if(run_len > 1 && (run_len & 1)) {
+            return false;
+        }
+
+        // Store the run length.
+        seq.push_back(run_len);
+
+        // If there is another run after this one, store the gap between runs.
+        if(j + 1 < high) {
+            seq.push_back(v[j + 1] - v[j]);
+        }
+
+        // Move to the start of the next run.
+        i = j + 1;
+    }
+
+    int prev = -1; // Index in seq of the previous isolated single-cell run.
+
+    // Run lengths are stored at even indices: 0, 2, 4, ...
+    for(int k = 0; k < (int)seq.size(); k += 2) {
+        // Only isolated single marked cells require palindrome checks.
+        if(seq[k] != 1) {
+            continue;
+        }
+
+        // If this is not the first isolated single run,
+        // check symmetry between the previous one and this one.
+        if(prev >= 0) {
+            // Compare the sequence between prev and k from both ends.
+            for(int l = prev + 1, r = k - 1; l < r; l++, r--) {
+                if(seq[l] != seq[r]) { // Pattern is not palindromic.
+                    return false;
+                }
+            }
+        }
+
+        // Remember this isolated single run.
+        prev = k;
+    }
+
+    // All checks passed.
+    return true;
+}
+
+// Checks whether the marked cells form exactly R x C,
+// where C is the list of distinct marked columns.
+// The cells must already be sorted lexicographically by row, then column.
+bool is_full_grid(vector<pair<int, int>>& cells, vector<int>& cols) {
+    int n_cells = (int)cells.size(); // Number of marked cells.
+    int n_cols = (int)cols.size();   // Number of distinct marked columns.
+
+    // With no marked cells, the product condition is trivially satisfied.
+    if(n_cells == 0) {
+        return true;
+    }
+
+    // The number of marked cells must be divisible by the number of columns.
+    // Otherwise, it cannot be a complete row-by-column product.
+    if(n_cells % n_cols != 0) {
+        return false;
+    }
+
+    // Number of distinct rows if the marked cells form a full grid.
+    int n_rows = n_cells / n_cols;
+
+    // Check each block of n_cols cells.
+    // Each block should correspond to one row containing all columns.
+    for(int row_idx = 0; row_idx < n_rows; row_idx++) {
+        // Expected row value for this block.
+        int expected_row = cells[row_idx * n_cols].first;
+
+        // Check every column in this row block.
+        for(int col_idx = 0; col_idx < n_cols; col_idx++) {
+            // Current cell in sorted order.
+            const auto& cell = cells[row_idx * n_cols + col_idx];
+
+            // It must have the expected row and the expected column.
+            if(cell.first != expected_row || cell.second != cols[col_idx]) {
+                return false;
+            }
+        }
+    }
+
+    // All cells match the Cartesian product structure.
+    return true;
+}
+
+// Solves the problem.
+void solve() {
+    // Folds along rows and columns are independent.
+    // Therefore, collect all marked rows and all marked columns separately.
+
+    vector<int> rows(k), cols(k); // Arrays for row and column coordinates.
+
+    // Extract row and column indices from the marked cells.
+    for(int i = 0; i < k; i++) {
+        rows[i] = pts[i].first;   // Store row of i-th marked cell.
+        cols[i] = pts[i].second;  // Store column of i-th marked cell.
+    }
+
+    // Sort rows and remove duplicates.
+    sort(rows.begin(), rows.end());
+    rows.erase(unique(rows.begin(), rows.end()), rows.end());
+
+    // Sort columns and remove duplicates.
+    sort(cols.begin(), cols.end());
+    cols.erase(unique(cols.begin(), cols.end()), cols.end());
+
+    // Both the row set and the column set must be independently foldable.
+    if(!foldable_1d(rows, n) || !foldable_1d(cols, m)) {
+        cout << "NO\n";
+        return;
+    }
+
+    // Sort marked cells lexicographically: first by row, then by column.
+    sort(pts.begin(), pts.end());
+
+    // Check that marked cells form the complete Cartesian product rows x cols.
+    if(!is_full_grid(pts, cols)) {
+        cout << "NO\n";
+        return;
+    }
+
+    // All conditions are satisfied.
+    cout << "YES\n";
+}
+
+int main() {
+    // Speeds up C++ input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Unties cin from cout for faster input.
+    cin.tie(nullptr);
+
+    int T = 1; // This problem has a single test case.
+
+    // Multiple test cases are not used.
+    // cin >> T;
+
+    // Run the solver once.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve and print answer.
+    }
+
+    return 0; // Successful program termination.
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def foldable_1d(v, lim):
+    """
+    Checks whether marked positions v in a 1D strip of length lim
+    can be folded into one stack without including unmarked positions.
+
+    v must be sorted and contain unique positions.
+    """
+
+    s = len(v)  # Number of marked positions.
+
+    # Zero or one marked position is always foldable.
+    if s < 2:
+        return True
+
+    # Consecutive marked positions must have odd distance.
+    # If the distance is even, the structure cannot be folded correctly.
+    for i in range(1, s):
+        if (v[i] - v[i - 1]) % 2 == 0:
+            return False
+
+    # low and high delimit the still-relevant middle part of v.
+    low = 0
+    high = s
+
+    # Current effective left and right borders of the strip.
+    left_border = 1
+    right_border = lim
+
+    # Remove consecutive marked cells touching the left border.
+    while low < high and v[low] == left_border:
+        low += 1
+        left_border += 1
+
+    # Remove consecutive marked cells touching the right border.
+    while low < high and v[high - 1] == right_border:
+        high -= 1
+        right_border -= 1
+
+    # seq stores alternating:
+    # run length of consecutive marked cells,
+    # gap between this run and the next run.
+    seq = []
+
+    i = low
+
+    # Split the remaining marked positions into consecutive runs.
+    while i < high:
+        j = i
+
+        # Find the end of the current consecutive marked run.
+        while j + 1 < high and v[j + 1] == v[j] + 1:
+            j += 1
+
+        # Length of current consecutive marked run.
+        run_len = j - i + 1
+
+        # Internal runs longer than one must have even length.
+        if run_len > 1 and run_len % 2 == 1:
+            return False
+
+        # Store current run length.
+        seq.append(run_len)
+
+        # If another run follows, store the distance to the next run.
+        if j + 1 < high:
+            seq.append(v[j + 1] - v[j])
+
+        # Move to the next run.
+        i = j + 1
+
+    # prev stores the index in seq of the previous isolated single run.
+    prev = -1
+
+    # Run lengths are located at even indices in seq.
+    for idx in range(0, len(seq), 2):
+        # Only isolated single-cell runs require palindrome checks.
+        if seq[idx] != 1:
+            continue
+
+        # If there was a previous isolated run, check symmetry between them.
+        if prev >= 0:
+            l = prev + 1
+            r = idx - 1
+
+            # The pattern between two isolated marks must be palindromic.
+            while l < r:
+                if seq[l] != seq[r]:
+                    return False
+                l += 1
+                r -= 1
+
+        # Remember this isolated single run.
+        prev = idx
+
+    # All checks passed.
+    return True
+
+
+def is_full_grid(cells, cols):
+    """
+    Checks whether sorted marked cells form exactly R x cols,
+    where R is the set of distinct rows appearing in cells.
+
+    cells must be sorted lexicographically by row and column.
+    cols must be sorted unique columns.
+    """
+
+    n_cells = len(cells)  # Number of marked cells.
+    n_cols = len(cols)    # Number of distinct marked columns.
+
+    # No marked cells: trivially okay.
+    if n_cells == 0:
+        return True
+
+    # If there are marked cells but no columns, impossible.
+    # This is mostly defensive; with valid input this should not happen.
+    if n_cols == 0:
+        return False
+
+    # A full grid must contain the same number of columns in every row.
+    if n_cells % n_cols != 0:
+        return False
+
+    # Number of rows in the supposed full product.
+    n_rows = n_cells // n_cols
+
+    # Check each row block.
+    for row_idx in range(n_rows):
+        # First cell of this block determines the expected row value.
+        expected_row = cells[row_idx * n_cols][0]
+
+        # Every column must appear exactly once in this row.
+        for col_idx in range(n_cols):
+            cell = cells[row_idx * n_cols + col_idx]
+
+            # The row and column must match the expected Cartesian product.
+            if cell[0] != expected_row or cell[1] != cols[col_idx]:
+                return False
+
+    # All rows contain exactly all columns.
+    return True
+
+
+def solve():
+    # Read all integers from standard input.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # If input is empty, do nothing.
+    if not data:
+        return
+
+    # First three integers are n, m, k.
+    n, m, k = data[0], data[1], data[2]
+
+    # Remaining data contains k pairs.
+    pts = []
+
+    index = 3
+
+    # Read marked cells.
+    for _ in range(k):
+        x = data[index]
+        y = data[index + 1]
+        index += 2
+        pts.append((x, y))
+
+    # Extract distinct marked rows and columns.
+    rows = sorted(set(x for x, y in pts))
+    cols = sorted(set(y for x, y in pts))
+
+    # Row set and column set must be independently foldable.
+    if not foldable_1d(rows, n) or not foldable_1d(cols, m):
+        print("NO")
+        return
+
+    # Sort cells by row, then column.
+    pts.sort()
+
+    # Marked cells must form the complete Cartesian product rows x cols.
+    if not is_full_grid(pts, cols):
+        print("NO")
+        return
+
+    # All conditions passed.
+    print("YES")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Folding rows and columns are independent operations. Let `R` be all marked rows and `C` be all marked columns. For all marked cells to end in one stack, all rows in `R` must be foldable together, all columns in `C` must be foldable together, and every cell in `R × C` must be marked; otherwise an unmarked cell would also appear in the final marked stack.
+
+For a 1D set of marked positions:
+
+1. Consecutive marked positions must differ by an odd number.
+2. Consecutive marked runs touching the left or right border can be ignored.
+3. Remaining internal marked runs of length greater than `1` must have even length.
+4. Between consecutive isolated single marked cells, the alternating sequence of run lengths and gaps must be palindromic.
+
+Check these conditions for rows and columns. Then sort marked cells and verify they form the full Cartesian product of distinct rows and distinct columns.
+
+Complexity:
+
+```text
+O(k log k)
+```

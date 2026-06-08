@@ -1,0 +1,655 @@
+p418.in1
+======================
+Program Parser;
+Procedure Skip; Forward;
+Function Peek:Char; Forward;
+Procedure Error; Forward;
+
+Procedure Parse; Forward;
+Procedure Addend; Forward;
+Procedure Term; Forward;
+Procedure Number; Forward;
+
+Procedure Term;
+Begin
+  If Peek='0' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='1' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='(' Then Begin
+    Skip;
+    Parse;
+    If Peek=')' Then Begin
+      Skip;
+    End Else Error;
+  End Else If Peek='P' Then Begin
+    Skip;
+    If Peek='I' Then Begin
+      Skip;
+    End Else If Peek='E' Then Begin
+      Skip;
+    End Else Error;        
+  End Else Error;
+End;
+
+Procedure Number;
+Begin
+  If Peek='0' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='1' Then Begin
+    Skip;
+    Number;
+  End;
+End;
+
+Procedure Addend;
+Begin
+  Term;
+  If Peek='*' Then Begin
+    Skip;
+    Addend;
+  End Else If Peek='/' Then Begin
+    Skip;
+    Addend;
+  End;
+End;
+
+Procedure Parse;
+Begin
+  Addend;
+  If Peek='+' Then Begin
+    Skip;
+    Parse;
+  End Else If Peek='-' Then Begin
+    Skip;
+    Parse;
+  End;
+End;
+
+Var
+  St:String;
+  Pos:Integer;
+
+Procedure Error;
+Begin
+  WriteLn('NO');
+  Halt;
+End;
+
+Procedure Skip;
+Begin
+  Inc(Pos);
+  If Pos>Length(St) Then Error;
+End;
+
+Function Peek:Char;
+Begin
+  Peek:=St[Pos];
+End;
+Begin
+  ReadLn(St);
+  St:=St+'#';
+  Pos:=1;
+  Parse;
+  If Pos=Length(St) Then WriteLn('YES') Else WriteLn('NO');
+End.
+
+=================
+p418.ans1
+======================
+<addend>::=<term>|<term>'*'<addend>|<term>'/'<addend>
+<number>::=|'0'<number>|'1'<number>
+<parse>::=<addend>|<addend>'+'<parse>|<addend>'-'<parse>
+<term>::='('<parse>')'|'0'<number>|'1'<number>|'PE'|'PI'
+
+=================
+p418.cpp
+======================
+#include <bits/stdc++.h>
+
+using namespace std;
+
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+string src;
+
+enum tok_kind { word_tok, str_tok, punct_tok };
+
+struct token {
+    tok_kind kind;
+    string val;
+};
+
+struct symbol {
+    bool terminal;
+    char ch;
+    string name;
+};
+
+struct segment {
+    bool conditional;
+    string call_name;
+    vector<pair<char, vector<segment>>> branches;
+    bool else_error;
+};
+
+vector<token> toks;
+size_t pos;
+
+void tokenize() {
+    size_t i = 0, n = src.size();
+    while(i < n) {
+        char c = src[i];
+        if(isspace((unsigned char)c)) {
+            i++;
+            continue;
+        }
+
+        if(isalpha((unsigned char)c)) {
+            string w;
+            while(i < n && isalpha((unsigned char)src[i])) {
+                w += (char)tolower((unsigned char)src[i]);
+                i++;
+            }
+            toks.push_back({word_tok, w});
+        } else if(c == '\'') {
+            i++;
+            string content;
+            while(i < n) {
+                if(src[i] == '\'') {
+                    if(i + 1 < n && src[i + 1] == '\'') {
+                        content += '\'';
+                        i += 2;
+                    } else {
+                        i++;
+                        break;
+                    }
+                } else {
+                    content += src[i];
+                    i++;
+                }
+            }
+            toks.push_back({str_tok, content});
+        } else {
+            toks.push_back({punct_tok, string(1, c)});
+            i++;
+        }
+    }
+}
+
+bool at_word(const string& w) {
+    return toks[pos].kind == word_tok && toks[pos].val == w;
+}
+
+vector<segment> parse_segments();
+
+segment parse_conditional() {
+    segment s;
+    s.conditional = true;
+    s.else_error = false;
+    pos++;  // if
+    while(true) {
+        pos++;  // peek
+        pos++;  // =
+        char c = toks[pos].val[0];
+        pos++;  // character literal
+        pos++;  // then
+        pos++;  // begin
+        pos++;  // skip
+        pos++;  // ;
+        vector<segment> inner = parse_segments();
+        pos++;  // end
+        s.branches.push_back({c, std::move(inner)});
+
+        if(at_word("else")) {
+            pos++;  // else
+            if(at_word("if")) {
+                pos++;  // if
+                continue;
+            }
+            pos++;  // error
+            pos++;  // ;
+            s.else_error = true;
+            break;
+        }
+
+        pos++;  // ;
+        break;
+    }
+
+    return s;
+}
+
+vector<segment> parse_segments() {
+    vector<segment> segs;
+    while(!at_word("end")) {
+        if(at_word("if")) {
+            segs.push_back(parse_conditional());
+        } else {
+            segment s;
+            s.conditional = false;
+            s.call_name = toks[pos].val;
+            pos++;  // name
+            pos++;  // ;
+            segs.push_back(std::move(s));
+        }
+    }
+
+    return segs;
+}
+
+vector<vector<symbol>> expand_segments(const vector<segment>& segs);
+
+vector<vector<symbol>> expand_segment(const segment& s) {
+    if(!s.conditional) {
+        symbol sym{false, 0, s.call_name};
+        return {{sym}};
+    }
+
+    vector<vector<symbol>> out;
+    for(const auto& br: s.branches) {
+        symbol t{true, br.first, ""};
+        for(auto& inner: expand_segments(br.second)) {
+            vector<symbol> prod{t};
+            prod.insert(prod.end(), inner.begin(), inner.end());
+            out.push_back(std::move(prod));
+        }
+    }
+    if(!s.else_error) {
+        out.push_back({});
+    }
+
+    return out;
+}
+
+vector<vector<symbol>> expand_segments(const vector<segment>& segs) {
+    vector<vector<symbol>> result = {{}};
+    for(const auto& s: segs) {
+        vector<vector<symbol>> seg_prods = expand_segment(s);
+        vector<vector<symbol>> next;
+        for(auto& a: result) {
+            for(auto& b: seg_prods) {
+                vector<symbol> c = a;
+                c.insert(c.end(), b.begin(), b.end());
+                next.push_back(std::move(c));
+            }
+        }
+        result = std::move(next);
+    }
+
+    return result;
+}
+
+string render(const vector<symbol>& prod) {
+    string out;
+    size_t i = 0;
+    while(i < prod.size()) {
+        if(prod[i].terminal) {
+            out += '\'';
+            while(i < prod.size() && prod[i].terminal) {
+                out += prod[i].ch;
+                i++;
+            }
+            out += '\'';
+        } else {
+            out += '<';
+            out += prod[i].name;
+            out += '>';
+            i++;
+        }
+    }
+
+    return out;
+}
+
+void read() {
+    stringstream ss;
+    ss << cin.rdbuf();
+    src = ss.str();
+}
+
+void solve() {
+    // This is a pure parsing/implementation problem: read the Pascal source,
+    // recover each parsing routine's body, and emit the grammar it encodes.
+    //
+    // The standard way to handle a task like this is to split it into two
+    // stages. First a tokenizer walks the raw text once and turns it into a
+    // flat list of tokens, collapsing all the optional whitespace away: a
+    // maximal run of letters becomes one case-folded word token, a run wrapped
+    // in apostrophes becomes a string token, and every other byte is its own
+    // punctuation token. After this stage the language is regular in the
+    // tokens, so the messy "whitespace may appear anywhere between words" rule
+    // never has to be thought about again.
+    //
+    // The second stage is a recursive-descent parser over that token list. A
+    // single cursor (pos) scans forward and each grammar construct gets one
+    // function that consumes exactly its tokens and advances the cursor:
+    // parse_segments reads a run of segments until the closing End, and
+    // parse_conditional reads an If / Else-If / Else chain, recursing back into
+    // parse_segments for each branch body. Because the input is guaranteed
+    // well-formed we advance the cursor positionally instead of validating.
+    //
+    // A parsing routine is any "Procedure <name>; Begin ..." with Skip and
+    // Error excluded and Peek being a Function, so a linear scan over the
+    // tokens finds every definition and parses its body.
+    //
+    // Finally each body is expanded into productions. Evaluating the If's of a
+    // routine in every non-Error way is just a cartesian product: a segment
+    // list expands to the concatenation of its segments' expansions, an
+    // unconditional call contributes its nonterminal, and a conditional
+    // contributes, per branch, the guessed character (a terminal, since Skip
+    // consumes it) followed by that branch's body, plus the empty alternative
+    // when there is no trailing Else Error. Rendering merges adjacent terminals
+    // into one quoted literal, and both the alternatives on a line and the
+    // lines themselves are sorted lexicographically.
+
+    tokenize();
+
+    vector<pair<string, vector<segment>>> routines;
+    pos = 0;
+    while(pos < toks.size()) {
+        bool is_def =
+            toks[pos].kind == word_tok && toks[pos].val == "procedure" &&
+            pos + 3 < toks.size() && toks[pos + 1].kind == word_tok &&
+            toks[pos + 3].kind == word_tok && toks[pos + 3].val == "begin" &&
+            toks[pos + 1].val != "skip" && toks[pos + 1].val != "error";
+        if(is_def) {
+            string name = toks[pos + 1].val;
+            pos += 4;  // procedure name ; begin
+            vector<segment> body = parse_segments();
+            pos++;  // end
+            pos++;  // ;
+            routines.push_back({name, std::move(body)});
+        } else {
+            pos++;
+        }
+    }
+
+    vector<string> lines;
+    for(auto& [name, body]: routines) {
+        vector<string> rendered;
+        for(auto& prod: expand_segments(body)) {
+            rendered.push_back(render(prod));
+        }
+        sort(rendered.begin(), rendered.end());
+
+        string line = "<" + name + ">::=";
+        for(size_t i = 0; i < rendered.size(); i++) {
+            if(i) {
+                line += '|';
+            }
+            line += rendered[i];
+        }
+        lines.push_back(line);
+    }
+
+    sort(lines.begin(), lines.end());
+    for(auto& line: lines) {
+        cout << line << "\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+
+=================
+statement.txt
+======================
+418. Deducing Grammar
+time limit per test: 0.25 sec.
+memory limit per test: 262144 KB
+input: standard
+output: standard
+
+
+
+A typical top-down parser is a very simple application. We will consider parsers written in Pascal that obey the following structure:
+
+Program Parser;
+Procedure Skip; Forward;
+Function Peek:Char; Forward;
+Procedure Error; Forward;
+
+<parsing routines forward-declarations>
+<parsing routines>
+
+Var
+  St:String;
+  Pos:Integer;
+Procedure Error;
+Begin
+  WriteLn('NO');
+  Halt;
+End;
+Procedure Skip;
+Begin
+  Inc(Pos);
+  If Pos>Length(St) Then Error;
+End;
+Function Peek:Char;
+Begin
+  Peek:=St[Pos];
+End;
+Begin
+  ReadLn(St);
+  St:=St+'#';
+  Pos:=1;
+  Parse;
+  If Pos=Length(St) Then WriteLn('YES') Else WriteLn('NO');
+End.
+
+The part labeled <parsing routines forward-declarations> contains a definition for each of the parsing functions, followed by Forward;. The part labeled <parsing routines> contains a definition followed by a body for each of the parsing routines.
+
+A definition of a parsing routine is:
+
+Procedure <name>;
+
+The name is a case-insensitive sequence of English letters. Names of different routines should be different. A routine name cannot coincide with a keyword, nor can it coincide with the names of parser's internal functions (Skip, Peek or Error). A body of a parsing routine is:
+
+Begin
+  <segment>
+  <segment>
+  ...
+  <segment>
+End;
+
+There must be at least one segment. Each segment is either an unconditional segment, or a conditional segment.
+
+An unconditional segment is a routine call: <name>;, where <name> is a name of some parsing routine.
+
+A conditional segment has the following structure:
+
+If Peek=<character> Then Begin
+  Skip;
+  <segment>
+  <segment>
+  ...
+  <segment>
+End Else If Peek=<character> Then Begin
+  Skip;
+  <segment>
+  <segment>
+  ...
+  <segment>
+End Else If Peek=<character> Then Begin
+...
+End Else If Peek=<character> Then Begin
+End;
+
+Where each <segment> is again either unconditional or conditional. The simplest form of a conditional segment has only one If and no Else. Note that we always skip a character after guessing it right, and that's the only case where we invoke Skip;. Each <character> is a non-apostrophe character with ASCII code between 33 and 126 wrapped in apostrophes, like 'a'. It is not necessary to have at least one <segment> after Skip; in the If body. The last End; can also be written as End Else Error;, meaning that all other peek outcomes are unacceptable.
+
+The case of the letters in the identifiers and keywords can be arbitrary, and whitespace may be inserted and/or omitted everywhere except it must be present between two words and it must not be present inside a word or string literal (something wrapped in apostrophes). One of the parsing routines must be named Parse.
+
+Such a top-down parser is usually based on some formal grammar. Your task is to find which grammar the given parser is based on. To do so, you should apply the following rules (note that the resulting grammar may not necessarily define the same language as the language accepted by the parser — you shouldn't care about it, just blindly apply the rules):
+
+The set of nonterminal symbols of the grammar is the same as the set of parsing routine names in the parser.
+
+The set of terminal symbols of the grammar is the set of characters with ASCII codes between 33 and 126, except apostrophe.
+
+For each (even seemingly impossible, like duplicate Peek=... conditions) way of evaluating all If's in the body of some routine that do not result in a call to Error;, there should be one production rule concatenating the corresponding nonterminals and terminals (see example for further clarification).
+
+The starting symbol should be Parse.
+
+Your program should input the top-down parser code in Pascal, and output the grammar in the Backus-Naur form. See example for more information on how to output the grammar. Two adjacent string literals should be concatenated, i.e., you should write 'AB' instead of 'A''B'. Your output should contain exactly n lines, where n is the number of parsing routines in the input.
+
+The nonterminals must be written in lowercase. The production rules inside a line must be sorted lexicographically, and the lines must be sorted lexicographically, too.
+
+Input
+The input file contains a top-down parser in Pascal. The size of the input file does not exceed 10000 bytes, and each word is at most 20 characters long.
+
+Output
+Output the Backus-Naur form of the underlying grammar. The only whitespace in output should be line breaks after each line (including the last line), as the output will be checked for exact equality with the reference answer. The output is guaranteed not to exceed 10000 bytes.
+
+Sample test(s)
+
+Input
+
+Program Parser;
+Procedure Skip; Forward;
+Function Peek:Char; Forward;
+Procedure Error; Forward;
+
+Procedure Parse; Forward;
+Procedure Addend; Forward;
+Procedure Term; Forward;
+Procedure Number; Forward;
+
+Procedure Term;
+Begin
+  If Peek='0' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='1' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='(' Then Begin
+    Skip;
+    Parse;
+    If Peek=')' Then Begin
+      Skip;
+    End Else Error;
+  End Else If Peek='P' Then Begin
+    Skip;
+    If Peek='I' Then Begin
+      Skip;
+    End Else If Peek='E' Then Begin
+      Skip;
+    End Else Error;        
+  End Else Error;
+End;
+
+Procedure Number;
+Begin
+  If Peek='0' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='1' Then Begin
+    Skip;
+    Number;
+  End;
+End;
+
+Procedure Addend;
+Begin
+  Term;
+  If Peek='*' Then Begin
+    Skip;
+    Addend;
+  End Else If Peek='/' Then Begin
+    Skip;
+    Addend;
+  End;
+End;
+
+Procedure Parse;
+Begin
+  Addend;
+  If Peek='+' Then Begin
+    Skip;
+    Parse;
+  End Else If Peek='-' Then Begin
+    Skip;
+    Parse;
+  End;
+End;
+
+Var
+  St:String;
+  Pos:Integer;
+
+Procedure Error;
+Begin
+  WriteLn('NO');
+  Halt;
+End;
+
+Procedure Skip;
+Begin
+  Inc(Pos);
+  If Pos>Length(St) Then Error;
+End;
+
+Function Peek:Char;
+Begin
+  Peek:=St[Pos];
+End;
+Begin
+  ReadLn(St);
+  St:=St+'#';
+  Pos:=1;
+  Parse;
+  If Pos=Length(St) Then WriteLn('YES') Else WriteLn('NO');
+End.
+
+Output
+
+<addend>::=<term>|<term>'*'<addend>|<term>'/'<addend>
+<number>::=|'0'<number>|'1'<number>
+<parse>::=<addend>|<addend>'+'<parse>|<addend>'-'<parse>
+<term>::='('<parse>')'|'0'<number>|'1'<number>|'PE'|'PI'
+
+Note
+Note that this parser and this grammar correspond to arithmetic expressions involving binary numbers and two constants 'PE' and 'PI'.
+Author:	Petr Mitrichev
+Resource:	Petr Mitrichev Contest 3
+Date:	September 01, 2007
+
+=================

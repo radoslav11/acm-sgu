@@ -1,0 +1,819 @@
+## 1. Abridged problem statement
+
+A dice game is played with sums up to 21. A player rolls a fair six-sided die at least once and may stop after any roll. If their sum exceeds 21, they lose. Then the croupier rolls similarly. A player wins iff their sum is at most 21 and is strictly greater than the croupier’s sum, or the croupier busts.
+
+There are two players before the croupier:
+
+1. Big Man bets `X` euros and plays using the optimal strategy he would use if Andrew did not exist.
+2. Andrew bets `1` euro, knows Big Man’s final sum, and chooses an optimal strategy knowing that the croupier will maximize total casino profit from both bets.
+3. The croupier then plays optimally for the casino.
+
+If a player/croupier is indifferent between stopping and rolling, they roll.
+
+Given `X`, output Andrew’s probability of winning.
+
+---
+
+## 2. Detailed editorial
+
+We work with expected values, not probabilities directly.
+
+For a unit bet:
+
+- win gives net profit `+1`;
+- loss gives net profit `-1`.
+
+So if Andrew’s win probability is `p`, his expected value is:
+
+```text
+EV = p * 1 + (1 - p) * (-1) = 2p - 1
+```
+
+Therefore:
+
+```text
+p = (EV + 1) / 2
+```
+
+All sums are in range `0..27`, because once a player reaches at most `21`, one more die roll can bring them to at most `27`. Sums above `21` are bust states.
+
+---
+
+### Step 1: Big Man against the croupier alone
+
+Big Man ignores Andrew. His bet size `X` does not affect his strategy because multiplying all profits by `X` does not change which action is optimal.
+
+Suppose Big Man has already stopped with score `Sb`.
+
+Let:
+
+```text
+f[Sc] = Big Man's expected profit if the croupier currently has score Sc
+```
+
+The croupier wants to minimize Big Man’s expected profit.
+
+If `Sc > 21`, the croupier busts, so Big Man wins:
+
+```text
+f[Sc] = +1
+```
+
+For `Sc <= 21`, the croupier can stop or roll.
+
+If the croupier stops:
+
+```text
+Big Man wins iff Sc < Sb
+```
+
+So:
+
+```text
+stop_value = +1 if Sc < Sb
+stop_value = -1 if Sc >= Sb
+```
+
+If the croupier rolls:
+
+```text
+roll_value = average(f[Sc + 1], ..., f[Sc + 6])
+```
+
+The croupier chooses the smaller value for Big Man. If equal, croupier rolls:
+
+```text
+f[Sc] = min(stop_value, roll_value), with ties going to roll
+```
+
+The croupier must roll at least once, so Big Man’s EV after stopping at `Sb` is:
+
+```text
+U_b[Sb] = average(f[1], ..., f[6])
+```
+
+---
+
+### Step 2: Big Man’s optimal stopping strategy
+
+Let:
+
+```text
+V_bm[Sb] = Big Man's optimal EV when his current sum is Sb
+```
+
+If `Sb > 21`, he has busted:
+
+```text
+V_bm[Sb] = -1
+```
+
+For `Sb <= 21`, he can either stop or roll:
+
+```text
+stop_value = U_b[Sb]
+roll_value = average(V_bm[Sb + 1], ..., V_bm[Sb + 6])
+```
+
+Big Man maximizes his EV. If equal, he rolls:
+
+```text
+V_bm[Sb] = max(stop_value, roll_value), with ties going to roll
+```
+
+We also store whether Big Man rolls or stops for each score.
+
+Then we simulate the probability distribution of Big Man’s final score using this strategy.
+
+Initially he must roll once, so:
+
+```text
+reach[1..6] = 1/6
+```
+
+Then for every reachable sum:
+
+- if Big Man rolls, distribute the probability to `sum + 1` through `sum + 6`;
+- if he stops, store that probability as final distribution.
+
+This gives:
+
+```text
+dist_b[Sb] = probability that Big Man finishes with score Sb
+```
+
+including bust scores `22..27`.
+
+---
+
+### Step 3: Croupier strategy against both players
+
+Now fix Big Man’s final score `Sb` and Andrew’s stopped score `Sa`.
+
+The croupier maximizes total casino expected profit:
+
+```text
+casino_profit = X * profit_against_Big_Man + profit_against_Andrew
+```
+
+But Andrew only cares about his own expected profit.
+
+For every croupier score `Sc`, we store two values:
+
+```text
+g[Sc] = casino's total EV from this croupier state
+a[Sc] = Andrew's EV from this croupier state,
+        assuming the croupier follows the strategy maximizing g
+```
+
+Important: `a[Sc]` is not optimized directly. It follows whichever action the croupier chooses by maximizing `g[Sc]`.
+
+If `Sc > 21`, the croupier busts. Then:
+
+- Big Man wins if `Sb <= 21`, otherwise Big Man already busted;
+- Andrew wins if `Sa <= 21`, otherwise Andrew already busted.
+
+For `Sc <= 21`, croupier compares stopping and rolling.
+
+If croupier stops:
+
+```text
+casino profit from Big Man:
+    +X if Big Man busted or Sc >= Sb
+    -X otherwise
+
+casino profit from Andrew:
+    +1 if Andrew busted or Sc >= Sa
+    -1 otherwise
+```
+
+Andrew’s own EV is:
+
+```text
+-1 if Andrew loses
++1 if Andrew wins
+```
+
+If croupier rolls:
+
+```text
+roll_casino = average(g[Sc + 1], ..., g[Sc + 6])
+roll_andrew = average(a[Sc + 1], ..., a[Sc + 6])
+```
+
+The croupier chooses the action with larger casino EV. If equal, croupier rolls.
+
+After computing this DP, if Andrew stops at `Sa`, the croupier must roll once, so Andrew’s EV is:
+
+```text
+stop_andrew[Sa] = average(a[1], ..., a[6])
+```
+
+---
+
+### Step 4: Andrew’s optimal strategy
+
+For fixed Big Man score `Sb`, compute Andrew’s optimal EV.
+
+Let:
+
+```text
+V_a[Sa] = Andrew's optimal EV at current sum Sa
+```
+
+If `Sa > 21`:
+
+```text
+V_a[Sa] = -1
+```
+
+Otherwise Andrew chooses between stopping and rolling:
+
+```text
+stop_value = stop_andrew[Sa]
+roll_value = average(V_a[Sa + 1], ..., V_a[Sa + 6])
+```
+
+Andrew maximizes his own EV. If equal, he rolls.
+
+Andrew must roll at least once, so his EV against this Big Man score is:
+
+```text
+andrew_ev(Sb) = average(V_a[1], ..., V_a[6])
+```
+
+---
+
+### Step 5: Average over Big Man’s final distribution
+
+Big Man’s final score is random. Therefore Andrew’s total EV is:
+
+```text
+total_ev = sum over Sb of dist_b[Sb] * andrew_ev(Sb)
+```
+
+Finally convert EV to probability:
+
+```text
+answer = (total_ev + 1) / 2
+```
+
+The state space is tiny. All DPs are over sums up to `27`, so the solution is easily fast enough.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std::.
+
+// Output operator for pairs; not actually needed for this problem,
+// but included in the author's template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair as "first second".
+}
+
+// Input operator for pairs; also unused here.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors; unused here.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // For every element of the vector...
+        in >> x;      // ...read it.
+    }
+    return in;        // Return stream to allow chaining.
+};
+
+// Output operator for vectors; unused here.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {      // For every element...
+        out << x << ' ';  // ...print it followed by a space.
+    }
+    return out;           // Return stream to allow chaining.
+};
+
+double X; // Big Man's bet size.
+
+// Reads the only input value.
+void read() {
+    cin >> X;
+}
+
+void solve() {
+    // We only need sums 0..27.
+    // 21 is the largest non-bust sum, and one more die roll can add at most 6.
+    const int N = 28;
+
+    // Helper lambda:
+    // returns average of v[s + 1], ..., v[s + 6],
+    // corresponding to rolling one fair six-sided die from current sum s.
+    auto roll_avg = [&](const vector<double>& v, int s) {
+        double t = 0.0;              // Sum of six possible future values.
+        for(int d = 1; d <= 6; d++) {
+            t += v[s + d];           // Add value after rolling d.
+        }
+        return t / 6.0;              // Fair die average.
+    };
+
+    // U_b[Sb] = Big Man's EV if he stops at score Sb
+    // in the one-player game against the croupier.
+    // Initialized to -1, which is correct for bust states.
+    vector<double> U_b(N, -1.0);
+
+    // Compute Big Man's stopping EV for every possible non-bust score.
+    for(int Sb = 1; Sb <= 21; Sb++) {
+        // f[Sc] = Big Man's EV when the croupier currently has score Sc.
+        vector<double> f(N, 0.0);
+
+        // If the croupier busts, Big Man wins.
+        for(int Sc = 22; Sc < N; Sc++) {
+            f[Sc] = 1.0;
+        }
+
+        // Compute from high scores down to low scores.
+        // This works because rolling only increases Sc.
+        for(int Sc = 21; Sc >= 1; Sc--) {
+            // If croupier stops, Big Man loses ties.
+            // Big Man wins only if Sc < Sb.
+            double stop_v = (Sc >= Sb) ? -1.0 : 1.0;
+
+            // If croupier rolls, average over next die result.
+            double roll_v = roll_avg(f, Sc);
+
+            // Croupier minimizes Big Man's EV.
+            // If equal, croupier rolls.
+            f[Sc] = (roll_v <= stop_v) ? roll_v : stop_v;
+        }
+
+        // Croupier must roll at least once, starting from 0.
+        U_b[Sb] = roll_avg(f, 0);
+    }
+
+    // V_bm[Sb] = Big Man's optimal EV at current score Sb.
+    // Bust states are initialized to -1.
+    vector<double> V_bm(N, -1.0);
+
+    // action_bm[Sb] = 1 if Big Man rolls at Sb, 0 if he stops.
+    vector<int> action_bm(N, 0);
+
+    // Compute Big Man's policy backwards.
+    for(int Sb = N - 1; Sb >= 1; Sb--) {
+        // Scores above 21 are bust states and remain -1.
+        if(Sb > 21) {
+            continue;
+        }
+
+        // Value if Big Man stops now.
+        double stop_v = U_b[Sb];
+
+        // Value if Big Man rolls once.
+        double roll_v = roll_avg(V_bm, Sb);
+
+        // Big Man maximizes his own EV.
+        // If equal, he rolls.
+        if(roll_v >= stop_v) {
+            V_bm[Sb] = roll_v;  // Store rolling value.
+            action_bm[Sb] = 1;  // Mark action as roll.
+        } else {
+            V_bm[Sb] = stop_v;  // Store stopping value.
+            action_bm[Sb] = 0;  // Mark action as stop.
+        }
+    }
+
+    // reach[Sb] = probability Big Man ever reaches score Sb.
+    vector<double> reach(N, 0.0);
+
+    // Big Man must roll once initially.
+    for(int d = 1; d <= 6; d++) {
+        reach[d] = 1.0 / 6.0;
+    }
+
+    // dist_b[Sb] = probability Big Man finishes with final score Sb.
+    vector<double> dist_b(N, 0.0);
+
+    // Propagate Big Man's probability mass according to his optimal policy.
+    for(int Sb = 1; Sb <= 21; Sb++) {
+        // If Big Man rolls at this score...
+        if(action_bm[Sb] == 1) {
+            // ...distribute this probability equally to six next scores.
+            for(int d = 1; d <= 6; d++) {
+                reach[Sb + d] += reach[Sb] / 6.0;
+            }
+        } else {
+            // Otherwise he stops here, so this is a final score.
+            dist_b[Sb] = reach[Sb];
+        }
+    }
+
+    // Bust scores are also final outcomes.
+    for(int Sb = 22; Sb < N; Sb++) {
+        dist_b[Sb] = reach[Sb];
+    }
+
+    // Lambda computing Andrew's optimal EV given Big Man's final score Sb.
+    auto andrew_ev_given = [&](int Sb) {
+        // stop_andrew[Sa] = Andrew's EV if he stops with score Sa.
+        // Bust values are -1.
+        vector<double> stop_andrew(N, -1.0);
+
+        // Compute stopping value for every possible Andrew score.
+        for(int Sa = 1; Sa <= 21; Sa++) {
+            // g[Sc] = total casino EV when croupier has score Sc.
+            // a[Sc] = Andrew's EV under the croupier policy maximizing g.
+            vector<double> g(N, 0.0), a(N, 0.0);
+
+            // If croupier busts:
+            // casino gains X from Big Man if Big Man already busted,
+            // otherwise casino loses X.
+            double big_bust = (Sb > 21) ? X : -X;
+
+            // If croupier busts, Andrew wins unless Andrew already busted.
+            // Since Sa is 1..21 here, these simplify to -1 and +1,
+            // but written generally.
+            double and_bust_casino = (Sa > 21) ? 1.0 : -1.0;
+            double and_bust_andrew = (Sa > 21) ? -1.0 : 1.0;
+
+            // Boundary states: croupier already busted.
+            for(int Sc = 22; Sc < N; Sc++) {
+                g[Sc] = big_bust + and_bust_casino; // Casino total EV.
+                a[Sc] = and_bust_andrew;            // Andrew's own EV.
+            }
+
+            // Compute croupier policy backwards.
+            for(int Sc = 21; Sc >= 1; Sc--) {
+                // Casino profit from Big Man if croupier stops.
+                // Casino wins if Big Man busted or croupier has at least Sb.
+                double stop_big = (Sb > 21) ? X : ((Sc >= Sb) ? X : -X);
+
+                // Casino profit from Andrew if croupier stops.
+                // Casino wins if Andrew busted or croupier has at least Sa.
+                double stop_and_c = (Sa > 21) ? 1.0 : ((Sc >= Sa) ? 1.0 : -1.0);
+
+                // Andrew's personal EV if croupier stops.
+                double stop_and_a =
+                    (Sa > 21) ? -1.0 : ((Sc >= Sa) ? -1.0 : 1.0);
+
+                // Total casino EV if croupier stops.
+                double stop_casino = stop_big + stop_and_c;
+
+                // Casino EV if croupier rolls.
+                double roll_casino = roll_avg(g, Sc);
+
+                // Andrew EV if croupier rolls, following same croupier action.
+                double roll_andrew = roll_avg(a, Sc);
+
+                // Croupier maximizes casino EV.
+                // If equal, croupier rolls.
+                if(roll_casino >= stop_casino) {
+                    g[Sc] = roll_casino;   // Store casino EV from rolling.
+                    a[Sc] = roll_andrew;   // Andrew EV follows roll branch.
+                } else {
+                    g[Sc] = stop_casino;   // Store casino EV from stopping.
+                    a[Sc] = stop_and_a;    // Andrew EV follows stop branch.
+                }
+            }
+
+            // Croupier must roll at least once from 0.
+            stop_andrew[Sa] = roll_avg(a, 0);
+        }
+
+        // V_a[Sa] = Andrew's optimal EV at current score Sa.
+        // Bust states remain -1.
+        vector<double> V_a(N, -1.0);
+
+        // Compute Andrew's optimal policy backwards.
+        for(int Sa = N - 1; Sa >= 1; Sa--) {
+            // Scores above 21 are bust states.
+            if(Sa > 21) {
+                continue;
+            }
+
+            // Value if Andrew stops now.
+            double stop_v = stop_andrew[Sa];
+
+            // Value if Andrew rolls once.
+            double roll_v = roll_avg(V_a, Sa);
+
+            // Andrew maximizes his own EV.
+            // If equal, he rolls.
+            V_a[Sa] = (roll_v >= stop_v) ? roll_v : stop_v;
+        }
+
+        // Andrew must roll at least once initially.
+        return roll_avg(V_a, 0);
+    };
+
+    // Expected value of Andrew, averaged over Big Man's final score.
+    double total_ev = 0.0;
+
+    // Consider every possible final Big Man score, including bust scores.
+    for(int Sb = 1; Sb < N; Sb++) {
+        // Skip impossible outcomes.
+        if(dist_b[Sb] == 0.0) {
+            continue;
+        }
+
+        // Weighted contribution of this Big Man score.
+        total_ev += dist_b[Sb] * andrew_ev_given(Sb);
+    }
+
+    // Convert Andrew's EV in [-1, 1] to win probability.
+    double prob = (total_ev + 1.0) / 2.0;
+
+    // Print with enough precision.
+    cout << fixed << setprecision(6) << prob << '\n';
+}
+
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // There is only one test case.
+
+    // Solve the test case.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read X.
+        solve(); // Compute and print answer.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def main():
+    # Read Big Man's bet.
+    X = float(sys.stdin.readline().strip())
+
+    # We need sums 0..27.
+    # 21 is the largest safe sum, and one more roll can add up to 6.
+    N = 28
+
+    def roll_avg(values, s):
+        """
+        Average value after rolling one fair six-sided die
+        from current sum s.
+        """
+        return sum(values[s + d] for d in range(1, 7)) / 6.0
+
+    # ------------------------------------------------------------
+    # Step 1: Big Man's stopping EV against croupier alone.
+    # ------------------------------------------------------------
+
+    # U_b[Sb] = Big Man's EV if he stops at score Sb.
+    # Bust scores remain -1.
+    U_b = [-1.0] * N
+
+    for Sb in range(1, 22):
+        # f[Sc] = Big Man's EV when croupier currently has score Sc.
+        f = [0.0] * N
+
+        # If croupier busts, Big Man wins.
+        for Sc in range(22, N):
+            f[Sc] = 1.0
+
+        # Compute croupier decisions backwards.
+        for Sc in range(21, 0, -1):
+            # If croupier stops, Big Man loses ties.
+            stop_v = -1.0 if Sc >= Sb else 1.0
+
+            # If croupier rolls, average future values.
+            roll_v = roll_avg(f, Sc)
+
+            # Croupier minimizes Big Man's EV.
+            # Ties go to rolling.
+            f[Sc] = roll_v if roll_v <= stop_v else stop_v
+
+        # Croupier must roll at least once.
+        U_b[Sb] = roll_avg(f, 0)
+
+    # ------------------------------------------------------------
+    # Step 2: Big Man's optimal policy and final-score distribution.
+    # ------------------------------------------------------------
+
+    # V_bm[Sb] = Big Man's optimal EV at current score Sb.
+    V_bm = [-1.0] * N
+
+    # action_bm[Sb] = 1 means roll, 0 means stop.
+    action_bm = [0] * N
+
+    for Sb in range(N - 1, 0, -1):
+        # Bust states remain -1.
+        if Sb > 21:
+            continue
+
+        # Value if Big Man stops.
+        stop_v = U_b[Sb]
+
+        # Value if Big Man rolls.
+        roll_v = roll_avg(V_bm, Sb)
+
+        # Big Man maximizes EV; ties go to rolling.
+        if roll_v >= stop_v:
+            V_bm[Sb] = roll_v
+            action_bm[Sb] = 1
+        else:
+            V_bm[Sb] = stop_v
+            action_bm[Sb] = 0
+
+    # reach[Sb] = probability Big Man reaches score Sb.
+    reach = [0.0] * N
+
+    # Big Man must roll once initially.
+    for d in range(1, 7):
+        reach[d] = 1.0 / 6.0
+
+    # dist_b[Sb] = probability Big Man's final score is Sb.
+    dist_b = [0.0] * N
+
+    # Propagate probabilities in increasing score order.
+    for Sb in range(1, 22):
+        if action_bm[Sb] == 1:
+            # Big Man rolls, so distribute probability to future scores.
+            for d in range(1, 7):
+                reach[Sb + d] += reach[Sb] / 6.0
+        else:
+            # Big Man stops here.
+            dist_b[Sb] = reach[Sb]
+
+    # Bust scores are final.
+    for Sb in range(22, N):
+        dist_b[Sb] = reach[Sb]
+
+    # ------------------------------------------------------------
+    # Step 3 and 4: Andrew's optimal EV given Big Man's score.
+    # ------------------------------------------------------------
+
+    def andrew_ev_given(Sb):
+        """
+        Compute Andrew's optimal expected profit,
+        assuming Big Man's final score is Sb.
+        """
+
+        # stop_andrew[Sa] = Andrew's EV if he stops at score Sa.
+        stop_andrew = [-1.0] * N
+
+        for Sa in range(1, 22):
+            # g[Sc] = casino's total EV from croupier score Sc.
+            # a[Sc] = Andrew's own EV under the croupier policy
+            #         that maximizes g.
+            g = [0.0] * N
+            a = [0.0] * N
+
+            # Values when croupier busts.
+            # If Big Man busted, casino wins X from him; otherwise loses X.
+            big_bust = X if Sb > 21 else -X
+
+            # If croupier busts, Andrew wins unless he already busted.
+            # Sa is non-bust here, but keep formulas general.
+            and_bust_casino = 1.0 if Sa > 21 else -1.0
+            and_bust_andrew = -1.0 if Sa > 21 else 1.0
+
+            # Boundary states for croupier bust.
+            for Sc in range(22, N):
+                g[Sc] = big_bust + and_bust_casino
+                a[Sc] = and_bust_andrew
+
+            # Croupier chooses action maximizing casino EV.
+            for Sc in range(21, 0, -1):
+                # Casino profit from Big Man if croupier stops.
+                if Sb > 21:
+                    stop_big = X
+                else:
+                    stop_big = X if Sc >= Sb else -X
+
+                # Casino profit from Andrew if croupier stops.
+                if Sa > 21:
+                    stop_and_c = 1.0
+                    stop_and_a = -1.0
+                else:
+                    if Sc >= Sa:
+                        stop_and_c = 1.0
+                        stop_and_a = -1.0
+                    else:
+                        stop_and_c = -1.0
+                        stop_and_a = 1.0
+
+                # Total casino EV if stopping.
+                stop_casino = stop_big + stop_and_c
+
+                # Total casino EV if rolling.
+                roll_casino = roll_avg(g, Sc)
+
+                # Andrew EV if croupier rolls.
+                roll_andrew = roll_avg(a, Sc)
+
+                # Croupier maximizes casino EV; ties go to rolling.
+                if roll_casino >= stop_casino:
+                    g[Sc] = roll_casino
+                    a[Sc] = roll_andrew
+                else:
+                    g[Sc] = stop_casino
+                    a[Sc] = stop_and_a
+
+            # Croupier must roll at least once.
+            stop_andrew[Sa] = roll_avg(a, 0)
+
+        # V_a[Sa] = Andrew's optimal EV at current score Sa.
+        V_a = [-1.0] * N
+
+        for Sa in range(N - 1, 0, -1):
+            # Bust states remain -1.
+            if Sa > 21:
+                continue
+
+            # Andrew can stop or roll.
+            stop_v = stop_andrew[Sa]
+            roll_v = roll_avg(V_a, Sa)
+
+            # Andrew maximizes EV; ties go to rolling.
+            V_a[Sa] = roll_v if roll_v >= stop_v else stop_v
+
+        # Andrew must roll at least once initially.
+        return roll_avg(V_a, 0)
+
+    # ------------------------------------------------------------
+    # Step 5: Average Andrew's EV over Big Man's final distribution.
+    # ------------------------------------------------------------
+
+    total_ev = 0.0
+
+    for Sb in range(1, N):
+        if dist_b[Sb] != 0.0:
+            total_ev += dist_b[Sb] * andrew_ev_given(Sb)
+
+    # Convert EV to probability.
+    probability = (total_ev + 1.0) / 2.0
+
+    # Print answer.
+    print(f"{probability:.6f}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+Use expected profit values `+1/-1` for Andrew’s unit bet. Convert final EV to probability by `(EV + 1) / 2`.
+
+Only sums `0..27` matter.
+
+First compute Big Man’s strategy as if Andrew did not exist. For every possible Big Man stopping score `Sb`, run a backward DP for the croupier:
+
+```text
+f[Sc] = Big Man EV from croupier score Sc
+```
+
+Croupier minimizes `f`, rolling on ties. This gives `U_b[Sb]`, the value of Big Man stopping at `Sb`.
+
+Then compute Big Man’s own DP:
+
+```text
+V_bm[Sb] = max(U_b[Sb], average V_bm[Sb+1..Sb+6])
+```
+
+with rolling on ties. Simulate this policy to get `dist_b[Sb]`, the distribution of Big Man’s final score.
+
+For each possible final `Sb`, compute Andrew’s optimal EV. For every Andrew stopping score `Sa`, compute the croupier’s strategy using two arrays:
+
+```text
+g[Sc] = casino total EV
+a[Sc] = Andrew EV under the casino-optimal action
+```
+
+The croupier maximizes:
+
+```text
+X * casino profit against Big Man + casino profit against Andrew
+```
+
+and rolls on ties. Andrew’s EV follows the chosen croupier branch.
+
+This gives Andrew’s stopping value for each `Sa`. Then Andrew runs:
+
+```text
+V_a[Sa] = max(stop_value[Sa], average V_a[Sa+1..Sa+6])
+```
+
+again rolling on ties.
+
+Average Andrew’s EV over Big Man’s final distribution and output `(EV + 1) / 2`.

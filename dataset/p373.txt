@@ -1,0 +1,946 @@
+## 1) Abridged problem statement
+
+A circular pizza of radius **R** centered at (0,0) is cut by **N** straight lines (1 ≤ N ≤ 4), each given by `ax + by + c = 0`. Each line intersects the pizza boundary in exactly two points, so it truly cuts the disk.
+
+Carlsson and Winnie-the-Pooh alternately **take an entire remaining piece** and eat it. They eat at the same speed, and the **time** to eat a piece is **proportional to its area**. Therefore, the next person to choose a new piece is whoever finishes eating earlier; if both finish at the same time and try to take simultaneously, **Carlsson chooses first**.
+
+Assuming both play optimally to maximize their own total eaten area, output the final areas eaten by **Carlsson** and **Pooh**.
+
+Accuracy must be within **1e-4**.
+
+---
+
+## 2) Detailed editorial (geometry + game)
+
+### A. Turn rule as a scheduling game
+Because eating time equals area (same speed), each player’s “busy time” is the sum of areas of pieces they already took.
+
+Let:
+- `tc` = total area Carlsson has taken so far (thus time spent so far)
+- `tp` = total area Pooh has taken so far
+
+At any moment, the next chooser is:
+- Carlsson if `tc <= tp` (tie goes to Carlsson),
+- otherwise Pooh.
+
+So the game is: from a multiset of piece areas, players pick pieces one by one, but **the next picker is determined by current cumulative sums**, not by strict alternation.
+
+This is not greedy. Taking a huge piece can “stall” you and let the opponent take several smaller pieces before you can pick again.
+
+Since N ≤ 4, the number of pieces is small (≤ 1 + N(N+1)/2 = 11 for lines in a disk arrangement), so we can do exact minimax over subsets.
+
+---
+
+### B. Computing all piece areas: arrangement inside a circle
+We need areas of all faces obtained by intersecting:
+- the disk boundary circle, and
+- N chords (each is the portion of a line inside the disk).
+
+We build a planar embedding of the arrangement via a **DCEL-like half-edge structure**:
+
+**Vertices**
+- For each line: its 2 intersection points with the circle are vertices.
+- For each pair of lines: if they intersect inside/on the disk, that intersection point is a vertex.
+
+We deduplicate close points (floating error).
+
+**Edges**
+1. **Chord pieces on each line:**  
+   Collect all vertices lying on that line (its circle endpoints + all internal line-line intersections), sort them along the line, then connect consecutive vertices with straight half-edges.
+2. **Circular arcs along the boundary:**  
+   Collect all circle-intersection vertices, sort by polar angle around the origin, then connect consecutive ones in CCW order with arc half-edges (and the last to the first).
+
+Each undirected edge becomes two directed **half-edges** with `twin` pointers.
+
+---
+
+### C. Getting faces using half-edge “next” pointers
+For each vertex, we sort all outgoing half-edges by their **direction angle** (tangent direction for arcs, segment direction for chords) in CCW order.
+
+For a half-edge `h`, when traversing a face boundary we want to “keep the face on the left”. The standard DCEL rule used here:
+
+`next(h)` = the outgoing half-edge that is immediately **clockwise** from `twin(h)` at the vertex `to(h)`.
+
+Once all `next` pointers are set, walking `h -> next(h) -> next(next(h)) ...` traces one face boundary. Doing this from all unvisited half-edges enumerates every face exactly once.
+
+---
+
+### D. Area of a face boundary (Green’s theorem)
+We compute signed area from the boundary, adding contributions per directed half-edge.
+
+For a **straight segment** from `P` to `Q`:
+\[
+2A += (P_x Q_y - Q_x P_y)
+\]
+(the standard polygon shoelace increment).
+
+For a **circular arc** centered at origin with radius r, from angle θ1 to θ2 along the chosen direction:
+Green’s theorem gives the arc contribution:
+\[
+2A += r^2 \cdot (\theta_2 - \theta_1)
+\]
+where the angle difference must follow the arc direction:
+- CCW arc: ensure Δθ > 0 by adding 2π if needed,
+- CW arc: ensure Δθ < 0 by subtracting 2π if needed.
+
+After traversal:
+\[
+A = \frac{1}{2}(2A)
+\]
+
+The outer (unbounded) face appears with negative signed area; all real pizza pieces are faces **inside the circle**, so we keep only faces with `A > 0`.
+
+This yields a list `areas[]` of piece areas.
+
+---
+
+### E. Optimal play via minimax with alpha-beta
+Let `p = len(areas)` (p ≤ ~11).
+
+State:
+- `mask`: which pieces are already taken
+- `tc`, `tp`: cumulative eaten areas (times)
+- `csf`: Carlsson’s total area so far
+
+Transition:
+- Determine whose turn: `tc <= tp` => Carlsson, else Pooh.
+- Current player chooses any remaining piece `i`:
+  - If Carlsson: new `(tc+ai, tp, csf+ai)`
+  - If Pooh: new `(tc, tp+ai, csf)`
+
+Terminal:
+- all taken (`mask == (1<<p)-1`) return `csf`.
+
+This is a zero-sum game in terms of Carlsson’s final area: Pooh minimizes it. So:
+- Carlsson nodes: take **max**
+- Pooh nodes: take **min**
+
+With p small, brute force is fine; alpha-beta pruning helps.
+
+Finally:
+- `carlsson = minimax(...)`
+- `pooh = total_area - carlsson`
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Print vector elements separated by spaces
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+using coord_t = double;
+
+// 2D point/vector with common geometry operations
+struct Point {
+    static constexpr coord_t eps = 1e-9;              // epsilon for comparisons
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D scalar)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Lexicographic comparisons (mostly unused here)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const { return x != p.x ? x < p.x : y < p.y; }
+    bool operator>(const Point& p) const { return x != p.x ? x > p.x : y > p.y; }
+    bool operator<=(const Point& p) const { return x != p.x ? x < p.x : y <= p.y; }
+    bool operator>=(const Point& p) const { return x != p.x ? x > p.x : y >= p.y; }
+
+    // Squared length and length
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+
+    // Polar angle in [-pi, pi]
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate by angle a
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector (CCW)
+    Point perp() const { return Point(-y, x); }
+
+    // Unit vector
+    Point unit() const { return *this / norm(); }
+
+    // Unit normal (perpendicular and normalized)
+    Point normal() const { return perp().unit(); }
+
+    // Project p onto this vector (interpreting this as direction)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+
+    // Reflect p across this vector line through origin
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Stream operators for Point
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // ccw test: +1 left turn, -1 right turn, 0 collinear
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) return 0;
+        else if(v > 0) return 1;
+        else return -1;
+    }
+
+    // Check if p lies on segment ab (with eps)
+    friend bool point_on_segment(const Point& a, const Point& b, const Point& p) {
+        return ccw(a, b, p) == 0 &&
+               p.x >= min(a.x, b.x) - eps && p.x <= max(a.x, b.x) + eps &&
+               p.y >= min(a.y, b.y) - eps && p.y <= max(a.y, b.y) + eps;
+    }
+
+    // Check if p is inside or on triangle abc
+    friend bool point_in_triangle(const Point& a, const Point& b, const Point& c, const Point& p) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) || (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection point of two non-parallel infinite lines a1b1 and a2b2
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        // Uses cross products; assumes denominator != 0
+        return a1 + (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    // Circumcenter of triangle abc (unused in solution)
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac);
+    }
+
+    // Area under a circular arc (unused in final; kept from library)
+    friend coord_t arc_area(const Point& center, coord_t r, const Point& p1, const Point& p2) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) theta2 += 2 * PI;
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    // Circle-circle intersection (unused)
+    friend vector<Point> intersect_circles(const Point& c1, coord_t r1, const Point& c2, coord_t r2) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) return {};
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) return {};
+        if(h_sq < 0) h_sq = 0;
+        coord_t h = sqrt(h_sq);
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+        if(h < eps) return {mid};
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    // Ray-segment intersection (unused)
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through, const Point& seg_a, const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) return {};
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) return {};
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) return {};
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) return {};
+        return ray_start + ray_dir * t;
+    }
+};
+
+void read() {}
+
+// Main solver
+void solve() {
+    // Build arrangement inside a circle using a half-edge structure, compute
+    // all bounded faces (pizza slices) areas, then run minimax (alpha-beta)
+    // with "who moves next" determined by current cumulative times (areas).
+
+    int n;
+    double r;
+    cin >> n >> r;
+
+    // Each line stored as (a,b,c) for ax+by+c=0
+    vector<array<double, 3>> lines(n);
+    for(auto& l: lines) cin >> l[0] >> l[1] >> l[2];
+
+    // Compute the two intersection points between line i and circle radius r
+    auto line_circle_pts = [&](int i) -> array<Point, 2> {
+        double a = lines[i][0], b = lines[i][1], c = lines[i][2];
+        double n2 = a * a + b * b;              // |(a,b)|^2
+        // Foot of perpendicular from origin to the line (closest point to origin)
+        Point foot(-a * c / n2, -b * c / n2);
+        // Distance^2 from foot to intersection points along the line direction
+        double h2 = r * r - c * c / n2;
+        double h = sqrt(max(0.0, h2));          // guard numerical negatives
+        // Unit direction along the line (perpendicular to normal (a,b))
+        Point dir = Point(-b, a) / sqrt(n2);
+        return {foot + dir * h, foot - dir * h};
+    };
+
+    // Compute intersection point of lines i and j, but only if inside the disk
+    auto line_line_pt = [&](int i, int j) -> optional<Point> {
+        double a1 = lines[i][0], b1 = lines[i][1], c1 = lines[i][2];
+        double a2 = lines[j][0], b2 = lines[j][1], c2 = lines[j][2];
+        double d = a1 * b2 - a2 * b1;           // determinant
+        if(fabs(d) < Point::eps) return nullopt; // parallel (or nearly)
+        // Solve linear system
+        Point p((-c1 * b2 + b1 * c2) / d, (-a1 * c2 + a2 * c1) / d);
+        // Keep only intersections within the pizza disk
+        if(p.norm() > r + Point::eps) return nullopt;
+        return p;
+    };
+
+    // Global vertex list
+    vector<Point> verts;
+
+    // Add vertex with dedup by distance; return its index
+    auto add_vertex = [&](Point p) {
+        for(int i = 0; i < (int)verts.size(); i++) {
+            if((verts[i] - p).norm() < 1e-7) return i; // same point
+        }
+        verts.push_back(p);
+        return (int)verts.size() - 1;
+    };
+
+    // Half-edge record
+    struct HalfEdge {
+        int from, to;       // directed edge from -> to
+        bool is_arc;        // false: straight segment, true: circle arc
+        bool ccw;           // for arcs: direction along circle (ccw or cw)
+        int twin;           // index of opposite half-edge
+        int next;           // next half-edge around the face
+    };
+
+    vector<HalfEdge> hes;
+
+    // Add an undirected edge as two half-edges
+    auto add_edge = [&](int u, int v, bool is_arc, bool ccw_uv) {
+        int h1 = (int)hes.size();
+        // forward half-edge
+        hes.push_back({u, v, is_arc, ccw_uv, h1 + 1, -1});
+        // backward half-edge is twin; reverse direction, reverse arc direction
+        hes.push_back({v, u, is_arc, !ccw_uv, h1, -1});
+    };
+
+    // 1) Add all chord segments: for each line, connect consecutive vertices on it
+    for(int i = 0; i < n; i++) {
+        vector<int> on_line;
+
+        // Add the two circle intersection endpoints
+        auto cp = line_circle_pts(i);
+        on_line.push_back(add_vertex(cp[0]));
+        on_line.push_back(add_vertex(cp[1]));
+
+        // Add all interior intersections with other lines
+        for(int j = 0; j < n; j++) {
+            if(j == i) continue;
+            auto pt = line_line_pt(i, j);
+            if(pt) on_line.push_back(add_vertex(*pt));
+        }
+
+        // Sort points along the line using projection onto a direction vector
+        double a = lines[i][0], b = lines[i][1];
+        sort(on_line.begin(), on_line.end(), [&](int u, int v) {
+            // direction along line is (-b,a); compare dot with that direction
+            return -b * verts[u].x + a * verts[u].y <
+                   -b * verts[v].x + a * verts[v].y;
+        });
+
+        // Remove duplicates (same vertex index)
+        on_line.erase(unique(on_line.begin(), on_line.end()), on_line.end());
+
+        // Connect consecutive points by straight edges (segments)
+        for(int k = 0; k + 1 < (int)on_line.size(); k++) {
+            add_edge(on_line[k], on_line[k + 1], false, false);
+        }
+    }
+
+    // 2) Add circle boundary arcs between consecutive circle-intersection points
+    vector<int> circle_verts;
+    for(int i = 0; i < n; i++) {
+        auto cp = line_circle_pts(i);
+        circle_verts.push_back(add_vertex(cp[0]));
+        circle_verts.push_back(add_vertex(cp[1]));
+    }
+
+    // Helper: angle in [0,2pi)
+    auto angle_of = [&](int v) {
+        double a = atan2(verts[v].y, verts[v].x);
+        if(a < 0) a += 2 * Point::PI;
+        return a;
+    };
+
+    // Sort boundary vertices by polar angle and dedup
+    sort(circle_verts.begin(), circle_verts.end(), [&](int u, int v) {
+        return angle_of(u) < angle_of(v);
+    });
+    circle_verts.erase(unique(circle_verts.begin(), circle_verts.end()), circle_verts.end());
+
+    // Connect around the circle in CCW direction
+    int cm = (int)circle_verts.size();
+    for(int k = 0; k < cm; k++) {
+        add_edge(circle_verts[k], circle_verts[(k + 1) % cm], true, true);
+    }
+
+    // For sorting outgoing half-edges at a vertex, we need a direction vector
+    auto outgoing_dir = [&](int h) -> Point {
+        Point p = verts[hes[h].from];
+        if(!hes[h].is_arc) {
+            // straight segment direction is just to-from
+            return verts[hes[h].to] - p;
+        }
+        // for arcs on circle centered at origin:
+        // tangent direction at point p is perpendicular to radius vector (x,y)
+        return hes[h].ccw ? Point(-p.y, p.x)   // CCW tangent
+                          : Point(p.y, -p.x);  // CW tangent
+    };
+
+    // Build adjacency list: outgoing half-edges from each vertex
+    int vtotal = (int)verts.size();
+    vector<vector<int>> out_at(vtotal);
+    for(int h = 0; h < (int)hes.size(); h++) {
+        out_at[hes[h].from].push_back(h);
+    }
+
+    // Sort outgoing edges CCW by their direction angle
+    for(auto& lst: out_at) {
+        sort(lst.begin(), lst.end(), [&](int a, int b) {
+            Point da = outgoing_dir(a);
+            Point db = outgoing_dir(b);
+            return atan2(da.y, da.x) < atan2(db.y, db.x);
+        });
+    }
+
+    // pos_of[h] = index of h inside out_at[from(h)] after sorting
+    vector<int> pos_of(hes.size());
+    for(int v = 0; v < vtotal; v++) {
+        for(int k = 0; k < (int)out_at[v].size(); k++) {
+            pos_of[out_at[v][k]] = k;
+        }
+    }
+
+    // Set next pointers using DCEL rule:
+    // next(h) = edge leaving vertex to(h) that is immediately clockwise from twin(h).
+    for(int h = 0; h < (int)hes.size(); h++) {
+        int t = hes[h].twin;         // go to twin
+        int v = hes[t].from;         // vertex we arrive at (same as to(h))
+        int k = (int)out_at[v].size();
+        // clockwise means previous in CCW-sorted list => index - 1
+        hes[h].next = out_at[v][(pos_of[t] - 1 + k) % k];
+    }
+
+    // Traverse all faces; each face corresponds to a cycle of next pointers
+    vector<bool> visited(hes.size(), false);
+    vector<double> areas;
+
+    for(int h0 = 0; h0 < (int)hes.size(); h0++) {
+        if(visited[h0]) continue;
+
+        double area2 = 0;  // we accumulate 2*area (signed)
+        int cur = h0;
+
+        while(!visited[cur]) {
+            visited[cur] = true;
+
+            Point pf = verts[hes[cur].from];
+            Point pt = verts[hes[cur].to];
+
+            if(!hes[cur].is_arc) {
+                // shoelace increment for segment
+                area2 += pf.x * pt.y - pt.x * pf.y;
+            } else {
+                // arc contribution: r^2 * dtheta (signed according to direction)
+                double th1 = atan2(pf.y, pf.x);
+                double th2 = atan2(pt.y, pt.x);
+                double dth = th2 - th1;
+
+                if(hes[cur].ccw) {
+                    // want positive dth in (0, 2pi]
+                    if(dth <= 1e-12) dth += 2 * Point::PI;
+                } else {
+                    // want negative dth in [-2pi, 0)
+                    if(dth >= -1e-12) dth -= 2 * Point::PI;
+                }
+                area2 += r * r * dth;
+            }
+
+            cur = hes[cur].next; // follow boundary
+        }
+
+        double a = area2 / 2.0;     // signed area
+        if(a > 1e-9) {              // keep only bounded positive-area faces (pieces)
+            areas.push_back(a);
+        }
+    }
+
+    // Number of pieces
+    int p = (int)areas.size();
+
+    // Minimax with alpha-beta pruning.
+    // State: mask of taken pieces, tc/tp cumulative times, csf Carlsson-so-far
+    function<double(int, double, double, double, double, double)> best_carlsson =
+        [&](int mask, double tc, double tp, double csf, double alpha, double beta) -> double {
+
+        // Terminal: all pieces taken
+        if(mask == (1 << p) - 1) return csf;
+
+        // Whose turn? tie goes to Carlsson
+        bool c_turn = (tc <= tp + Point::eps);
+
+        if(c_turn) {
+            // Carlsson maximizes his final total
+            double best = -1e18;
+            for(int i = 0; i < p; i++) {
+                if(mask & (1 << i)) continue;
+
+                double v = best_carlsson(
+                    mask | (1 << i),
+                    tc + areas[i],   // Carlsson spends time equal to area
+                    tp,
+                    csf + areas[i],  // Carlsson gains area
+                    alpha, beta
+                );
+
+                best = max(best, v);
+                alpha = max(alpha, best);
+                if(alpha >= beta) break; // prune
+            }
+            return best;
+        } else {
+            // Pooh minimizes Carlsson's final total (zero-sum)
+            double best = 1e18;
+            for(int i = 0; i < p; i++) {
+                if(mask & (1 << i)) continue;
+
+                double v = best_carlsson(
+                    mask | (1 << i),
+                    tc,
+                    tp + areas[i],   // Pooh spends time
+                    csf,             // Carlsson gains nothing on Pooh's move
+                    alpha, beta
+                );
+
+                best = min(best, v);
+                beta = min(beta, best);
+                if(alpha >= beta) break; // prune
+            }
+            return best;
+        }
+    };
+
+    // Total pizza area is sum of all piece areas (should equal pi*r^2)
+    double total = 0;
+    for(double a: areas) total += a;
+
+    // Compute optimal Carlsson area, Pooh gets the rest
+    double carlsson = best_carlsson(0, 0, 0, 0, -1e18, 1e18);
+    double pooh = total - carlsson;
+
+    cout << fixed << setprecision(10) << carlsson << ' ' << pooh << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // single test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+import math
+from typing import List, Tuple, Optional
+
+EPS = 1e-9
+PI = math.pi
+
+class Point:
+    __slots__ = ("x", "y")
+    def __init__(self, x: float = 0.0, y: float = 0.0):
+        self.x = x
+        self.y = y
+
+    def __add__(self, other): return Point(self.x + other.x, self.y + other.y)
+    def __sub__(self, other): return Point(self.x - other.x, self.y - other.y)
+    def __mul__(self, c: float): return Point(self.x * c, self.y * c)
+    def __truediv__(self, c: float): return Point(self.x / c, self.y / c)
+
+    def dot(self, other) -> float: return self.x * other.x + self.y * other.y
+    def cross(self, other) -> float: return self.x * other.y - self.y * other.x
+
+    def norm2(self) -> float: return self.x * self.x + self.y * self.y
+    def norm(self) -> float: return math.hypot(self.x, self.y)
+
+    def perp(self):  # CCW perpendicular
+        return Point(-self.y, self.x)
+
+    def unit(self):
+        n = self.norm()
+        return self / n
+
+def atan2pi(y: float, x: float) -> float:
+    """Angle in [0, 2pi)."""
+    a = math.atan2(y, x)
+    if a < 0:
+        a += 2 * PI
+    return a
+
+class HalfEdge:
+    __slots__ = ("frm", "to", "is_arc", "ccw", "twin", "nxt")
+    def __init__(self, frm: int, to: int, is_arc: bool, ccw: bool, twin: int):
+        self.frm = frm
+        self.to = to
+        self.is_arc = is_arc
+        self.ccw = ccw
+        self.twin = twin
+        self.nxt = -1
+
+def solve() -> None:
+    import sys
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    r = float(next(it))
+
+    # Read lines as (a,b,c)
+    lines: List[Tuple[float, float, float]] = []
+    for _ in range(n):
+        a = float(next(it)); b = float(next(it)); c = float(next(it))
+        lines.append((a, b, c))
+
+    # Compute line-circle intersection points for line i
+    def line_circle_pts(i: int) -> Tuple[Point, Point]:
+        a, b, c = lines[i]
+        n2 = a*a + b*b
+        # closest point from origin to line
+        foot = Point(-a*c/n2, -b*c/n2)
+        # distance^2 along line direction to circle intersections
+        h2 = r*r - (c*c)/n2
+        if h2 < 0:  # numerical guard; problem guarantees intersection
+            h2 = 0.0
+        h = math.sqrt(h2)
+        # direction along line
+        dirv = Point(-b, a) / math.sqrt(n2)
+        return foot + dirv*h, foot - dirv*h
+
+    # Compute intersection of lines i and j if not parallel and within disk
+    def line_line_pt(i: int, j: int) -> Optional[Point]:
+        a1, b1, c1 = lines[i]
+        a2, b2, c2 = lines[j]
+        d = a1*b2 - a2*b1
+        if abs(d) < EPS:
+            return None
+        x = (-c1*b2 + b1*c2) / d
+        y = (-a1*c2 + a2*c1) / d
+        p = Point(x, y)
+        if p.norm() > r + EPS:
+            return None
+        return p
+
+    # Vertex list with deduplication
+    verts: List[Point] = []
+
+    def add_vertex(p: Point) -> int:
+        for idx, q in enumerate(verts):
+            if (q - p).norm() < 1e-7:
+                return idx
+        verts.append(p)
+        return len(verts) - 1
+
+    hes: List[HalfEdge] = []
+
+    def add_edge(u: int, v: int, is_arc: bool, ccw_uv: bool) -> None:
+        h1 = len(hes)
+        # forward
+        hes.append(HalfEdge(u, v, is_arc, ccw_uv, h1 + 1))
+        # backward (twin)
+        hes.append(HalfEdge(v, u, is_arc, not ccw_uv, h1))
+
+    # Add chord segments for each line
+    for i in range(n):
+        on_line: List[int] = []
+        p1, p2 = line_circle_pts(i)
+        on_line.append(add_vertex(p1))
+        on_line.append(add_vertex(p2))
+        for j in range(n):
+            if j == i:
+                continue
+            p = line_line_pt(i, j)
+            if p is not None:
+                on_line.append(add_vertex(p))
+
+        a, b, _ = lines[i]
+
+        # sort along direction (-b, a) using dot product
+        on_line.sort(key=lambda vid: (-b)*verts[vid].x + a*verts[vid].y)
+
+        # unique vertex ids (sorted list)
+        uniq = []
+        last = None
+        for vid in on_line:
+            if last is None or vid != last:
+                uniq.append(vid)
+            last = vid
+        on_line = uniq
+
+        # connect consecutive vertices
+        for k in range(len(on_line) - 1):
+            add_edge(on_line[k], on_line[k+1], is_arc=False, ccw_uv=False)
+
+    # Add boundary arcs between consecutive circle intersection vertices
+    circle_verts: List[int] = []
+    for i in range(n):
+        p1, p2 = line_circle_pts(i)
+        circle_verts.append(add_vertex(p1))
+        circle_verts.append(add_vertex(p2))
+
+    circle_verts.sort(key=lambda vid: atan2pi(verts[vid].y, verts[vid].x))
+    uniq = []
+    last = None
+    for vid in circle_verts:
+        if last is None or vid != last:
+            uniq.append(vid)
+        last = vid
+    circle_verts = uniq
+
+    m = len(circle_verts)
+    for k in range(m):
+        add_edge(circle_verts[k], circle_verts[(k+1) % m], is_arc=True, ccw_uv=True)
+
+    # Direction used for ordering outgoing half-edges at a vertex
+    def outgoing_dir(h: int) -> Point:
+        p = verts[hes[h].frm]
+        if not hes[h].is_arc:
+            return verts[hes[h].to] - p
+        # tangent to circle at p; direction depends on arc direction
+        if hes[h].ccw:
+            return Point(-p.y, p.x)
+        else:
+            return Point(p.y, -p.x)
+
+    # Build outgoing lists per vertex
+    out_at: List[List[int]] = [[] for _ in range(len(verts))]
+    for h in range(len(hes)):
+        out_at[hes[h].frm].append(h)
+
+    # Sort outgoing edges by polar angle of their direction vector
+    for v in range(len(verts)):
+        out_at[v].sort(key=lambda h: math.atan2(outgoing_dir(h).y, outgoing_dir(h).x))
+
+    # Position lookup for each half-edge in its vertex outgoing list
+    pos_of = [0] * len(hes)
+    for v in range(len(verts)):
+        for k, h in enumerate(out_at[v]):
+            pos_of[h] = k
+
+    # Set next pointers: next(h) = edge clockwise from twin(h) at the destination
+    for h in range(len(hes)):
+        t = hes[h].twin
+        v = hes[t].frm
+        k = len(out_at[v])
+        hes[h].nxt = out_at[v][(pos_of[t] - 1) % k]
+
+    # Traverse faces and compute positive areas
+    visited = [False] * len(hes)
+    areas: List[float] = []
+
+    for h0 in range(len(hes)):
+        if visited[h0]:
+            continue
+        area2 = 0.0
+        cur = h0
+        while not visited[cur]:
+            visited[cur] = True
+            pf = verts[hes[cur].frm]
+            pt = verts[hes[cur].to]
+
+            if not hes[cur].is_arc:
+                # segment shoelace contribution
+                area2 += pf.x * pt.y - pt.x * pf.y
+            else:
+                # arc contribution: r^2 * dtheta with sign
+                th1 = math.atan2(pf.y, pf.x)
+                th2 = math.atan2(pt.y, pt.x)
+                dth = th2 - th1
+                if hes[cur].ccw:
+                    if dth <= 1e-12:
+                        dth += 2 * PI
+                else:
+                    if dth >= -1e-12:
+                        dth -= 2 * PI
+                area2 += r * r * dth
+
+            cur = hes[cur].nxt
+
+        a = area2 / 2.0
+        if a > 1e-9:
+            areas.append(a)
+
+    p = len(areas)
+
+    # Alpha-beta minimax returning Carlsson's final area
+    sys.setrecursionlimit(10000)
+
+    from functools import lru_cache
+
+    @lru_cache(None)
+    def dfs(mask: int, tc_q: int, tp_q: int) -> float:
+        """
+        Memoized version with quantized tc/tp is hard; instead we do
+        non-memo alpha-beta in C++. Here we keep it simple without memo:
+        but we still need tc/tp as floats; caching floats is unreliable.
+        So we implement a direct alpha-beta recursion without caching below.
+        """
+        return 0.0  # unused
+
+    def best_carlsson(mask: int, tc: float, tp: float, csf: float,
+                      alpha: float, beta: float) -> float:
+        if mask == (1 << p) - 1:
+            return csf
+
+        c_turn = (tc <= tp + EPS)
+
+        if c_turn:
+            best = -1e100
+            for i in range(p):
+                if mask & (1 << i):
+                    continue
+                v = best_carlsson(mask | (1 << i),
+                                  tc + areas[i], tp,
+                                  csf + areas[i],
+                                  alpha, beta)
+                if v > best:
+                    best = v
+                if best > alpha:
+                    alpha = best
+                if alpha >= beta:
+                    break
+            return best
+        else:
+            best = 1e100
+            for i in range(p):
+                if mask & (1 << i):
+                    continue
+                v = best_carlsson(mask | (1 << i),
+                                  tc, tp + areas[i],
+                                  csf,
+                                  alpha, beta)
+                if v < best:
+                    best = v
+                if best < beta:
+                    beta = best
+                if alpha >= beta:
+                    break
+            return best
+
+    total = sum(areas)
+    carl = best_carlsson(0, 0.0, 0.0, 0.0, -1e100, 1e100)
+    pooh = total - carl
+
+    sys.stdout.write(f"{carl:.10f} {pooh:.10f}\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+Notes:
+- This Python version mirrors the C++ logic closely.
+- With N ≤ 4, p is small and recursion is fine; Python should still be okay for typical constraints, but the original problem has a very tight 0.25s limit (meant for C++). For Python, performance may be borderline on worst cases.
+
+---
+
+## 5) Compressed editorial
+
+1. Build all pieces created by N ≤ 4 lines inside a radius-R disk.
+   - Vertices = all line–circle intersections + all line–line intersections inside disk (dedup).
+   - Edges = split each line into segments between consecutive vertices on that line, plus circle boundary arcs between consecutive boundary vertices (sorted by angle).
+   - Use half-edges with twins; at each vertex sort outgoing half-edges by direction angle; set `next(h)` to the edge immediately clockwise from `twin(h)` to trace faces.
+
+2. Compute each face area by walking `next` cycles:
+   - Segment contribution: `cross(P,Q)`
+   - Arc contribution: `r^2 * dtheta` (signed, respecting CW/CCW)
+   - Keep faces with positive signed area → pizza pieces.
+
+3. Game:
+   - `tc,tp` are cumulative eaten areas (times).
+   - Next mover is Carlsson if `tc <= tp`, else Pooh.
+   - Minimax over subsets of pieces: Carlsson maximizes his final sum; Pooh minimizes it.
+   - Alpha-beta pruning; pieces ≤ ~11 so brute force works.
+
+4. Output Carlsson and Pooh areas (`pooh = total - carlsson`).

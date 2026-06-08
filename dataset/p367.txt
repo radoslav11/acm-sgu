@@ -1,0 +1,465 @@
+## 1. Abridged problem statement
+
+There are `N` contest problems and `T` minutes of training time. Problem `i` takes exactly `t[i]` minutes to solve.
+
+There are `M` prerequisite constraints `(a, b)`, meaning problem `a` must be solved before problem `b`. It is guaranteed that `t[a] <= t[b]`.
+
+If the team solves problems at completion times `c1, c2, ...`, the penalty is `c1 + c2 + ...`.
+
+Find:
+
+1. The maximum number of problems the team can solve within `T` minutes.
+2. Among schedules solving that many problems, the minimum possible penalty.
+3. One valid order of problems achieving this.
+
+If constraints contain cycles, problems in those cycles cannot be solved.
+
+---
+
+## 2. Detailed editorial
+
+### Key observations
+
+For a fixed set of solved problems, the penalty is minimized by solving shorter problems earlier.
+
+For example, suppose two independent problems take `x` and `y` minutes, with `x <= y`.
+
+Solving `x` then `y` gives contribution:
+
+```text
+x + (x + y) = 2x + y
+```
+
+Solving `y` then `x` gives:
+
+```text
+y + (y + x) = x + 2y
+```
+
+Since `x <= y`, the first order is no worse.
+
+So, without prerequisites, the optimal strategy is simply to solve problems in increasing order of `t[i]`.
+
+The only complication is prerequisites.
+
+However, the input guarantees that for every constraint `a -> b`:
+
+```text
+t[a] <= t[b]
+```
+
+That means prerequisite edges never force a longer problem before a shorter one. Therefore, sorting by increasing solving time is compatible with prerequisites, except possibly among problems with equal solving time. Equal-time problems can be ordered according to the directed constraints.
+
+So we need a topological order that always chooses the currently available problem with the smallest solving time.
+
+---
+
+### Handling prerequisites
+
+Use Kahn's algorithm for topological sorting.
+
+Normally, Kahn's algorithm keeps a queue of nodes whose indegree is zero.
+
+Here, instead of a queue, use a min-heap ordered by:
+
+```text
+(t[i], i)
+```
+
+At each step:
+
+1. Take the available problem with minimum solving time.
+2. If solving it would exceed total training time, stop.
+3. Otherwise, solve it.
+4. Remove its outgoing edges.
+5. Any newly available problems are pushed into the heap.
+
+---
+
+### Why this is optimal
+
+The heap-based Kahn algorithm gives a valid prerequisite order.
+
+Also, because every edge goes from a problem of smaller or equal time to a problem of larger or equal time, the produced order is non-decreasing by solving time.
+
+Indeed, when a problem `u` is popped, any newly unlocked problem `v` satisfies:
+
+```text
+t[u] <= t[v]
+```
+
+So the algorithm can never introduce a newly available problem that is shorter than one already popped.
+
+Therefore, the produced order is essentially the globally shortest-first feasible order.
+
+Now consider the prefix of this order.
+
+If the first `k` problems fit in time, then they form a valid solution solving `k` problems.
+
+If the first `k + 1` problems do not fit, then no other set of `k + 1` solvable problems can fit either, because the first `k + 1` problems are the shortest feasible `k + 1` problems.
+
+So the longest prefix that fits maximizes the number of solved problems.
+
+Since the prefix is in non-decreasing solving time order, it also minimizes the penalty among schedules solving that many problems.
+
+---
+
+### Cycles
+
+If there is a directed cycle, none of the problems in that cycle can be solved, because each requires another one to be solved earlier.
+
+Kahn's algorithm naturally handles this: nodes in cycles never reach indegree zero, so they are never pushed into the heap.
+
+---
+
+### Complexity
+
+Let `N` be the number of problems and `M` the number of constraints.
+
+Each problem enters and leaves the heap at most once.
+
+Each edge is processed once.
+
+Therefore:
+
+```text
+Time complexity:  O((N + M) log N)
+Memory complexity: O(N + M)
+```
+
+This easily fits the constraints.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std;
+
+// Overload output operator for pairs.
+// Allows printing pair<T1, T2> as "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pairs.
+// Allows reading pair<T1, T2> directly from input.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vectors.
+// Reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Overload output operator for vectors.
+// Prints every element followed by a space.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Number of problems.
+int n;
+
+// Total duration of the training.
+// This can be large, so int64_t is used.
+int64_t total_time;
+
+// t[i] is the time needed to solve problem i.
+vector<int> t;
+
+// Adjacency list.
+// adj[u] contains all problems v such that u must be solved before v.
+vector<vector<int>> adj;
+
+// indeg[i] is the current number of unsolved prerequisites of problem i.
+vector<int> indeg;
+
+// Reads input and builds the graph.
+void read() {
+    // Read number of problems and total training time.
+    cin >> n >> total_time;
+
+    // Allocate t[0..n]. We use 1-based indexing, so t[0] is unused.
+    t.assign(n + 1, 0);
+
+    // Read solving times.
+    for(int i = 1; i <= n; i++) {
+        cin >> t[i];
+    }
+
+    // Initialize adjacency list.
+    adj.assign(n + 1, {});
+
+    // Initialize indegrees to zero.
+    indeg.assign(n + 1, 0);
+
+    // Number of prerequisite constraints.
+    int m;
+    cin >> m;
+
+    // Read every directed edge a -> b.
+    for(int i = 0; i < m; i++) {
+        int a, b;
+        cin >> a >> b;
+
+        // To solve b, a must be solved first.
+        adj[a].push_back(b);
+
+        // b has one more prerequisite.
+        indeg[b]++;
+    }
+}
+
+// Solves the problem.
+void solve() {
+    // We use Kahn's topological sort.
+    //
+    // The priority queue stores currently available problems, i.e. problems
+    // whose indegree is zero.
+    //
+    // Each heap element is {solving_time, problem_index}.
+    // Because greater<> is used, this is a min-heap.
+    priority_queue<pair<int, int>, vector<pair<int, int>>, greater<>> pq;
+
+    // Initially, all problems with no prerequisites are available.
+    for(int i = 1; i <= n; i++) {
+        if(indeg[i] == 0) {
+            pq.push({t[i], i});
+        }
+    }
+
+    // The order of solved problems.
+    vector<int> order;
+
+    // Total time already spent.
+    int64_t elapsed = 0;
+
+    // Current total penalty.
+    int64_t penalty = 0;
+
+    // Process available problems in increasing solving time.
+    while(!pq.empty()) {
+        // Take the currently available problem with minimum solving time.
+        auto [ti, u] = pq.top();
+        pq.pop();
+
+        // If solving this problem would exceed the training duration,
+        // then no later available problem can fit either, because all later
+        // problems have solving time at least ti.
+        if(elapsed + ti > total_time) {
+            break;
+        }
+
+        // Solve problem u.
+        elapsed += ti;
+
+        // Its completion time is now elapsed, so add it to the penalty.
+        penalty += elapsed;
+
+        // Store u in the answer order.
+        order.push_back(u);
+
+        // Remove outgoing edges from u.
+        // This may make some dependent problems available.
+        for(int v: adj[u]) {
+            // One prerequisite of v has just been solved.
+            if(--indeg[v] == 0) {
+                // If v has no remaining prerequisites, it becomes available.
+                pq.push({t[v], v});
+            }
+        }
+    }
+
+    // Print maximum number of solved problems and minimal penalty.
+    cout << order.size() << ' ' << penalty << '\n';
+
+    // Print the solving order.
+    // If order is empty, this prints just an empty line.
+    cout << order << '\n';
+}
+
+int main() {
+    // Speeds up input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Unties cin from cout for faster input.
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    int T = 1;
+
+    // If the problem had multiple test cases, this line could be enabled.
+    // cin >> T;
+
+    // Process each test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import heapq
+
+
+def solve():
+    # Read all input tokens.
+    data = sys.stdin.read().strip().split()
+
+    # If input is empty, do nothing.
+    if not data:
+        return
+
+    # Pointer into the token list.
+    ptr = 0
+
+    # Read number of problems and total training time.
+    n = int(data[ptr])
+    ptr += 1
+
+    total_time = int(data[ptr])
+    ptr += 1
+
+    # Use 1-based indexing.
+    # t[0] is unused.
+    t = [0] * (n + 1)
+
+    # Read solving times.
+    for i in range(1, n + 1):
+        t[i] = int(data[ptr])
+        ptr += 1
+
+    # Read number of prerequisite constraints.
+    m = int(data[ptr])
+    ptr += 1
+
+    # adj[u] contains all problems v such that u must be solved before v.
+    adj = [[] for _ in range(n + 1)]
+
+    # indeg[v] is the number of remaining prerequisites of v.
+    indeg = [0] * (n + 1)
+
+    # Read all constraints.
+    for _ in range(m):
+        a = int(data[ptr])
+        ptr += 1
+
+        b = int(data[ptr])
+        ptr += 1
+
+        # Edge a -> b.
+        adj[a].append(b)
+
+        # b has one more prerequisite.
+        indeg[b] += 1
+
+    # Min-heap of currently available problems.
+    # Each element is (solving_time, problem_index).
+    heap = []
+
+    # Initially, problems with zero indegree have no prerequisites.
+    for i in range(1, n + 1):
+        if indeg[i] == 0:
+            heapq.heappush(heap, (t[i], i))
+
+    # Chosen solving order.
+    order = []
+
+    # Total time already spent.
+    elapsed = 0
+
+    # Total penalty.
+    penalty = 0
+
+    # Kahn's algorithm with a min-heap.
+    while heap:
+        # Get available problem with smallest solving time.
+        ti, u = heapq.heappop(heap)
+
+        # If even the shortest available problem does not fit,
+        # then no remaining feasible problem can improve the answer.
+        if elapsed + ti > total_time:
+            break
+
+        # Solve problem u.
+        elapsed += ti
+
+        # Add its completion time to the penalty.
+        penalty += elapsed
+
+        # Store it in the answer.
+        order.append(u)
+
+        # Remove outgoing edges u -> v.
+        for v in adj[u]:
+            # One prerequisite of v has been solved.
+            indeg[v] -= 1
+
+            # If all prerequisites of v are solved, it becomes available.
+            if indeg[v] == 0:
+                heapq.heappush(heap, (t[v], v))
+
+    # Prepare output.
+    out = []
+
+    # First line: number of solved problems and minimal penalty.
+    out.append(f"{len(order)} {penalty}")
+
+    # Second line: order of solved problems.
+    # If order is empty, this becomes an empty line.
+    out.append(" ".join(map(str, order)))
+
+    # Print result.
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Use Kahn's topological sort, but store available zero-indegree problems in a min-heap by solving time.
+
+Because every constraint `a -> b` satisfies `t[a] <= t[b]`, prerequisites never require solving a longer problem before a shorter one. Thus, repeatedly choosing the shortest currently available problem produces a valid topological order whose solving times are non-decreasing.
+
+Walk through this order, accumulating elapsed time and penalty. Stop when the next problem would exceed `T`.
+
+The chosen prefix is optimal:
+
+- It is prerequisite-valid.
+- It contains the maximum possible number of problems, because no other set of the same larger size can have smaller total solving time.
+- Its penalty is minimal because problems are solved in shortest-first order.
+
+Cycles are automatically ignored by Kahn's algorithm, since their nodes never reach indegree zero.
+
+Complexity:
+
+```text
+O((N + M) log N)
+```

@@ -1,0 +1,366 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+257. Debt
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Professor Dr. Murzov decided to leave Burland. But before he leaves, he should return all his debts. Professor owes priest Popov P burcrystals, barber Parkin O burcrystals, student Studnev S burcrystals. Making payments using crystals is very simple - one small crystal equals to one burcrystal, one big crystal equals to two burcrystals.
+The only problem is that there is no exact criteria to determine whether the crystal big or small. Because of this, Murzov asked all his creditors to estimate all his crystals and to say about each crystal is it big or small. Now professor has a big problem to solve - how to distribute his crystals to repay all his debts. Possibly somebody will get more then he owed, but it does not matter for professor, because he is not going to return to Burland, and crystals have no value in any other place.
+
+Input
+The first line contains integer numbers P, O and S (1 <= P,O,S <= 10^5).
+The second line contains integer number N - the amount of crystals professor has (1 <= N <= 10^5).
+Each of the following N lines contains three letters without spaces. First letter means the estimate of this crystal by Popov, second - by Parkin, third - by Studnev.
+Letter 'B' means that the crystal is estimated as big, 'S' means that the crystal estimated as small.
+
+Output
+You should output the distribution of crystals - N letters without any delimiters.
+Letter 'P' means that the crystal goes to Popov, 'O' - to Parkin, 'S' - to Studnev. If there is no such distributions of crystals that the debt is repaid, output only phrase 'no solution'.
+
+Sample test(s)
+
+Input
+3 2 4
+6
+BBS
+SSB
+BBB
+BBS
+SSS
+BBS
+
+Output
+OSPPSS
+
+Note
+Popov will get 4 burcrystals, Parkin - 2, Studnev - 4.
+Author:	Andrew V. Lazarev
+Resource:	Saratov SU Contest: Golden Fall 2004
+Date:	October 2, 2004
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+Three people are owed debts: **Popov = P**, **Parkin = O**, **Studnev = S** (values up to `1e5`).  
+The professor has **N** crystals (up to `1e5`). For each crystal, each person labels it as:
+
+- `B` (big) → worth **2** burcrystals **to that person**
+- `S` (small) → worth **1** burcrystal **to that person**
+
+You must assign every crystal to exactly one person (`P`, `O`, or `S`) so that each person’s received total value (according to *their own labels*) is **at least** their debt. Overpaying is allowed.
+
+Output a string of length `N` describing the assignment, or print `no solution` if impossible.
+
+---
+
+## 2) Key observations
+
+1. **Only 8 distinct crystal types exist**  
+   Each crystal has a 3-letter label (for P/O/S), each letter is `B` or `S` → `2^3 = 8` patterns.
+
+2. **Bitmask encoding makes valuation trivial**  
+   Encode a type as 3-bit mask `t`:
+   - bit 0: Popov says `B`
+   - bit 1: Parkin says `B`
+   - bit 2: Studnev says `B`
+
+   If we give type `t` to person `person ∈ {0,1,2}`, its value is:
+   - `2` if `(t >> person) & 1 == 1`, else `1`.
+
+3. **The input reduces to counts of 8 types**  
+   Crystals of the same type are interchangeable for feasibility; only the **count** of each type matters while planning.
+
+4. **Brute force over “greedy behaviors” is small**  
+   A single deterministic greedy depends on:
+   - order in which we satisfy people: `3! = 6`
+   - priority order of types used: `8! = 40320`
+
+   Total `6 * 40320 = 241920` attempts.  
+   Each attempt does only constant work (`3 * 8` loops), so it is fast in C++.
+
+5. **Reconstruction is easy once we know quotas**  
+   If we decide “person X gets k crystals of type t”, then we can scan the original list and assign arbitrarily among identical types.
+
+---
+
+## 3) Full solution approach
+
+### Step A: Encode crystals and count types
+- Read debts `debt[3]`.
+- For each crystal string like `"BBS"`, build bitmask `t` in `[0..7]`.
+- Store `type[i] = t` and increment `cnt[t]`.
+
+### Step B: Try all greedy strategies
+For each permutation `people_perm` of `[0,1,2]`  
+and each permutation `type_perm` of `[0..7]`:
+
+Maintain:
+- `rem[t]`: remaining crystals of each type (start = `cnt[t]`)
+- `assign[person][t]`: how many of type `t` we give to `person`
+
+For each person in `people_perm`, satisfy their debt with a two-phase greedy:
+
+**Phase 1 (bulk without overshooting too much):**
+For types in `type_perm`:
+- `value = 2 if type is B for this person else 1`
+- take `take = min(rem[t], debt // value)`
+- reduce debt by `take * value`, reduce `rem[t]` accordingly.
+
+**Phase 2 (finish debt, overshoot allowed):**
+If `debt > 0`, again iterate types in `type_perm` and take crystals one by one:
+- take 1 from any available type, subtract its value from debt
+- stop when `debt <= 0` or no crystals left.
+
+If after both phases `debt > 0`, this greedy attempt fails.
+
+If all three people are satisfied, we have a feasible `assign`.
+
+### Step C: Reconstruct an explicit per-crystal output
+- Create answer string `ans` length `N`.
+- For each crystal `i` (in input order), with type `t`:
+  - pick any person `p` with `assign[p][t] > 0`, decrement it, output that letter.
+
+If all strategies fail, output `no solution`.
+
+---
+
+## 4) C++ implementation (detailed comments)
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Problem: Debt (p257)
+
+  Key idea:
+  - Each crystal belongs to one of 8 types (3-bit mask for which people call it Big).
+  - Try all 3! orders of satisfying people and all 8! orders of consuming types.
+  - For each combination run a simple greedy, then reconstruct an explicit assignment.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int P, O, S;
+    cin >> P >> O >> S;
+
+    int N;
+    cin >> N;
+
+    vector<int> typ(N);
+    array<int, 8> cnt{};
+    cnt.fill(0);
+
+    // Encode each crystal as a 3-bit mask:
+    // bit0 for P, bit1 for O, bit2 for S; 1 means 'B' (value 2), 0 means 'S' (value 1).
+    for (int i = 0; i < N; i++) {
+        string s;
+        cin >> s; // length 3, e.g. "BBS"
+        int t = 0;
+        if (s[0] == 'B') t |= 1 << 0;
+        if (s[1] == 'B') t |= 1 << 1;
+        if (s[2] == 'B') t |= 1 << 2;
+        typ[i] = t;
+        cnt[t]++;
+    }
+
+    array<int, 3> debt = {P, O, S};
+    const char name[3] = {'P', 'O', 'S'};
+
+    // Permutations to try.
+    array<int, 3> people_perm = {0, 1, 2}; // 0=P,1=O,2=S
+    array<int, 8> type_perm;
+    iota(type_perm.begin(), type_perm.end(), 0);
+
+    // Try all orders of people (3!)
+    do {
+        // For each people order, try all type priority orders (8!)
+        type_perm = {0,1,2,3,4,5,6,7};
+        do {
+            array<int, 8> rem = cnt;                 // remaining crystals of each type
+            array<array<int, 8>, 3> assign{};        // assign[person][type] = quantity
+            for (int p = 0; p < 3; p++) assign[p].fill(0);
+
+            bool ok = true;
+
+            // Greedily satisfy people in this chosen order.
+            for (int idx = 0; idx < 3; idx++) {
+                int person = people_perm[idx];
+                int need = debt[person];
+
+                // Phase 1: take as many as possible without overshooting
+                // (use integer division need/value).
+                for (int j = 0; j < 8 && need > 0; j++) {
+                    int t = type_perm[j];
+                    if (rem[t] == 0) continue;
+
+                    int value = ((t >> person) & 1) ? 2 : 1;
+                    int take = min(rem[t], need / value);
+
+                    if (take > 0) {
+                        assign[person][t] += take;
+                        rem[t] -= take;
+                        need -= take * value;
+                    }
+                }
+
+                // Phase 2: if still need > 0, take single crystals (overpay allowed)
+                for (int j = 0; j < 8 && need > 0; j++) {
+                    int t = type_perm[j];
+                    if (rem[t] == 0) continue;
+
+                    int value = ((t >> person) & 1) ? 2 : 1;
+                    assign[person][t] += 1;
+                    rem[t] -= 1;
+                    need -= value; // may go <= 0, that's fine
+                }
+
+                // If still not covered, this permutation fails.
+                if (need > 0) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (!ok) continue;
+
+            // Reconstruct concrete per-crystal assignment string.
+            // Crystals of the same type are interchangeable.
+            string ans(N, 'P');
+            for (int i = 0; i < N; i++) {
+                int t = typ[i];
+                // Choose any person with remaining quota for this type.
+                for (int person = 0; person < 3; person++) {
+                    if (assign[person][t] > 0) {
+                        assign[person][t]--;
+                        ans[i] = name[person];
+                        break;
+                    }
+                }
+            }
+
+            cout << ans << "\n";
+            return 0;
+
+        } while (next_permutation(type_perm.begin(), type_perm.end()));
+    } while (next_permutation(people_perm.begin(), people_perm.end()));
+
+    cout << "no solution\n";
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation (detailed comments)
+
+Note: This is the same algorithm. Python may be tight under a **0.25s** limit, but logically it’s correct and often passes under more generous limits.
+
+```python
+import sys
+from itertools import permutations
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+
+    # debts
+    P = int(next(it))
+    O = int(next(it))
+    S = int(next(it))
+    debt = [P, O, S]   # person 0=P, 1=O, 2=S
+
+    N = int(next(it))
+
+    # Encode each crystal into one of 8 types (3-bit mask).
+    # bit j is 1 if that person says 'B' (value 2), else 0 (value 1).
+    typ = []
+    cnt = [0] * 8
+    for _ in range(N):
+        s = next(it)  # e.g. "BBS"
+        t = 0
+        if s[0] == 'B': t |= 1 << 0
+        if s[1] == 'B': t |= 1 << 1
+        if s[2] == 'B': t |= 1 << 2
+        typ.append(t)
+        cnt[t] += 1
+
+    names = ['P', 'O', 'S']
+
+    # Try all 3! orders of satisfying people and all 8! orders of using types.
+    for people_perm in permutations([0, 1, 2]):
+        for type_perm in permutations(range(8)):
+            rem = cnt[:]  # remaining crystals per type
+            assign = [[0] * 8 for _ in range(3)]  # assign[person][type]
+
+            ok = True
+            for person in people_perm:
+                need = debt[person]
+
+                # Phase 1: bulk take without overshoot (need // value)
+                for t in type_perm:
+                    if need <= 0:
+                        break
+                    if rem[t] == 0:
+                        continue
+                    value = 2 if ((t >> person) & 1) else 1
+                    take = min(rem[t], need // value)
+                    if take:
+                        assign[person][t] += take
+                        rem[t] -= take
+                        need -= take * value
+
+                # Phase 2: finish with single crystals (overpay allowed)
+                for t in type_perm:
+                    if need <= 0:
+                        break
+                    if rem[t] == 0:
+                        continue
+                    value = 2 if ((t >> person) & 1) else 1
+                    assign[person][t] += 1
+                    rem[t] -= 1
+                    need -= value
+
+                if need > 0:
+                    ok = False
+                    break
+
+            if not ok:
+                continue
+
+            # Reconstruct per-crystal output in original order
+            out = []
+            for t in typ:
+                if assign[0][t] > 0:
+                    assign[0][t] -= 1
+                    out.append('P')
+                elif assign[1][t] > 0:
+                    assign[1][t] -= 1
+                    out.append('O')
+                else:
+                    # must go to S if quotas are consistent
+                    assign[2][t] -= 1
+                    out.append('S')
+
+            sys.stdout.write("".join(out) + "\n")
+            return
+
+    sys.stdout.write("no solution\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+If you want, I can also provide (1) a proof sketch of why trying all permutations is “enough” for this greedy family, or (2) micro-optimizations to make the Python version more likely to pass strict time limits.

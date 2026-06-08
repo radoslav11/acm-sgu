@@ -1,0 +1,1351 @@
+## 1. Abridged problem statement
+
+You are given an `N x M` chessboard (`N, M <= 300`) with:
+
+- empty cells `.`,
+- walls/sculptures `#` that block movement/attacks and cannot be captured,
+- stationary colorless chess pieces:
+  - `P` pawn,
+  - `R` rook,
+  - `K` knight,
+  - `B` bishop,
+  - `Q` queen,
+  - `M` king,
+- your starting cell `@`.
+
+Before moving, you choose your own piece type: pawn, rook, knight, bishop, or king — never queen.
+
+You move according to chess rules. Capturing a stationary piece removes it and gives a piece-specific bonus. After every move, if your current cell is attacked by any remaining stationary piece, training ends and you pay a penalty. You may also quit before any move with no penalty.
+
+Pawns: colorless pawns attack toward decreasing row numbers; your pawn moves in the opposite direction.
+
+Maximize final score.
+
+---
+
+## 2. Detailed editorial
+
+### Key observations
+
+We only need to consider choosing one of:
+
+```text
+rook, knight, bishop, king
+```
+
+The provided solution ignores choosing a pawn. A pawn can only move monotonically downward and is dominated by a king: every square a pawn could safely enter or capture can also be entered by a king, while the king has more options. Therefore pawn is never strictly better.
+
+---
+
+### Attacked-cell counts
+
+For every cell, compute:
+
+```text
+base_count[cell] = number of stationary pieces attacking this cell
+```
+
+A cell is safe iff:
+
+```text
+base_count[cell] == 0
+```
+
+The stationary pieces never move, but captured pieces disappear, so attack counts can decrease.
+
+Sliding attacks from rooks, bishops, and queens are computed efficiently using directional sweeps.
+
+For example, for a rook-like direction, while sweeping left-to-right, we remember whether the nearest blocker behind the current cell is a rook or queen. If yes, the current cell is attacked from that direction.
+
+Non-sliding attacks from pawns, knights, and kings are stamped directly.
+
+---
+
+### Important lemma
+
+Suppose we capture a piece while standing safely on its square.
+
+That square has attack count zero. Therefore, no sliding enemy piece attacks that square. Hence the captured piece cannot be the first blocker in front of a rook/bishop/queen that would start attacking farther squares after the capture.
+
+So capturing a safe piece does **not open new sliding attacks**.
+
+It only removes the attacks made by the captured piece itself.
+
+Therefore during safe play:
+
+```text
+attack counts only decrease
+```
+
+This is the central trick.
+
+---
+
+### Closure of reachable safe area
+
+For a chosen moving type, define a process:
+
+1. Start from one or more safe seed cells.
+2. Flood all safe empty cells reachable by legal moves.
+3. If a reachable cell can move to a safe capturable piece, capture it.
+4. Capturing removes its attacks, possibly making more cells safe.
+5. Newly safe reachable cells or pieces are added.
+6. Repeat until nothing changes.
+
+This computes all free captures possible without ever landing on an attacked cell.
+
+At the end, we may optionally make one final risky capture onto an attacked piece:
+
+```text
+bonus(piece) - penalty
+```
+
+If this value is positive, take it; otherwise quit safely.
+
+---
+
+### Handling the starting square
+
+If `@` is initially safe, it is just a normal seed cell.
+
+If `@` is attacked, we are allowed to stand there only before making the first move. After the first move, we cannot treat it as part of the safe connected region unless it later becomes safe.
+
+So for each possible first move:
+
+- If it lands on a safe empty cell, run closure from that safe component.
+- If it captures a safe piece, remove that piece and run closure from its square.
+- If it captures an attacked piece, that is immediately a losing final move worth:
+
+```text
+bonus - penalty
+```
+
+Take the maximum over all first moves and all piece types.
+
+---
+
+### Complexity
+
+Let `V = N * M`.
+
+Computing initial attack counts is roughly:
+
+```text
+O(V)
+```
+
+Each closure may scan legal moves many times; in the worst case the provided solution is around:
+
+```text
+O(V * (N + M))
+```
+
+for sliding pieces.
+
+This is acceptable in the intended C++ setting.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ headers.
+
+using namespace std;
+
+// Output a pair as "first second".
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input a pair.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input all elements of a vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+
+    return in;
+};
+
+// Output all elements of a vector.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+
+    return out;
+};
+
+// A very negative value used to mean "no risky capture exists".
+const int64_t NEG = LLONG_MIN / 4;
+
+// Board dimensions.
+int n, m;
+
+// Starting position.
+int start_r, start_c;
+
+// Capture bonuses.
+int bonus_pawn, bonus_rook, bonus_knight, bonus_bishop, bonus_queen, bonus_king;
+
+// Losing penalty.
+int penalty;
+
+// Board.
+vector<string> grid;
+
+// base_count[cell] = number of stationary pieces currently attacking cell.
+vector<int> base_count;
+
+// Knight movement offsets.
+// In the input, 'K' means knight.
+const int knight_d[8][2] = {{-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+                            {1, -2},  {1, 2},  {2, -1},  {2, 1}};
+
+// King movement offsets.
+// In the input, 'M' means king.
+const int king_d[8][2] = {{-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+                          {0, 1},   {1, -1}, {1, 0},  {1, 1}};
+
+// Rook directions.
+const int rook_d[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+// Bishop directions.
+const int bishop_d[4][2] = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+
+// Read input.
+void read() {
+    cin >> n >> m;
+
+    cin >> bonus_pawn >> bonus_rook >> bonus_knight >> bonus_bishop >>
+        bonus_queen >> bonus_king >> penalty;
+
+    grid.assign(n, string());
+
+    for(int i = 0; i < n; i++) {
+        cin >> grid[i];
+    }
+
+    // Locate starting cell '@'.
+    for(int r = 0; r < n; r++) {
+        for(int c = 0; c < m; c++) {
+            if(grid[r][c] == '@') {
+                start_r = r;
+                start_c = c;
+            }
+        }
+    }
+}
+
+// Check whether a cell is inside the board.
+bool in_board(int r, int c) {
+    return r >= 0 && r < n && c >= 0 && c < m;
+}
+
+// Check whether a character is a capturable stationary piece.
+bool is_piece(char ch) {
+    return ch == 'P' || ch == 'R' || ch == 'K' || ch == 'B' || ch == 'Q' ||
+           ch == 'M';
+}
+
+// Check whether a character blocks a sliding attack.
+// Empty cells and our start marker do not block rays.
+bool blocks_ray(char ch) {
+    return ch != '.' && ch != '@';
+}
+
+// Return the bonus for capturing a piece.
+int capture_bonus(char ch) {
+    switch(ch) {
+        case 'P':
+            return bonus_pawn;
+        case 'R':
+            return bonus_rook;
+        case 'K':
+            return bonus_knight;
+        case 'B':
+            return bonus_bishop;
+        case 'Q':
+            return bonus_queen;
+        case 'M':
+            return bonus_king;
+    }
+
+    return 0;
+}
+
+// Iterate over legal moves of our chosen piece type.
+//
+// type:
+//   'R' = rook,
+//   'B' = bishop,
+//   'K' = knight,
+//   'M' = king.
+//
+// fn(nr, nc) is called for each candidate landing square.
+// For sliding pieces, if fn returns true, scanning in that direction stops.
+template<typename F>
+void for_moves(char type, int r, int c, F fn) {
+    // Rook and bishop are sliding pieces.
+    bool slide = type == 'R' || type == 'B';
+
+    // Select direction table.
+    const int(*dirs)[2] = type == 'K'   ? knight_d
+                          : type == 'M' ? king_d
+                          : type == 'R' ? rook_d
+                                        : bishop_d;
+
+    // Sliding pieces have four directions; knight/king have eight moves.
+    int k = slide ? 4 : 8;
+
+    for(int i = 0; i < k; i++) {
+        int nr = r + dirs[i][0];
+        int nc = c + dirs[i][1];
+
+        // Non-sliding move: just test one square.
+        if(!slide) {
+            if(in_board(nr, nc)) {
+                fn(nr, nc);
+            }
+
+            continue;
+        }
+
+        // Sliding move: continue until off-board or callback asks to stop.
+        while(in_board(nr, nc) && !fn(nr, nc)) {
+            nr += dirs[i][0];
+            nc += dirs[i][1];
+        }
+    }
+}
+
+// Iterate over all cells attacked by stationary piece t at (pr, pc)
+// on board g.
+template<typename F>
+void for_footprint(const vector<string>& g, char t, int pr, int pc, F fn) {
+    // Helper for sliding attacks.
+    auto ray = [&](int dr, int dc) {
+        int r = pr + dr;
+        int c = pc + dc;
+
+        while(in_board(r, c)) {
+            // The current square is attacked.
+            fn(r * m + c);
+
+            // Sliding attack stops at the first blocker.
+            if(blocks_ray(g[r][c])) {
+                break;
+            }
+
+            r += dr;
+            c += dc;
+        }
+    };
+
+    // Helper for one-square or knight-style attacks.
+    auto spot = [&](int dr, int dc) {
+        int r = pr + dr;
+        int c = pc + dc;
+
+        if(in_board(r, c)) {
+            fn(r * m + c);
+        }
+    };
+
+    // Rook-like attacks.
+    if(t == 'R' || t == 'Q') {
+        for(auto& d: rook_d) {
+            ray(d[0], d[1]);
+        }
+    }
+
+    // Bishop-like attacks.
+    if(t == 'B' || t == 'Q') {
+        for(auto& d: bishop_d) {
+            ray(d[0], d[1]);
+        }
+    }
+
+    // Knight attacks.
+    if(t == 'K') {
+        for(auto& d: knight_d) {
+            spot(d[0], d[1]);
+        }
+    }
+    // King attacks.
+    else if(t == 'M') {
+        for(auto& d: king_d) {
+            spot(d[0], d[1]);
+        }
+    }
+    // Colorless pawns attack upward: decreasing row index.
+    else if(t == 'P') {
+        spot(-1, -1);
+        spot(-1, 1);
+    }
+}
+
+// Compute initial attack counts for every cell.
+void compute_base_count() {
+    base_count.assign(n * m, 0);
+
+    // active[cell] stores whether current sweep direction has an active
+    // attacking slider behind this cell.
+    vector<int> active(n * m, 0);
+
+    // Sweep in direction (dr, dc).
+    // If diagonal is false, we count rook/queen attacks.
+    // If diagonal is true, we count bishop/queen attacks.
+    auto sweep = [&](int dr, int dc, bool diagonal) {
+        // Pick iteration order so previous cell is already processed.
+        int r0 = dr >= 0 ? 0 : n - 1;
+        int r1 = dr >= 0 ? n : -1;
+        int rs = dr >= 0 ? 1 : -1;
+
+        int c0 = dc >= 0 ? 0 : m - 1;
+        int c1 = dc >= 0 ? m : -1;
+        int cs = dc >= 0 ? 1 : -1;
+
+        for(int r = r0; r != r1; r += rs) {
+            for(int c = c0; c != c1; c += cs) {
+                int pr = r - dr;
+                int pc = c - dc;
+
+                int inc;
+
+                // No previous cell, so no attacking slider from this direction.
+                if(!in_board(pr, pc)) {
+                    inc = 0;
+                }
+                // Previous cell blocks rays.
+                else if(blocks_ray(grid[pr][pc])) {
+                    char p = grid[pr][pc];
+
+                    // The blocker itself may be a rook/bishop/queen that attacks us.
+                    inc = diagonal ? (p == 'B' || p == 'Q')
+                                   : (p == 'R' || p == 'Q');
+                }
+                // Previous cell is transparent, inherit active state.
+                else {
+                    inc = active[pr * m + pc];
+                }
+
+                // Store whether this cell is attacked from this direction.
+                active[r * m + c] = inc;
+
+                // If yes, increment attack count.
+                if(inc) {
+                    base_count[r * m + c]++;
+                }
+            }
+        }
+    };
+
+    // Four rook-like directions.
+    sweep(0, 1, false);
+    sweep(0, -1, false);
+    sweep(1, 0, false);
+    sweep(-1, 0, false);
+
+    // Four bishop-like directions.
+    sweep(1, 1, true);
+    sweep(1, -1, true);
+    sweep(-1, 1, true);
+    sweep(-1, -1, true);
+
+    // Stamp non-sliding attacks directly.
+    for(int r = 0; r < n; r++) {
+        for(int c = 0; c < m; c++) {
+            char ch = grid[r][c];
+
+            if(is_piece(ch) && ch != 'R' && ch != 'B' && ch != 'Q') {
+                for_footprint(grid, ch, r, c, [&](int idx) {
+                    base_count[idx]++;
+                });
+            }
+        }
+    }
+}
+
+// Remove a piece from g and decrement its attacks from cnt.
+void uncount_piece(vector<string>& g, vector<int>& cnt, int pr, int pc) {
+    char t = g[pr][pc];
+
+    // Remove its attack footprint.
+    for_footprint(g, t, pr, pc, [&](int idx) {
+        cnt[idx]--;
+    });
+
+    // Delete the piece.
+    g[pr][pc] = '.';
+}
+
+// Compute closure from given safe seed cells.
+//
+// Returns:
+//   first  = total value of all forced/free safe captures,
+//   second = best optional final risky capture value, or NEG if none.
+pair<int64_t, int64_t> closure(
+    char type,
+    vector<string> g,
+    vector<int> cnt,
+    const vector<pair<int, int>>& seeds
+) {
+    int64_t free_sum = 0;
+
+    // reach[cell] = already reachable safe cell.
+    vector<char> reach(n * m, 0);
+
+    // sched[cell] = piece already scheduled for safe capture.
+    vector<char> sched(n * m, 0);
+
+    // risky_mark[cell] = piece already recorded as possible risky final capture.
+    vector<char> risky_mark(n * m, 0);
+
+    // Work stack of reachable cells to scan from.
+    vector<int> work;
+
+    // Queue/stack of safe capturable pieces.
+    vector<int> capq;
+
+    // Risky final capture candidates.
+    vector<int> risky_cells;
+
+    // Check whether cell x can be pulled into the reachable region,
+    // i.e. whether from x our piece can move to some already reached cell.
+    auto can_pull = [&](int x) {
+        bool found = false;
+
+        for_moves(type, x / m, x % m, [&](int nr, int nc) {
+            if(reach[nr * m + nc]) {
+                found = true;
+                return true;
+            }
+
+            return g[nr][nc] == '#' || is_piece(g[nr][nc]);
+        });
+
+        return found;
+    };
+
+    // Called when cnt[x] becomes zero.
+    auto on_zero = [&](int x) {
+        // Walls cannot be reached, already reached cells need no action.
+        if(g[x / m][x % m] == '#' || reach[x]) {
+            return;
+        }
+
+        // Newly safe piece: if adjacent/reachable from region, schedule capture.
+        if(is_piece(g[x / m][x % m])) {
+            if(!sched[x] && can_pull(x)) {
+                sched[x] = 1;
+                capq.push_back(x);
+            }
+        }
+        // Newly safe empty cell: add to reachable region if connected.
+        else if(can_pull(x)) {
+            reach[x] = 1;
+            work.push_back(x);
+        }
+    };
+
+    // Safely capture piece at (pr, pc).
+    auto take = [&](int pr, int pc) {
+        char t = g[pr][pc];
+        int idx = pr * m + pc;
+
+        // Gain bonus.
+        free_sum += capture_bonus(t);
+
+        // Its square becomes reachable.
+        reach[idx] = 1;
+
+        // Remove piece from board.
+        g[pr][pc] = '.';
+
+        // Scan from this newly reachable square.
+        work.push_back(idx);
+
+        // Remove the captured piece's attacks.
+        for_footprint(g, t, pr, pc, [&](int x) {
+            cnt[x]--;
+
+            // If a cell just became safe, process it.
+            if(cnt[x] == 0) {
+                on_zero(x);
+            }
+        });
+    };
+
+    // Scan legal moves from reachable cell u.
+    auto scan = [&](int u) {
+        for_moves(type, u / m, u % m, [&](int nr, int nc) {
+            int idx = nr * m + nc;
+            char ch = g[nr][nc];
+
+            // Wall blocks movement.
+            if(ch == '#') {
+                return true;
+            }
+
+            // Encounter a piece.
+            if(is_piece(ch)) {
+                // Safe piece can be captured for free.
+                if(cnt[idx] == 0) {
+                    if(!sched[idx]) {
+                        sched[idx] = 1;
+                        capq.push_back(idx);
+                    }
+                }
+                // Attacked piece is only a possible final losing capture.
+                else if(!risky_mark[idx]) {
+                    risky_mark[idx] = 1;
+                    risky_cells.push_back(idx);
+                }
+
+                // Pieces block sliding movement.
+                return true;
+            }
+
+            // Empty safe cell can be reached.
+            if(cnt[idx] == 0) {
+                if(!reach[idx]) {
+                    reach[idx] = 1;
+                    work.push_back(idx);
+                }
+
+                // Stop here for sliding; further cells will be found later.
+                return true;
+            }
+
+            // Empty attacked cells cannot be landed on,
+            // but sliding pieces may pass over them.
+            return false;
+        });
+    };
+
+    // Add initial seed cells.
+    for(auto [sr, sc]: seeds) {
+        if(!reach[sr * m + sc]) {
+            reach[sr * m + sc] = 1;
+            work.push_back(sr * m + sc);
+        }
+    }
+
+    // Process reachable cells and captures until stable.
+    while(!work.empty() || !capq.empty()) {
+        while(!work.empty()) {
+            int u = work.back();
+            work.pop_back();
+            scan(u);
+        }
+
+        while(!capq.empty()) {
+            int p = capq.back();
+            capq.pop_back();
+            take(p / m, p % m);
+        }
+    }
+
+    // Choose best optional final risky capture.
+    int64_t best_risky = NEG;
+
+    for(int idx: risky_cells) {
+        char ch = g[idx / m][idx % m];
+
+        if(is_piece(ch)) {
+            best_risky = max(best_risky, (int64_t)capture_bonus(ch) - penalty);
+        }
+    }
+
+    return {free_sum, best_risky};
+}
+
+// Return full best value from a closure:
+// free captures plus optional profitable risky capture.
+int64_t closure_value(
+    char type,
+    const vector<string>& g,
+    const vector<int>& cnt,
+    const vector<pair<int, int>>& seeds
+) {
+    auto [f, rk] = closure(type, g, cnt, seeds);
+
+    return f + (rk > NEG ? max((int64_t)0, rk) : 0);
+}
+
+// Flood one connected component of currently safe empty cells.
+// Used only for deduplicating first moves when start is attacked.
+void flood_component(char type, int sr, int sc, vector<char>& seen) {
+    vector<pair<int, int>> st = {{sr, sc}};
+
+    seen[sr * m + sc] = 1;
+
+    while(!st.empty()) {
+        auto [r, c] = st.back();
+        st.pop_back();
+
+        for_moves(type, r, c, [&](int nr, int nc) {
+            int idx = nr * m + nc;
+            char ch = grid[nr][nc];
+
+            if(ch == '#' || is_piece(ch)) {
+                return true;
+            }
+
+            if(base_count[idx] == 0) {
+                if(!seen[idx]) {
+                    seen[idx] = 1;
+                    st.push_back({nr, nc});
+                }
+
+                return true;
+            }
+
+            return false;
+        });
+    }
+}
+
+// Evaluate best score for one reversible piece type.
+int64_t eval_reversible(char type) {
+    // If starting cell is safe, simply start closure there.
+    if(base_count[start_r * m + start_c] == 0) {
+        return closure_value(type, grid, base_count, {{start_r, start_c}});
+    }
+
+    // Otherwise, first move must leave attacked start.
+    int64_t best = 0;
+
+    // Safe empty first moves.
+    vector<pair<int, int>> empties;
+
+    // Safe-piece first captures.
+    vector<pair<int, int>> capfirst;
+
+    // Enumerate first moves from '@'.
+    for_moves(type, start_r, start_c, [&](int nr, int nc) {
+        int idx = nr * m + nc;
+        char ch = grid[nr][nc];
+
+        if(ch == '#') {
+            return true;
+        }
+
+        if(is_piece(ch)) {
+            if(base_count[idx] == 0) {
+                capfirst.push_back({nr, nc});
+            }
+            else {
+                best = max(best, (int64_t)capture_bonus(ch) - penalty);
+            }
+
+            return true;
+        }
+
+        if(base_count[idx] == 0) {
+            empties.push_back({nr, nc});
+        }
+
+        return false;
+    });
+
+    // Deduplicate empty first moves by safe component.
+    vector<char> seen(n * m, 0);
+
+    for(auto [r, c]: empties) {
+        if(!seen[r * m + c]) {
+            flood_component(type, r, c, seen);
+            best = max(best, closure_value(type, grid, base_count, {{r, c}}));
+        }
+    }
+
+    // Try first move that captures a safe piece.
+    for(auto [pr, pc]: capfirst) {
+        vector<string> g2 = grid;
+        vector<int> cnt2 = base_count;
+
+        int b = capture_bonus(grid[pr][pc]);
+
+        uncount_piece(g2, cnt2, pr, pc);
+
+        auto [f, rk] = closure(type, g2, cnt2, {{pr, pc}});
+
+        best = max(best, b + f + (rk > NEG ? max((int64_t)0, rk) : 0));
+    }
+
+    return best;
+}
+
+// Solve one test.
+void solve() {
+    compute_base_count();
+
+    int64_t ans = 0;
+
+    // Pawn is dominated by king, queen is forbidden.
+    for(char type: {'R', 'K', 'B', 'M'}) {
+        ans = max(ans, eval_reversible(type));
+    }
+
+    cout << ans << '\n';
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+# Very negative value used when no risky move exists.
+NEG = -(10 ** 30)
+
+# Directions for chess pieces.
+KNIGHT_D = [(-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)]
+
+KING_D = [(-1, -1), (-1, 0), (-1, 1),
+          (0, -1),           (0, 1),
+          (1, -1),  (1, 0),  (1, 1)]
+
+ROOK_D = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+BISHOP_D = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+
+def solve():
+    data = sys.stdin.read().split()
+    it = iter(data)
+
+    n = int(next(it))
+    m = int(next(it))
+
+    bonus_pawn = int(next(it))
+    bonus_rook = int(next(it))
+    bonus_knight = int(next(it))
+    bonus_bishop = int(next(it))
+    bonus_queen = int(next(it))
+    bonus_king = int(next(it))
+    penalty = int(next(it))
+
+    grid = [list(next(it)) for _ in range(n)]
+
+    start_r = start_c = -1
+
+    for r in range(n):
+        for c in range(m):
+            if grid[r][c] == '@':
+                start_r, start_c = r, c
+
+    def in_board(r, c):
+        """Return True if cell is inside the board."""
+        return 0 <= r < n and 0 <= c < m
+
+    def is_piece(ch):
+        """Return True if ch is a capturable stationary chess piece."""
+        return ch in "PRKBQM"
+
+    def blocks_ray(ch):
+        """
+        Return True if ch blocks a sliding attack.
+
+        Walls and pieces block.
+        Empty cells and '@' do not block.
+        """
+        return ch != '.' and ch != '@'
+
+    def capture_bonus(ch):
+        """Return score bonus for capturing piece ch."""
+        if ch == 'P':
+            return bonus_pawn
+        if ch == 'R':
+            return bonus_rook
+        if ch == 'K':
+            return bonus_knight
+        if ch == 'B':
+            return bonus_bishop
+        if ch == 'Q':
+            return bonus_queen
+        if ch == 'M':
+            return bonus_king
+        return 0
+
+    def for_moves(piece_type, r, c, fn):
+        """
+        Iterate over legal moves of our selected piece.
+
+        fn(nr, nc) is called for each candidate cell.
+        For sliding pieces, if fn returns True, the ray stops.
+        """
+        if piece_type == 'K':
+            dirs = KNIGHT_D
+            slide = False
+        elif piece_type == 'M':
+            dirs = KING_D
+            slide = False
+        elif piece_type == 'R':
+            dirs = ROOK_D
+            slide = True
+        else:
+            dirs = BISHOP_D
+            slide = True
+
+        if not slide:
+            for dr, dc in dirs:
+                nr = r + dr
+                nc = c + dc
+
+                if in_board(nr, nc):
+                    fn(nr, nc)
+        else:
+            for dr, dc in dirs:
+                nr = r + dr
+                nc = c + dc
+
+                while in_board(nr, nc):
+                    stop = fn(nr, nc)
+
+                    if stop:
+                        break
+
+                    nr += dr
+                    nc += dc
+
+    def for_footprint(g, t, pr, pc, fn):
+        """
+        Iterate over cells attacked by stationary piece t at (pr, pc).
+        """
+
+        def ray(dr, dc):
+            r = pr + dr
+            c = pc + dc
+
+            while in_board(r, c):
+                fn(r * m + c)
+
+                if blocks_ray(g[r][c]):
+                    break
+
+                r += dr
+                c += dc
+
+        def spot(dr, dc):
+            r = pr + dr
+            c = pc + dc
+
+            if in_board(r, c):
+                fn(r * m + c)
+
+        if t == 'R' or t == 'Q':
+            for dr, dc in ROOK_D:
+                ray(dr, dc)
+
+        if t == 'B' or t == 'Q':
+            for dr, dc in BISHOP_D:
+                ray(dr, dc)
+
+        if t == 'K':
+            for dr, dc in KNIGHT_D:
+                spot(dr, dc)
+
+        elif t == 'M':
+            for dr, dc in KING_D:
+                spot(dr, dc)
+
+        elif t == 'P':
+            # Colorless pawns attack toward decreasing row index.
+            spot(-1, -1)
+            spot(-1, 1)
+
+    def compute_base_count():
+        """
+        Compute initial number of attacks on each cell.
+        """
+        cnt = [0] * (n * m)
+        active = [0] * (n * m)
+
+        def sweep(dr, dc, diagonal):
+            """
+            Sweep in one direction and count slider attacks.
+            """
+            r_range = range(n) if dr >= 0 else range(n - 1, -1, -1)
+            c_range = range(m) if dc >= 0 else range(m - 1, -1, -1)
+
+            for r in r_range:
+                for c in c_range:
+                    pr = r - dr
+                    pc = c - dc
+
+                    if not in_board(pr, pc):
+                        inc = 0
+                    elif blocks_ray(grid[pr][pc]):
+                        p = grid[pr][pc]
+
+                        if diagonal:
+                            inc = 1 if p == 'B' or p == 'Q' else 0
+                        else:
+                            inc = 1 if p == 'R' or p == 'Q' else 0
+                    else:
+                        inc = active[pr * m + pc]
+
+                    active[r * m + c] = inc
+
+                    if inc:
+                        cnt[r * m + c] += 1
+
+        # Rook-like directions.
+        sweep(0, 1, False)
+        sweep(0, -1, False)
+        sweep(1, 0, False)
+        sweep(-1, 0, False)
+
+        # Bishop-like directions.
+        sweep(1, 1, True)
+        sweep(1, -1, True)
+        sweep(-1, 1, True)
+        sweep(-1, -1, True)
+
+        # Stamp pawn, knight, and king attacks directly.
+        for r in range(n):
+            for c in range(m):
+                ch = grid[r][c]
+
+                if is_piece(ch) and ch not in "RBQ":
+                    for_footprint(grid, ch, r, c,
+                                  lambda idx: cnt.__setitem__(idx, cnt[idx] + 1))
+
+        return cnt
+
+    base_count = compute_base_count()
+
+    def uncount_piece(g, cnt, pr, pc):
+        """
+        Remove piece at (pr, pc) and subtract its attacks.
+        """
+        t = g[pr][pc]
+
+        def dec(idx):
+            cnt[idx] -= 1
+
+        for_footprint(g, t, pr, pc, dec)
+
+        g[pr][pc] = '.'
+
+    def closure(piece_type, given_g, given_cnt, seeds):
+        """
+        Compute all free captures from safe seed cells.
+
+        Returns:
+            free_sum: total free capture score
+            best_risky: best optional final risky capture value
+        """
+        g = [row[:] for row in given_g]
+        cnt = given_cnt[:]
+
+        free_sum = 0
+
+        reach = [0] * (n * m)
+        sched = [0] * (n * m)
+        risky_mark = [0] * (n * m)
+
+        work = []
+        capq = []
+        risky_cells = []
+
+        def can_pull(x):
+            """
+            Return True if x can reach any already reached safe cell.
+            """
+            xr = x // m
+            xc = x % m
+            found = False
+
+            def cb(nr, nc):
+                nonlocal found
+
+                idx = nr * m + nc
+
+                if reach[idx]:
+                    found = True
+                    return True
+
+                return g[nr][nc] == '#' or is_piece(g[nr][nc])
+
+            for_moves(piece_type, xr, xc, cb)
+
+            return found
+
+        def on_zero(x):
+            """
+            Called when attack count of cell x becomes zero.
+            """
+            r = x // m
+            c = x % m
+
+            if g[r][c] == '#' or reach[x]:
+                return
+
+            if is_piece(g[r][c]):
+                if not sched[x] and can_pull(x):
+                    sched[x] = 1
+                    capq.append(x)
+            else:
+                if can_pull(x):
+                    reach[x] = 1
+                    work.append(x)
+
+        def take(pr, pc):
+            """
+            Safely capture piece at (pr, pc).
+            """
+            nonlocal free_sum
+
+            t = g[pr][pc]
+            idx = pr * m + pc
+
+            free_sum += capture_bonus(t)
+
+            reach[idx] = 1
+            g[pr][pc] = '.'
+            work.append(idx)
+
+            def dec(x):
+                cnt[x] -= 1
+
+                if cnt[x] == 0:
+                    on_zero(x)
+
+            for_footprint(g, t, pr, pc, dec)
+
+        def scan(u):
+            """
+            Scan all moves from reached cell u.
+            """
+            ur = u // m
+            uc = u % m
+
+            def cb(nr, nc):
+                idx = nr * m + nc
+                ch = g[nr][nc]
+
+                if ch == '#':
+                    return True
+
+                if is_piece(ch):
+                    if cnt[idx] == 0:
+                        if not sched[idx]:
+                            sched[idx] = 1
+                            capq.append(idx)
+                    else:
+                        if not risky_mark[idx]:
+                            risky_mark[idx] = 1
+                            risky_cells.append(idx)
+
+                    return True
+
+                if cnt[idx] == 0:
+                    if not reach[idx]:
+                        reach[idx] = 1
+                        work.append(idx)
+
+                    return True
+
+                # Attacked empty square cannot be landed on,
+                # but a rook/bishop may slide through it.
+                return False
+
+            for_moves(piece_type, ur, uc, cb)
+
+        # Insert initial seeds.
+        for sr, sc in seeds:
+            idx = sr * m + sc
+
+            if not reach[idx]:
+                reach[idx] = 1
+                work.append(idx)
+
+        # Process until no new reachable cell or capture remains.
+        while work or capq:
+            while work:
+                u = work.pop()
+                scan(u)
+
+            while capq:
+                p = capq.pop()
+                take(p // m, p % m)
+
+        best_risky = NEG
+
+        for idx in risky_cells:
+            r = idx // m
+            c = idx % m
+            ch = g[r][c]
+
+            if is_piece(ch):
+                best_risky = max(best_risky, capture_bonus(ch) - penalty)
+
+        return free_sum, best_risky
+
+    def closure_value(piece_type, g, cnt, seeds):
+        """
+        Free closure value plus optional profitable risky capture.
+        """
+        free_score, risky = closure(piece_type, g, cnt, seeds)
+
+        if risky > NEG:
+            return free_score + max(0, risky)
+
+        return free_score
+
+    def flood_component(piece_type, sr, sc, seen):
+        """
+        Flood a connected component of currently safe empty cells.
+        Used to avoid running closure multiple times for equivalent first moves.
+        """
+        stack = [(sr, sc)]
+        seen[sr * m + sc] = 1
+
+        while stack:
+            r, c = stack.pop()
+
+            def cb(nr, nc):
+                idx = nr * m + nc
+                ch = grid[nr][nc]
+
+                if ch == '#' or is_piece(ch):
+                    return True
+
+                if base_count[idx] == 0:
+                    if not seen[idx]:
+                        seen[idx] = 1
+                        stack.append((nr, nc))
+
+                    return True
+
+                return False
+
+            for_moves(piece_type, r, c, cb)
+
+    def eval_reversible(piece_type):
+        """
+        Evaluate best score if we choose piece_type.
+        """
+        start_idx = start_r * m + start_c
+
+        # If start is safe, one closure is enough.
+        if base_count[start_idx] == 0:
+            return closure_value(piece_type, grid, base_count, [(start_r, start_c)])
+
+        best = 0
+
+        empties = []
+        capfirst = []
+
+        # Otherwise enumerate possible first moves from attacked start.
+        def first_cb(nr, nc):
+            nonlocal best
+
+            idx = nr * m + nc
+            ch = grid[nr][nc]
+
+            if ch == '#':
+                return True
+
+            if is_piece(ch):
+                if base_count[idx] == 0:
+                    capfirst.append((nr, nc))
+                else:
+                    best = max(best, capture_bonus(ch) - penalty)
+
+                return True
+
+            if base_count[idx] == 0:
+                empties.append((nr, nc))
+
+            return False
+
+        for_moves(piece_type, start_r, start_c, first_cb)
+
+        # Try safe empty first moves, one per component.
+        seen = [0] * (n * m)
+
+        for r, c in empties:
+            idx = r * m + c
+
+            if not seen[idx]:
+                flood_component(piece_type, r, c, seen)
+                best = max(best, closure_value(piece_type, grid, base_count, [(r, c)]))
+
+        # Try first move capturing a safe piece.
+        for pr, pc in capfirst:
+            g2 = [row[:] for row in grid]
+            cnt2 = base_count[:]
+
+            first_bonus = capture_bonus(grid[pr][pc])
+
+            uncount_piece(g2, cnt2, pr, pc)
+
+            free_score, risky = closure(piece_type, g2, cnt2, [(pr, pc)])
+
+            value = first_bonus + free_score
+
+            if risky > NEG:
+                value += max(0, risky)
+
+            best = max(best, value)
+
+        return best
+
+    answer = 0
+
+    # Queen is forbidden; pawn is dominated by king.
+    for piece_type in ['R', 'K', 'B', 'M']:
+        answer = max(answer, eval_reversible(piece_type))
+
+    print(answer)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Compute how many stationary pieces attack each board cell. A cell is safe iff this count is zero.
+
+Sliding attacks from rooks, bishops, and queens are counted with eight directional sweeps. Pawn, knight, and king attacks are added directly.
+
+The main lemma is: if a piece is captured safely, then its square was not attacked, so removing it cannot open a new sliding attack through that square. Therefore safe captures only decrease attack counts by removing the captured piece’s own attack footprint.
+
+For each possible chosen piece among rook, knight, bishop, and king, compute the closure of all safe cells and safe captures reachable from a starting seed. Whenever a captured piece is removed, decrement counts on its attacked cells; cells whose count becomes zero may join the reachable region or become capturable. At the end, optionally take one final attacked capture worth `bonus - penalty`.
+
+If the start cell is safe, run one closure from it. If it is attacked, enumerate possible first moves separately: safe empty landings, safe first captures, and immediate risky captures.
+
+The answer is the maximum over the four considered piece types, at least zero because quitting immediately is always allowed.

@@ -1,0 +1,791 @@
+## 1. Abridged problem statement
+
+Two businessmen race to obtain `N` approvals. Each day, each businessman may bribe one bureaucrat with any non-negative real amount `b`.
+
+For businessman `i`, a bribe of `b` gives approval probability
+
+\[
+p = 1 - 0.99(1-F_i)^b
+\]
+
+and the bribe is paid whether or not the approval succeeds. Without bribing, the success probability is still `0.01`.
+
+The first businessman to obtain `N` approvals wins profit `V`; if both finish on the same day, the winner is chosen by a fair coin toss. Both know the current numbers of approvals and choose bribes optimally to maximize expected profit minus total bribes.
+
+Given `N, F1, F2, V`, output the winning probabilities of businessman 1 and businessman 2.
+
+Constraints: `1 ≤ N ≤ 10`, `0 < F1, F2 < 1`, `1 ≤ V ≤ 100`.
+
+---
+
+## 2. Detailed editorial
+
+### State representation
+
+Let a game state be:
+
+\[
+(a,b)
+\]
+
+where `a` is the number of approvals already obtained by businessman 1, and `b` is the number of approvals already obtained by businessman 2.
+
+The live states satisfy:
+
+\[
+0 \le a,b < N
+\]
+
+If one of them reaches `N`, the race is over.
+
+We compute values by dynamic programming from states close to the end backwards to `(0,0)`.
+
+For every state `(a,b)`, we want:
+
+- `val1[a][b]`: expected net payoff of player 1 from this state;
+- `val2[a][b]`: expected net payoff of player 2 from this state;
+- `win1[a][b]`: probability that player 1 eventually wins from this state.
+
+The final answer is:
+
+\[
+win1[0][0], \quad 1 - win1[0][0]
+\]
+
+---
+
+### Reparameterizing bribes by success probability
+
+Instead of choosing a bribe amount `b`, it is easier to choose the resulting daily success probability `p`.
+
+The probability formula is:
+
+\[
+p = 1 - 0.99(1-F)^b
+\]
+
+Solving for `b`:
+
+\[
+1-p = 0.99(1-F)^b
+\]
+
+\[
+\frac{1-p}{0.99} = (1-F)^b
+\]
+
+\[
+b = \frac{\ln((1-p)/0.99)}{\ln(1-F)}
+\]
+
+Since `b ≥ 0`, we have:
+
+\[
+p \in [0.01, 1)
+\]
+
+So each player's daily action can be represented as choosing a probability `p` in `[0.01, 1)`.
+
+---
+
+### State transition
+
+At state `(a,b)`, suppose player 1 chooses success probability `p1`, and player 2 chooses `p2`.
+
+There are four possibilities during the day:
+
+| Outcome | Probability | Next state |
+|---|---:|---|
+| both succeed | `p1 * p2` | `(a+1,b+1)` |
+| only player 1 succeeds | `p1 * (1-p2)` | `(a+1,b)` |
+| only player 2 succeeds | `(1-p1) * p2` | `(a,b+1)` |
+| both fail | `(1-p1)*(1-p2)` | `(a,b)` again |
+
+The self-loop happens when both fail.
+
+Let:
+
+\[
+leave = 1 - (1-p1)(1-p2) = p1 + p2 - p1p2
+\]
+
+This is the probability that the state changes on a day.
+
+---
+
+### Expected payoff equation
+
+Let `A`, `B`, `C` be player 1's payoff in the three advanced states:
+
+- `A`: payoff after both succeed;
+- `B`: payoff after only player 1 succeeds;
+- `C`: payoff after only player 2 succeeds.
+
+Then player 1's expected payoff `V1` satisfies:
+
+\[
+V1 =
+-b_1
++ p_1p_2A
++ p_1(1-p_2)B
++ (1-p_1)p_2C
++ (1-p_1)(1-p_2)V1
+\]
+
+Move the self-loop term to the left:
+
+\[
+V1 \cdot leave =
+-b_1
++ p_1p_2A
++ p_1(1-p_2)B
++ (1-p_1)p_2C
+\]
+
+So:
+
+\[
+V1 =
+\frac{
+-b_1
++ p_1p_2A
++ p_1(1-p_2)B
++ (1-p_1)p_2C
+}{
+p_1+p_2-p_1p_2
+}
+\]
+
+Similarly for player 2.
+
+---
+
+### Terminal values
+
+When resolving a future state:
+
+- if both reach `N` at the same time, each gets expected profit `V/2`;
+- if player 1 reaches `N` first, player 1 gets `V`, player 2 gets `0`;
+- if player 2 reaches `N` first, player 1 gets `0`, player 2 gets `V`.
+
+For winning probability:
+
+- player 1 already won: `1`;
+- player 1 already lost: `0`;
+- both finish simultaneously: `0.5`.
+
+---
+
+### Finding equilibrium in one state
+
+For a fixed state `(a,b)`, all future values are already known by backward DP.
+
+So this state becomes a two-player continuous game where:
+
+- player 1 chooses `p1`;
+- player 2 chooses `p2`;
+- each maximizes their own expected payoff.
+
+For fixed `p2`, player 1's payoff as a function of `p1` is single-peaked, so we can find player 1's best response by ternary search:
+
+\[
+BR_1(p_2) = \arg\max_{p_1} V_1(p_1,p_2)
+\]
+
+Similarly:
+
+\[
+BR_2(p_1) = \arg\max_{p_2} V_2(p_1,p_2)
+\]
+
+At equilibrium:
+
+\[
+p_1 = BR_1(p_2)
+\]
+
+\[
+p_2 = BR_2(p_1)
+\]
+
+Substitute the second into the first:
+
+\[
+p_1 = BR_1(BR_2(p_1))
+\]
+
+Define:
+
+\[
+gap(p_1) = BR_1(BR_2(p_1)) - p_1
+\]
+
+The statement guarantees uniqueness of equilibrium. We solve `gap(p1) = 0` by bisection on `[0.01, 1)`.
+
+After finding `p1`, compute:
+
+\[
+p_2 = BR_2(p_1)
+\]
+
+Then store:
+
+```cpp
+val1[a][b] = V1(p1,p2)
+val2[a][b] = V2(p1,p2)
+```
+
+and compute the winning probability:
+
+\[
+win1[a][b] =
+\frac{
+p_1p_2W_A
++ p_1(1-p_2)W_B
++ (1-p_1)p_2W_C
+}{
+p_1+p_2-p_1p_2
+}
+\]
+
+where `WA`, `WB`, `WC` are the already-known winning probabilities of the advanced states.
+
+---
+
+### Complexity
+
+There are at most:
+
+\[
+N^2 \le 100
+\]
+
+states.
+
+Each state uses numerical searches with fixed iteration counts, so the total complexity is effectively:
+
+\[
+O(N^2)
+\]
+
+with a relatively large but constant factor.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std::.
+
+// Helper output operator for pairs.
+// Not actually needed for the final algorithm, but present in the provided code.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by a space.
+}
+
+// Helper input operator for pairs.
+// Also not needed by this problem directly.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Helper input operator for vectors.
+// Reads every element of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate by reference over all elements.
+        in >> x;      // Read one element.
+    }
+    return in;        // Return the stream for chaining.
+};
+
+// Helper output operator for vectors.
+// Prints all elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {      // Iterate over all elements.
+        out << x << ' ';  // Print element and trailing space.
+    }
+    return out;           // Return the stream for chaining.
+};
+
+// Number of approvals required.
+int n;
+
+// Fascination parameters of businessmen 1 and 2.
+double f1, f2;
+
+// Project profit V.
+double profit;
+
+// Reads input.
+void read() {
+    cin >> n >> f1 >> f2 >> profit;
+}
+
+void solve() {
+    // val1[a][b] = expected net payoff of player 1 from state (a,b).
+    vector<vector<double>> val1(n + 1, vector<double>(n + 1));
+
+    // val2[a][b] = expected net payoff of player 2 from state (a,b).
+    vector<vector<double>> val2(n + 1, vector<double>(n + 1));
+
+    // win1[a][b] = probability that player 1 eventually wins from state (a,b).
+    vector<vector<double>> win1(n + 1, vector<double>(n + 1));
+
+    // Precompute logarithms used to convert success probability into bribe.
+    // Since 0 < f < 1, log(1-f) is negative.
+    double l1 = log(1 - f1), l2 = log(1 - f2);
+
+    // Minimum possible success probability corresponds to bribe b = 0.
+    const double lo = 0.01;
+
+    // Probability 1 would require infinite bribe, so use a value just below 1.
+    const double hi = 1 - 1e-12;
+
+    // Returns the value of a possibly terminal state.
+    //
+    // board is val1, val2, or win1.
+    // x,y are the numbers of approvals after a transition.
+    // won is the value if player 1 has won this board's perspective.
+    // lost is the value if player 1 has lost this board's perspective.
+    // tie is the value if both finish simultaneously.
+    auto resolve = [&](const vector<vector<double>>& board, int x, int y,
+                       double won, double lost, double tie) {
+        if(x == n && y == n) { // Both players reached N approvals on the same day.
+            return tie;        // Tie value.
+        }
+        if(x == n) {           // Player 1 reached N first.
+            return won;        // Winning value.
+        }
+        if(y == n) {           // Player 2 reached N first.
+            return lost;       // Losing value.
+        }
+
+        return board[x][y];    // Otherwise the state is live and already computed.
+    };
+
+    // Converts a desired success probability p into the required bribe.
+    //
+    // p = 1 - 0.99 * (1-F)^b
+    // b = log((1-p)/0.99) / log(1-F)
+    auto bribe = [](double p, double l) {
+        return log((1 - p) / 0.99) / l;
+    };
+
+    // Computes the non-self-loop expected future value:
+    //
+    // both  = value after both succeed,
+    // only1 = value after only player 1 succeeds,
+    // only2 = value after only player 2 succeeds.
+    auto expected = [](double p1, double p2, double both, double only1,
+                       double only2) {
+        return p1 * p2 * both
+             + p1 * (1 - p2) * only1
+             + (1 - p1) * p2 * only2;
+    };
+
+    // Finds the argument maximizing a single-peaked function on [lo, hi].
+    // Uses ternary search with a fixed number of iterations.
+    auto argmax = [&](auto value) {
+        double x = lo, y = hi; // Current search interval.
+
+        for(int it = 0; it < 80; it++) { // Enough iterations for double precision.
+            double m1 = x + (y - x) / 3; // First trisection point.
+            double m2 = y - (y - x) / 3; // Second trisection point.
+
+            if(value(m1) < value(m2)) {
+                // Maximum is more likely to the right.
+                x = m1;
+            } else {
+                // Maximum is more likely to the left.
+                y = m2;
+            }
+        }
+
+        return (x + y) / 2; // Approximate maximizing argument.
+    };
+
+    // Process states in reverse order.
+    // Advanced states have larger a and/or b, so they are already computed.
+    for(int a = n - 1; a >= 0; a--) {
+        for(int b = n - 1; b >= 0; b--) {
+            // Player 1's payoff if both succeed from this state.
+            double a1 = resolve(val1, a + 1, b + 1, profit, 0.0, profit / 2);
+
+            // Player 1's payoff if only player 1 succeeds.
+            double b1 = resolve(val1, a + 1, b, profit, 0.0, profit / 2);
+
+            // Player 1's payoff if only player 2 succeeds.
+            double c1 = resolve(val1, a, b + 1, profit, 0.0, profit / 2);
+
+            // Player 2's payoff if both succeed.
+            // For player 2's value table, player 1 reaching N means player 2 loses.
+            double a2 = resolve(val2, a + 1, b + 1, 0.0, profit, profit / 2);
+
+            // Player 2's payoff if only player 1 succeeds.
+            double b2 = resolve(val2, a + 1, b, 0.0, profit, profit / 2);
+
+            // Player 2's payoff if only player 2 succeeds.
+            double c2 = resolve(val2, a, b + 1, 0.0, profit, profit / 2);
+
+            // Expected net payoff of player 1 if probabilities are p1 and p2.
+            auto v1 = [&](double p1, double p2) {
+                return (-bribe(p1, l1) + expected(p1, p2, a1, b1, c1)) /
+                       (p1 + p2 - p1 * p2);
+            };
+
+            // Expected net payoff of player 2 if probabilities are p1 and p2.
+            // Player 2 pays the bribe corresponding to p2 and F2.
+            auto v2 = [&](double p1, double p2) {
+                return (-bribe(p2, l2) + expected(p1, p2, a2, b2, c2)) /
+                       (p1 + p2 - p1 * p2);
+            };
+
+            // Best response of player 1 to fixed p2.
+            auto br1 = [&](double p2) {
+                return argmax([&](double q) {
+                    return v1(q, p2);
+                });
+            };
+
+            // Best response of player 2 to fixed p1.
+            auto br2 = [&](double p1) {
+                return argmax([&](double q) {
+                    return v2(p1, q);
+                });
+            };
+
+            // Fixed-point equation:
+            // p1 = br1(br2(p1)).
+            // gap(p1) is zero at equilibrium.
+            auto gap = [&](double p1) {
+                return br1(br2(p1)) - p1;
+            };
+
+            // Bisection interval for p1.
+            double x = lo, y = hi;
+
+            // Solve gap(p1) = 0.
+            for(int it = 0; it < 100; it++) {
+                double m = (x + y) / 2; // Midpoint.
+
+                if(gap(m) > 0) {
+                    // Fixed point is to the right.
+                    x = m;
+                } else {
+                    // Fixed point is to the left.
+                    y = m;
+                }
+            }
+
+            // Equilibrium success probability of player 1.
+            double p1 = (x + y) / 2;
+
+            // Equilibrium success probability of player 2.
+            double p2 = br2(p1);
+
+            // Store equilibrium expected payoff for player 1.
+            val1[a][b] = v1(p1, p2);
+
+            // Store equilibrium expected payoff for player 2.
+            val2[a][b] = v2(p1, p2);
+
+            // Compute player 1's win probability under equilibrium play.
+            win1[a][b] = expected(
+                             p1,
+                             p2,
+
+                             // Player 1 win probability if both succeed.
+                             resolve(win1, a + 1, b + 1, 1.0, 0.0, 0.5),
+
+                             // Player 1 win probability if only player 1 succeeds.
+                             resolve(win1, a + 1, b, 1.0, 0.0, 0.5),
+
+                             // Player 1 win probability if only player 2 succeeds.
+                             resolve(win1, a, b + 1, 1.0, 0.0, 0.5)
+                         ) /
+                         // Divide by probability that the state changes.
+                         (p1 + p2 - p1 * p2);
+        }
+    }
+
+    // Print player 1 and player 2 winning probabilities.
+    cout << setprecision(9) << fixed << win1[0][0] << ' ' << 1 - win1[0][0]
+         << '\n';
+}
+
+int main() {
+    // Faster input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout.
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    int T = 1;
+
+    // Original code keeps this loop style, though T is fixed to 1.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve the instance.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import math
+
+
+def solve():
+    # Read all input tokens.
+    data = sys.stdin.read().strip().split()
+
+    # If there is no input, do nothing.
+    if not data:
+        return
+
+    # Parse input.
+    n = int(data[0])
+    f1 = float(data[1])
+    f2 = float(data[2])
+    profit = float(data[3])
+
+    # val1[a][b] = equilibrium expected net payoff of player 1 from state (a,b).
+    val1 = [[0.0 for _ in range(n + 1)] for _ in range(n + 1)]
+
+    # val2[a][b] = equilibrium expected net payoff of player 2 from state (a,b).
+    val2 = [[0.0 for _ in range(n + 1)] for _ in range(n + 1)]
+
+    # win1[a][b] = probability that player 1 eventually wins from state (a,b).
+    win1 = [[0.0 for _ in range(n + 1)] for _ in range(n + 1)]
+
+    # Logarithms used in the inverse bribe formula.
+    # Since 0 < f < 1, these are negative.
+    log1 = math.log(1.0 - f1)
+    log2 = math.log(1.0 - f2)
+
+    # Minimum possible daily approval probability, achieved with zero bribe.
+    LO = 0.01
+
+    # Probability 1 requires infinite bribe, so use something just below 1.
+    HI = 1.0 - 1e-12
+
+    def resolve(board, x, y, won, lost, tie):
+        """
+        Return value for state (x,y).
+
+        If the state is terminal, return the corresponding terminal value.
+        Otherwise, return board[x][y], which has already been computed.
+        """
+        if x == n and y == n:
+            return tie
+        if x == n:
+            return won
+        if y == n:
+            return lost
+        return board[x][y]
+
+    def bribe(p, log_base):
+        """
+        Convert success probability p into required bribe.
+
+        p = 1 - 0.99 * (1-F)^b
+
+        Therefore:
+
+        b = log((1-p)/0.99) / log(1-F)
+        """
+        return math.log((1.0 - p) / 0.99) / log_base
+
+    def expected(p1, p2, both, only1, only2):
+        """
+        Expected future value excluding the self-loop where both fail.
+
+        both: value if both succeed
+        only1: value if only player 1 succeeds
+        only2: value if only player 2 succeeds
+        """
+        return (
+            p1 * p2 * both
+            + p1 * (1.0 - p2) * only1
+            + (1.0 - p1) * p2 * only2
+        )
+
+    def argmax(func):
+        """
+        Maximize a single-peaked function on [LO, HI] using ternary search.
+        """
+        left = LO
+        right = HI
+
+        # Fixed iteration count is enough for double precision.
+        for _ in range(80):
+            m1 = left + (right - left) / 3.0
+            m2 = right - (right - left) / 3.0
+
+            if func(m1) < func(m2):
+                # Maximum is to the right.
+                left = m1
+            else:
+                # Maximum is to the left.
+                right = m2
+
+        return (left + right) / 2.0
+
+    # Process states in reverse order.
+    # Any transition increases at least one coordinate, so future states are known.
+    for a in range(n - 1, -1, -1):
+        for b in range(n - 1, -1, -1):
+            # Player 1's values after the possible successful transitions.
+            a1 = resolve(val1, a + 1, b + 1, profit, 0.0, profit / 2.0)
+            b1 = resolve(val1, a + 1, b, profit, 0.0, profit / 2.0)
+            c1 = resolve(val1, a, b + 1, profit, 0.0, profit / 2.0)
+
+            # Player 2's values after the possible successful transitions.
+            # From player 2's perspective, if player 1 reaches n first, player 2 loses.
+            a2 = resolve(val2, a + 1, b + 1, 0.0, profit, profit / 2.0)
+            b2 = resolve(val2, a + 1, b, 0.0, profit, profit / 2.0)
+            c2 = resolve(val2, a, b + 1, 0.0, profit, profit / 2.0)
+
+            def v1(p1, p2):
+                """
+                Expected net payoff of player 1 for fixed probabilities p1,p2.
+                """
+                leave = p1 + p2 - p1 * p2
+                daily_cost = bribe(p1, log1)
+                future = expected(p1, p2, a1, b1, c1)
+                return (-daily_cost + future) / leave
+
+            def v2(p1, p2):
+                """
+                Expected net payoff of player 2 for fixed probabilities p1,p2.
+                """
+                leave = p1 + p2 - p1 * p2
+                daily_cost = bribe(p2, log2)
+                future = expected(p1, p2, a2, b2, c2)
+                return (-daily_cost + future) / leave
+
+            def br1(p2):
+                """
+                Player 1's best response to player 2 choosing p2.
+                """
+                return argmax(lambda q: v1(q, p2))
+
+            def br2(p1):
+                """
+                Player 2's best response to player 1 choosing p1.
+                """
+                return argmax(lambda q: v2(p1, q))
+
+            def gap(p1):
+                """
+                Fixed-point residual.
+
+                At equilibrium:
+                    p1 = br1(br2(p1))
+                """
+                return br1(br2(p1)) - p1
+
+            # Find equilibrium p1 by bisection.
+            left = LO
+            right = HI
+
+            for _ in range(100):
+                mid = (left + right) / 2.0
+
+                if gap(mid) > 0.0:
+                    left = mid
+                else:
+                    right = mid
+
+            # Equilibrium probabilities.
+            p1 = (left + right) / 2.0
+            p2 = br2(p1)
+
+            # Store expected net payoffs at equilibrium.
+            val1[a][b] = v1(p1, p2)
+            val2[a][b] = v2(p1, p2)
+
+            # Values of player 1's winning probability after transitions.
+            wa = resolve(win1, a + 1, b + 1, 1.0, 0.0, 0.5)
+            wb = resolve(win1, a + 1, b, 1.0, 0.0, 0.5)
+            wc = resolve(win1, a, b + 1, 1.0, 0.0, 0.5)
+
+            # Probability that at least one player succeeds and the state changes.
+            leave = p1 + p2 - p1 * p2
+
+            # Compute player 1's winning probability, removing the self-loop.
+            win1[a][b] = expected(p1, p2, wa, wb, wc) / leave
+
+    # Player 2's winning probability is the complement.
+    ans1 = win1[0][0]
+    ans2 = 1.0 - ans1
+
+    # Print with sufficient precision.
+    print(f"{ans1:.9f} {ans2:.9f}")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Use DP over states `(a,b)`, the numbers of approvals already obtained. Terminal states give payoff `V/0/V/2` depending on who finished.
+
+Represent an action by success probability `p` instead of bribe:
+
+\[
+b = \frac{\ln((1-p)/0.99)}{\ln(1-F)}, \qquad p \in [0.01,1)
+\]
+
+For a live state and chosen probabilities `p1,p2`, let `A,B,C` be the already-known future values after both succeed, only player 1 succeeds, and only player 2 succeeds. Since both failing returns to the same state,
+
+\[
+V_1 =
+\frac{-b_1 + p_1p_2A + p_1(1-p_2)B + (1-p_1)p_2C}
+{p_1+p_2-p_1p_2}
+\]
+
+and similarly for player 2.
+
+For each state, find the Nash equilibrium. For fixed opponent probability, a player's payoff is single-peaked in their own probability, so compute best responses with ternary search:
+
+\[
+BR_1(p_2), \quad BR_2(p_1)
+\]
+
+At equilibrium:
+
+\[
+p_1 = BR_1(BR_2(p_1))
+\]
+
+Solve this scalar fixed point by bisection. Then store both expected payoffs.
+
+Finally compute winning probability with the same equilibrium probabilities:
+
+\[
+W =
+\frac{
+p_1p_2W_A + p_1(1-p_2)W_B + (1-p_1)p_2W_C
+}{
+p_1+p_2-p_1p_2
+}
+\]
+
+The answer is `W[0][0]` and `1 - W[0][0]`.

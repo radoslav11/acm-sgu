@@ -1,0 +1,753 @@
+## 1. Abridged Problem Statement
+
+Given an `M × N` rectangular board (`1 ≤ M, N ≤ 200`) where some cells exist (`1`) and some are removed (`0`), place as many Guardians as possible on existing cells such that:
+
+- No two Guardians are on the same cell or on edge-neighboring cells.
+- Every existing cell is defended, meaning it either contains a Guardian or is edge-adjacent to one.
+
+Output the maximum number of Guardians and any valid placement using:
+
+- `G` for Guardian,
+- `.` for empty existing cell,
+- `#` for removed cell.
+
+---
+
+## 2. Detailed Editorial
+
+### Graph interpretation
+
+Treat every existing board cell as a vertex of a graph.
+
+Connect two vertices by an edge if their cells share a side.
+
+A Guardian attacks:
+
+- its own cell,
+- the four edge-neighboring cells.
+
+Therefore:
+
+- Two Guardians cannot be placed on adjacent cells, because they would attack each other.
+- So the chosen Guardian cells must form an **independent set** in this graph.
+- Every existing cell must be defended, so every vertex must either be chosen or adjacent to a chosen vertex. This means the chosen set must also be a **dominating set**.
+
+We want the largest set of cells that is both independent and dominating.
+
+---
+
+### Key observation
+
+Any **maximum independent set** is automatically dominating.
+
+Why?
+
+Suppose we have a maximum independent set `S`.
+
+If there is some vertex `v` that is:
+
+- not in `S`,
+- not adjacent to any vertex in `S`,
+
+then we could add `v` to `S`, and it would still be independent.
+
+That contradicts the fact that `S` was maximum.
+
+Therefore, every maximum independent set is dominating.
+
+So the problem reduces to:
+
+> Find a maximum independent set of the graph of existing cells.
+
+---
+
+### The graph is bipartite
+
+The grid graph is bipartite using checkerboard coloring:
+
+- Cells with `(row + col) % 2 == 0` go to the left part.
+- Cells with `(row + col) % 2 == 1` go to the right part.
+
+Every edge connects cells of opposite parity.
+
+---
+
+### König’s theorem
+
+For bipartite graphs:
+
+```text
+size(maximum independent set) = number of vertices - size(minimum vertex cover)
+```
+
+And by König’s theorem:
+
+```text
+size(minimum vertex cover) = size(maximum matching)
+```
+
+So we can:
+
+1. Build the bipartite graph.
+2. Find a maximum matching using Hopcroft–Karp.
+3. Recover a minimum vertex cover.
+4. Take its complement to obtain a maximum independent set.
+5. Place Guardians on those cells.
+
+---
+
+### Recovering the minimum vertex cover
+
+After computing a maximum matching:
+
+1. Start from all unmatched left-side vertices.
+2. Traverse alternating paths:
+   - from left to right along non-matching edges,
+   - from right to left along matching edges.
+3. Let:
+   - `Z_L` be visited left vertices,
+   - `Z_R` be visited right vertices.
+
+Then a minimum vertex cover is:
+
+```text
+(left vertices not in Z_L) ∪ (right vertices in Z_R)
+```
+
+Therefore, the maximum independent set is its complement:
+
+```text
+(left vertices in Z_L) ∪ (right vertices not in Z_R)
+```
+
+The provided C++ implementation wraps this logic inside a Hopcroft–Karp class.
+
+---
+
+### Complexity
+
+There are at most:
+
+```text
+V ≤ 40000
+E ≤ about 80000
+```
+
+Hopcroft–Karp runs in:
+
+```text
+O(E sqrt(V))
+```
+
+which is suitable for the constraints.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+// #include <coding_library/graph/hopcroft_karp.hpp>
+
+using namespace std; // Avoids writing std:: before standard library names.
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by a space.
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x; // Read each element.
+    }
+    return in; // Return stream to allow chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Iterate over all elements.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out; // Return stream to allow chaining.
+};
+
+// Class implementing Hopcroft-Karp maximum bipartite matching.
+class HopcroftKarp {
+  private:
+    int n, m; // n = number of left vertices, m = number of right vertices.
+    vector<int> dist; // BFS distance/level for left vertices.
+
+    // BFS builds layers of alternating paths starting from unmatched left vertices.
+    bool bfs() {
+        queue<int> q; // Queue for BFS.
+
+        dist.assign(n, -1); // Initially no left vertex is visited.
+
+        for(int u = 0; u < n; u++) { // Check every left vertex.
+            if(inv_match[u] == -1) { // If left vertex u is unmatched,
+                dist[u] = 0; // it is a BFS source.
+                q.push(u); // Add it to the queue.
+            }
+        }
+
+        bool found = false; // Whether an augmenting path to an unmatched right vertex exists.
+
+        while(!q.empty()) { // Standard BFS loop.
+            int u = q.front(); // Get current left vertex.
+            q.pop(); // Remove it from queue.
+
+            for(int v: adj[u]) { // For each right vertex adjacent to u,
+                int m = match[v]; // m is the left vertex currently matched to v, or -1.
+
+                if(m == -1) { // If v is unmatched,
+                    found = true; // then an augmenting path exists.
+                } else if(dist[m] == -1) { // Otherwise, if matched left vertex m is unvisited,
+                    dist[m] = dist[u] + 1; // assign it next BFS level.
+                    q.push(m); // Continue BFS from that left vertex.
+                }
+            }
+        }
+
+        return found; // Return whether at least one augmenting path may exist.
+    }
+
+    // DFS tries to find an augmenting path from left vertex u within BFS layers.
+    bool dfs(int u) {
+        for(int v: adj[u]) { // Try all right neighbors of u.
+            int m = match[v]; // Current left partner of right vertex v.
+
+            // We can use v if it is unmatched, or if its matched partner can be rematched deeper.
+            if(m == -1 || (dist[m] == dist[u] + 1 && dfs(m))) {
+                inv_match[u] = v; // Match left u to right v.
+                match[v] = u; // Match right v to left u.
+                return true; // Successfully augmented.
+            }
+        }
+
+        dist[u] = -1; // Mark u as useless in this BFS phase.
+        return false; // No augmenting path from u.
+    }
+
+  public:
+    vector<int> match, inv_match; // match[v] = matched left of right v; inv_match[u] = matched right of left u.
+    vector<vector<int>> adj; // adj[u] contains right vertices adjacent to left vertex u.
+
+    // Constructor.
+    HopcroftKarp(int _n, int _m = -1) : n(_n), m(_m == -1 ? _n : _m) {
+        adj.assign(n, vector<int>()); // Create adjacency list for all left vertices.
+        clear(false); // Initialize matching arrays, but do not clear adjacency.
+    }
+
+    // Clears matching, and optionally adjacency.
+    void clear(bool clear_adj = true) {
+        match.assign(m, -1); // Initially every right vertex is unmatched.
+        inv_match.assign(n, -1); // Initially every left vertex is unmatched.
+
+        if(clear_adj) { // If requested,
+            adj.assign(n, vector<int>()); // remove all edges.
+        }
+    }
+
+    // Add edge from left vertex u to right vertex v.
+    void add_edge(int u, int v) {
+        adj[u].push_back(v); // Store v in u's adjacency list.
+    }
+
+    // Computes maximum matching.
+    int max_matching(bool shuffle_edges = false) {
+        if(shuffle_edges) { // Optional randomization of adjacency order.
+            for(int i = 0; i < n; i++) { // For each left vertex,
+                shuffle(
+                    adj[i].begin(), adj[i].end(), // Shuffle its edges.
+                    mt19937(
+                        chrono::steady_clock::now().time_since_epoch().count()
+                    )
+                );
+            }
+        }
+
+        int ans = 0; // Number of matched pairs.
+
+        while(bfs()) { // While augmenting paths exist,
+            for(int u = 0; u < n; u++) { // Try every left vertex.
+                if(inv_match[u] == -1 && dfs(u)) { // If u is unmatched and can augment,
+                    ans++; // Matching size increases by one.
+                }
+            }
+        }
+
+        return ans; // Return maximum matching size.
+    }
+
+    // Returns all matched pairs.
+    vector<pair<int, int>> get_matching() {
+        vector<pair<int, int>> matches; // Result vector.
+
+        for(int u = 0; u < n; u++) { // For every left vertex,
+            if(inv_match[u] != -1) { // if it is matched,
+                matches.emplace_back(u, inv_match[u]); // store the pair.
+            }
+        }
+
+        return matches; // Return matching pairs.
+    }
+
+    // Computes one minimum vertex cover using König's theorem.
+    pair<vector<int>, vector<int>> minimum_vertex_cover() {
+        // After maximum matching, alternating BFS from unmatched left vertices
+        // identifies reachable left vertices. The cover is:
+        // left vertices not reached + right vertices reached.
+
+        vector<int> left_cover, right_cover; // Containers for cover vertices.
+
+        bfs(); // Re-run BFS to mark reachable left vertices in dist.
+
+        for(int u = 0; u < n; u++) { // For each left vertex,
+            if(dist[u] == -1) { // if it was not reached,
+                left_cover.push_back(u); // it belongs to the minimum vertex cover.
+            }
+        }
+
+        for(int v = 0; v < m; v++) { // For each right vertex,
+            // A matched right vertex is reachable if its matched left partner is reachable.
+            if(match[v] != -1 && dist[match[v]] != -1) {
+                right_cover.push_back(v); // Then it belongs to the minimum vertex cover.
+            }
+        }
+
+        return {left_cover, right_cover}; // Return both parts of the cover.
+    }
+
+    // Computes maximum independent set as complement of minimum vertex cover.
+    pair<vector<int>, vector<int>> maximum_independent_set() {
+        // In bipartite graphs, complement of a minimum vertex cover is
+        // a maximum independent set.
+
+        auto [left_cover, right_cover] = minimum_vertex_cover(); // Get minimum vertex cover.
+
+        vector<char> in_left_cover(n), in_right_cover(m); // Boolean markers.
+
+        for(int u: left_cover) { // Mark covered left vertices.
+            in_left_cover[u] = 1;
+        }
+
+        for(int v: right_cover) { // Mark covered right vertices.
+            in_right_cover[v] = 1;
+        }
+
+        vector<int> left_set, right_set; // Maximum independent set parts.
+
+        for(int u = 0; u < n; u++) { // For every left vertex,
+            if(!in_left_cover[u]) { // if it is not in the cover,
+                left_set.push_back(u); // it is in the independent set.
+            }
+        }
+
+        for(int v = 0; v < m; v++) { // For every right vertex,
+            if(!in_right_cover[v]) { // if it is not in the cover,
+                right_set.push_back(v); // it is in the independent set.
+            }
+        }
+
+        return {left_set, right_set}; // Return both sides of the independent set.
+    }
+};
+
+// Alias for readability.
+using BipartiteMatching = HopcroftKarp;
+
+int m, n; // Board dimensions: m rows, n columns.
+vector<vector<int>> grid; // grid[i][j] is 1 for existing cell, 0 for removed cell.
+
+// Reads input.
+void read() {
+    cin >> m >> n; // Read number of rows and columns.
+
+    grid.assign(m, vector<int>(n)); // Allocate the grid.
+
+    for(auto& row: grid) { // For each row,
+        cin >> row; // read all entries using overloaded vector input operator.
+    }
+}
+
+// Solves the problem.
+void solve() {
+    // Guardians must form an independent set in the grid graph.
+    // A maximum independent set is automatically dominating.
+    // The grid graph is bipartite, so we use König's theorem.
+
+    vector<vector<int>> id(m, vector<int>(n, -1)); // id of each existing cell inside its parity part.
+
+    int num_even = 0, num_odd = 0; // Counts of even-parity and odd-parity cells.
+
+    for(int i = 0; i < m; i++) { // Loop over rows.
+        for(int j = 0; j < n; j++) { // Loop over columns.
+            if(grid[i][j]) { // Only existing cells become graph vertices.
+                // Even parity cells go to the left side, odd parity cells to the right side.
+                id[i][j] = ((i + j) & 1) ? num_odd++ : num_even++;
+            }
+        }
+    }
+
+    HopcroftKarp hk(num_even, num_odd); // Create bipartite graph.
+
+    static const int di[] = {-1, 1, 0, 0}; // Row offsets for four neighbors.
+    static const int dj[] = {0, 0, -1, 1}; // Column offsets for four neighbors.
+
+    for(int i = 0; i < m; i++) { // Loop over rows.
+        for(int j = 0; j < n; j++) { // Loop over columns.
+            // Add edges only from even-side cells.
+            if(grid[i][j] && ((i + j) & 1) == 0) {
+                for(int d = 0; d < 4; d++) { // Try four directions.
+                    int ni = i + di[d], nj = j + dj[d]; // Neighbor coordinates.
+
+                    // If neighbor is inside board and exists,
+                    if(ni >= 0 && ni < m && nj >= 0 && nj < n && grid[ni][nj]) {
+                        hk.add_edge(id[i][j], id[ni][nj]); // Add bipartite edge.
+                    }
+                }
+            }
+        }
+    }
+
+    hk.max_matching(); // Compute maximum matching.
+
+    auto [even_set, odd_set] = hk.maximum_independent_set(); // Get maximum independent set.
+
+    vector<char> even_chosen(num_even), odd_chosen(num_odd); // Mark selected cells.
+
+    for(int u: even_set) { // Mark selected even-side vertices.
+        even_chosen[u] = 1;
+    }
+
+    for(int v: odd_set) { // Mark selected odd-side vertices.
+        odd_chosen[v] = 1;
+    }
+
+    vector<string> out(m, string(n, '#')); // Initialize output grid with removed cells as '#'.
+
+    for(int i = 0; i < m; i++) { // Loop over rows.
+        for(int j = 0; j < n; j++) { // Loop over columns.
+            if(!grid[i][j]) { // Removed cells remain '#'.
+                continue;
+            }
+
+            // Check whether this cell belongs to the maximum independent set.
+            bool chosen =
+                ((i + j) & 1) ? odd_chosen[id[i][j]] : even_chosen[id[i][j]];
+
+            out[i][j] = chosen ? 'G' : '.'; // Place Guardian or leave empty.
+        }
+    }
+
+    cout << even_set.size() + odd_set.size() << '\n'; // Print maximum number of Guardians.
+
+    for(auto& row: out) { // Print output board.
+        cout << row << '\n';
+    }
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+    cin.tie(nullptr); // Untie cin from cout for faster input.
+
+    int T = 1; // There is only one test case.
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) { // Process test cases.
+        read(); // Read input.
+        solve(); // Solve and output answer.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+from collections import deque
+
+
+def hopcroft_karp(adj, left_size, right_size):
+    """
+    Computes maximum bipartite matching.
+
+    adj[u] contains all right-side vertices adjacent to left-side vertex u.
+
+    Returns:
+        pair_u: pair_u[u] = matched right vertex of left u, or -1
+        pair_v: pair_v[v] = matched left vertex of right v, or -1
+    """
+
+    pair_u = [-1] * left_size      # Matching from left to right.
+    pair_v = [-1] * right_size     # Matching from right to left.
+    dist = [-1] * left_size        # BFS levels for left vertices.
+
+    def bfs():
+        """
+        Builds BFS layers starting from all unmatched left vertices.
+        Returns True if there may be an augmenting path.
+        """
+
+        q = deque()                # Queue for BFS.
+
+        for u in range(left_size):
+            if pair_u[u] == -1:    # Unmatched left vertices are sources.
+                dist[u] = 0
+                q.append(u)
+            else:
+                dist[u] = -1       # Matched vertices initially unvisited.
+
+        found = False              # Whether we reached an unmatched right vertex.
+
+        while q:
+            u = q.popleft()
+
+            for v in adj[u]:
+                matched_left = pair_v[v]
+
+                if matched_left == -1:
+                    # We found an edge to an unmatched right vertex,
+                    # so an augmenting path exists.
+                    found = True
+                elif dist[matched_left] == -1:
+                    # Continue along the alternating path.
+                    dist[matched_left] = dist[u] + 1
+                    q.append(matched_left)
+
+        return found
+
+    def dfs(u):
+        """
+        Attempts to find an augmenting path from left vertex u,
+        respecting BFS layers.
+        """
+
+        for v in adj[u]:
+            matched_left = pair_v[v]
+
+            if matched_left == -1 or (
+                dist[matched_left] == dist[u] + 1 and dfs(matched_left)
+            ):
+                pair_u[u] = v
+                pair_v[v] = u
+                return True
+
+        # Mark as unusable in this phase.
+        dist[u] = -1
+        return False
+
+    matching_size = 0
+
+    while bfs():
+        for u in range(left_size):
+            if pair_u[u] == -1:
+                if dfs(u):
+                    matching_size += 1
+
+    return pair_u, pair_v
+
+
+def maximum_independent_set(adj, pair_u, pair_v, left_size, right_size):
+    """
+    Given a maximum matching, computes a maximum independent set
+    in a bipartite graph.
+
+    Uses König's theorem:
+        maximum independent set = complement of minimum vertex cover.
+
+    Minimum vertex cover is obtained by alternating BFS from unmatched
+    left vertices.
+    """
+
+    visited_left = [False] * left_size
+    visited_right = [False] * right_size
+
+    q = deque()
+
+    # Start from all unmatched left vertices.
+    for u in range(left_size):
+        if pair_u[u] == -1:
+            visited_left[u] = True
+            q.append(u)
+
+    while q:
+        u = q.popleft()
+
+        # From left side, traverse only non-matching edges.
+        for v in adj[u]:
+            if pair_u[u] == v:
+                continue
+
+            if not visited_right[v]:
+                visited_right[v] = True
+
+                # From right side, traverse the matching edge if it exists.
+                matched_left = pair_v[v]
+                if matched_left != -1 and not visited_left[matched_left]:
+                    visited_left[matched_left] = True
+                    q.append(matched_left)
+
+    # Minimum vertex cover:
+    #   left not visited + right visited
+    #
+    # Maximum independent set is complement:
+    #   left visited + right not visited
+    left_set = [u for u in range(left_size) if visited_left[u]]
+    right_set = [v for v in range(right_size) if not visited_right[v]]
+
+    return left_set, right_set
+
+
+def main():
+    data = sys.stdin.read().split()
+
+    if not data:
+        return
+
+    it = iter(data)
+
+    m = int(next(it))  # Number of rows.
+    n = int(next(it))  # Number of columns.
+
+    grid = [[0] * n for _ in range(m)]
+
+    for i in range(m):
+        for j in range(n):
+            grid[i][j] = int(next(it))
+
+    # id_cell[i][j] stores the id of this cell in its bipartite side.
+    id_cell = [[-1] * n for _ in range(m)]
+
+    left_count = 0
+    right_count = 0
+
+    # Assign IDs to existing cells according to checkerboard parity.
+    for i in range(m):
+        for j in range(n):
+            if grid[i][j] == 1:
+                if (i + j) % 2 == 0:
+                    id_cell[i][j] = left_count
+                    left_count += 1
+                else:
+                    id_cell[i][j] = right_count
+                    right_count += 1
+
+    # Adjacency list from even-parity cells to odd-parity cells.
+    adj = [[] for _ in range(left_count)]
+
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    # Build graph edges between neighboring existing cells.
+    for i in range(m):
+        for j in range(n):
+            if grid[i][j] == 1 and (i + j) % 2 == 0:
+                u = id_cell[i][j]
+
+                for di, dj in directions:
+                    ni = i + di
+                    nj = j + dj
+
+                    if 0 <= ni < m and 0 <= nj < n and grid[ni][nj] == 1:
+                        v = id_cell[ni][nj]
+                        adj[u].append(v)
+
+    # Python recursion depth may need to be increased for DFS.
+    sys.setrecursionlimit(1_000_000)
+
+    # Compute maximum matching.
+    pair_u, pair_v = hopcroft_karp(adj, left_count, right_count)
+
+    # Compute maximum independent set.
+    left_set, right_set = maximum_independent_set(
+        adj, pair_u, pair_v, left_count, right_count
+    )
+
+    chosen_left = [False] * left_count
+    chosen_right = [False] * right_count
+
+    for u in left_set:
+        chosen_left[u] = True
+
+    for v in right_set:
+        chosen_right[v] = True
+
+    # Build output grid.
+    output = [['#'] * n for _ in range(m)]
+
+    guardian_count = len(left_set) + len(right_set)
+
+    for i in range(m):
+        for j in range(n):
+            if grid[i][j] == 0:
+                output[i][j] = '#'
+            else:
+                if (i + j) % 2 == 0:
+                    chosen = chosen_left[id_cell[i][j]]
+                else:
+                    chosen = chosen_right[id_cell[i][j]]
+
+                output[i][j] = 'G' if chosen else '.'
+
+    result = [str(guardian_count)]
+
+    for row in output:
+        result.append(''.join(row))
+
+    sys.stdout.write('\n'.join(result))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Model existing cells as vertices of a graph, with edges between edge-neighboring cells.
+
+A valid Guardian placement cannot contain adjacent cells, so it is an independent set. Since every cell must be protected, it must also dominate the graph. However, every maximum independent set is automatically dominating: otherwise, an undominated vertex could be added, contradicting maximality.
+
+Thus, find a maximum independent set of the grid graph.
+
+The grid graph is bipartite by checkerboard parity. In a bipartite graph:
+
+```text
+maximum independent set = complement of minimum vertex cover
+```
+
+By König’s theorem, a minimum vertex cover can be found from a maximum matching.
+
+Algorithm:
+
+1. Put cells with even `(i + j)` parity on the left, odd parity on the right.
+2. Add edges between neighboring existing cells.
+3. Run Hopcroft–Karp to get a maximum matching.
+4. Recover minimum vertex cover using alternating BFS from unmatched left vertices.
+5. Take its complement as the maximum independent set.
+6. Place Guardians on those cells.
+
+Complexity:
+
+```text
+O(E sqrt(V))
+```
+
+with `V ≤ 40000`, suitable for the problem constraints.

@@ -1,0 +1,670 @@
+## 1. Abridged problem statement
+
+You are given `c` colors of 3D “corner” pieces. A corner of size `2^j` consists of 4 cubes of side `2^j`. You need to build one big corner of size `2^k`.
+
+For each color `i` and size index `j`, you are given `a[i][j]`, the number of available corners of that color and size `2^j`, where `0 <= j < k`.
+
+You must output a multiset of available pieces that can build the big corner, using the minimum possible number of different colors. If multiple answers exist, output any. If impossible, output `NO SOLUTION`.
+
+Constraints:
+
+```text
+1 <= c, k <= 1000
+0 <= a[i][j] <= 1000
+```
+
+---
+
+## 2. Detailed editorial
+
+### Key geometric observation
+
+A corner of size `2^j` has volume proportional to:
+
+```text
+4 * (2^j)^3 = 4 * 8^j
+```
+
+The constant factor `4` is common for all corners, so we can measure a corner of size `2^j` as having “weight”:
+
+```text
+8^j
+```
+
+A corner of size `2^j` can be subdivided into exactly `8` corners of size `2^(j-1)`.
+
+Therefore, to build one big corner of size `2^k`, we need total normalized volume:
+
+```text
+8^k
+```
+
+using pieces of sizes `0, 1, ..., k - 1`.
+
+So if we choose some set of colors `S`, the necessary and sufficient condition for being able to build the big corner is:
+
+```text
+sum over colors i in S, sizes j of a[i][j] * 8^j >= 8^k
+```
+
+Why sufficient? Because any missing larger corner can always be replaced by `8` smaller corners recursively.
+
+---
+
+### Minimizing the number of colors
+
+For each color, compute its total normalized volume:
+
+```text
+volume[i] = sum over j of a[i][j] * 8^j
+```
+
+Since feasibility depends only on total volume of chosen colors, to minimize the number of colors we should take the colors with largest total volume first.
+
+So:
+
+1. Compute total volume for each color.
+2. Sort colors in decreasing order of total volume.
+3. Add colors one by one until the chosen colors can build the big corner.
+
+The first prefix that works uses the minimum possible number of colors.
+
+Because `k` can be up to `1000`, values like `8^1000` are enormous. The C++ solution stores each volume as a base-8 digit vector and compares digit vectors instead of using big integers.
+
+---
+
+### Finding exact counts of pieces to use
+
+After choosing a set of colors, we need to output how many pieces of each size and color are used.
+
+Let:
+
+```text
+sum_caps[j] = total number of available chosen pieces of size 2^j
+```
+
+We greedily decide how many pieces of each size to use, starting from the largest size `k - 1`.
+
+Initially, a size-`2^k` corner can be made from:
+
+```text
+8
+```
+
+corners of size `2^(k-1)`.
+
+So set:
+
+```text
+need = 8
+```
+
+Then process sizes from `k - 1` down to `0`.
+
+At size `j`:
+
+- If we have at least `need` pieces of size `j`, use exactly `need` and finish.
+- Otherwise, use all available pieces of size `j`.
+- Every missing size-`j` piece must be replaced by `8` pieces of size `j - 1`.
+
+So:
+
+```text
+missing = need - sum_caps[j]
+need = missing * 8
+```
+
+If after processing size `0` we still cannot satisfy the demand, construction is impossible with the chosen colors.
+
+---
+
+### Producing the output
+
+Once we know the total number `x[j]` of pieces of size `j` to use, we distribute these counts among the chosen colors.
+
+For each size `j`, iterate over the chosen colors and take as many pieces as possible until `x[j]` becomes zero.
+
+Each output line is:
+
+```text
+color size count
+```
+
+Colors are 1-indexed in the output.
+
+---
+
+### Complexity
+
+Let `c` be the number of colors and `k` the number of size levels.
+
+Computing volumes:
+
+```text
+O(c * k)
+```
+
+Sorting colors:
+
+```text
+O(c log c * k)
+```
+
+because comparing two base-8 digit vectors may take `O(k)`.
+
+Trying prefixes and greedy feasibility:
+
+```text
+O(c * k)
+```
+
+Total complexity:
+
+```text
+O(c * k + c log c * k)
+```
+
+This is fine for `c, k <= 1000`.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs.
+// Prints pair as: first second
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+// Reads pair as: first second
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+// Reads all elements of the vector in order.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+// Prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+// c = number of colors.
+// k = target corner size index. We need to build a corner of size 2^k.
+int c, k;
+
+// a[i][j] = number of corners of color i and size 2^j.
+vector<vector<int>> a;
+
+// Reads the input.
+void read() {
+    cin >> c >> k; // Read number of colors and size index of big corner.
+
+    // Allocate c rows and k columns.
+    a.assign(c, vector<int>(k));
+
+    // Read all available piece counts.
+    for(int i = 0; i < c; i++) {
+        for(int j = 0; j < k; j++) {
+            cin >> a[i][j];
+        }
+    }
+}
+
+// Converts coefficients of powers of 8 into normalized base-8 digits.
+//
+// Input coeffs represent:
+//
+//   coeffs[0] * 8^0 + coeffs[1] * 8^1 + ...
+//
+// But coeffs[j] may be larger than 7.
+// This function performs carries so every digit is in [0, 7].
+vector<int> normalize_base8(const vector<int>& coeffs) {
+    vector<int> digits; // Normalized base-8 digits, least significant first.
+
+    // Reserve a little extra space in case carries create new digits.
+    digits.reserve(coeffs.size() + 4);
+
+    int64_t carry = 0; // Carry from lower base-8 positions.
+
+    // Process every coefficient.
+    for(int v: coeffs) {
+        // Add carry from previous lower digit.
+        int64_t cur = (int64_t)v + carry;
+
+        // Current normalized base-8 digit.
+        digits.push_back((int)(cur % 8));
+
+        // Carry to the next digit.
+        carry = cur / 8;
+    }
+
+    // Continue processing remaining carry.
+    while(carry > 0) {
+        digits.push_back((int)(carry % 8));
+        carry /= 8;
+    }
+
+    // Remove leading zero digits.
+    while(!digits.empty() && digits.back() == 0) {
+        digits.pop_back();
+    }
+
+    // Return normalized base-8 representation.
+    return digits;
+}
+
+// Compares two base-8 digit vectors.
+//
+// Digits are stored least significant first.
+// Returns:
+//   -1 if x < y
+//    0 if x == y
+//    1 if x > y
+int cmp_digits(const vector<int>& x, const vector<int>& y) {
+    // A number with more base-8 digits is larger.
+    if(x.size() != y.size()) {
+        return x.size() < y.size() ? -1 : 1;
+    }
+
+    // Same number of digits: compare from most significant digit down.
+    for(int i = (int)x.size() - 1; i >= 0; i--) {
+        if(x[i] != y[i]) {
+            return x[i] < y[i] ? -1 : 1;
+        }
+    }
+
+    // All digits equal.
+    return 0;
+}
+
+// Main solving function.
+void solve() {
+    /*
+        A corner of size 2^j has normalized volume 8^j.
+
+        The big corner has size 2^k, so its normalized volume is 8^k.
+
+        A corner of size 2^j can be split into 8 corners of size 2^(j-1).
+        Therefore, construction is possible using a chosen set of colors iff
+        their total normalized volume is at least 8^k.
+
+        To minimize the number of colors, sort colors by total volume descending
+        and take the shortest prefix whose total volume is enough.
+
+        After choosing colors, greedily determine how many pieces of each size
+        to use, starting from the largest size.
+    */
+
+    // vol_digits[i] stores total volume of color i in normalized base-8 form.
+    vector<vector<int>> vol_digits(c);
+
+    // Compute normalized base-8 volume representation for every color.
+    for(int i = 0; i < c; i++) {
+        vol_digits[i] = normalize_base8(a[i]);
+    }
+
+    // order will contain color indices sorted by decreasing volume.
+    vector<int> order(c);
+
+    // Fill order with 0, 1, ..., c - 1.
+    iota(order.begin(), order.end(), 0);
+
+    // Sort colors by descending total volume.
+    sort(order.begin(), order.end(), [&](int u, int v) {
+        return cmp_digits(vol_digits[u], vol_digits[v]) > 0;
+    });
+
+    // sum_caps[j] = total available pieces of size 2^j among chosen colors.
+    vector<int64_t> sum_caps(k, 0);
+
+    // x[j] = number of pieces of size 2^j that we will actually use.
+    vector<int64_t> x(k, 0);
+
+    // List of chosen color indices.
+    vector<int> chosen;
+
+    // Whether we have found a feasible prefix of colors.
+    bool feasible = false;
+
+    // Lambda that tests if currently chosen colors can build the big corner.
+    auto try_greedy = [&]() -> bool {
+        // Reset selected counts for each size.
+        fill(x.begin(), x.end(), (int64_t)0);
+
+        // To build one size-2^k corner, initially we need 8 corners of size 2^(k-1).
+        int64_t N = 8;
+
+        // Clamp value to avoid overflow.
+        //
+        // Each sum_caps[j] is at most c * 1000 <= 1,000,000.
+        // Once N becomes very large, it can never be satisfied later.
+        const int64_t CLAMP = (int64_t)4e9;
+
+        // Process sizes from largest to smallest.
+        for(int j = k - 1; j >= 0; j--) {
+            // If we have enough corners of this size, use exactly N and finish.
+            if(sum_caps[j] >= N) {
+                x[j] = N;
+                N = 0;
+                break;
+            }
+
+            // Otherwise, use all available corners of this size.
+            x[j] = sum_caps[j];
+
+            // Remaining corners of this size that must be replaced by smaller ones.
+            int64_t rem = N - sum_caps[j];
+
+            // Avoid overflow when multiplying by 8.
+            if(rem > CLAMP / 8) {
+                N = CLAMP;
+            } else {
+                // Each missing size-j corner requires 8 size-(j-1) corners.
+                N = rem * 8;
+            }
+        }
+
+        // Feasible iff all required volume was satisfied.
+        return N == 0;
+    };
+
+    // Add colors in descending volume order until construction becomes feasible.
+    for(int idx = 0; idx < c; idx++) {
+        // Current color index.
+        int cc = order[idx];
+
+        // Mark this color as chosen.
+        chosen.push_back(cc);
+
+        // Add this color's pieces to total capacities.
+        for(int j = 0; j < k; j++) {
+            sum_caps[j] += a[cc][j];
+        }
+
+        // Test whether the chosen prefix can build the big corner.
+        if(try_greedy()) {
+            feasible = true;
+            break;
+        }
+    }
+
+    // If even all colors are not enough, there is no solution.
+    if(!feasible) {
+        cout << "NO SOLUTION\n";
+        return;
+    }
+
+    // result stores triples:
+    //   color index, size index, count
+    vector<tuple<int, int, int>> result;
+
+    // Distribute required counts x[j] among chosen colors.
+    for(int j = 0; j < k; j++) {
+        // Number of size-2^j pieces still needed.
+        int64_t need = x[j];
+
+        // Try to take them from chosen colors.
+        for(int cc: chosen) {
+            // Stop once this size is fully supplied.
+            if(need == 0) {
+                break;
+            }
+
+            // Take as many as possible from this color and size.
+            int64_t take = min((int64_t)a[cc][j], need);
+
+            // If we take at least one piece, output this type.
+            if(take > 0) {
+                // Colors are output 1-indexed, size remains j.
+                result.push_back({cc + 1, j, (int)take});
+
+                // Decrease remaining demand.
+                need -= take;
+            }
+        }
+    }
+
+    // Print number of used piece types.
+    cout << result.size() << "\n";
+
+    // Print each used type.
+    for(auto& [col, sz, cnt]: result) {
+        cout << col << ' ' << sz << ' ' << cnt << "\n";
+    }
+}
+
+// Program entry point.
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    // The problem has one test case.
+    int T = 1;
+
+    // Multiple test cases are not used.
+    // cin >> T;
+
+    // Solve each test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def solve():
+    # Read all integers from standard input.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # If input is empty, do nothing.
+    if not data:
+        return
+
+    # Pointer into the flat input array.
+    ptr = 0
+
+    # Number of colors.
+    c = data[ptr]
+    ptr += 1
+
+    # Big corner has size 2^k.
+    k = data[ptr]
+    ptr += 1
+
+    # a[i][j] = number of available corners of color i and size 2^j.
+    a = []
+
+    # Read the c by k table.
+    for _ in range(c):
+        row = data[ptr:ptr + k]
+        ptr += k
+        a.append(row)
+
+    # Compute normalized volume of each color.
+    #
+    # A corner of size 2^j has normalized volume 8^j.
+    # Python integers are arbitrary precision, so we can store huge values directly.
+    volumes = []
+
+    for i in range(c):
+        total = 0
+
+        for j in range(k):
+            cnt = a[i][j]
+
+            # cnt * 8^j.
+            #
+            # Since 8^j == 2^(3j), shifting left by 3*j is equivalent.
+            total += cnt << (3 * j)
+
+        volumes.append(total)
+
+    # Sort color indices by decreasing total volume.
+    order = sorted(range(c), key=lambda i: volumes[i], reverse=True)
+
+    # sum_caps[j] = total available pieces of size 2^j among chosen colors.
+    sum_caps = [0] * k
+
+    # x[j] = number of pieces of size 2^j that we will actually use.
+    x = [0] * k
+
+    # Chosen color indices.
+    chosen = []
+
+    def try_greedy():
+        """
+        Tests whether currently chosen colors can build the big corner.
+
+        Also fills array x, where x[j] is the number of pieces of size 2^j
+        that should be used.
+
+        We process sizes from large to small.
+
+        To build a size-2^k corner, we initially need 8 corners of size 2^(k-1).
+        If some of those are missing, each missing one is replaced by 8 smaller
+        corners.
+        """
+
+        # We want to modify outer variable x.
+        nonlocal x
+
+        # Reset chosen counts.
+        x = [0] * k
+
+        # Initial demand at size k - 1.
+        need = 8
+
+        # Process sizes from k - 1 down to 0.
+        for j in range(k - 1, -1, -1):
+            # If enough pieces of this size exist, use exactly need and finish.
+            if sum_caps[j] >= need:
+                x[j] = need
+                return True
+
+            # Otherwise, use all available pieces of this size.
+            x[j] = sum_caps[j]
+
+            # Missing pieces of size j.
+            missing = need - sum_caps[j]
+
+            # Each missing size-j piece requires 8 size-(j-1) pieces.
+            need = missing * 8
+
+        # If demand remains after size 0, construction is impossible.
+        return False
+
+    # Whether a feasible prefix of colors has been found.
+    feasible = False
+
+    # Add colors from largest volume to smallest.
+    for color in order:
+        # Add this color to the chosen set.
+        chosen.append(color)
+
+        # Add this color's pieces to total capacities.
+        for j in range(k):
+            sum_caps[j] += a[color][j]
+
+        # Check if the current chosen colors are sufficient.
+        if try_greedy():
+            feasible = True
+            break
+
+    # If even all colors are insufficient, output NO SOLUTION.
+    if not feasible:
+        sys.stdout.write("NO SOLUTION\n")
+        return
+
+    # Store output triples:
+    #   color, size, count
+    result = []
+
+    # For every size, distribute the required count among chosen colors.
+    for j in range(k):
+        # Number of size-2^j pieces still needed.
+        need = x[j]
+
+        # Take pieces from chosen colors.
+        for color in chosen:
+            # If enough pieces of this size have been taken, stop.
+            if need == 0:
+                break
+
+            # Number of pieces we can take from this color and size.
+            take = min(a[color][j], need)
+
+            # If positive, record this type.
+            if take > 0:
+                # Output colors are 1-indexed.
+                result.append((color + 1, j, take))
+
+                # Decrease remaining demand.
+                need -= take
+
+    # Prepare output lines.
+    out = []
+
+    # First line: number of used types.
+    out.append(str(len(result)))
+
+    # Then each used type.
+    for color, size, count in result:
+        out.append(f"{color} {size} {count}")
+
+    # Print answer.
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+A corner of size `2^j` has volume proportional to `8^j`. A corner of size `2^j` can be replaced by `8` corners of size `2^(j-1)`. Therefore, for any chosen set of colors, construction is possible iff their total normalized volume is at least `8^k`.
+
+For each color compute:
+
+```text
+volume[i] = sum_j a[i][j] * 8^j
+```
+
+To minimize the number of colors, sort colors by decreasing `volume[i]` and take the shortest prefix with enough volume.
+
+Then determine exact piece counts greedily from large sizes to small sizes. Initially need `8` pieces of size `k - 1`. At size `j`, if available pieces are enough, use the needed amount and stop. Otherwise, use all available pieces and replace each missing piece by `8` smaller pieces.
+
+Finally distribute the required counts among the chosen colors and output the used `(color, size, count)` triples. If no prefix works, output `NO SOLUTION`.

@@ -1,0 +1,820 @@
+## 1. Abridged problem statement
+
+A convex polygon represents the tent walls, and the lamp is at the origin `(0, 0)` strictly inside it. There are `M` thin shelves, each represented by a segment strictly inside the polygon and not passing through the origin.
+
+A shelf blocks light along all rays from the origin that intersect the shelf. These blocked rays shade the corresponding points on the polygon boundary. Compute the total length of shaded parts of the polygon boundary.
+
+Constraints: `3 ≤ N ≤ 100000`, `0 ≤ M ≤ 100000`.
+
+Output the answer with at least `6` digits after the decimal point.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+The lamp is at the origin and the tent is a convex polygon containing the origin strictly inside.
+
+For every direction angle `θ`, the ray from the origin in that direction intersects the polygon boundary in exactly one point.
+
+So there is a one-to-one correspondence:
+
+```text
+angle θ  <->  point on the wall hit by the ray from origin
+```
+
+A wall point is shaded iff the ray from the origin to that point intersects at least one shelf.
+
+Therefore, instead of working directly with polygon boundary points, we work with angular intervals blocked by shelves.
+
+---
+
+### Angular interval blocked by one shelf
+
+A shelf is a segment `AB`.
+
+From the origin, the segment subtends some angular interval between the directions of `A` and `B`.
+
+Let:
+
+```cpp
+angle(A) = atan2(A.y, A.x)
+angle(B) = atan2(B.y, B.x)
+```
+
+Normalize angles into `[0, 2π)`.
+
+The segment does not contain the origin, so the visible angular span is the smaller arc between the two endpoint directions.
+
+We can decide orientation using the cross product:
+
+```cpp
+cross = A ^ B
+```
+
+- If `cross > 0`, then the counter-clockwise interval from `A` to `B` is the blocked interval.
+- If `cross < 0`, then the counter-clockwise interval from `B` to `A` is the blocked interval.
+- If `cross == 0`, the segment subtends zero angle, so it contributes zero wall length and can be ignored.
+
+If an interval crosses angle `0`, split it into two intervals:
+
+```text
+[start, 2π] and [0, end]
+```
+
+After processing all shelves, we have many angular intervals. Sort and merge them to get their union.
+
+---
+
+### Converting an angular interval to wall length
+
+Now we need to compute:
+
+```text
+length of polygon boundary corresponding to angles in [l, r]
+```
+
+Because the polygon is convex and contains the origin, the order of polygon vertices by polar angle is the same as their cyclic order along the boundary.
+
+So we sort polygon vertices by angle.
+
+Let:
+
+```cpp
+bound[i] = angle of vertex i
+pref[i] = boundary length from vertex 0 to vertex i
+```
+
+For an angle `θ`, we find which polygon edge the ray intersects.
+
+If:
+
+```text
+bound[i] <= θ <= bound[i + 1]
+```
+
+then the ray hits edge:
+
+```text
+poly[i] -> poly[i + 1]
+```
+
+We intersect the ray from the origin with this edge and compute the boundary distance from the chosen starting vertex to that hit point.
+
+This gives a monotonic function:
+
+```text
+S(θ) = boundary distance from starting vertex to wall point at angle θ
+```
+
+Then for an angular interval `[l, r]` not crossing the chosen starting angle:
+
+```text
+wall length = S(r) - S(l)
+```
+
+---
+
+### Handling cyclic wraparound
+
+The sorted vertices start at some angle:
+
+```cpp
+g0 = bound[0]
+```
+
+The boundary distance function is naturally defined on `[g0, g0 + 2π]`.
+
+But shelf intervals are in `[0, 2π]`.
+
+For a merged interval `[l, r]`:
+
+1. If it lies completely before `g0`, evaluate it as `[l + 2π, r + 2π]`.
+2. If it lies completely after `g0`, evaluate normally.
+3. If it contains `g0`, split around the polygon starting point:
+
+```text
+[l, g0] and [g0, r]
+```
+
+The implementation computes this as:
+
+```cpp
+perimeter - S(l + 2π) + S(r)
+```
+
+---
+
+### Complexity
+
+Sorting polygon vertices:
+
+```text
+O(N log N)
+```
+
+Sorting shelf angular intervals:
+
+```text
+O(M log M)
+```
+
+Each interval contributes constant work except for binary search in `S(θ)`:
+
+```text
+O(log N)
+```
+
+Overall:
+
+```text
+O((N + M) log(N + M))
+```
+
+Memory usage:
+
+```text
+O(N + M)
+```
+
+---
+
+## 3. Commented C++ solution
+
+The original submitted file contains many reusable geometry helpers. Below is the same solution logic with detailed comments.
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// All geometric computations are done in double precision.
+using coord_t = double;
+
+// Point/vector structure.
+struct Point {
+    // Small epsilon for floating point comparisons.
+    static constexpr coord_t eps = 1e-9;
+
+    // Pi constant.
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    // Cartesian coordinates.
+    coord_t x, y;
+
+    // Constructor, defaults to origin.
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector addition.
+    Point operator+(const Point& p) const {
+        return Point(x + p.x, y + p.y);
+    }
+
+    // Vector subtraction.
+    Point operator-(const Point& p) const {
+        return Point(x - p.x, y - p.y);
+    }
+
+    // Multiplication by scalar.
+    Point operator*(coord_t c) const {
+        return Point(x * c, y * c);
+    }
+
+    // Division by scalar.
+    Point operator/(coord_t c) const {
+        return Point(x / c, y / c);
+    }
+
+    // Dot product.
+    coord_t operator*(const Point& p) const {
+        return x * p.x + y * p.y;
+    }
+
+    // Cross product.
+    coord_t operator^(const Point& p) const {
+        return x * p.y - y * p.x;
+    }
+
+    // Squared vector length.
+    coord_t norm2() const {
+        return x * x + y * y;
+    }
+
+    // Vector length.
+    coord_t norm() const {
+        return sqrt(norm2());
+    }
+
+    // Polar angle of vector.
+    coord_t angle() const {
+        return atan2(y, x);
+    }
+
+    // Intersection of two infinite lines:
+    // line a1-b1 and line a2-b2.
+    friend Point line_line_intersection(
+        const Point& a1,
+        const Point& b1,
+        const Point& a2,
+        const Point& b2
+    ) {
+        // Direction of first line.
+        Point d1 = b1 - a1;
+
+        // Direction of second line.
+        Point d2 = b2 - a2;
+
+        // Parameter on first line.
+        coord_t t = ((a2 - a1) ^ d2) / (d1 ^ d2);
+
+        // Return intersection point.
+        return a1 + d1 * t;
+    }
+};
+
+// Fast input namespace.
+namespace fastin {
+    // Input buffer size.
+    const int BUF = 1 << 16;
+
+    // Buffer storage.
+    char buf[BUF];
+
+    // Current position and length of buffer.
+    int pos = 0, len = 0;
+
+    // Get next character.
+    char gc() {
+        // If buffer is exhausted, refill it.
+        if (pos == len) {
+            len = (int)fread(buf, 1, BUF, stdin);
+            pos = 0;
+
+            // End of input.
+            if (len == 0) {
+                return -1;
+            }
+        }
+
+        // Return next character.
+        return buf[pos++];
+    }
+
+    // Read signed integer.
+    long long read_int() {
+        // Read first relevant character.
+        char c = gc();
+
+        // Skip non-digit and non-minus characters.
+        while (c != '-' && (c < '0' || c > '9')) {
+            c = gc();
+        }
+
+        // Check sign.
+        bool neg = c == '-';
+
+        // If negative, move to first digit.
+        if (neg) {
+            c = gc();
+        }
+
+        // Parse number.
+        long long x = 0;
+        while (c >= '0' && c <= '9') {
+            x = x * 10 + (c - '0');
+            c = gc();
+        }
+
+        // Return with sign.
+        return neg ? -x : x;
+    }
+}
+
+// Number of polygon vertices and shelves.
+int n, m;
+
+// Polygon vertices.
+vector<Point> poly;
+
+// Shelf segments.
+vector<pair<Point, Point>> shelves;
+
+// Reads input.
+void read() {
+    // Read N and M.
+    n = fastin::read_int();
+    m = fastin::read_int();
+
+    // Resize polygon vector.
+    poly.resize(n);
+
+    // Read polygon vertices.
+    for (auto& p : poly) {
+        p.x = fastin::read_int();
+        p.y = fastin::read_int();
+    }
+
+    // Resize shelf vector.
+    shelves.resize(m);
+
+    // Read shelf segment endpoints.
+    for (auto& [a, b] : shelves) {
+        a.x = fastin::read_int();
+        a.y = fastin::read_int();
+        b.x = fastin::read_int();
+        b.y = fastin::read_int();
+    }
+}
+
+// Main solving function.
+void solve() {
+    // Normalize angle into [0, 2*pi).
+    auto norm_angle = [](coord_t a) {
+        if (a < 0) {
+            a += 2 * Point::PI;
+        }
+        return a;
+    };
+
+    // Store polygon vertices together with their polar angles.
+    vector<pair<coord_t, Point>> by_angle(n);
+
+    // Compute angle of every polygon vertex.
+    for (int i = 0; i < n; i++) {
+        by_angle[i] = {norm_angle(poly[i].angle()), poly[i]};
+    }
+
+    // Sort vertices by polar angle.
+    // For a convex polygon containing the origin, this is cyclic boundary order.
+    sort(by_angle.begin(), by_angle.end(), [](const auto& p, const auto& q) {
+        return p.first < q.first;
+    });
+
+    // bound[i] = polar angle of i-th sorted vertex.
+    vector<coord_t> bound(n + 1);
+
+    // pref[i] = boundary length from sorted vertex 0 to sorted vertex i.
+    vector<coord_t> pref(n + 1, 0);
+
+    // Rebuild polygon in sorted-by-angle order.
+    for (int i = 0; i < n; i++) {
+        poly[i] = by_angle[i].second;
+        bound[i] = by_angle[i].first;
+
+        // Compute prefix boundary length.
+        if (i > 0) {
+            pref[i] = pref[i - 1] + (poly[i] - poly[i - 1]).norm();
+        }
+    }
+
+    // Closing angle, used for cyclic handling.
+    bound[n] = bound[0] + 2 * Point::PI;
+
+    // Total polygon perimeter.
+    coord_t perim = pref[n - 1] + (poly[0] - poly[n - 1]).norm();
+
+    // First angle in sorted polygon order.
+    coord_t g0 = bound[0];
+
+    // Function returning boundary distance from poly[0]
+    // to the intersection point of boundary with ray at angle theta.
+    auto arc_length = [&](coord_t theta) {
+        // Find the edge whose angular interval contains theta.
+        int i = upper_bound(bound.begin(), bound.end(), theta) - bound.begin() - 1;
+
+        // Clamp to last real edge.
+        i = min(i, n - 1);
+
+        // Unit direction of the ray.
+        Point dir(cos(theta), sin(theta));
+
+        // Intersect ray line with polygon edge poly[i] -> poly[i + 1].
+        Point hit = line_line_intersection(
+            Point(0, 0),
+            dir,
+            poly[i],
+            poly[(i + 1) % n]
+        );
+
+        // Distance along boundary equals prefix to vertex i
+        // plus length along the current edge to the hit point.
+        return pref[i] + (hit - poly[i]).norm();
+    };
+
+    // Angular intervals blocked by shelves.
+    vector<pair<coord_t, coord_t>> arcs;
+
+    // Add interval [s, e], splitting if it crosses angle 0.
+    auto add_arc = [&](coord_t s, coord_t e) {
+        if (s <= e) {
+            // Normal interval.
+            arcs.emplace_back(s, e);
+        } else {
+            // Wrapped interval split into two.
+            arcs.emplace_back(s, 2 * Point::PI);
+            arcs.emplace_back(0, e);
+        }
+    };
+
+    // Convert every shelf to one angular interval.
+    for (auto& [a, b] : shelves) {
+        // Cross product determines shorter angular direction.
+        coord_t cross = a ^ b;
+
+        // If endpoints have same direction, shaded boundary length is zero.
+        if (fabs(cross) < Point::eps) {
+            continue;
+        }
+
+        // Endpoint polar angles.
+        coord_t sa = norm_angle(a.angle());
+        coord_t sb = norm_angle(b.angle());
+
+        // If cross > 0, the CCW arc from a to b is the visible shelf interval.
+        if (cross > 0) {
+            add_arc(sa, sb);
+        } else {
+            // Otherwise, the CCW arc from b to a is the interval.
+            add_arc(sb, sa);
+        }
+    }
+
+    // Sort intervals before merging.
+    sort(arcs.begin(), arcs.end());
+
+    // Final shaded wall length.
+    coord_t ans = 0;
+
+    // Current merged interval.
+    coord_t cur_lo = 0;
+    coord_t cur_hi = -1;
+
+    // Add the current merged interval's wall-length contribution.
+    auto flush = [&]() {
+        // Empty interval.
+        if (cur_hi < cur_lo) {
+            return;
+        }
+
+        // If interval crosses the polygon's starting angle g0,
+        // it corresponds to two boundary pieces.
+        if (cur_lo < g0 - Point::eps && cur_hi > g0 + Point::eps) {
+            ans += (perim - arc_length(cur_lo + 2 * Point::PI))
+                 + arc_length(cur_hi);
+        }
+        // Entire interval lies before g0 in [0, 2*pi),
+        // so shift it by +2*pi.
+        else if (cur_hi <= g0 + Point::eps) {
+            ans += arc_length(cur_hi + 2 * Point::PI)
+                 - arc_length(cur_lo + 2 * Point::PI);
+        }
+        // Entire interval lies after g0.
+        else {
+            ans += arc_length(cur_hi) - arc_length(cur_lo);
+        }
+    };
+
+    // Merge sorted intervals.
+    for (auto& [s, e] : arcs) {
+        // No active interval yet.
+        if (cur_hi < cur_lo) {
+            cur_lo = s;
+            cur_hi = e;
+        }
+        // Overlapping or touching interval.
+        else if (s <= cur_hi + Point::eps) {
+            cur_hi = max(cur_hi, e);
+        }
+        // Disjoint interval: finish old one and start a new one.
+        else {
+            flush();
+            cur_lo = s;
+            cur_hi = e;
+        }
+    }
+
+    // Flush final interval.
+    flush();
+
+    // Print answer.
+    cout << fixed << setprecision(12) << ans << '\n';
+}
+
+int main() {
+    // Disable synchronization for faster C++ streams.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout.
+    cin.tie(nullptr);
+
+    // Only one test case.
+    read();
+
+    // Solve it.
+    solve();
+
+    // Successful termination.
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import math
+import bisect
+
+
+# Small tolerance for floating point comparisons.
+EPS = 1e-12
+
+# Pi and full circle constants.
+PI = math.pi
+TWO_PI = 2.0 * math.pi
+
+
+def norm_angle(a):
+    """
+    Normalize angle into [0, 2*pi).
+    atan2 returns values in [-pi, pi].
+    """
+    if a < 0:
+        a += TWO_PI
+    return a
+
+
+def cross(a, b):
+    """
+    Cross product of vectors a and b.
+    Points/vectors are represented as tuples (x, y).
+    """
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def dist(a, b):
+    """
+    Euclidean distance between points a and b.
+    """
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def line_ray_edge_intersection(theta, p, q):
+    """
+    Intersect the ray line from origin in direction theta
+    with the polygon edge line p -> q.
+
+    Since the polygon is convex and the chosen edge is correct,
+    the intersection lies on the segment p-q.
+    """
+    # Direction vector of the ray.
+    dx = math.cos(theta)
+    dy = math.sin(theta)
+
+    # Edge direction vector.
+    ex = q[0] - p[0]
+    ey = q[1] - p[1]
+
+    # We solve:
+    # t * dir = p + u * edge
+    #
+    # Taking cross with edge:
+    # cross(t * dir, edge) = cross(p, edge)
+    # t = cross(p, edge) / cross(dir, edge)
+    denom = dx * ey - dy * ex
+    numer = p[0] * ey - p[1] * ex
+
+    t = numer / denom
+
+    # Intersection point.
+    return (dx * t, dy * t)
+
+
+def solve():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # Current index in the flat input list.
+    idx = 0
+
+    # Number of polygon vertices and shelves.
+    n = data[idx]
+    m = data[idx + 1]
+    idx += 2
+
+    # Read polygon vertices.
+    poly = []
+    for _ in range(n):
+        x = data[idx]
+        y = data[idx + 1]
+        idx += 2
+        poly.append((float(x), float(y)))
+
+    # Read shelves.
+    shelves = []
+    for _ in range(m):
+        x1 = data[idx]
+        y1 = data[idx + 1]
+        x2 = data[idx + 2]
+        y2 = data[idx + 3]
+        idx += 4
+        shelves.append(((float(x1), float(y1)), (float(x2), float(y2))))
+
+    # Sort polygon vertices by polar angle around the origin.
+    # For a convex polygon containing origin, this is the boundary cyclic order.
+    by_angle = []
+    for p in poly:
+        ang = norm_angle(math.atan2(p[1], p[0]))
+        by_angle.append((ang, p))
+
+    by_angle.sort()
+
+    # Rebuild sorted polygon and angle array.
+    poly = [p for _, p in by_angle]
+    bound = [ang for ang, _ in by_angle]
+
+    # Add cyclic closing angle.
+    bound.append(bound[0] + TWO_PI)
+
+    # Prefix lengths along polygon boundary starting from poly[0].
+    pref = [0.0] * (n + 1)
+
+    for i in range(1, n):
+        pref[i] = pref[i - 1] + dist(poly[i - 1], poly[i])
+
+    # Total perimeter.
+    perimeter = pref[n - 1] + dist(poly[n - 1], poly[0])
+
+    # Starting angle of our boundary parameterization.
+    g0 = bound[0]
+
+    def arc_length(theta):
+        """
+        Return boundary distance from poly[0] to the wall point hit by
+        the ray at angle theta.
+
+        theta must lie in [g0, g0 + 2*pi].
+        """
+        # Find rightmost bound[i] <= theta.
+        i = bisect.bisect_right(bound, theta) - 1
+
+        # Clamp to last edge.
+        if i >= n:
+            i = n - 1
+
+        # Current edge is poly[i] -> poly[(i + 1) % n].
+        p = poly[i]
+        q = poly[(i + 1) % n]
+
+        # Intersection of ray and current edge.
+        hit = line_ray_edge_intersection(theta, p, q)
+
+        # Boundary distance to hit point.
+        return pref[i] + dist(p, hit)
+
+    # List of blocked angular intervals in [0, 2*pi].
+    arcs = []
+
+    def add_arc(s, e):
+        """
+        Add CCW angular interval from s to e.
+        If it wraps around 0, split it.
+        """
+        if s <= e:
+            arcs.append((s, e))
+        else:
+            arcs.append((s, TWO_PI))
+            arcs.append((0.0, e))
+
+    # Convert every shelf segment to an angular interval.
+    for a, b in shelves:
+        c = cross(a, b)
+
+        # Collinear with origin means zero angular measure.
+        if abs(c) < EPS:
+            continue
+
+        # Endpoint angles.
+        sa = norm_angle(math.atan2(a[1], a[0]))
+        sb = norm_angle(math.atan2(b[1], b[0]))
+
+        # Choose the smaller visible angular interval.
+        if c > 0:
+            add_arc(sa, sb)
+        else:
+            add_arc(sb, sa)
+
+    # Sort intervals for merging.
+    arcs.sort()
+
+    # Answer: total shaded boundary length.
+    ans = 0.0
+
+    def interval_length(lo, hi):
+        """
+        Convert merged angular interval [lo, hi] in [0, 2*pi]
+        to corresponding wall length.
+        """
+        # The interval crosses the starting angle g0.
+        if lo < g0 - EPS and hi > g0 + EPS:
+            return (perimeter - arc_length(lo + TWO_PI)) + arc_length(hi)
+
+        # The whole interval lies before g0, so shift by 2*pi.
+        if hi <= g0 + EPS:
+            return arc_length(hi + TWO_PI) - arc_length(lo + TWO_PI)
+
+        # The whole interval lies after g0.
+        return arc_length(hi) - arc_length(lo)
+
+    # Merge intervals and accumulate their lengths.
+    cur_lo = 0.0
+    cur_hi = -1.0
+
+    for s, e in arcs:
+        # No active interval.
+        if cur_hi < cur_lo:
+            cur_lo = s
+            cur_hi = e
+
+        # Overlap or touch.
+        elif s <= cur_hi + EPS:
+            if e > cur_hi:
+                cur_hi = e
+
+        # Disjoint interval.
+        else:
+            ans += interval_length(cur_lo, cur_hi)
+            cur_lo = s
+            cur_hi = e
+
+    # Add final active interval if any.
+    if cur_hi >= cur_lo:
+        ans += interval_length(cur_lo, cur_hi)
+
+    # Print with enough precision.
+    print(f"{ans:.12f}")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Each shelf blocks exactly the set of directions from the origin that intersect its segment. Thus every shelf becomes one angular interval. Use endpoint angles and the cross product to choose the smaller counter-clockwise interval; split intervals crossing `0`.
+
+Merge all blocked angular intervals.
+
+Now convert angular length to polygon-boundary length. Since the polygon is convex and contains the origin, every ray from the origin hits the boundary once, and polygon vertices sorted by polar angle appear in boundary order. Precompute prefix perimeter lengths in that order.
+
+For any angle `θ`, binary search the polygon edge whose endpoint angles contain `θ`, intersect the ray with that edge, and compute the boundary distance `S(θ)` from a fixed starting vertex. Then a blocked interval `[l, r]` contributes `S(r) - S(l)`, with special handling if it wraps around the chosen starting angle.
+
+Complexity:
+
+```text
+O((N + M) log(N + M))
+```

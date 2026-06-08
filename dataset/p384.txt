@@ -1,0 +1,469 @@
+## 1) Concise abridged problem statement
+
+You are given an undirected simple graph with `n` cities and `m` roads **as it was immediately after a special “reform”**. The reformed graph satisfied:
+
+> For every two distinct vertices `u != v`, there is **exactly one** vertex that is adjacent to both `u` and `v` (exactly one common neighbor).
+
+After the reform, roads start getting destroyed. Then you must process operations until EOF:
+
+- `DELETE x`: delete the `x`-th road from the original list (1-based).
+- `LENGTH x y`: output the current shortest path length between cities `x` and `y`, or `-1` if disconnected.
+
+Constraints are not fully shown, but the number of queries is bounded; the solution must be fast.
+
+---
+
+## 2) Detailed editorial (solution explanation)
+
+### Key structural theorem (Friendship theorem)
+
+The condition
+
+> every pair of distinct vertices has exactly one common neighbor
+
+characterizes graphs known as **friendship graphs** (also called “windmill graphs”). A classic result (Erdős–Rényi–Sós, 1966) implies:
+
+Such a graph must look like:
+
+- There exists a single **central vertex** `c`
+- All other vertices are partitioned into disjoint pairs `(a_i, b_i)`
+- For each pair `(a_i, b_i)`, edges form a triangle `c - a_i - b_i - c`
+- No other edges exist
+
+So initially the graph is a bunch of triangles sharing the same center.
+
+Consequences:
+
+- The graph is connected initially (implied by the property).
+- Every **non-center** vertex has degree exactly 2 initially: connected to `center` and to its **partner** in the triangle.
+- The center has high degree: connected to all non-center vertices.
+
+After deletions, this structure is partially broken, but edges are only removed, never added.
+
+---
+
+### What queries ask after deletions
+
+We need shortest distances in the **current** graph.
+
+Because the original graph is extremely restricted, even after deletions the remaining edges still come only from those triangles.
+
+So the possible paths between two vertices are very limited:
+
+- Any path between vertices in different triangles (different partner pairs) can only go through the center `c` (because there were no cross edges).
+- Within the same triangle (center + two partners), there are only 3 edges to consider.
+
+Thus for `LENGTH(x, y)` we can answer in O(1) if we can:
+1. Identify the center `c`
+2. For any vertex `v`, know its partner `partner[v]` (the other non-center vertex in its original triangle)
+3. Quickly test whether a particular edge currently exists (because it may have been deleted)
+
+---
+
+### Finding the center
+
+In the initial friendship graph:
+
+- The center has degree `n-1` (connected to every other vertex)
+- All non-center vertices have degree 2
+
+So we can find `center` as the vertex with **maximum degree** in the initial graph.
+
+Even if constraints were larger, this is linear in `n+m`.
+
+---
+
+### Finding each vertex’s partner
+
+For any `v != center`, its neighbors initially are `{center, partner[v]}`.
+
+So we can set:
+
+- `partner[v] =` the unique neighbor of `v` that is not `center` (or 0 if missing later, but we compute partners from the initial adjacency).
+
+Important: deletions will remove edges, but the “intended partner” from the original structure stays the same and is still useful in reasoning about distances.
+
+---
+
+### Fast “does edge (u,v) exist currently?” with deletions
+
+We must support deletions by index (`DELETE x` refers to the original `x`-th edge).
+
+To delete in O(1), the C++ solution stores adjacency lists as `std::list<int>` and for each original edge `i` stores the **iterators** to the two list nodes representing it:
+
+- When building adjacency: insert `v` into `adj[u]`, keep iterator
+- Insert `u` into `adj[v]`, keep iterator
+- On delete: erase both iterators in O(1)
+
+To test existence of an edge `(u, v)` after deletions:
+
+- Scan the smaller adjacency list between `adj[u]` and `adj[v]`
+- Since at least one endpoint is non-center in all checks we perform, the smaller list is size ≤ 2 (or small), so this is O(1) in practice and in worst-case reasoning for this special graph.
+
+---
+
+### Distance logic
+
+Define a helper `dist_to_center(v)`:
+
+- `0` if `v == center`
+- `1` if edge `(v, center)` exists
+- `2` if edge `(v, partner[v])` exists AND edge `(partner[v], center)` exists
+- otherwise `-1` (cannot reach center)
+
+Then answer `LENGTH(x, y)`:
+
+1. If `x == y`: `0`
+2. If one is center: return `dist_to_center(other)`
+3. If `partner[x] == y` (they are the two non-center vertices of the same triangle):
+   - candidate distance 1 if edge `(x,y)` exists
+   - candidate distance 2 if both `(x,center)` and `(center,y)` exist
+   - take min, else `-1`
+4. Otherwise (different triangles):
+   - must go via center, if possible
+   - compute `dx = dist_to_center(x)`, `dy = dist_to_center(y)`
+   - if either is `-1` → `-1`, else `dx + dy`
+
+This is correct because there are no edges between different triangles except via the center, and the only other possible intermediate is a vertex’s partner.
+
+Complexity:
+- Building: O(n + m)
+- Each `DELETE`: O(1)
+- Each `LENGTH`: O(1) (small adjacency scans)
+- Memory: O(n + m)
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Pretty-print a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a vector by reading each element sequentially
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated); unused in this problem but included
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n, m;                          // number of vertices and edges initially
+vector<pair<int, int>> edges;      // edges in the original order (1..m)
+
+void read() {
+    cin >> n >> m;                 // read n and m
+    edges.resize(m);               // allocate array for m edges
+    cin >> edges;                  // read all edges as pairs
+}
+
+int center;                        // the central vertex of the friendship graph
+vector<int> partner;               // partner[v] = the non-center neighbor in v's triangle
+vector<list<int>> adj;             // adjacency lists (as std::list for O(1) erase by iterator)
+
+// For each edge i, store iterators to the nodes in adj[u] and adj[v]
+// edge_iters[i][0] corresponds to the list node inside adj[u] holding v
+// edge_iters[i][1] corresponds to the list node inside adj[v] holding u
+vector<array<list<int>::iterator, 2>> edge_iters;
+
+// Check whether an edge (u, v) exists *currently* (after deletions).
+// Strategy: scan the smaller adjacency list.
+// In this special graph, at least one of the endpoints will have tiny degree,
+// so scanning is effectively O(1).
+bool has_edge(int u, int v) {
+    if(adj[u].size() > adj[v].size()) {
+        swap(u, v);                // ensure adj[u] is the smaller list
+    }
+    for(int w: adj[u]) {           // scan neighbors of u
+        if(w == v) {               // found v => edge exists
+            return true;
+        }
+    }
+    return false;                  // not found
+}
+
+// Compute the current shortest distance from v to the center.
+// Possible values: 0, 1, 2, or -1 if not reachable.
+int dist_to_center(int v) {
+    if(v == center) {
+        return 0;                  // center to itself
+    }
+    if(has_edge(v, center)) {
+        return 1;                  // direct edge to center exists
+    }
+    int p = partner[v];            // the original partner in its triangle
+    // If v connects to its partner, and partner connects to center,
+    // then v reaches center in 2 steps.
+    if(p != 0 && has_edge(v, p) && has_edge(p, center)) {
+        return 2;
+    }
+    return -1;                     // no path to center
+}
+
+// Answer a LENGTH query between x and y in the current graph.
+int query_length(int x, int y) {
+    if(x == y) {
+        return 0;                  // distance to itself
+    }
+
+    // If one endpoint is center, just compute distance of the other to center.
+    if(x == center || y == center) {
+        int other = (x == center) ? y : x;
+        return dist_to_center(other);
+    }
+
+    // If x and y are partners, they belong to the same original triangle.
+    if(partner[x] == y) {
+        int best = INT_MAX;
+
+        // They might still have the direct edge between them.
+        if(has_edge(x, y)) {
+            best = min(best, 1);
+        }
+
+        // Or they might connect via the center if both spokes exist.
+        if(has_edge(x, center) && has_edge(center, y)) {
+            best = min(best, 2);
+        }
+
+        // If neither route exists, no path.
+        return (best == INT_MAX) ? -1 : best;
+    }
+
+    // Otherwise they come from different triangles in the original structure.
+    // Any path must go through the center.
+    int dx = dist_to_center(x);
+    int dy = dist_to_center(y);
+    if(dx == -1 || dy == -1) {
+        return -1;                 // if either can't reach center, can't reach each other
+    }
+    return dx + dy;                // shortest is x -> center -> y (with dx, dy possibly 1 or 2)
+}
+
+void solve() {
+    // Build adjacency lists and remember iterators so we can delete edges in O(1).
+    adj.assign(n + 1, list<int>());    // 1-based vertices
+    edge_iters.resize(m);              // one record per original edge
+
+    for(int i = 0; i < m; i++) {
+        auto [u, v] = edges[i];
+        // Insert v into u's adjacency and store iterator
+        edge_iters[i][0] = adj[u].insert(adj[u].end(), v);
+        // Insert u into v's adjacency and store iterator
+        edge_iters[i][1] = adj[v].insert(adj[v].end(), u);
+    }
+
+    // Find the center as the vertex with maximum initial degree.
+    center = 1;
+    for(int v = 2; v <= n; v++) {
+        if(adj[v].size() > adj[center].size()) {
+            center = v;
+        }
+    }
+
+    // Determine partner[v] for each non-center vertex v:
+    // the unique neighbor not equal to center (in the initial graph).
+    partner.assign(n + 1, 0);
+    for(int v = 1; v <= n; v++) {
+        if(v == center) {
+            continue;                  // center has many neighbors, no single partner
+        }
+        for(int u: adj[v]) {           // scan its adjacency list
+            if(u != center) {          // the partner is the non-center neighbor
+                partner[v] = u;
+                break;
+            }
+        }
+    }
+
+    // Process operations until EOF.
+    string cmd;
+    while(cin >> cmd) {
+        if(cmd == "DELETE") {
+            int x;
+            cin >> x;
+            x--;                       // convert to 0-based edge index
+            auto [u, v] = edges[x];    // original endpoints of this edge
+
+            // Erase both adjacency-list nodes via stored iterators (O(1)).
+            adj[u].erase(edge_iters[x][0]);
+            adj[v].erase(edge_iters[x][1]);
+
+        } else if(cmd == "LENGTH") {
+            int x, y;
+            cin >> x >> y;
+            cout << query_length(x, y) << "\n";
+        }
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T;   // only one test in this problem
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach) with detailed comments
+
+```python
+import sys
+
+# We will implement the same logic.
+# Python does not have stable list iterators like C++ std::list, so O(1) deletion
+# by stored iterator is not convenient.
+#
+# However, in a friendship graph:
+# - Every non-center vertex starts with degree 2 (center + partner)
+# - Only deletions happen, so degree only decreases.
+#
+# Therefore we can store adjacency as small sets and delete in O(1) average time.
+# Checking edge existence is also O(1) average.
+#
+# Complexity: O(n + m + q) average, which is fine for this structure.
+
+def solve() -> None:
+    data = sys.stdin.buffer.read().split()
+    if not data:
+        return
+
+    it = iter(data)
+    n = int(next(it))
+    m = int(next(it))
+
+    edges = []
+    adj = [set() for _ in range(n + 1)]
+
+    # Read initial edges, build adjacency sets
+    for _ in range(m):
+        u = int(next(it)); v = int(next(it))
+        edges.append((u, v))
+        adj[u].add(v)
+        adj[v].add(u)
+
+    # Find center as vertex with maximum degree in the initial graph
+    center = 1
+    for v in range(2, n + 1):
+        if len(adj[v]) > len(adj[center]):
+            center = v
+
+    # partner[v] = the non-center neighbor of v in its original triangle
+    partner = [0] * (n + 1)
+    for v in range(1, n + 1):
+        if v == center:
+            continue
+        # Among neighbors, the one that is not the center is the partner
+        for u in adj[v]:
+            if u != center:
+                partner[v] = u
+                break
+
+    def has_edge(u: int, v: int) -> bool:
+        # With sets, membership is O(1) average.
+        return v in adj[u]
+
+    def dist_to_center(v: int) -> int:
+        if v == center:
+            return 0
+        if has_edge(v, center):
+            return 1
+        p = partner[v]
+        if p != 0 and has_edge(v, p) and has_edge(p, center):
+            return 2
+        return -1
+
+    def query_length(x: int, y: int) -> int:
+        if x == y:
+            return 0
+
+        if x == center or y == center:
+            other = y if x == center else x
+            return dist_to_center(other)
+
+        # Same original triangle (partners)
+        if partner[x] == y:
+            best = None
+            if has_edge(x, y):
+                best = 1
+            if has_edge(x, center) and has_edge(center, y):
+                best = 2 if best is None else min(best, 2)
+            return -1 if best is None else best
+
+        # Different triangles: must go through center
+        dx = dist_to_center(x)
+        dy = dist_to_center(y)
+        if dx == -1 or dy == -1:
+            return -1
+        return dx + dy
+
+    out_lines = []
+
+    # Remaining tokens describe commands until EOF.
+    for token in it:
+        cmd = token.decode()
+        if cmd == "DELETE":
+            x = int(next(it)) - 1  # to 0-based
+            u, v = edges[x]
+            # Remove if present (they always should be, but safe anyway)
+            adj[u].discard(v)
+            adj[v].discard(u)
+        else:  # "LENGTH"
+            x = int(next(it))
+            y = int(next(it))
+            out_lines.append(str(query_length(x, y)))
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+The “exactly one common neighbor for every pair” property implies (Friendship theorem) the initial graph is a **windmill**: all triangles share one **center** `c`; other vertices form disjoint partner pairs `(a,b)` with edges `c-a`, `c-b`, `a-b`. Pick `c` as the max-degree vertex.
+
+Precompute `partner[v]` for each `v != c` as its neighbor different from `c`.
+
+Maintain current graph under deletions and answer distances using only local checks:
+
+- `dist(v,c)=0` if `v=c`, `1` if edge `(v,c)` exists, `2` if `(v,partner[v])` and `(partner[v],c)` exist, else `-1`.
+- For query `(x,y)`:
+  - if `x==y`: `0`
+  - if one is `c`: `dist(other,c)`
+  - if `partner[x]==y`: answer is `1` if `(x,y)` exists else `2` if both spokes to `c` exist else `-1`
+  - otherwise: answer is `dist(x,c)+dist(y,c)` if both reachable, else `-1`.
+
+C++ uses `std::list` adjacency plus stored iterators per edge for O(1) `DELETE`; edge existence is O(1) by scanning the smaller list (non-center degrees ≤2). Python can use adjacency `set`s with `discard`.

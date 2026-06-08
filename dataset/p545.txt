@@ -1,0 +1,1385 @@
+## 1. Abridged problem statement
+
+There are `n` ropes attached at points `(xi, 0)` on the horizontal axis. Their other ends are tied to a point-like ball. Rope `i` has fixed length `li`, so the ball must always lie inside or on the disk centered at `(xi, 0)` with radius `li`.
+
+Initially all ropes are present and the ball is at rest. Then `n-1` ropes are cut in a given order. The first cut happens at time `0`; each next cut happens as soon as the ball becomes stationary after the previous cut. If cutting a rope does not move the ball, the next cut is immediate.
+
+The ball moves in a perfectly viscous medium: at every moment it moves in the feasible direction that decreases potential energy fastest, i.e. as downward as possible, with constant speed `1`.
+
+For each query time `t`, output the ball position.
+
+Constraints: `2 ≤ n ≤ 20`, `1 ≤ m ≤ 1000`.
+
+---
+
+## 2. Detailed editorial
+
+### Geometry model
+
+For every remaining rope `i`, the ball must satisfy
+
+\[
+(x-x_i)^2+y^2 \le l_i^2
+\]
+
+because the distance from the attachment point `(xi, 0)` to the ball cannot exceed the rope length.
+
+So every rope corresponds to a closed disk. If the active rope set is `S`, then all feasible ball positions are in
+
+\[
+\bigcap_{i \in S} D_i
+\]
+
+where `Di` is the disk of rope `i`.
+
+Since gravity pulls downward, a static position is the feasible point with minimum `y`.
+
+---
+
+### Finding the equilibrium point
+
+For a fixed active set `S`, we need the lowest point in the intersection of disks.
+
+The optimum must lie on the boundary of at least one disk. In 2D, it is enough to check:
+
+1. The bottom point of each active circle:
+
+\[
+(x_i, -l_i)
+\]
+
+2. Every intersection point of two active circles.
+
+For each candidate point, check whether it lies inside all active disks. Among valid candidates, choose the one with minimum `y`.
+
+Since `n ≤ 20`, this brute-force candidate enumeration is easily fast enough.
+
+---
+
+### Motion after a cut
+
+After a rope is cut, the feasible region becomes larger. The current position is still feasible, but it may no longer be the lowest feasible point. The ball moves until it reaches the new equilibrium.
+
+At any point `p`, define the tight ropes as ropes whose distance from `p` is exactly equal to their length. These are the ropes currently stretched.
+
+For a tight rope `i`, its outward unit normal is
+
+\[
+n_i = \frac{p-(x_i,0)}{l_i}
+\]
+
+A feasible velocity direction `d` must not move outside a tight disk:
+
+\[
+d \cdot n_i \le 0
+\]
+
+Gravity direction is
+
+\[
+g = (0,-1)
+\]
+
+The ball chooses the feasible direction closest to gravity, i.e. the projection of `g` onto the feasible tangent cone.
+
+There are several cases:
+
+#### Case 1: Gravity is feasible
+
+If
+
+\[
+g \cdot n_i \le 0
+\]
+
+for all tight ropes, the ball falls straight down.
+
+This produces a vertical segment until it hits another circle boundary, or until it reaches the target equilibrium.
+
+#### Case 2: Gravity is blocked by one or more ropes
+
+Then the ball slides along some tight circle. For each tight rope `k`, project gravity onto the tangent line of circle `k`:
+
+\[
+d_k = g - (g \cdot n_k)n_k
+\]
+
+Normalize it, keep only directions that go downward and remain feasible for all other tight ropes.
+
+The best such direction determines which circle arc the ball follows.
+
+#### Case 3: No downward feasible direction exists
+
+The ball is already at equilibrium.
+
+---
+
+### Path representation
+
+The whole path between two equilibria consists of simple pieces:
+
+1. Vertical segments.
+2. Circular arcs along one rope.
+
+For each phase after a cut, we store:
+
+- start time,
+- start point,
+- end equilibrium point,
+- list of path segments,
+- total length.
+
+Since speed is `1`, elapsed time equals path length.
+
+---
+
+### Processing queries
+
+After preprocessing all cuts, we have a sequence of motion phases.
+
+For a query time `t`:
+
+1. Find the first phase whose time interval contains `t`.
+2. Let `s = t - phase.start_time`.
+3. Walk through that phase’s segments until distance `s` is reached.
+4. Interpolate inside the current vertical segment or arc.
+5. If `t` is after all phases, output the final static position.
+
+---
+
+### Complexity
+
+`n ≤ 20`, so even repeated pairwise circle intersection checks are cheap.
+
+Equilibrium computation is roughly `O(n^3)` because there are `O(n^2)` candidates and each is checked against `O(n)` disks.
+
+The trajectory tracing is event-based and small for these constraints.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output operator for pairs.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Read every element.
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Print every element followed by a space.
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Coordinate type. long double gives better precision for geometry.
+using coord_t = long double;
+
+// 2D point/vector structure.
+struct Point {
+    static constexpr coord_t eps = 1e-12L; // Small epsilon for comparisons.
+    static inline const coord_t PI = acosl((coord_t)-1.0L); // pi.
+
+    coord_t x, y; // Point coordinates.
+
+    // Constructor.
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector addition.
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+
+    // Vector subtraction.
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+
+    // Scalar multiplication.
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+
+    // Scalar division.
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product.
+    coord_t dot(const Point& p) const { return x * p.x + y * p.y; }
+
+    // Squared vector length.
+    coord_t norm2() const { return x * x + y * y; }
+
+    // Vector length.
+    coord_t norm() const { return sqrtl(norm2()); }
+
+    // Output point.
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+
+    // Input point.
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+};
+
+int n, m; // Number of ropes and queries.
+vector<coord_t> xs, ls; // Attachment x-coordinates and rope lengths.
+vector<int> cut_seq; // Cutting order, zero-indexed.
+vector<coord_t> ts; // Query times.
+
+// Check whether point p lies inside all disks from set S.
+bool inside_disks(const Point& p, const vector<int>& S, coord_t tol = 1e-7L) {
+    for(int i: S) { // For every active rope.
+        coord_t dx = p.x - xs[i], dy = p.y; // Vector from center to p.
+        if(dx * dx + dy * dy > ls[i] * ls[i] + tol) {
+            return false; // Outside this disk.
+        }
+    }
+
+    return true; // Inside every disk.
+}
+
+// Return intersection points of circles i and j.
+vector<Point> circle_pair_inters(int i, int j) {
+    coord_t dx = xs[j] - xs[i]; // Horizontal distance with sign.
+    coord_t d = fabsl(dx); // Distance between centers.
+
+    if(d < 1e-14L) {
+        return {}; // Same center: no useful pair intersections here.
+    }
+
+    coord_t r1 = ls[i], r2 = ls[j]; // Circle radii.
+
+    // No intersection if circles are too far apart or one contains the other.
+    if(d > r1 + r2 + 1e-12L || d < fabsl(r1 - r2) - 1e-12L) {
+        return {};
+    }
+
+    // Distance from center i to the chord midpoint along the center line.
+    coord_t a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+
+    // Squared half-chord length.
+    coord_t h2 = r1 * r1 - a * a;
+
+    // Clamp tiny negative errors to zero.
+    if(h2 < 0) {
+        h2 = 0;
+    }
+
+    coord_t h = sqrtl(h2); // Half-chord length.
+
+    // Direction from i to j on x-axis.
+    coord_t sgn = (xs[j] > xs[i]) ? 1.0L : -1.0L;
+
+    // x-coordinate of chord midpoint.
+    coord_t mx = xs[i] + a * sgn;
+
+    // Two symmetric intersection points.
+    return {Point(mx, h), Point(mx, -h)};
+}
+
+// Compute lowest feasible point for active rope set S.
+Point equilibrium(const vector<int>& S) {
+    if(S.empty()) {
+        return Point(0, -1e18L); // Degenerate fallback; not used normally.
+    }
+
+    vector<Point> cands; // Candidate equilibrium points.
+
+    // Bottom of every active circle.
+    for(int i: S) {
+        cands.push_back(Point(xs[i], -ls[i]));
+    }
+
+    // Intersections of every pair of active circles.
+    for(size_t a = 0; a < S.size(); ++a) {
+        for(size_t b = a + 1; b < S.size(); ++b) {
+            for(auto& q: circle_pair_inters(S[a], S[b])) {
+                cands.push_back(q);
+            }
+        }
+    }
+
+    Point best(0, 1e18L); // Best candidate has minimum y.
+
+    for(auto& c: cands) {
+        // Candidate must be inside every active disk.
+        if(inside_disks(c, S) && c.y < best.y) {
+            best = c;
+        }
+    }
+
+    return best;
+}
+
+// Return all active ropes tight at point p.
+vector<int> tight_set(const Point& p, const vector<int>& S) {
+    vector<int> tight;
+
+    for(int i: S) {
+        coord_t dx = p.x - xs[i], dy = p.y;
+        coord_t d = sqrtl(dx * dx + dy * dy);
+
+        // Tight if distance equals rope length.
+        if(fabsl(d - ls[i]) < 1e-6L) {
+            tight.push_back(i);
+        }
+    }
+
+    return tight;
+}
+
+// Result of choosing a descent direction.
+struct DirResult {
+    Point dir; // Unit direction of motion.
+    int arc_circle; // Circle followed as arc; -1 means vertical/free motion.
+};
+
+// Compute steepest feasible downward direction at point p.
+DirResult descent_dir(const Point& p, const vector<int>& tight) {
+    Point g(0, -1); // Gravity direction.
+
+    if(tight.empty()) {
+        return {g, -1}; // No tight ropes: fall straight down.
+    }
+
+    vector<Point> normals; // Outward normals of tight circles.
+
+    for(int i: tight) {
+        Point r(p.x - xs[i], p.y); // Radius vector from center to p.
+        coord_t rn = r.norm(); // Its length.
+
+        if(rn < 1e-14L) {
+            normals.push_back(Point(0, -1)); // Degenerate safety case.
+        } else {
+            normals.push_back(r / rn); // Unit outward normal.
+        }
+    }
+
+    bool g_ok = true; // Whether gravity itself is feasible.
+
+    for(auto& nk: normals) {
+        if(g.dot(nk) > 1e-9L) {
+            g_ok = false; // Gravity points outside some tight disk.
+            break;
+        }
+    }
+
+    if(g_ok) {
+        int tangent_circle = -1;
+
+        // If gravity is exactly tangent to a tight circle, mark that circle.
+        for(size_t k = 0; k < tight.size(); ++k) {
+            if(fabsl(g.dot(normals[k])) < 1e-9L) {
+                tangent_circle = tight[k];
+                break;
+            }
+        }
+
+        return {g, tangent_circle};
+    }
+
+    DirResult best;
+    best.dir = Point(0, 1); // Dummy initial direction.
+    best.arc_circle = -1;
+
+    bool found = false;
+
+    // Try sliding along each tight circle.
+    for(size_t k = 0; k < tight.size(); ++k) {
+        const Point& nk = normals[k];
+
+        coord_t gn = g.dot(nk); // Component of gravity along normal.
+
+        // Projection of gravity onto tangent line of circle k.
+        Point d(-gn * nk.x, -1 - gn * nk.y);
+
+        coord_t dn = d.norm(); // Length of projected vector.
+
+        if(dn < 1e-14L) {
+            continue; // No usable direction.
+        }
+
+        d = d / dn; // Normalize to unit speed.
+
+        if(d.y >= -1e-12L) {
+            continue; // Direction does not go downward.
+        }
+
+        bool ok = true;
+
+        // Direction must remain feasible for all other tight circles.
+        for(size_t kk = 0; kk < tight.size(); ++kk) {
+            if(kk == k) {
+                continue;
+            }
+
+            if(d.dot(normals[kk]) > 1e-9L) {
+                ok = false;
+                break;
+            }
+        }
+
+        if(!ok) {
+            continue;
+        }
+
+        // Choose the direction with most negative y-component.
+        if(!found || d.y < best.dir.y) {
+            best.dir = d;
+            best.arc_circle = tight[k];
+            found = true;
+        }
+    }
+
+    if(!found) {
+        return {Point(0, 0), -1}; // No descent direction: equilibrium.
+    }
+
+    return best;
+}
+
+// A path segment: either vertical or circular arc.
+struct Segment {
+    bool is_vert; // true for vertical segment, false for arc.
+
+    coord_t x, y0, y1; // Data for vertical segment.
+
+    coord_t cx, r, theta0, theta1; // Data for circular arc.
+
+    coord_t len; // Segment length.
+};
+
+// A motion phase after one cut.
+struct Phase {
+    coord_t start_t; // Time when this phase starts.
+    coord_t total_len; // Duration, equal to path length.
+    Point start_p, end_p; // Start and end points.
+    vector<Segment> segs; // Ordered path segments.
+};
+
+// Angular distance from angle from to angle to in direction s.
+coord_t fwd_angle(coord_t from, coord_t to, coord_t s) {
+    coord_t two_pi = 2 * Point::PI;
+    coord_t dt = s * (to - from); // Signed movement in chosen direction.
+    dt = fmodl(dt, two_pi); // Reduce modulo 2*pi.
+
+    if(dt < 0) {
+        dt += two_pi; // Make it nonnegative.
+    }
+
+    return dt;
+}
+
+// Trace path from start to target under active rope set S.
+vector<Segment> trace_path(Point start, Point target, const vector<int>& S) {
+    vector<Segment> segs; // Resulting segment list.
+    Point cur = start; // Current position.
+    coord_t two_pi = 2 * Point::PI;
+
+    // Safety iteration cap.
+    for(int iter = 0; iter < 20000; ++iter) {
+        if((cur - target).norm() < 1e-9L) {
+            break; // Already at target.
+        }
+
+        vector<int> tight = tight_set(cur, S); // Current tight ropes.
+        DirResult dr = descent_dir(cur, tight); // Chosen motion direction.
+
+        if(dr.dir.norm() < 1e-9L) {
+            break; // No motion possible.
+        }
+
+        if(dr.arc_circle == -1) {
+            // Free vertical motion.
+            coord_t y_end = -1e18L;
+
+            for(int i: S) {
+                bool is_t = false;
+
+                // Skip already tight constraints.
+                for(int t: tight) {
+                    if(t == i) {
+                        is_t = true;
+                        break;
+                    }
+                }
+
+                if(is_t) {
+                    continue;
+                }
+
+                coord_t dx = cur.x - xs[i];
+
+                // Find lower intersection of vertical line x=cur.x with disk i.
+                coord_t disc = ls[i] * ls[i] - dx * dx;
+
+                if(disc < 0) {
+                    continue;
+                }
+
+                coord_t y_b = -sqrtl(disc);
+
+                // First boundary hit while going downward.
+                if(y_b < cur.y - 1e-12L && y_b > y_end) {
+                    y_end = y_b;
+                }
+            }
+
+            if(y_end < -1e17L) {
+                y_end = target.y; // No circle hit before target.
+            }
+
+            // Clamp if target lies on same vertical line.
+            if(fabsl(cur.x - target.x) < 1e-9L && y_end < target.y - 1e-12L) {
+                y_end = target.y;
+            }
+
+            Segment sg;
+            sg.is_vert = true;
+            sg.x = cur.x;
+            sg.y0 = cur.y;
+            sg.y1 = y_end;
+            sg.len = cur.y - y_end;
+
+            if(sg.len < 1e-12L) {
+                break;
+            }
+
+            segs.push_back(sg);
+            cur = Point(cur.x, y_end);
+        } else {
+            // Motion along a circular arc.
+            int arc_i = dr.arc_circle;
+
+            // Current angle on that circle.
+            coord_t theta0 = atan2l(cur.y, cur.x - xs[arc_i]);
+
+            // Positive angular tangent direction.
+            Point tang(-sinl(theta0), cosl(theta0));
+
+            // Determine whether to move in positive or negative angle direction.
+            coord_t s = (tang.dot(dr.dir) > 0) ? 1.0L : -1.0L;
+
+            coord_t best_dt = two_pi; // Closest event angular distance.
+            Point best_pt = cur;
+            bool have_event = false;
+
+            // Event: intersect another active circle.
+            for(int j: S) {
+                if(j == arc_i) {
+                    continue;
+                }
+
+                for(auto& q: circle_pair_inters(arc_i, j)) {
+                    coord_t tq = atan2l(q.y, q.x - xs[arc_i]);
+                    coord_t dt = fwd_angle(theta0, tq, s);
+
+                    if(dt < 1e-9L) {
+                        continue;
+                    }
+
+                    if(dt < best_dt) {
+                        best_dt = dt;
+                        best_pt = q;
+                        have_event = true;
+                    }
+                }
+            }
+
+            {
+                // Event: bottom of the current circle.
+                coord_t tq = -Point::PI / 2;
+                coord_t dt = fwd_angle(theta0, tq, s);
+
+                if(dt > 1e-9L && dt < best_dt) {
+                    best_dt = dt;
+                    best_pt = Point(xs[arc_i], -ls[arc_i]);
+                    have_event = true;
+                }
+            }
+
+            if(!have_event) {
+                break;
+            }
+
+            coord_t theta1 = theta0 + s * best_dt;
+
+            Segment sg;
+            sg.is_vert = false;
+            sg.cx = xs[arc_i];
+            sg.r = ls[arc_i];
+            sg.theta0 = theta0;
+            sg.theta1 = theta1;
+            sg.len = ls[arc_i] * best_dt;
+
+            if(sg.len < 1e-12L) {
+                break;
+            }
+
+            segs.push_back(sg);
+            cur = best_pt;
+        }
+
+        if((cur - target).norm() < 1e-7L) {
+            cur = target;
+            break;
+        }
+    }
+
+    return segs;
+}
+
+// Return position at distance s along phase ph.
+Point interpolate(const Phase& ph, coord_t s) {
+    if(s <= 0) {
+        return ph.start_p;
+    }
+
+    if(s >= ph.total_len - 1e-12L) {
+        return ph.end_p;
+    }
+
+    coord_t acc = 0;
+
+    for(const auto& sg: ph.segs) {
+        if(s <= acc + sg.len + 1e-12L) {
+            coord_t local = s - acc;
+            coord_t frac = (sg.len > 1e-14L) ? local / sg.len : 0;
+
+            if(sg.is_vert) {
+                // Linear interpolation on vertical segment.
+                return Point(sg.x, sg.y0 + (sg.y1 - sg.y0) * frac);
+            } else {
+                // Angular interpolation on circular arc.
+                coord_t theta = sg.theta0 + (sg.theta1 - sg.theta0) * frac;
+                return Point(sg.cx + sg.r * cosl(theta), sg.r * sinl(theta));
+            }
+        }
+
+        acc += sg.len;
+    }
+
+    return ph.end_p;
+}
+
+// Read input.
+void read() {
+    cin >> n >> m;
+
+    xs.resize(n);
+    ls.resize(n);
+
+    for(auto& v: xs) {
+        cin >> v;
+    }
+
+    for(auto& v: ls) {
+        cin >> v;
+    }
+
+    cut_seq.resize(n - 1);
+
+    for(auto& v: cut_seq) {
+        cin >> v;
+        --v; // Convert to zero-based indexing.
+    }
+
+    ts.resize(m);
+
+    for(auto& v: ts) {
+        cin >> v;
+    }
+}
+
+// Solve the whole problem.
+void solve() {
+    vector<int> active(n); // Initially all ropes are active.
+    iota(active.begin(), active.end(), 0);
+
+    Point cur = equilibrium(active); // Initial stable point.
+    coord_t cur_time = 0; // Time when current phase starts.
+    vector<Phase> phases; // All non-empty motion phases.
+    Point final_pos = cur; // Final known position.
+
+    // Process cuts in order.
+    for(int ci = 0; ci < n - 1; ++ci) {
+        int cut = cut_seq[ci];
+
+        // Remove cut rope.
+        active.erase(find(active.begin(), active.end(), cut));
+
+        // New stable position after this cut.
+        Point new_eq = equilibrium(active);
+
+        // If position does not change, this cut is instantaneous.
+        if((new_eq - cur).norm() < 1e-9L) {
+            cur = new_eq;
+            final_pos = cur;
+            continue;
+        }
+
+        // Build trajectory from old equilibrium to new one.
+        vector<Segment> segs = trace_path(cur, new_eq, active);
+
+        coord_t total = 0;
+
+        // Total time equals total length because speed is 1.
+        for(auto& sg: segs) {
+            total += sg.len;
+        }
+
+        if(total < 1e-9L) {
+            cur = new_eq;
+            final_pos = cur;
+            continue;
+        }
+
+        Phase ph;
+        ph.start_t = cur_time;
+        ph.total_len = total;
+        ph.start_p = cur;
+        ph.end_p = new_eq;
+        ph.segs = std::move(segs);
+
+        phases.push_back(std::move(ph));
+
+        // Advance to the end of this phase.
+        cur = new_eq;
+        cur_time += total;
+        final_pos = cur;
+    }
+
+    cout << fixed << setprecision(10);
+
+    // Answer every query.
+    for(coord_t t: ts) {
+        Point pos = final_pos; // Default: after all motion is over.
+
+        for(const auto& ph: phases) {
+            if(t <= ph.start_t + ph.total_len + 1e-9L) {
+                coord_t s = t - ph.start_t;
+
+                if(s < 0) {
+                    s = 0;
+                }
+
+                if(s > ph.total_len) {
+                    s = ph.total_len;
+                }
+
+                pos = interpolate(ph, s);
+                break;
+            }
+        }
+
+        cout << pos.x << ' ' << pos.y << '\n';
+    }
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import math
+from dataclasses import dataclass
+
+# Numerical tolerances.
+EPS = 1e-12
+PI = math.acos(-1.0)
+
+
+@dataclass
+class Point:
+    # 2D point/vector.
+    x: float = 0.0
+    y: float = 0.0
+
+    def __add__(self, other):
+        # Vector addition.
+        return Point(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        # Vector subtraction.
+        return Point(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, c):
+        # Scalar multiplication.
+        return Point(self.x * c, self.y * c)
+
+    def __truediv__(self, c):
+        # Scalar division.
+        return Point(self.x / c, self.y / c)
+
+    def dot(self, other):
+        # Dot product.
+        return self.x * other.x + self.y * other.y
+
+    def norm2(self):
+        # Squared length.
+        return self.x * self.x + self.y * self.y
+
+    def norm(self):
+        # Euclidean length.
+        return math.sqrt(self.norm2())
+
+
+@dataclass
+class DirResult:
+    # Chosen descent direction and circle to follow.
+    dir: Point
+    arc_circle: int
+
+
+@dataclass
+class Segment:
+    # A segment is either vertical or a circular arc.
+    is_vert: bool
+
+    # Vertical segment data.
+    x: float = 0.0
+    y0: float = 0.0
+    y1: float = 0.0
+
+    # Arc data.
+    cx: float = 0.0
+    r: float = 0.0
+    theta0: float = 0.0
+    theta1: float = 0.0
+
+    # Euclidean length.
+    length: float = 0.0
+
+
+@dataclass
+class Phase:
+    # One motion phase after a cut.
+    start_t: float
+    total_len: float
+    start_p: Point
+    end_p: Point
+    segs: list
+
+
+def inside_disks(p, S, xs, ls, tol=1e-7):
+    # Check whether point p lies inside every disk indexed by S.
+    for i in S:
+        dx = p.x - xs[i]
+        dy = p.y
+        if dx * dx + dy * dy > ls[i] * ls[i] + tol:
+            return False
+    return True
+
+
+def circle_pair_inters(i, j, xs, ls):
+    # Compute intersection points of circles i and j.
+    dx = xs[j] - xs[i]
+    d = abs(dx)
+
+    # Same center: no useful pair intersections for this solution.
+    if d < 1e-14:
+        return []
+
+    r1 = ls[i]
+    r2 = ls[j]
+
+    # No intersection if circles are disjoint or one is inside the other.
+    if d > r1 + r2 + 1e-12 or d < abs(r1 - r2) - 1e-12:
+        return []
+
+    # Distance from center i to chord midpoint.
+    a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d)
+
+    # Squared half-length of the chord.
+    h2 = r1 * r1 - a * a
+
+    # Avoid tiny negative values from floating-point errors.
+    if h2 < 0:
+        h2 = 0.0
+
+    h = math.sqrt(h2)
+
+    # Sign of direction from circle i to circle j.
+    sgn = 1.0 if xs[j] > xs[i] else -1.0
+
+    # x-coordinate of chord midpoint.
+    mx = xs[i] + a * sgn
+
+    # Two symmetric intersections.
+    return [Point(mx, h), Point(mx, -h)]
+
+
+def equilibrium(S, xs, ls):
+    # Find the lowest point in the intersection of active disks.
+    if not S:
+        return Point(0.0, -1e18)
+
+    candidates = []
+
+    # Bottom point of every active circle.
+    for i in S:
+        candidates.append(Point(xs[i], -ls[i]))
+
+    # Intersection points of every pair of active circles.
+    for a in range(len(S)):
+        for b in range(a + 1, len(S)):
+            candidates.extend(circle_pair_inters(S[a], S[b], xs, ls))
+
+    # Choose the valid candidate with minimum y.
+    best = Point(0.0, 1e18)
+
+    for c in candidates:
+        if inside_disks(c, S, xs, ls) and c.y < best.y:
+            best = c
+
+    return best
+
+
+def tight_set(p, S, xs, ls):
+    # Return active ropes that are tight at point p.
+    tight = []
+
+    for i in S:
+        dx = p.x - xs[i]
+        dy = p.y
+        d = math.sqrt(dx * dx + dy * dy)
+
+        if abs(d - ls[i]) < 1e-6:
+            tight.append(i)
+
+    return tight
+
+
+def descent_dir(p, tight, xs, ls):
+    # Gravity direction.
+    g = Point(0.0, -1.0)
+
+    # No tight constraints means straight fall.
+    if not tight:
+        return DirResult(g, -1)
+
+    normals = []
+
+    # Compute outward normals of tight circles.
+    for i in tight:
+        r = Point(p.x - xs[i], p.y)
+        rn = r.norm()
+
+        if rn < 1e-14:
+            normals.append(Point(0.0, -1.0))
+        else:
+            normals.append(r / rn)
+
+    # Test whether gravity itself is feasible.
+    g_ok = True
+    for nk in normals:
+        if g.dot(nk) > 1e-9:
+            g_ok = False
+            break
+
+    if g_ok:
+        tangent_circle = -1
+
+        # If gravity is tangent to some tight circle, mark it as arc circle.
+        for k, nk in enumerate(normals):
+            if abs(g.dot(nk)) < 1e-9:
+                tangent_circle = tight[k]
+                break
+
+        return DirResult(g, tangent_circle)
+
+    # Otherwise try projections of gravity onto tangents of tight circles.
+    best_dir = Point(0.0, 1.0)
+    best_circle = -1
+    found = False
+
+    for k, nk in enumerate(normals):
+        gn = g.dot(nk)
+
+        # Projection g - (g dot n) n.
+        d = Point(-gn * nk.x, -1.0 - gn * nk.y)
+
+        dn = d.norm()
+
+        if dn < 1e-14:
+            continue
+
+        d = d / dn
+
+        # Must move downward.
+        if d.y >= -1e-12:
+            continue
+
+        ok = True
+
+        # Must be feasible for every other tight disk.
+        for kk, nkk in enumerate(normals):
+            if kk == k:
+                continue
+
+            if d.dot(nkk) > 1e-9:
+                ok = False
+                break
+
+        if not ok:
+            continue
+
+        # Prefer the steepest downward direction.
+        if not found or d.y < best_dir.y:
+            best_dir = d
+            best_circle = tight[k]
+            found = True
+
+    if not found:
+        # No descent direction: already stable.
+        return DirResult(Point(0.0, 0.0), -1)
+
+    return DirResult(best_dir, best_circle)
+
+
+def fwd_angle(frm, to, s):
+    # Angular distance from frm to to in direction s = +1 or -1.
+    two_pi = 2.0 * PI
+    dt = s * (to - frm)
+    dt = math.fmod(dt, two_pi)
+
+    if dt < 0:
+        dt += two_pi
+
+    return dt
+
+
+def trace_path(start, target, S, xs, ls):
+    # Build vertical/arc segments from start to target.
+    segs = []
+    cur = start
+    two_pi = 2.0 * PI
+
+    # Large cap for safety.
+    for _ in range(20000):
+        if (cur - target).norm() < 1e-9:
+            break
+
+        tight = tight_set(cur, S, xs, ls)
+        dr = descent_dir(cur, tight, xs, ls)
+
+        if dr.dir.norm() < 1e-9:
+            break
+
+        if dr.arc_circle == -1:
+            # Vertical free fall.
+            y_end = -1e18
+
+            for i in S:
+                # Skip already tight ropes.
+                if i in tight:
+                    continue
+
+                dx = cur.x - xs[i]
+                disc = ls[i] * ls[i] - dx * dx
+
+                if disc < 0:
+                    continue
+
+                y_b = -math.sqrt(disc)
+
+                # First boundary encountered below current point.
+                if y_b < cur.y - 1e-12 and y_b > y_end:
+                    y_end = y_b
+
+            # If no boundary is hit, go to target y.
+            if y_end < -1e17:
+                y_end = target.y
+
+            # Clamp if target is on the same vertical line.
+            if abs(cur.x - target.x) < 1e-9 and y_end < target.y - 1e-12:
+                y_end = target.y
+
+            length = cur.y - y_end
+
+            if length < 1e-12:
+                break
+
+            segs.append(Segment(
+                is_vert=True,
+                x=cur.x,
+                y0=cur.y,
+                y1=y_end,
+                length=length
+            ))
+
+            cur = Point(cur.x, y_end)
+
+        else:
+            # Move along an arc of circle arc_i.
+            arc_i = dr.arc_circle
+
+            theta0 = math.atan2(cur.y, cur.x - xs[arc_i])
+
+            # Positive angular tangent.
+            tang = Point(-math.sin(theta0), math.cos(theta0))
+
+            # Choose angular direction matching descent direction.
+            s = 1.0 if tang.dot(dr.dir) > 0 else -1.0
+
+            best_dt = two_pi
+            best_pt = cur
+            have_event = False
+
+            # Events: intersections with other active circles.
+            for j in S:
+                if j == arc_i:
+                    continue
+
+                for q in circle_pair_inters(arc_i, j, xs, ls):
+                    tq = math.atan2(q.y, q.x - xs[arc_i])
+                    dt = fwd_angle(theta0, tq, s)
+
+                    if dt < 1e-9:
+                        continue
+
+                    if dt < best_dt:
+                        best_dt = dt
+                        best_pt = q
+                        have_event = True
+
+            # Event: bottom of this circle.
+            tq = -PI / 2.0
+            dt = fwd_angle(theta0, tq, s)
+
+            if dt > 1e-9 and dt < best_dt:
+                best_dt = dt
+                best_pt = Point(xs[arc_i], -ls[arc_i])
+                have_event = True
+
+            if not have_event:
+                break
+
+            theta1 = theta0 + s * best_dt
+            length = ls[arc_i] * best_dt
+
+            if length < 1e-12:
+                break
+
+            segs.append(Segment(
+                is_vert=False,
+                cx=xs[arc_i],
+                r=ls[arc_i],
+                theta0=theta0,
+                theta1=theta1,
+                length=length
+            ))
+
+            cur = best_pt
+
+        if (cur - target).norm() < 1e-7:
+            cur = target
+            break
+
+    return segs
+
+
+def interpolate(phase, s):
+    # Return point after traveling distance s in this phase.
+    if s <= 0:
+        return phase.start_p
+
+    if s >= phase.total_len - 1e-12:
+        return phase.end_p
+
+    acc = 0.0
+
+    for sg in phase.segs:
+        if s <= acc + sg.length + 1e-12:
+            local = s - acc
+            frac = local / sg.length if sg.length > 1e-14 else 0.0
+
+            if sg.is_vert:
+                # Linear interpolation on vertical segment.
+                return Point(
+                    sg.x,
+                    sg.y0 + (sg.y1 - sg.y0) * frac
+                )
+            else:
+                # Angular interpolation on circular arc.
+                theta = sg.theta0 + (sg.theta1 - sg.theta0) * frac
+                return Point(
+                    sg.cx + sg.r * math.cos(theta),
+                    sg.r * math.sin(theta)
+                )
+
+        acc += sg.length
+
+    return phase.end_p
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+
+    if not data:
+        return
+
+    ptr = 0
+
+    n = int(data[ptr])
+    ptr += 1
+
+    m = int(data[ptr])
+    ptr += 1
+
+    xs = [float(data[ptr + i]) for i in range(n)]
+    ptr += n
+
+    ls = [float(data[ptr + i]) for i in range(n)]
+    ptr += n
+
+    # Convert cut order to zero-based indices.
+    cut_seq = [int(data[ptr + i]) - 1 for i in range(n - 1)]
+    ptr += n - 1
+
+    ts = [float(data[ptr + i]) for i in range(m)]
+
+    # Initially all ropes are active.
+    active = list(range(n))
+
+    # Initial equilibrium.
+    cur = equilibrium(active, xs, ls)
+
+    cur_time = 0.0
+    phases = []
+    final_pos = cur
+
+    # Precompute all movement phases.
+    for cut in cut_seq:
+        # Remove cut rope.
+        active.remove(cut)
+
+        # New equilibrium after cutting.
+        new_eq = equilibrium(active, xs, ls)
+
+        # If unchanged, next cut is immediate.
+        if (new_eq - cur).norm() < 1e-9:
+            cur = new_eq
+            final_pos = cur
+            continue
+
+        # Build trajectory.
+        segs = trace_path(cur, new_eq, active, xs, ls)
+
+        # Total duration equals path length.
+        total = sum(sg.length for sg in segs)
+
+        if total < 1e-9:
+            cur = new_eq
+            final_pos = cur
+            continue
+
+        phases.append(Phase(
+            start_t=cur_time,
+            total_len=total,
+            start_p=cur,
+            end_p=new_eq,
+            segs=segs
+        ))
+
+        cur = new_eq
+        cur_time += total
+        final_pos = cur
+
+    out = []
+
+    # Answer queries.
+    for t in ts:
+        # If no phase contains t, ball is already at final position.
+        pos = final_pos
+
+        for ph in phases:
+            if t <= ph.start_t + ph.total_len + 1e-9:
+                s = t - ph.start_t
+
+                if s < 0:
+                    s = 0.0
+
+                if s > ph.total_len:
+                    s = ph.total_len
+
+                pos = interpolate(ph, s)
+                break
+
+        out.append(f"{pos.x:.10f} {pos.y:.10f}")
+
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Represent each rope as a disk centered at `(xi, 0)` with radius `li`. With active rope set `S`, the stable ball position is the lowest point in the intersection of these disks.
+
+To find this point, enumerate:
+
+- every circle bottom `(xi, -li)`,
+- every pairwise circle intersection.
+
+Keep candidates inside all active disks and choose minimum `y`.
+
+After each cut, compute the new equilibrium. If it differs from the current point, trace the path.
+
+At any point, tight ropes define tangent constraints:
+
+\[
+d \cdot n_i \le 0
+\]
+
+where `ni` is the outward unit normal. The ball wants gravity direction `(0, -1)` projected into this feasible tangent cone.
+
+Thus motion is always either:
+
+1. vertical downward, or
+2. along an arc of a tight circle.
+
+For vertical motion, continue until hitting the next disk boundary or the target equilibrium.
+
+For arc motion, continue until hitting another circle intersection or the bottom of the current circle.
+
+Store all segments of each phase. Since speed is `1`, segment length equals time. For each query, locate the phase and interpolate along its segments. If the time is after all phases, output the final equilibrium.

@@ -1,0 +1,991 @@
+## 1. Abridged problem statement
+
+You are given the source code of a specially structured Pascal top-down parser. Its parsing routines consist only of:
+
+- calls to other parsing routines, and
+- `If Peek='c' Then Begin Skip; ... End ...` conditional chains, optionally ending with `Else Error;`.
+
+From this parser, reconstruct the formal grammar it encodes.
+
+Rules:
+
+- Each parsing routine is a nonterminal, printed lowercase as `<name>`.
+- Each successful way through a routine body gives one production.
+- A condition `Peek='c'` followed by `Skip;` contributes terminal `'c'`.
+- A routine call contributes the corresponding nonterminal.
+- If a conditional chain has no final `Else Error`, then “do nothing” is also a valid alternative.
+- Output one BNF line per routine, sorted lexicographically.
+- Alternatives inside each line must also be sorted lexicographically.
+- Adjacent terminals must be merged, e.g. output `'AB'`, not `'A''B'`.
+
+Input size is at most 10000 bytes.
+
+---
+
+## 2. Detailed editorial
+
+### Observations
+
+The Pascal parser has a very restricted structure. We do not need to understand arbitrary Pascal. We only need to recognize:
+
+1. Procedure definitions of parsing routines.
+2. Procedure bodies containing segments.
+3. Conditional chains of the form:
+
+```pascal
+If Peek='x' Then Begin
+  Skip;
+  ...
+End Else If Peek='y' Then Begin
+  Skip;
+  ...
+End Else Error;
+```
+
+or without the final `Else Error`.
+
+Every non-error execution path through a routine body becomes a production rule.
+
+For example:
+
+```pascal
+Procedure Number;
+Begin
+  If Peek='0' Then Begin
+    Skip;
+    Number;
+  End Else If Peek='1' Then Begin
+    Skip;
+    Number;
+  End;
+End;
+```
+
+There are three successful paths:
+
+1. First branch: consume `'0'`, call `Number`.
+2. Second branch: consume `'1'`, call `Number`.
+3. No branch matches, because there is no `Else Error`.
+
+So the grammar is:
+
+```text
+<number>::=|'0'<number>|'1'<number>
+```
+
+The empty alternative appears first because alternatives are sorted lexicographically.
+
+---
+
+### Step 1: Tokenization
+
+Whitespace and letter case are irrelevant in most places, so the first step is to convert the entire Pascal program into tokens.
+
+We use three token types:
+
+```cpp
+enum tok_kind {
+    word_tok,
+    str_tok,
+    punct_tok
+};
+```
+
+- A `word_tok` is a maximal sequence of English letters, converted to lowercase.
+- A `str_tok` is a Pascal string literal, preserving its contents.
+- A `punct_tok` is any other single character, such as `;`, `=`, `(`, `)`.
+
+For example:
+
+```pascal
+If Peek='0' Then Begin
+```
+
+becomes roughly:
+
+```text
+word(if), word(peek), punct(=), str(0), word(then), word(begin)
+```
+
+Because the input is guaranteed to be valid, the parser can consume expected tokens without extensive error checking.
+
+---
+
+### Step 2: Parse routine bodies into an AST-like structure
+
+Each routine body is a list of segments.
+
+A segment is either:
+
+1. An unconditional call:
+
+```pascal
+Number;
+```
+
+represented as:
+
+```cpp
+conditional = false
+call_name = "number"
+```
+
+2. A conditional chain:
+
+```pascal
+If Peek='0' Then Begin
+  Skip;
+  Number;
+End Else If Peek='1' Then Begin
+  Skip;
+  Number;
+End Else Error;
+```
+
+represented as a list of branches:
+
+```text
+branch '0' -> [call Number]
+branch '1' -> [call Number]
+else_error = true
+```
+
+If there is no final `Else Error`, then `else_error = false`, which means the conditional also has an empty alternative.
+
+---
+
+### Step 3: Find parsing routine definitions
+
+Forward declarations look like:
+
+```pascal
+Procedure Parse; Forward;
+```
+
+Real definitions look like:
+
+```pascal
+Procedure Parse;
+Begin
+  ...
+End;
+```
+
+So we scan the token list and look for:
+
+```text
+procedure <name> ; begin
+```
+
+We ignore internal procedures `Skip` and `Error`.
+
+`Peek` is a function, not a parsing routine.
+
+For each real parsing routine, we parse its body into a vector of segments.
+
+---
+
+### Step 4: Expand a segment into productions
+
+Each segment expands into a list of possible symbol sequences.
+
+Symbols are either:
+
+- terminal characters, e.g. `'0'`
+- nonterminals, e.g. `<number>`
+
+#### Unconditional call
+
+```pascal
+Number;
+```
+
+expands to:
+
+```text
+<number>
+```
+
+#### Conditional segment
+
+For each branch:
+
+```pascal
+If Peek='c' Then Begin
+  Skip;
+  body
+End
+```
+
+we produce:
+
+```text
+'c' + expansions_of(body)
+```
+
+If the conditional chain does not end with `Else Error`, we also add the empty sequence.
+
+---
+
+### Step 5: Expand a list of segments
+
+A routine body is a sequence of segments, so the production alternatives are the Cartesian product of all segment expansions.
+
+For example:
+
+```pascal
+Begin
+  Term;
+  If Peek='*' Then Begin
+    Skip;
+    Addend;
+  End Else If Peek='/' Then Begin
+    Skip;
+    Addend;
+  End;
+End;
+```
+
+First segment:
+
+```text
+<term>
+```
+
+Second segment:
+
+```text
+empty
+'*'<addend>
+'/'<addend>
+```
+
+Combined result:
+
+```text
+<term>
+<term>'*'<addend>
+<term>'/'<addend>
+```
+
+---
+
+### Step 6: Render and sort
+
+A production is rendered by printing:
+
+- terminals inside apostrophes,
+- adjacent terminals as one string literal,
+- nonterminals inside angle brackets.
+
+For example, terminal `P` followed by terminal `I` becomes:
+
+```text
+'PI'
+```
+
+Finally:
+
+- sort alternatives within each nonterminal line,
+- sort all lines lexicographically,
+- print exactly one line per parsing routine.
+
+---
+
+### Complexity
+
+The input and output are both limited to 10000 bytes. The algorithm is linear in the input size for tokenization and parsing, plus the size of the expanded output. Since the output size is guaranteed not to exceed 10000 bytes, this is easily fast enough.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h>                 // Include almost all standard C++ headers.
+
+using namespace std;                      // Avoid writing std:: everywhere.
+
+// Output operator for pairs. Not essential for this problem, but included in the template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs. Also part of the author's generic template.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;     // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {                     // Iterate over all vector elements by reference.
+        in >> x;                          // Read each element.
+    }
+    return in;                            // Return stream to allow chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {                      // Iterate over all vector elements.
+        out << x << ' ';                  // Print each element followed by a space.
+    }
+    return out;                           // Return stream to allow chaining.
+};
+
+string src;                               // The whole input Pascal program.
+
+// Token categories used by the lexer.
+enum tok_kind {
+    word_tok,                             // A sequence of letters, lowercased.
+    str_tok,                              // A Pascal string literal, without surrounding quotes.
+    punct_tok                             // Any other single punctuation character.
+};
+
+// One token produced by tokenization.
+struct token {
+    tok_kind kind;                        // The token type.
+    string val;                           // The token text/value.
+};
+
+// One grammar symbol in an expanded production.
+struct symbol {
+    bool terminal;                        // true if this is a terminal character.
+    char ch;                              // Terminal character, valid if terminal == true.
+    string name;                          // Nonterminal name, valid if terminal == false.
+};
+
+// Internal representation of a parser body segment.
+struct segment {
+    bool conditional;                     // false for routine call, true for If-chain.
+    string call_name;                     // Name of called routine for unconditional segment.
+
+    // For a conditional segment, each branch stores:
+    // - the Peek character,
+    // - the list of nested segments inside that branch.
+    vector<pair<char, vector<segment>>> branches;
+
+    bool else_error;                      // true if the chain ends with Else Error.
+};
+
+vector<token> toks;                       // All tokens of the source program.
+size_t pos;                               // Current token pointer while parsing tokens.
+
+// Convert raw source text into tokens.
+void tokenize() {
+    size_t i = 0, n = src.size();         // i is current character index, n is source length.
+
+    while(i < n) {                        // Process until end of source.
+        char c = src[i];                  // Current source character.
+
+        if(isspace((unsigned char)c)) {   // Ignore all whitespace.
+            i++;                          // Move to next character.
+            continue;                     // Continue scanning.
+        }
+
+        if(isalpha((unsigned char)c)) {   // Words consist of English letters.
+            string w;                     // Accumulate the word here.
+
+            while(i < n && isalpha((unsigned char)src[i])) {
+                w += (char)tolower((unsigned char)src[i]); // Store lowercase letter.
+                i++;                      // Advance inside the word.
+            }
+
+            toks.push_back({word_tok, w}); // Add word token.
+        } else if(c == '\'') {            // Pascal string literal starts with apostrophe.
+            i++;                          // Skip opening apostrophe.
+            string content;               // Literal contents.
+
+            while(i < n) {                // Read until the closing apostrophe.
+                if(src[i] == '\'') {      // Apostrophe can close or be escaped.
+                    if(i + 1 < n && src[i + 1] == '\'') {
+                        content += '\'';  // Two apostrophes represent one apostrophe.
+                        i += 2;           // Skip both apostrophes.
+                    } else {
+                        i++;              // Skip closing apostrophe.
+                        break;            // Literal is complete.
+                    }
+                } else {
+                    content += src[i];    // Normal literal character.
+                    i++;                  // Move forward.
+                }
+            }
+
+            toks.push_back({str_tok, content}); // Add string token.
+        } else {
+            toks.push_back({punct_tok, string(1, c)}); // Any other char is punctuation.
+            i++;                          // Move to next character.
+        }
+    }
+}
+
+// Check whether current token is a specific lowercase word.
+bool at_word(const string& w) {
+    return toks[pos].kind == word_tok && toks[pos].val == w;
+}
+
+// Forward declaration because conditional parsing recursively parses segment lists.
+vector<segment> parse_segments();
+
+// Parse one If / Else If / Else Error conditional segment.
+segment parse_conditional() {
+    segment s;                            // Segment being built.
+    s.conditional = true;                 // This is a conditional segment.
+    s.else_error = false;                 // Initially assume no final Else Error.
+
+    pos++;                                // Consume initial "if".
+
+    while(true) {                         // Parse each branch of the If-chain.
+        pos++;                            // Consume "peek".
+        pos++;                            // Consume "=".
+
+        char c = toks[pos].val[0];        // Character from the string literal.
+        pos++;                            // Consume character literal.
+
+        pos++;                            // Consume "then".
+        pos++;                            // Consume "begin".
+        pos++;                            // Consume "skip".
+        pos++;                            // Consume ";".
+
+        vector<segment> inner = parse_segments(); // Parse nested branch body.
+
+        pos++;                            // Consume "end".
+
+        s.branches.push_back({c, std::move(inner)}); // Store this branch.
+
+        if(at_word("else")) {             // There is an Else after this End.
+            pos++;                        // Consume "else".
+
+            if(at_word("if")) {           // Else If starts another branch.
+                pos++;                    // Consume "if".
+                continue;                 // Parse next branch.
+            }
+
+            pos++;                        // Otherwise consume "error".
+            pos++;                        // Consume ";".
+            s.else_error = true;          // Non-matching cases are errors.
+            break;                        // Conditional chain is complete.
+        }
+
+        pos++;                            // No Else: consume ";" after End.
+        break;                            // Conditional chain is complete.
+    }
+
+    return s;                             // Return parsed conditional segment.
+}
+
+// Parse a sequence of segments until the matching End token.
+vector<segment> parse_segments() {
+    vector<segment> segs;                 // Resulting list of segments.
+
+    while(!at_word("end")) {              // Body ends when current token is "end".
+        if(at_word("if")) {               // Conditional segment.
+            segs.push_back(parse_conditional()); // Parse and append it.
+        } else {                          // Otherwise it must be an unconditional call.
+            segment s;                    // Build a call segment.
+            s.conditional = false;        // Mark as unconditional.
+            s.call_name = toks[pos].val;  // Routine name.
+            pos++;                        // Consume routine name.
+            pos++;                        // Consume ";".
+            segs.push_back(std::move(s)); // Add segment to body.
+        }
+    }
+
+    return segs;                          // Return all parsed segments.
+}
+
+// Forward declaration: expands a list of segments into productions.
+vector<vector<symbol>> expand_segments(const vector<segment>& segs);
+
+// Expand one segment into all possible symbol sequences.
+vector<vector<symbol>> expand_segment(const segment& s) {
+    if(!s.conditional) {                  // Unconditional routine call.
+        symbol sym{false, 0, s.call_name}; // Nonterminal symbol.
+        return {{sym}};                   // Only one possible expansion.
+    }
+
+    vector<vector<symbol>> out;           // All expansions for this conditional.
+
+    for(const auto& br: s.branches) {     // Process every If / Else If branch.
+        symbol t{true, br.first, ""};     // Branch begins by consuming terminal br.first.
+
+        for(auto& inner: expand_segments(br.second)) {
+            vector<symbol> prod{t};       // Start production with the terminal.
+            prod.insert(prod.end(), inner.begin(), inner.end()); // Append branch body.
+            out.push_back(std::move(prod)); // Save this branch expansion.
+        }
+    }
+
+    if(!s.else_error) {                   // If no Else Error, doing nothing is allowed.
+        out.push_back({});                // Add empty expansion.
+    }
+
+    return out;                           // Return all alternatives.
+}
+
+// Expand a sequence of segments using Cartesian product concatenation.
+vector<vector<symbol>> expand_segments(const vector<segment>& segs) {
+    vector<vector<symbol>> result = {{}}; // Initially one empty production.
+
+    for(const auto& s: segs) {            // Process segments from left to right.
+        vector<vector<symbol>> seg_prods = expand_segment(s); // Alternatives of this segment.
+        vector<vector<symbol>> next;      // New accumulated alternatives.
+
+        for(auto& a: result) {            // Existing prefix production.
+            for(auto& b: seg_prods) {     // One expansion of current segment.
+                vector<symbol> c = a;     // Copy prefix.
+                c.insert(c.end(), b.begin(), b.end()); // Concatenate current expansion.
+                next.push_back(std::move(c)); // Store combined production.
+            }
+        }
+
+        result = std::move(next);         // Continue with combined alternatives.
+    }
+
+    return result;                        // Return all expansions of the segment list.
+}
+
+// Convert a production into required BNF text.
+string render(const vector<symbol>& prod) {
+    string out;                           // Result string.
+    size_t i = 0;                         // Current symbol index.
+
+    while(i < prod.size()) {              // Render every symbol.
+        if(prod[i].terminal) {            // Consecutive terminals are merged.
+            out += '\'';                  // Opening quote.
+
+            while(i < prod.size() && prod[i].terminal) {
+                out += prod[i].ch;        // Append terminal character.
+                i++;                      // Move to next symbol.
+            }
+
+            out += '\'';                  // Closing quote.
+        } else {
+            out += '<';                   // Opening nonterminal bracket.
+            out += prod[i].name;          // Nonterminal name.
+            out += '>';                   // Closing bracket.
+            i++;                          // Move to next symbol.
+        }
+    }
+
+    return out;                           // Empty production renders as empty string.
+}
+
+// Read all input into src.
+void read() {
+    stringstream ss;                      // String stream buffer.
+    ss << cin.rdbuf();                    // Copy stdin into stream.
+    src = ss.str();                       // Store as string.
+}
+
+// Main solving routine.
+void solve() {
+    tokenize();                           // Convert source code into tokens.
+
+    vector<pair<string, vector<segment>>> routines; // Parsed routines: name + body.
+    pos = 0;                              // Start scanning tokens from beginning.
+
+    while(pos < toks.size()) {            // Scan all tokens.
+        bool is_def =
+            toks[pos].kind == word_tok && toks[pos].val == "procedure" && // Starts with Procedure.
+            pos + 3 < toks.size() && toks[pos + 1].kind == word_tok &&    // Has a name.
+            toks[pos + 3].kind == word_tok && toks[pos + 3].val == "begin" && // Followed by Begin.
+            toks[pos + 1].val != "skip" && toks[pos + 1].val != "error";  // Not internal routines.
+
+        if(is_def) {                      // Found a parsing routine definition.
+            string name = toks[pos + 1].val; // Routine name, already lowercase.
+            pos += 4;                     // Consume "procedure name ; begin".
+
+            vector<segment> body = parse_segments(); // Parse body until End.
+
+            pos++;                        // Consume "end".
+            pos++;                        // Consume ";".
+            routines.push_back({name, std::move(body)}); // Store routine.
+        } else {
+            pos++;                        // Not a routine definition, keep scanning.
+        }
+    }
+
+    vector<string> lines;                 // Final BNF lines.
+
+    for(auto& [name, body]: routines) {   // Process each parsed routine.
+        vector<string> rendered;          // Rendered alternatives.
+
+        for(auto& prod: expand_segments(body)) {
+            rendered.push_back(render(prod)); // Expand and render one production.
+        }
+
+        sort(rendered.begin(), rendered.end()); // Sort alternatives lexicographically.
+
+        string line = "<" + name + ">::="; // Start BNF line.
+
+        for(size_t i = 0; i < rendered.size(); i++) {
+            if(i) {                       // Add separator before all but first alternative.
+                line += '|';
+            }
+            line += rendered[i];          // Add alternative text.
+        }
+
+        lines.push_back(line);            // Store completed line.
+    }
+
+    sort(lines.begin(), lines.end());     // Sort all nonterminal lines.
+
+    for(auto& line: lines) {              // Print result.
+        cout << line << "\n";             // Each line must end with newline.
+    }
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false);     // Faster C++ I/O.
+    cin.tie(nullptr);                     // Untie cin from cout.
+
+    int T = 1;                            // Only one test case.
+    // cin >> T;                          // Multiple tests are not used.
+
+    for(int test = 1; test <= T; test++) {
+        read();                           // Read full input.
+        solve();                          // Solve it.
+    }
+
+    return 0;                             // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+# Token kinds.
+WORD = "word"      # Sequence of letters, converted to lowercase.
+STRING = "string"  # Pascal string literal without surrounding apostrophes.
+PUNCT = "punct"    # Single punctuation character.
+
+
+def tokenize(src):
+    """
+    Convert the whole Pascal source into tokens.
+
+    Each token is represented as a pair:
+        (kind, value)
+    """
+    tokens = []             # Result token list.
+    i = 0                   # Current source index.
+    n = len(src)            # Source length.
+
+    while i < n:
+        c = src[i]          # Current character.
+
+        # Whitespace is irrelevant.
+        if c.isspace():
+            i += 1
+            continue
+
+        # A word is a maximal sequence of letters.
+        if c.isalpha():
+            word = []
+
+            while i < n and src[i].isalpha():
+                word.append(src[i].lower())
+                i += 1
+
+            tokens.append((WORD, "".join(word)))
+            continue
+
+        # Pascal string literal.
+        if c == "'":
+            i += 1          # Skip opening apostrophe.
+            content = []    # Literal contents.
+
+            while i < n:
+                if src[i] == "'":
+                    # Pascal escapes an apostrophe as two apostrophes.
+                    if i + 1 < n and src[i + 1] == "'":
+                        content.append("'")
+                        i += 2
+                    else:
+                        i += 1      # Closing apostrophe.
+                        break
+                else:
+                    content.append(src[i])
+                    i += 1
+
+            tokens.append((STRING, "".join(content)))
+            continue
+
+        # Everything else is punctuation.
+        tokens.append((PUNCT, c))
+        i += 1
+
+    return tokens
+
+
+class ParserExtractor:
+    """
+    Parses the restricted Pascal parser and extracts grammar productions.
+    """
+
+    def __init__(self, tokens):
+        self.tokens = tokens    # Full token list.
+        self.pos = 0            # Current token pointer.
+
+    def at_word(self, word):
+        """
+        Return True if the current token is the given lowercase word.
+        """
+        return (
+            self.pos < len(self.tokens)
+            and self.tokens[self.pos][0] == WORD
+            and self.tokens[self.pos][1] == word
+        )
+
+    def current_value(self):
+        """
+        Return current token value.
+        """
+        return self.tokens[self.pos][1]
+
+    def parse_segments(self):
+        """
+        Parse a list of segments until the matching 'end'.
+
+        Segment representation:
+        - unconditional call:
+              ("call", routine_name)
+        - conditional:
+              ("if", branches, else_error)
+
+          where branches is a list of:
+              (terminal_character, inner_segments)
+        """
+        segments = []
+
+        while not self.at_word("end"):
+            if self.at_word("if"):
+                segments.append(self.parse_conditional())
+            else:
+                # Unconditional call: Name ;
+                name = self.current_value()
+                self.pos += 1      # Consume name.
+                self.pos += 1      # Consume semicolon.
+                segments.append(("call", name))
+
+        return segments
+
+    def parse_conditional(self):
+        """
+        Parse an If / Else If / Else Error conditional chain.
+        """
+        branches = []              # Successful branches.
+        else_error = False         # Whether the chain ends with Else Error.
+
+        self.pos += 1              # Consume initial "if".
+
+        while True:
+            self.pos += 1          # Consume "peek".
+            self.pos += 1          # Consume "=".
+
+            ch = self.current_value()[0]  # Character literal content.
+            self.pos += 1          # Consume string literal.
+
+            self.pos += 1          # Consume "then".
+            self.pos += 1          # Consume "begin".
+            self.pos += 1          # Consume "skip".
+            self.pos += 1          # Consume ";".
+
+            inner = self.parse_segments() # Parse nested branch body.
+
+            self.pos += 1          # Consume "end".
+
+            branches.append((ch, inner))
+
+            if self.at_word("else"):
+                self.pos += 1      # Consume "else".
+
+                if self.at_word("if"):
+                    self.pos += 1  # Consume "if".
+                    continue       # Parse next branch.
+
+                # Otherwise this is Else Error ;
+                self.pos += 1      # Consume "error".
+                self.pos += 1      # Consume ";".
+                else_error = True
+                break
+
+            # No Else, so the End is followed by semicolon.
+            self.pos += 1          # Consume ";".
+            break
+
+        return ("if", branches, else_error)
+
+    def find_routines(self):
+        """
+        Scan the token list and parse every real parsing routine definition.
+
+        A real definition has the token pattern:
+            procedure name ; begin
+
+        Forward declarations have:
+            procedure name ; forward
+
+        Internal procedures Skip and Error are ignored.
+        """
+        routines = []
+        self.pos = 0
+
+        while self.pos < len(self.tokens):
+            is_definition = (
+                self.tokens[self.pos][0] == WORD
+                and self.tokens[self.pos][1] == "procedure"
+                and self.pos + 3 < len(self.tokens)
+                and self.tokens[self.pos + 1][0] == WORD
+                and self.tokens[self.pos + 3][0] == WORD
+                and self.tokens[self.pos + 3][1] == "begin"
+                and self.tokens[self.pos + 1][1] not in ("skip", "error")
+            )
+
+            if is_definition:
+                name = self.tokens[self.pos + 1][1]
+                self.pos += 4       # Consume procedure name ; begin.
+
+                body = self.parse_segments()
+
+                self.pos += 1       # Consume end.
+                self.pos += 1       # Consume semicolon.
+
+                routines.append((name, body))
+            else:
+                self.pos += 1
+
+        return routines
+
+
+def expand_segment(segment):
+    """
+    Expand one segment into a list of possible productions.
+
+    A production is represented as a list of symbols:
+    - terminal:    ("terminal", character)
+    - nonterminal: ("nonterminal", name)
+    """
+    kind = segment[0]
+
+    # Unconditional call contributes one nonterminal.
+    if kind == "call":
+        name = segment[1]
+        return [[("nonterminal", name)]]
+
+    # Conditional segment.
+    _, branches, else_error = segment
+    result = []
+
+    for ch, inner_segments in branches:
+        terminal_symbol = ("terminal", ch)
+
+        # Branch contributes the consumed character followed by its body.
+        for inner_prod in expand_segments(inner_segments):
+            result.append([terminal_symbol] + inner_prod)
+
+    # If there is no Else Error, doing nothing is also successful.
+    if not else_error:
+        result.append([])
+
+    return result
+
+
+def expand_segments(segments):
+    """
+    Expand a sequence of segments.
+
+    Since segments are executed sequentially, alternatives are combined
+    by Cartesian product and concatenation.
+    """
+    result = [[]]                  # One empty prefix initially.
+
+    for segment in segments:
+        alternatives = expand_segment(segment)
+        new_result = []
+
+        for prefix in result:
+            for suffix in alternatives:
+                new_result.append(prefix + suffix)
+
+        result = new_result
+
+    return result
+
+
+def render_production(prod):
+    """
+    Convert a production into required BNF text.
+
+    Adjacent terminal characters are merged into one quoted literal.
+    """
+    out = []
+    i = 0
+
+    while i < len(prod):
+        typ, value = prod[i]
+
+        if typ == "terminal":
+            chars = []
+
+            while i < len(prod) and prod[i][0] == "terminal":
+                chars.append(prod[i][1])
+                i += 1
+
+            out.append("'" + "".join(chars) + "'")
+        else:
+            out.append("<" + value + ">")
+            i += 1
+
+    return "".join(out)
+
+
+def solve():
+    src = sys.stdin.read()             # Read entire Pascal program.
+    tokens = tokenize(src)             # Tokenize it.
+
+    extractor = ParserExtractor(tokens)
+    routines = extractor.find_routines()
+
+    lines = []
+
+    for name, body in routines:
+        alternatives = []
+
+        for prod in expand_segments(body):
+            alternatives.append(render_production(prod))
+
+        alternatives.sort()
+
+        line = "<" + name + ">::=" + "|".join(alternatives)
+        lines.append(line)
+
+    lines.sort()
+
+    sys.stdout.write("\n".join(lines) + "\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Tokenize the whole Pascal program into lowercase words, string literals, and punctuation, ignoring whitespace. Scan tokens for real parsing routine definitions of the form `Procedure name ; Begin`, excluding internal `Skip` and `Error`.
+
+Parse each routine body as a sequence of segments until `End`. A segment is either a routine call `name;` or an `If Peek='c' Then Begin Skip; ... End` chain. Store conditional chains as branches `(c, inner_body)` plus a flag saying whether the chain ends with `Else Error`.
+
+To generate grammar productions, expand each routine body. A routine call expands to one nonterminal. A conditional branch expands to terminal `c` followed by all expansions of its inner body. If the conditional has no final `Else Error`, also add the empty expansion. A sequence of segments is expanded by Cartesian product concatenation.
+
+Render productions by writing nonterminals as `<name>` and terminals in quotes, merging adjacent terminals. Sort alternatives in each line, sort all lines, and print them.

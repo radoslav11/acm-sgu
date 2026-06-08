@@ -1,0 +1,609 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+341. Circuits
+Time limit per test: 0.25 second(s)
+Memory limit: 65536 kilobytes
+input: standard
+output: standard
+
+
+
+Consider a digital electric circuit operating with binary signals in a discrete time. It contains input signals, wires, junctions and logical gates. We will use six kinds of logical gates: NOT, AND, NAND, OR, NOR, DFF. Each of them returns one output signal. The amount of input signals and details about return value are showed in the following table.
+
+Gate	Inputs	Return value
+NOT	1	Opposite to the input signal value.
+AND	1 or more	Conjunction of the input signal values.
+NAND	1 or more	Negation of the conjunction of the input signal values.
+OR	1 or more	Disjunction of the input signal values.
+NOR	1 or more	Negation of the disjunction of the input signal values.
+DFF	1	Same as the input signal. Returned with the delay of one tick of discrete time.
+
+
+The scheme will operate in the following manner. Before the first tick of the discret time each DFF gate is initialized with zero value. Then during certain amount of ticks several junctions ( junctions) will be feeded with input values. You are to write a program that will calculate binary values on a certain set of junctions ( junctions).
+
+Your program will be given the description of the logical scheme, the set of junctions in which we are interested and the input values for each consecutive tick of the discrete time.
+
+Input
+The input file consists of two blocks. First block contains several lines. If the first symbol of a line is a sharp "#", than the line contains a comment. You can ignore it. You can also ignore empty lines. A line describing the input signal looks like INPUT(junction), where junction is the name of the junction. A line describing the interesting junction looks like OUTPUT(junction), where junction is the name of the junction. A junction name consists of small and capital Latin letters and digits and the underline character "_". The length of each name is less than 64 characters.
+
+All other lines of the first block contain the description of new junctions. Such line can look like j1 = op(j2), where j1 and j2 are the names of junctions and op is either NOT or DFF. It can also look like j1 = op(j2[, j3...]), where j's are the junction names and op is AND, NAND, OR or NOR. There will be no more than 5 · 103 junctions.
+
+The second block of the input file starts with the line INPUT VALUES. Each of the following lines contains a sequence of zeroes and ones. Amount of digits equals to the amount of input signals. You should match these binary values to the input signal values, in the order the input signals given. There are no more than 500 lines in this block. Please refer to the sample for the details.
+
+The input file size is less than 320 KB.
+
+You may assume that the input data is correct. You may assume that the given circuit will operate correctly.
+
+Output
+For each line of the input signal values, print one line containing zeroes and ones. The digits should correspond to the values of the output signals, preserving their order in the input file.
+
+Example(s)
+sample input
+sample output
+INPUT(a)
+INPUT(b)
+x = DFF(a)
+t = OR(a, b)
+y = AND(x, t)
+OUTPUT(x)
+OUTPUT(y)
+INPUT VALUES
+10
+11
+00
+00
+11
+10
+
+sample input
+sample output
+# 4 inputs
+# 1 output
+# 3 D-type flipflops
+# 2 inverters
+# 8 gates (1 AND+1 NAND+2 ORs+4 NORs)
+
+
+INPUT(G0)
+INPUT(G1)
+INPUT(G2)
+INPUT(G3)
+
+
+OUTPUT(G17)
+
+
+G5 = DFF(G10)
+G6 = DFF(G11)
+G7 = DFF(G13)
+
+
+G14 = NOT(G0)
+G17 = NOT(G11)
+
+
+G8 = AND(G14, G6)
+
+
+G15 = OR(G12, G8)
+G16 = OR(G3, G8)
+
+
+G9 = NAND(G16, G15)
+
+
+G10 = NOR(G14, G11)
+G11 = NOR(G5, G9)
+G12 = NOR(G1, G7)
+G13 = NOR(G2, G12)
+
+
+INPUT VALUES
+0000
+0001
+0010
+0100
+1000
+1010
+1
+0
+0
+0
+1
+1
+
+<|response|>
+## 1) Abridged problem statement (concise)
+
+You are given a synchronous digital circuit described by **named junctions** (wires). Some junctions are:
+
+- **Primary inputs**: `INPUT(name)`
+- **Requested outputs**: `OUTPUT(name)`
+- **Defined junctions** using one gate:
+  - `name = NOT(x)`
+  - `name = AND(x1, x2, ...)`, `NAND(...)`, `OR(...)`, `NOR(...)`
+  - `name = DFF(x)` — outputs the value of `x` **delayed by 1 tick**, and before the first tick every DFF output is `0`.
+
+After the line `INPUT VALUES`, each following line is a bitstring giving the input values for one tick (in the same order as `INPUT(...)` lines).  
+For each tick, output a bitstring of the requested `OUTPUT(...)` junction values (in the same order as outputs were listed).
+
+Constraints: up to 5000 junctions, up to 500 ticks.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **The circuit is a dependency graph.**  
+   Each junction’s value is determined by other junctions’ values via its gate.
+
+2. **Only `DFF` introduces time.**  
+   For a tick:
+   - `DFF` output is the **stored state from the previous tick**.
+   - After computing the circuit for this tick, each DFF updates its stored state to the value of its input **in the current tick**.
+
+3. **We can evaluate junction values on-demand with memoization per tick.**  
+   If you compute a junction once in a tick, store it and reuse it. This ensures each junction is evaluated at most once per tick.
+
+4. **Input format is parsing-heavy but regular.**  
+   Ignore comments (`#...`) and empty lines. The first block defines nodes; second block provides per-tick input bitstrings.
+
+---
+
+## 3) Full solution approach based on the observations
+
+### A. Parse the circuit into an internal graph
+
+Maintain:
+
+- `id(name)` mapping: junction name → integer id (0..N-1)
+- For each id: `type` (INPUT/NOT/DFF/AND/...) and `inputs[]` (fan-in ids)
+- `input_order[]`: ids in the order `INPUT(...)` appears
+- `output_order[]`: ids in the order `OUTPUT(...)` appears
+- `dff_ids[]`: ids whose type is DFF
+- `tick_inputs[]`: the bitstrings after `INPUT VALUES`
+
+Parsing rules:
+
+- `INPUT(x)` → mark node x as INPUT; append to `input_order`
+- `OUTPUT(x)` → append node x to `output_order`
+- `lhs = OP(a,b,...)` → create/get ids; set `lhs.type = OP`; store argument ids in `lhs.inputs`
+
+### B. Simulate tick by tick
+
+State:
+
+- `dff_out[k]`: current stored output for the k-th DFF (initially all 0)
+- Arrays per tick:
+  - `val[u]`: computed value of junction u for current tick
+  - `seen[u]`: stamp (tick counter) when `val[u]` is valid
+
+Evaluation function `eval(u)` (DFS with memoization):
+
+- If already computed this tick (`seen[u] == stamp`) return `val[u]`
+- Otherwise compute based on type:
+  - INPUT: `val[u]` already set from the tick input bitstring
+  - DFF: `val[u] = dff_out[pos[u]]`
+  - NOT: `1 - eval(x)`
+  - AND: AND across inputs
+  - NAND: 1 - AND
+  - OR: OR across inputs
+  - NOR: 1 - OR
+
+Per tick:
+
+1. Increment `stamp`
+2. Load primary inputs: set `val[input_order[i]]` from the i-th char in the bitstring; mark `seen` with current `stamp`
+3. Output: for each `out` in `output_order`, print `eval(out)`
+4. Update all DFFs:
+   - `next_dff[k] = eval(input_of_dff_ids[k])`
+   - `dff_out = next_dff`
+
+Complexity: each node evaluated at most once per tick ⇒ `O(ticks * (N + E))` worst-case, fits easily.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  We represent each junction (wire) as a node:
+  - type: what gate defines it (or INPUT)
+  - inputs: ids of upstream nodes
+*/
+
+enum GateType { G_INPUT, G_NOT, G_DFF, G_AND, G_NAND, G_OR, G_NOR };
+
+struct Junction {
+    int type = -1;           // gate type
+    vector<int> inputs;      // fan-in node ids
+};
+
+static string trim(const string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    vector<Junction> junctions;                 // id -> node
+    unordered_map<string,int> name_id;          // name -> id
+    vector<int> input_order, output_order, dff_ids;
+    vector<string> tick_inputs;
+
+    auto get_id = [&](const string& name) -> int {
+        auto it = name_id.find(name);
+        if (it != name_id.end()) return it->second;
+        int id = (int)junctions.size();
+        name_id[name] = id;
+        junctions.emplace_back();
+        return id;
+    };
+
+    auto op_type = [&](const string& op) -> int {
+        if (op == "NOT")  return G_NOT;
+        if (op == "DFF")  return G_DFF;
+        if (op == "AND")  return G_AND;
+        if (op == "NAND") return G_NAND;
+        if (op == "OR")   return G_OR;
+        if (op == "NOR")  return G_NOR;
+        return -1; // valid input guarantees we won't get here
+    };
+
+    // -------- Parse input --------
+    bool reading_values = false;
+    string line;
+    while (getline(cin, line)) {
+        if (!line.empty() && line[0] == '#') continue; // comment
+        string t = trim(line);
+        if (t.empty()) continue;
+
+        if (!reading_values) {
+            if (t == "INPUT VALUES") {
+                reading_values = true;
+                continue;
+            }
+
+            if (t.rfind("INPUT(", 0) == 0) {
+                // INPUT(name)
+                size_t l = t.find('('), r = t.find(')');
+                string name = trim(t.substr(l + 1, r - l - 1));
+                int id = get_id(name);
+                junctions[id].type = G_INPUT;
+                input_order.push_back(id);
+            } else if (t.rfind("OUTPUT(", 0) == 0) {
+                // OUTPUT(name)
+                size_t l = t.find('('), r = t.find(')');
+                string name = trim(t.substr(l + 1, r - l - 1));
+                int id = get_id(name);
+                output_order.push_back(id);
+            } else {
+                // lhs = OP(arg1, arg2, ...)
+                size_t eq = t.find('=');
+                string lhs = trim(t.substr(0, eq));
+                string rhs = trim(t.substr(eq + 1));
+
+                size_t l = rhs.find('('), r = rhs.find(')');
+                string op = trim(rhs.substr(0, l));
+                string args = rhs.substr(l + 1, r - l - 1);
+
+                int u = get_id(lhs);
+                junctions[u].type = op_type(op);
+                junctions[u].inputs.clear();
+
+                if (junctions[u].type == G_DFF) dff_ids.push_back(u);
+
+                // split args by comma
+                stringstream ss(args);
+                string tok;
+                while (getline(ss, tok, ',')) {
+                    tok = trim(tok);
+                    if (!tok.empty()) {
+                        junctions[u].inputs.push_back(get_id(tok));
+                    }
+                }
+            }
+        } else {
+            // second block: input bitstrings per tick
+            tick_inputs.push_back(t);
+        }
+    }
+
+    // -------- Simulation --------
+    int N = (int)junctions.size();
+    int D = (int)dff_ids.size();
+
+    // map junction id -> index in dff_out, or -1 if not DFF
+    vector<int> dff_pos(N, -1);
+    for (int i = 0; i < D; i++) dff_pos[dff_ids[i]] = i;
+
+    // DFF stored outputs start with 0 before first tick
+    vector<int> dff_out(D, 0);
+
+    // memoization arrays
+    vector<int> val(N, 0), seen(N, 0);
+    int stamp = 0;
+
+    // recursive evaluation with memoization for a single tick
+    function<int(int)> eval = [&](int u) -> int {
+        if (seen[u] == stamp) return val[u];
+        seen[u] = stamp;
+
+        const Junction& j = junctions[u];
+        switch (j.type) {
+            case G_INPUT:
+                // val[u] already set from tick input line
+                break;
+
+            case G_DFF:
+                val[u] = dff_out[dff_pos[u]];
+                break;
+
+            case G_NOT:
+                val[u] = 1 - eval(j.inputs[0]);
+                break;
+
+            case G_AND: {
+                int r = 1;
+                for (int v : j.inputs) r &= eval(v);
+                val[u] = r;
+                break;
+            }
+
+            case G_NAND: {
+                int r = 1;
+                for (int v : j.inputs) r &= eval(v);
+                val[u] = 1 - r;
+                break;
+            }
+
+            case G_OR: {
+                int r = 0;
+                for (int v : j.inputs) r |= eval(v);
+                val[u] = r;
+                break;
+            }
+
+            case G_NOR: {
+                int r = 0;
+                for (int v : j.inputs) r |= eval(v);
+                val[u] = 1 - r;
+                break;
+            }
+        }
+        return val[u];
+    };
+
+    // process each tick
+    string out;
+    for (const string& tick : tick_inputs) {
+        stamp++;
+
+        // load primary inputs for this tick
+        for (size_t i = 0; i < input_order.size(); i++) {
+            int u = input_order[i];
+            val[u] = tick[i] - '0';
+            seen[u] = stamp;
+        }
+
+        // produce outputs
+        out.assign(output_order.size(), '0');
+        for (size_t i = 0; i < output_order.size(); i++) {
+            out[i] = char('0' + eval(output_order[i]));
+        }
+        cout << out << "\n";
+
+        // compute next DFF states using current tick values
+        vector<int> next_dff(D, 0);
+        for (int k = 0; k < D; k++) {
+            int dff_node = dff_ids[k];
+            int dff_input = junctions[dff_node].inputs[0]; // DFF has exactly 1 input
+            next_dff[k] = eval(dff_input);
+        }
+        dff_out.swap(next_dff);
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+
+# Gate type constants
+G_INPUT, G_NOT, G_DFF, G_AND, G_NAND, G_OR, G_NOR = range(7)
+
+class Junction:
+    __slots__ = ("type", "inputs")
+    def __init__(self):
+        self.type = -1
+        self.inputs = []
+
+def op_type(op: str) -> int:
+    if op == "NOT":  return G_NOT
+    if op == "DFF":  return G_DFF
+    if op == "AND":  return G_AND
+    if op == "NAND": return G_NAND
+    if op == "OR":   return G_OR
+    if op == "NOR":  return G_NOR
+    return -1
+
+def solve() -> None:
+    junctions = []          # id -> Junction
+    name_id = {}            # name -> id
+    input_order = []        # ids in INPUT(...) order
+    output_order = []       # ids in OUTPUT(...) order
+    dff_ids = []            # ids of DFF nodes
+    tick_inputs = []        # per-tick input bitstrings
+
+    def get_id(name: str) -> int:
+        """Get existing id for name or create a new junction."""
+        if name in name_id:
+            return name_id[name]
+        idx = len(junctions)
+        name_id[name] = idx
+        junctions.append(Junction())
+        return idx
+
+    # -------- Parse input --------
+    reading_values = False
+    for raw in sys.stdin:
+        if raw.startswith("#"):
+            continue
+        t = raw.strip()
+        if not t:
+            continue
+
+        if not reading_values:
+            if t == "INPUT VALUES":
+                reading_values = True
+                continue
+
+            if t.startswith("INPUT("):
+                l = t.find("("); r = t.find(")")
+                name = t[l+1:r].strip()
+                u = get_id(name)
+                junctions[u].type = G_INPUT
+                input_order.append(u)
+
+            elif t.startswith("OUTPUT("):
+                l = t.find("("); r = t.find(")")
+                name = t[l+1:r].strip()
+                u = get_id(name)
+                output_order.append(u)
+
+            else:
+                # lhs = OP(arg1, arg2, ...)
+                eq = t.find("=")
+                lhs = t[:eq].strip()
+                rhs = t[eq+1:].strip()
+
+                l = rhs.find("("); r = rhs.find(")")
+                op = rhs[:l].strip()
+                args = rhs[l+1:r]
+
+                u = get_id(lhs)
+                junctions[u].type = op_type(op)
+                junctions[u].inputs = []
+
+                if junctions[u].type == G_DFF:
+                    dff_ids.append(u)
+
+                for part in args.split(","):
+                    name = part.strip()
+                    if name:
+                        junctions[u].inputs.append(get_id(name))
+        else:
+            tick_inputs.append(t)
+
+    # -------- Simulate --------
+    n = len(junctions)
+    d = len(dff_ids)
+
+    # map node id -> DFF index, else -1
+    dff_pos = [-1] * n
+    for i, u in enumerate(dff_ids):
+        dff_pos[u] = i
+
+    # DFF stored outputs (initially all 0)
+    dff_out = [0] * d
+
+    # memoization per tick with stamps
+    val = [0] * n
+    seen = [0] * n
+    stamp = 0
+
+    sys.setrecursionlimit(1_000_000)
+
+    def eval_node(u: int) -> int:
+        """Evaluate node u for the current tick."""
+        nonlocal stamp
+        if seen[u] == stamp:
+            return val[u]
+        seen[u] = stamp
+
+        j = junctions[u]
+        t = j.type
+
+        if t == G_INPUT:
+            # already set
+            return val[u]
+
+        if t == G_DFF:
+            val[u] = dff_out[dff_pos[u]]
+            return val[u]
+
+        if t == G_NOT:
+            val[u] = 1 - eval_node(j.inputs[0])
+            return val[u]
+
+        if t == G_AND:
+            r = 1
+            for v in j.inputs:
+                r &= eval_node(v)
+            val[u] = r
+            return r
+
+        if t == G_NAND:
+            r = 1
+            for v in j.inputs:
+                r &= eval_node(v)
+            val[u] = 1 - r
+            return val[u]
+
+        if t == G_OR:
+            r = 0
+            for v in j.inputs:
+                r |= eval_node(v)
+            val[u] = r
+            return r
+
+        if t == G_NOR:
+            r = 0
+            for v in j.inputs:
+                r |= eval_node(v)
+            val[u] = 1 - r
+            return val[u]
+
+        return 0  # should not happen
+
+    out_lines = []
+    for tick in tick_inputs:
+        stamp += 1
+
+        # load inputs for this tick
+        for i, u in enumerate(input_order):
+            val[u] = ord(tick[i]) - ord('0')
+            seen[u] = stamp
+
+        # output requested junctions
+        bits = []
+        for u in output_order:
+            bits.append('1' if eval_node(u) else '0')
+        out_lines.append(''.join(bits))
+
+        # latch next DFF states
+        next_dff = [0] * d
+        for i, u in enumerate(dff_ids):
+            dff_input = junctions[u].inputs[0]  # DFF has exactly 1 input
+            next_dff[i] = eval_node(dff_input)
+        dff_out = next_dff
+
+    sys.stdout.write("\n".join(out_lines))
+
+if __name__ == "__main__":
+    solve()
+```
+
+If you want, I can also provide a small “parsing helper” section (regex-based) or show how to make the evaluation iterative (topological order) instead of DFS, but DFS+memo is typically simplest and fast enough here.

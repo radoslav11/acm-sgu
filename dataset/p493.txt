@@ -1,0 +1,615 @@
+## 1. Abridged Problem Statement
+
+You are given several test cases. Each test case contains `N` non-touching, non-overlapping axis-aligned rectangular buildings. Building `i` has bottom-left corner `(L, 0)` and top-right corner `(R, H)`.
+
+A light source may be placed only on the top edge of some building. A point is illuminated by a light source if the straight segment between them does not pass through the interior of any building; touching edges/corners is allowed.
+
+Find the minimum number of light sources needed so that both vertical side edges of every building are completely illuminated.
+
+---
+
+## 2. Detailed Editorial
+
+### Key observation 1: only bottom endpoints matter
+
+Consider one vertical side of a building. If a lamp can see the bottom endpoint of that side, then it can also see every higher point on the same side: rays to higher points are “above” the ray to the bottom, so intermediate roofs cannot block them if they did not block the bottom ray.
+
+Therefore, to fully illuminate both side edges of every building, it is enough to illuminate:
+
+- every left-bottom corner `(L, 0)`,
+- every right-bottom corner `(R, 0)`.
+
+The code keeps two arrays:
+
+```cpp
+lit_left[i]   // whether left side of building i is illuminated
+lit_right[i]  // whether right side of building i is illuminated
+```
+
+---
+
+### Key observation 2: process buildings from left to right
+
+Buildings are disjoint, so after sorting by `L`, their order by `R` is also fixed.
+
+Two artificial zero-height sentinel buildings are added:
+
+- one before the leftmost building,
+- one after the rightmost building.
+
+This makes edge cases uniform: every real building has a “neighbor” on both sides.
+
+---
+
+### Key observation 3: how to compute sides illuminated by one lamp
+
+Suppose a lamp is at `(px, py)`.
+
+To find which **left sides** to the right of the lamp are visible, sweep buildings from left to right.
+
+A building between the lamp and a target side may block the ray. The relevant blocking point is its top-right corner. Maintain the steepest blocking/shadow ray so far.
+
+For a candidate left side at `x = L[j]`, its bottom is visible iff the ray from `(px, py)` to `(L[j], 0)` is not below the current shadow.
+
+Instead of using floating-point slopes, the solution compares fractions by cross multiplication:
+
+```cpp
+p1 / q1 < p2 / q2
+```
+
+is checked as:
+
+```cpp
+p1 * q2 < p2 * q1
+```
+
+This avoids precision errors.
+
+The same idea is mirrored to compute which **right sides** to the left of the lamp are visible.
+
+Each lamp placement costs `O(N)` to update all newly lit sides.
+
+---
+
+### Key observation 4: greedy placement
+
+We scan gaps between consecutive buildings from left to right.
+
+Let the current pair be buildings `i` and `i + 1`.
+
+#### Case 1: left side of building `i + 1` is not lit
+
+Then we must place a lamp now to light it. The optimal lamp is placed in the immediate gap:
+
+- if building `i` is shorter than building `i + 1`, place the lamp at the top-left corner of building `i + 1`;
+- otherwise place it at the top-right corner of building `i`.
+
+This lamp directly illuminates the unlit left side and is the best local choice.
+
+#### Case 2: left side of building `i + 1` is already lit, but right side of building `i` is not lit
+
+Then we need a lamp somewhere to the right of building `i`.
+
+To maximize future usefulness, choose the future building `k` whose top-left corner gives the steepest angle from `(R[i], 0)`.
+
+That is, maximize:
+
+```text
+H[k] / (L[k] - R[i])
+```
+
+The code compares the reciprocal form without division.
+
+This is optimal by exchange argument:
+
+- Any lamp that can see the right side of building `i` must be at least as “high” as the steepest blocking requirement.
+- The chosen top-left corner is exactly the tightest such useful point.
+- It covers every future right side that any other valid lamp for this side could cover, so choosing it never hurts.
+
+---
+
+### Complexity
+
+For each test case:
+
+- Sorting: `O(N log N)`
+- Each placement may scan all buildings: `O(N)`
+- There are at most `O(N)` placements
+
+Total:
+
+```text
+O(N^2)
+```
+
+This matches the input constraint that the sum of `N^2` over all test cases is bounded.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ library headers.
+
+using namespace std; // Allows using standard names without std:: prefix.
+
+// Convenience output operator for pairs.
+// This is not essential to the algorithm, but is part of the provided template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair as "first second".
+}
+
+// Convenience input operator for pairs.
+// Also not essential for this particular solution.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read pair fields.
+}
+
+// Convenience input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return stream to allow chaining.
+};
+
+// Convenience output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {      // Iterate over all elements.
+        out << x << ' ';  // Print each followed by a space.
+    }
+    return out;           // Return stream to allow chaining.
+};
+
+// Structure describing one building.
+struct building {
+    int64_t l, r, h; // Left x-coordinate, right x-coordinate, height.
+};
+
+int n; // Number of real buildings in the current test case.
+
+vector<int64_t> L, R, H; // Input arrays for left, right, and height values.
+
+// Reads one test case.
+void read() {
+    cin >> n;          // Read number of buildings.
+    L.assign(n, 0);    // Resize L to n and fill with zero.
+    R.assign(n, 0);    // Resize R to n and fill with zero.
+    H.assign(n, 0);    // Resize H to n and fill with zero.
+
+    for(int i = 0; i < n; i++) {      // Read all buildings.
+        cin >> L[i] >> R[i] >> H[i];  // Read left, right, height.
+    }
+}
+
+// Solves one test case.
+void solve() {
+    // Create an array of building structs from the separate input arrays.
+    vector<building> a(n);
+
+    for(int i = 0; i < n; i++) {      // For every real building...
+        a[i] = {L[i], R[i], H[i]};    // Store it as {left, right, height}.
+    }
+
+    // Sort buildings from left to right.
+    // Since buildings do not intersect or touch, sorting by left coordinate
+    // also gives their physical order.
+    sort(a.begin(), a.end(), [](const building& x, const building& y) {
+        return x.l < y.l; // Compare by left endpoint.
+    });
+
+    // Remember the extremal coordinates before adding sentinels.
+    int64_t left_x = a.front().l;  // Left coordinate of the leftmost building.
+    int64_t right_x = a.back().r;  // Right coordinate of the rightmost building.
+
+    // Add a fake zero-height building just before all real buildings.
+    // It simplifies handling the left boundary.
+    a.insert(a.begin(), {left_x - 2, left_x - 1, 0});
+
+    // Add a fake zero-height building just after all real buildings.
+    // It simplifies handling the right boundary.
+    a.push_back({right_x + 1, right_x + 2, 0});
+
+    // Index of the right sentinel.
+    // Real buildings are now indexed from 1 to last - 1.
+    int last = (int)a.size() - 1;
+
+    // lit_left[i] tells whether the left side of building i is lit.
+    // lit_right[i] tells whether the right side of building i is lit.
+    vector<char> lit_left(last + 1, 0), lit_right(last + 1, 0);
+
+    // Compares two fractions p1/q1 and p2/q2 without floating point.
+    // Returns true iff p1 / q1 < p2 / q2.
+    auto lt_slope = [](int64_t p1, int64_t q1, int64_t p2, int64_t q2) {
+        return p1 * q2 < p2 * q1; // Cross multiplication.
+    };
+
+    // Marks all left sides illuminated by a lamp at (px, py).
+    auto cover_left = [&](int64_t px, int64_t py) {
+        int64_t bn = 0, bd = 1; // Current strongest blocking ray as bn / bd.
+
+        // Sweep buildings from left to right.
+        // We only need indices < last; the right sentinel's left side is irrelevant.
+        for(int j = 0; j < last; j++) {
+            // If building j is completely to the left of or under the lamp x,
+            // it cannot be a left-side target to the right.
+            if(a[j].r <= px) {
+                continue; // Skip it.
+            }
+
+            // Candidate ray to bottom of left side has ratio:
+            // (a[j].l - px) / py.
+            // If it is not smaller than the blocking ray, it is visible.
+            if(!lt_slope(a[j].l - px, py, bn, bd)) {
+                lit_left[j] = 1; // Mark left side of building j as lit.
+            }
+
+            // If this building is at least as high as the lamp,
+            // it blocks everything farther to the right.
+            if(a[j].h >= py) {
+                break; // Stop the sweep.
+            }
+
+            // Update blocking ray using the top-right corner of building j.
+            // The relevant ratio is:
+            // (a[j].r - px) / (py - a[j].h).
+            if(lt_slope(bn, bd, a[j].r - px, py - a[j].h)) {
+                bn = a[j].r - px;      // New numerator.
+                bd = py - a[j].h;      // New denominator.
+            }
+        }
+    };
+
+    // Marks all right sides illuminated by a lamp at (px, py).
+    // This is the mirror image of cover_left.
+    auto cover_right = [&](int64_t px, int64_t py) {
+        int64_t bn = 0, bd = 1; // Current strongest blocking ray.
+
+        // Sweep buildings from right to left.
+        // Real buildings are 1..last-1; left sentinel's right side is irrelevant.
+        for(int j = last - 1; j >= 1; j--) {
+            // If building j is completely to the right of or under the lamp x,
+            // it cannot be a right-side target to the left.
+            if(a[j].l >= px) {
+                continue; // Skip it.
+            }
+
+            // Candidate ray to bottom of right side has ratio:
+            // (px - a[j].r) / py.
+            // If it clears the current blocking ray, the right side is lit.
+            if(!lt_slope(px - a[j].r, py, bn, bd)) {
+                lit_right[j] = 1; // Mark right side of building j as lit.
+            }
+
+            // A building at least as high as the lamp blocks everything farther left.
+            if(a[j].h >= py) {
+                break; // Stop sweeping.
+            }
+
+            // Update blocking ray using the top-left corner of building j.
+            // The relevant ratio is:
+            // (px - a[j].l) / (py - a[j].h).
+            if(lt_slope(bn, bd, px - a[j].l, py - a[j].h)) {
+                bn = px - a[j].l;      // New numerator.
+                bd = py - a[j].h;      // New denominator.
+            }
+        }
+    };
+
+    int ans = 0; // Number of lamps placed.
+
+    // Places a lamp at (px, py), increments answer,
+    // and updates all sides lit by this lamp.
+    auto place = [&](int64_t px, int64_t py) {
+        ans++;              // Count the new lamp.
+        cover_left(px, py); // Mark left sides visible from it.
+        cover_right(px, py);// Mark right sides visible from it.
+    };
+
+    // Sweep gaps from left to right.
+    // Gap i is between building i and building i+1.
+    for(int i = 0; i < last; i++) {
+        // First priority: left side of the next building.
+        // If it is unlit, it must be handled now.
+        if(!lit_left[i + 1]) {
+            // If the left neighbor is shorter, use top-left corner
+            // of the next building.
+            if(a[i].h < a[i + 1].h) {
+                place(a[i + 1].l, a[i + 1].h);
+            } else {
+                // Otherwise, use top-right corner of the left neighbor.
+                place(a[i].r, a[i].h);
+            }
+
+            continue; // Move to next gap.
+        }
+
+        // If the left side of next building is already lit,
+        // check whether the right side of current building is unlit.
+        if(!lit_right[i]) {
+            int best = 0;       // Index of best future building to place lamp on.
+            int64_t bn = 1, bd = 0; // Represents infinity as 1/0.
+
+            // Search future real buildings.
+            // We choose the top-left corner with maximum H / distance,
+            // equivalently minimum distance / H.
+            for(int j = i + 1; j < last; j++) {
+                // Compare current best ratio bn/bd with candidate:
+                // (a[j].l - a[i].r) / a[j].h.
+                // If candidate is no larger in reciprocal ratio,
+                // it has at least as steep an angle.
+                if(!lt_slope(bn, bd, a[j].l - a[i].r, a[j].h)) {
+                    best = j;                   // Update best building.
+                    bn = a[j].l - a[i].r;       // Store candidate distance.
+                    bd = a[j].h;                // Store candidate height.
+                }
+            }
+
+            // Place lamp at the selected top-left corner.
+            place(a[best].l, a[best].h);
+        }
+    }
+
+    cout << ans << '\n'; // Output minimum number of lamps.
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O.
+    cin.tie(nullptr);                 // Do not flush cout before cin.
+
+    int T = 1; // Number of test cases.
+    cin >> T;  // Read number of test cases.
+
+    for(int test = 1; test <= T; test++) { // Process each test case.
+        read();  // Read input.
+        solve(); // Solve and print answer.
+    }
+
+    return 0; // Successful program termination.
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def lt_slope(p1, q1, p2, q2):
+    """
+    Return True iff p1 / q1 < p2 / q2.
+
+    We compare by cross multiplication instead of division to avoid
+    floating-point precision issues.
+
+    This also works for the artificial infinity 1/0 used in the greedy search.
+    """
+    return p1 * q2 < p2 * q1
+
+
+def solve_case(buildings):
+    """
+    Solve one test case.
+
+    buildings is a list of triples (L, R, H).
+    """
+
+    # Sort buildings from left to right.
+    # Since buildings do not touch or overlap, this is their geometric order.
+    buildings.sort(key=lambda x: x[0])
+
+    # Coordinates of the outermost real buildings.
+    left_x = buildings[0][0]
+    right_x = buildings[-1][1]
+
+    # Add zero-height sentinel buildings on both ends.
+    # Real buildings become indices 1..last-1.
+    a = [(left_x - 2, left_x - 1, 0)] + buildings + [(right_x + 1, right_x + 2, 0)]
+
+    # Index of right sentinel.
+    last = len(a) - 1
+
+    # lit_left[i] says whether the left side of building i is illuminated.
+    lit_left = [False] * (last + 1)
+
+    # lit_right[i] says whether the right side of building i is illuminated.
+    lit_right = [False] * (last + 1)
+
+    def cover_left(px, py):
+        """
+        Mark all left sides visible from lamp (px, py).
+
+        We sweep buildings to the right and maintain the strongest shadow ray.
+        """
+
+        # Current strongest blocking ray, represented as bn / bd.
+        bn, bd = 0, 1
+
+        # Sweep left to right.
+        # The right sentinel's left side is irrelevant, so j < last.
+        for j in range(last):
+            l, r, h = a[j]
+
+            # If this building is not to the right of the lamp, skip it.
+            if r <= px:
+                continue
+
+            # The ray to the bottom of this left side has ratio:
+            # (l - px) / py.
+            # It is visible if it is not below the current blocker.
+            if not lt_slope(l - px, py, bn, bd):
+                lit_left[j] = True
+
+            # A building at least as high as the lamp blocks all farther targets.
+            if h >= py:
+                break
+
+            # Update blocking ray using this building's top-right corner.
+            # Its ratio is (r - px) / (py - h).
+            if lt_slope(bn, bd, r - px, py - h):
+                bn, bd = r - px, py - h
+
+    def cover_right(px, py):
+        """
+        Mark all right sides visible from lamp (px, py).
+
+        This is the mirror version of cover_left.
+        """
+
+        # Current strongest blocking ray.
+        bn, bd = 0, 1
+
+        # Sweep right to left over real buildings.
+        for j in range(last - 1, 0, -1):
+            l, r, h = a[j]
+
+            # If this building is not to the left of the lamp, skip it.
+            if l >= px:
+                continue
+
+            # The ray to the bottom of this right side has ratio:
+            # (px - r) / py.
+            # It is visible if it is not below the current blocker.
+            if not lt_slope(px - r, py, bn, bd):
+                lit_right[j] = True
+
+            # A building at least as high as the lamp blocks all farther targets.
+            if h >= py:
+                break
+
+            # Update blocking ray using this building's top-left corner.
+            # Its ratio is (px - l) / (py - h).
+            if lt_slope(bn, bd, px - l, py - h):
+                bn, bd = px - l, py - h
+
+    # Number of placed lamps.
+    ans = 0
+
+    def place(px, py):
+        """
+        Place one lamp at (px, py) and update all sides it illuminates.
+        """
+        nonlocal ans
+
+        # Count this lamp.
+        ans += 1
+
+        # Update illuminated left and right sides.
+        cover_left(px, py)
+        cover_right(px, py)
+
+    # Process gaps from left to right.
+    # Gap i is between building i and building i + 1.
+    for i in range(last):
+        # If the left side of the next building is still unlit,
+        # we must place a lamp now.
+        if not lit_left[i + 1]:
+            # If the current building is shorter, place lamp at the next
+            # building's top-left corner.
+            if a[i][2] < a[i + 1][2]:
+                place(a[i + 1][0], a[i + 1][2])
+            else:
+                # Otherwise place lamp at current building's top-right corner.
+                place(a[i][1], a[i][2])
+
+            # Continue to the next gap.
+            continue
+
+        # Otherwise, if the right side of the current building is unlit,
+        # we need a lamp somewhere to the right.
+        if not lit_right[i]:
+            # best is the future building whose top-left corner gives
+            # the steepest angle from the bottom-right corner of building i.
+            best = 0
+
+            # Current best reciprocal slope distance / height.
+            # Initialize as infinity.
+            bn, bd = 1, 0
+
+            # Check all future real buildings.
+            for j in range(i + 1, last):
+                # Distance from right side of building i to left side of j.
+                dist = a[j][0] - a[i][1]
+
+                # Height of building j.
+                height = a[j][2]
+
+                # We want maximum height / dist,
+                # equivalently minimum dist / height.
+                if not lt_slope(bn, bd, dist, height):
+                    best = j
+                    bn, bd = dist, height
+
+            # Place lamp at the chosen top-left corner.
+            place(a[best][0], a[best][2])
+
+    # Return minimum number of lamps.
+    return ans
+
+
+def main():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # Pointer into input array.
+    idx = 0
+
+    # Number of test cases.
+    t = data[idx]
+    idx += 1
+
+    # Store answers as strings.
+    out = []
+
+    # Process each test case.
+    for _ in range(t):
+        # Number of buildings.
+        n = data[idx]
+        idx += 1
+
+        # Read buildings.
+        buildings = []
+        for _ in range(n):
+            l = data[idx]
+            r = data[idx + 1]
+            h = data[idx + 2]
+            idx += 3
+            buildings.append((l, r, h))
+
+        # Solve and store answer.
+        out.append(str(solve_case(buildings)))
+
+    # Print all answers.
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Sort buildings by `L`. A vertical side is fully illuminated iff its bottom endpoint is illuminated, because rays to higher points are never harder to see over roofs.
+
+Add zero-height sentinel buildings on both ends. Sweep gaps left to right. Maintain which left and right sides are already lit.
+
+When placing a lamp, update all visible sides in `O(N)` using a geometric sweep. For a lamp `(px, py)`, while sweeping right, keep the maximum blocking ratio `(block_x - px) / (py - block_h)`. A left side bottom `(L, 0)` is visible iff `(L - px) / py` is at least this blocking ratio. Do the mirrored sweep for right sides. Compare fractions by cross multiplication.
+
+Greedy:
+
+- If the left side of the next building is unlit, place one lamp in the immediate gap:
+  - at the next building’s top-left corner if it is taller,
+  - otherwise at the current building’s top-right corner.
+- Else, if the current building’s right side is unlit, place a lamp to the right at the future building top-left corner maximizing `H / (L - R[current])`.
+
+The second choice is optimal because any lamp that can illuminate the current right side must clear the steepest intermediate constraint; choosing the corresponding top-left corner covers a superset of future useful sides.
+
+Total complexity: `O(N^2)` per test case.

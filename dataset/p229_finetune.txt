@@ -1,0 +1,621 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+229. Divide and conquer
+time limit per test: 0.25 sec.
+memory limit per test: 4096 KB
+input: standard
+output: standard
+
+
+
+You are to write a program which will divide set Q of squares into two parts, in such a way that one of them can be presented as other after rotations on 90 degrees and shifts along some vector. Set Q is the subset of NxN square.
+
+Input
+The first line of the input contains the integer N (1 <= N <= 20). The following N lines contain description of the set Q (symbol '1' means that square belongs to Q and '0' otherwise).
+
+Output
+Write 'YES' in the first line of the output, if such division exists, and 'NO' otherwise. In the first case output one of the subsets of Q.
+
+Sample test(s)
+
+Input
+
+Test #1
+3
+100
+011
+010
+
+Test #2
+3
+100
+101
+010
+
+Output
+
+Test #1
+YES
+100
+010
+000
+
+Test #2
+NO
+Author:	Andrew V. Lazarev
+Resource:	
+Date:
+
+<|response|>
+## 1. Abridged problem statement
+
+Given an `N × N` binary grid, let `Q` be the set of cells marked with `1`.
+
+We need to decide whether `Q` can be split into two disjoint subsets `A` and `B` such that one subset can be transformed into the other by:
+
+1. rotating by `0`, `90`, `180`, or `270` degrees,
+2. then shifting by some vector.
+
+If possible, output `YES` and one valid subset. Otherwise output `NO`.
+
+`1 ≤ N ≤ 20`.
+
+---
+
+## 2. Key observations needed to solve the problem
+
+### Observation 1: Both parts must have equal size
+
+If `A` can be transformed into `B`, then:
+
+```text
+|A| = |B|
+```
+
+Since `A` and `B` partition `Q`, we need:
+
+```text
+|Q| = |A| + |B| = 2|A|
+```
+
+Therefore, if `|Q|` is odd, the answer is immediately `NO`.
+
+---
+
+### Observation 2: Only finitely many transformations need to be tried
+
+A transformation has the form:
+
+```text
+f(cell) = rotate(cell) + shift
+```
+
+There are only four possible rotations.
+
+There are infinitely many shifts, but we can reduce them.
+
+Pick one fixed marked cell `c0 ∈ Q`.
+
+Suppose a valid split exists.
+
+- If `c0 ∈ A`, then `f(c0)` must be some other marked cell in `Q`.
+- If `c0 ∈ B`, then we can instead use the inverse transformation, swapping the roles of `A` and `B`.
+
+So it is enough to try transformations where `c0` is mapped to some other marked cell.
+
+Thus, we try at most:
+
+```text
+4 * |Q|
+```
+
+candidate transformations.
+
+Since `|Q| ≤ 400`, this is very small.
+
+---
+
+### Observation 3: For a fixed transformation, the structure is paths and cycles
+
+Fix a transformation `f`.
+
+Create a directed graph on the cells of `Q`.
+
+For every cell `x ∈ Q`, draw an edge:
+
+```text
+x → f(x)
+```
+
+if `f(x)` is also in `Q`.
+
+Because `f` is bijective on the infinite grid:
+
+- every cell has out-degree at most `1`,
+- every cell has in-degree at most `1`.
+
+Therefore, every connected component is either:
+
+- a path,
+- or a cycle.
+
+---
+
+### Observation 4: Cells must alternate between the two parts
+
+If `x ∈ A`, then `f(x) ∈ B`.
+
+So along every edge, the two endpoints must belong to different parts.
+
+Therefore, each component must be colored alternately:
+
+```text
+A, B, A, B, ...
+```
+
+A path with odd length cannot be split this way correctly.
+
+For example:
+
+```text
+v1 → v2 → v3
+```
+
+The first vertex has no predecessor, so it must be in `A`.
+
+Then:
+
+```text
+v1 ∈ A
+v2 ∈ B
+v3 ∈ A
+```
+
+But `v3` has no outgoing edge, so it cannot be in `A`, because every `A` cell must map to a `B` cell.
+
+So paths must have even length.
+
+Cycles must also have even length to be colored alternately.
+
+Hence, for a fixed transformation, it works iff every component has even size.
+
+---
+
+## 3. Full solution approach based on the observations
+
+1. Read the grid and collect all marked cells.
+
+2. If `|Q| = 0`, output `YES` and an empty subset.
+
+3. If `|Q|` is odd, output `NO`.
+
+4. Pick the first marked cell `c0`.
+
+5. For each rotation `k = 0, 1, 2, 3`:
+
+   Rotation formulas around the origin:
+
+   ```text
+   0°:   (r, c)
+   90°:  (c, -r)
+   180°: (-r, -c)
+   270°: (-c, r)
+   ```
+
+6. For every other marked cell `target`, compute the shift that maps rotated `c0` to `target`.
+
+7. For this fixed transformation:
+
+   - Build components implicitly using `f` and `f⁻¹`.
+   - For each unvisited marked cell:
+     - Move backwards using `f⁻¹` until finding the start of a path, or detecting a cycle.
+     - Traverse forward using `f`.
+     - Color cells alternately `0` and `1`.
+     - Count the component length.
+     - If the component length is odd, this transformation fails.
+
+8. If all components have even length, output `YES` and all cells colored `0` as one valid subset.
+
+9. If no transformation works, output `NO`.
+
+Complexity:
+
+```text
+O(4 * |Q| * N²)
+```
+
+Since `N ≤ 20`, this is easily fast enough.
+
+---
+
+## 4. C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int n;
+vector<string> grid;
+
+/*
+    Rotate point (r, c) by k * 90 degrees around the origin.
+
+    k = 0: (r, c)
+    k = 1: (c, -r)
+    k = 2: (-r, -c)
+    k = 3: (-c, r)
+*/
+pair<int, int> rotate_k(int r, int c, int k) {
+    for (int i = 0; i < k; i++) {
+        int nr = c;
+        int nc = -r;
+        r = nr;
+        c = nc;
+    }
+    return {r, c};
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    cin >> n;
+    grid.resize(n);
+
+    for (int i = 0; i < n; i++) {
+        cin >> grid[i];
+    }
+
+    vector<pair<int, int>> cells;
+
+    // Collect all cells belonging to Q.
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (grid[r][c] == '1') {
+                cells.push_back({r, c});
+            }
+        }
+    }
+
+    int total = (int)cells.size();
+
+    // Empty set can be divided into two empty subsets.
+    if (total == 0) {
+        cout << "YES\n";
+        for (int i = 0; i < n; i++) {
+            cout << string(n, '0') << '\n';
+        }
+        return 0;
+    }
+
+    // The two parts must have equal size.
+    if (total % 2 == 1) {
+        cout << "NO\n";
+        return 0;
+    }
+
+    // Checks whether a cell is inside the grid and belongs to Q.
+    auto in_q = [&](int r, int c) -> bool {
+        return 0 <= r && r < n && 0 <= c && c < n && grid[r][c] == '1';
+    };
+
+    // Use one fixed anchor cell.
+    auto [anchor_r, anchor_c] = cells[0];
+
+    /*
+        Try transformation:
+
+            f(x) = rotate_k(x) + (dr, dc)
+
+        If it works, print the answer and return true.
+        Otherwise return false.
+    */
+    auto try_transform = [&](int k, int dr, int dc) -> bool {
+        // Forward transformation.
+        auto f = [&](int r, int c) -> pair<int, int> {
+            auto [nr, nc] = rotate_k(r, c, k);
+            return {nr + dr, nc + dc};
+        };
+
+        // Inverse transformation.
+        auto f_inv = [&](int r, int c) -> pair<int, int> {
+            // First undo the shift.
+            r -= dr;
+            c -= dc;
+
+            // Then undo the rotation.
+            return rotate_k(r, c, (4 - k) % 4);
+        };
+
+        /*
+            color[r][c]:
+            -1 = unvisited
+             0 = chosen subset A
+             1 = other subset B
+        */
+        vector<vector<int>> color(n, vector<int>(n, -1));
+
+        // Process every marked cell.
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                if (grid[i][j] != '1' || color[i][j] != -1) {
+                    continue;
+                }
+
+                /*
+                    Find the beginning of this component.
+
+                    If the component is a path, move backwards until there is
+                    no predecessor in Q.
+
+                    If it is a cycle, moving backwards eventually returns to
+                    the original cell.
+                */
+                int sr = i;
+                int sc = j;
+
+                while (true) {
+                    auto [pr, pc] = f_inv(sr, sc);
+
+                    if (!in_q(pr, pc) || (pr == i && pc == j)) {
+                        break;
+                    }
+
+                    sr = pr;
+                    sc = pc;
+                }
+
+                // Traverse forward and color alternately.
+                int cr = sr;
+                int cc = sc;
+                int current_color = 0;
+                int length = 0;
+
+                while (color[cr][cc] == -1) {
+                    color[cr][cc] = current_color;
+                    current_color ^= 1;
+                    length++;
+
+                    auto [nr, nc] = f(cr, cc);
+
+                    // Path ends.
+                    if (!in_q(nr, nc)) {
+                        break;
+                    }
+
+                    cr = nr;
+                    cc = nc;
+                }
+
+                // Odd-sized component cannot be alternately split.
+                if (length % 2 == 1) {
+                    return false;
+                }
+            }
+        }
+
+        // Found a valid split.
+        cout << "YES\n";
+
+        // Output cells colored 0 as one subset.
+        for (int r = 0; r < n; r++) {
+            for (int c = 0; c < n; c++) {
+                if (grid[r][c] == '1' && color[r][c] == 0) {
+                    cout << '1';
+                } else {
+                    cout << '0';
+                }
+            }
+            cout << '\n';
+        }
+
+        return true;
+    };
+
+    // Try all rotations and all shifts induced by mapping anchor to another cell.
+    for (int k = 0; k < 4; k++) {
+        auto [rot_anchor_r, rot_anchor_c] = rotate_k(anchor_r, anchor_c, k);
+
+        for (auto [target_r, target_c] : cells) {
+            // In a valid split, a cell cannot be mapped to itself.
+            if (target_r == anchor_r && target_c == anchor_c) {
+                continue;
+            }
+
+            int dr = target_r - rot_anchor_r;
+            int dc = target_c - rot_anchor_c;
+
+            if (try_transform(k, dr, dc)) {
+                return 0;
+            }
+        }
+    }
+
+    cout << "NO\n";
+    return 0;
+}
+```
+
+---
+
+## 5. Python implementation with detailed comments
+
+```python
+import sys
+
+
+def rotate_k(r, c, k):
+    """
+    Rotate point (r, c) by k * 90 degrees around the origin.
+
+    k = 0: (r, c)
+    k = 1: (c, -r)
+    k = 2: (-r, -c)
+    k = 3: (-c, r)
+    """
+    for _ in range(k):
+        r, c = c, -r
+    return r, c
+
+
+def solve():
+    data = sys.stdin.read().strip().split()
+
+    n = int(data[0])
+    grid = data[1:1 + n]
+
+    cells = []
+
+    # Collect all cells belonging to Q.
+    for r in range(n):
+        for c in range(n):
+            if grid[r][c] == '1':
+                cells.append((r, c))
+
+    total = len(cells)
+
+    # Empty set can be split into two empty subsets.
+    if total == 0:
+        print("YES")
+        for _ in range(n):
+            print("0" * n)
+        return
+
+    # The two parts must have equal size.
+    if total % 2 == 1:
+        print("NO")
+        return
+
+    def in_q(r, c):
+        """
+        Check whether cell (r, c) is inside the grid and belongs to Q.
+        """
+        return 0 <= r < n and 0 <= c < n and grid[r][c] == '1'
+
+    # Use one fixed anchor cell.
+    anchor_r, anchor_c = cells[0]
+
+    def try_transform(k, dr, dc):
+        """
+        Try transformation:
+
+            f(x) = rotate_k(x) + (dr, dc)
+
+        Return the resulting subset grid if valid.
+        Return None otherwise.
+        """
+
+        def f(r, c):
+            """
+            Forward transformation.
+            """
+            nr, nc = rotate_k(r, c, k)
+            return nr + dr, nc + dc
+
+        def f_inv(r, c):
+            """
+            Inverse transformation.
+            """
+            # First undo the shift.
+            r -= dr
+            c -= dc
+
+            # Then undo the rotation.
+            return rotate_k(r, c, (4 - k) % 4)
+
+        """
+        color[r][c]:
+        -1 = unvisited
+         0 = chosen subset A
+         1 = other subset B
+        """
+        color = [[-1] * n for _ in range(n)]
+
+        # Process every marked cell.
+        for i in range(n):
+            for j in range(n):
+                if grid[i][j] != '1' or color[i][j] != -1:
+                    continue
+
+                """
+                Find the beginning of this component.
+
+                If it is a path, move backwards until there is no predecessor.
+                If it is a cycle, moving backwards eventually returns to the
+                original cell.
+                """
+                sr, sc = i, j
+
+                while True:
+                    pr, pc = f_inv(sr, sc)
+
+                    if not in_q(pr, pc) or (pr == i and pc == j):
+                        break
+
+                    sr, sc = pr, pc
+
+                # Traverse forward and color alternately.
+                cr, cc = sr, sc
+                current_color = 0
+                length = 0
+
+                while color[cr][cc] == -1:
+                    color[cr][cc] = current_color
+                    current_color ^= 1
+                    length += 1
+
+                    nr, nc = f(cr, cc)
+
+                    # Path ends.
+                    if not in_q(nr, nc):
+                        break
+
+                    cr, cc = nr, nc
+
+                # Odd-sized component cannot be alternately split.
+                if length % 2 == 1:
+                    return None
+
+        # Build the output subset: cells colored 0.
+        answer = []
+
+        for r in range(n):
+            row = []
+
+            for c in range(n):
+                if grid[r][c] == '1' and color[r][c] == 0:
+                    row.append('1')
+                else:
+                    row.append('0')
+
+            answer.append(''.join(row))
+
+        return answer
+
+    # Try all rotations.
+    for k in range(4):
+        rot_anchor_r, rot_anchor_c = rotate_k(anchor_r, anchor_c, k)
+
+        # Try mapping the anchor to every other marked cell.
+        for target_r, target_c in cells:
+            # A cell cannot be mapped to itself in a valid disjoint split.
+            if target_r == anchor_r and target_c == anchor_c:
+                continue
+
+            dr = target_r - rot_anchor_r
+            dc = target_c - rot_anchor_c
+
+            result = try_transform(k, dr, dc)
+
+            if result is not None:
+                print("YES")
+                print("\n".join(result))
+                return
+
+    print("NO")
+
+
+if __name__ == "__main__":
+    solve()
+```

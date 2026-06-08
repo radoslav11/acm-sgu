@@ -1,0 +1,498 @@
+<|instruction|>
+Solve the below problem. The solution should start with an abridged problem statement. Then key observations. Then full solution based on the observations. Then C++ and Python implementations with comments.
+
+251. Polymania
+time limit per test: 0.25 sec.
+memory limit per test: 65536 KB
+input: standard
+output: standard
+
+
+
+Consider N points on the plane. Each point has its special number. Points arrangement is called "awful" if for any three different points A, B, and C the sum of their special numbers is equal to the area of the triangle ABC.
+You are given special numbers for all points, but not their coordinates. You have to find some awful points arrangement.
+It is guarantee, that last special number and previous are equal.
+
+Input
+The first line of input contains single integer N (3<=N<=8). Next line contains N positive integers R[i] - special numbers of points (0<R[i]<=100, R[N-1]=R[N]).
+
+Output
+On the first line output "YES" (without quotes) if the solution exists, or "NO" (without quotes) if it does not. In case of positive answer output N lines with points coordinates: X[i] and Y[i] with four digits after the decimal point.
+
+Sample test(s)
+
+Input
+Test #1
+3
+2 3 3
+
+Test #2
+4
+1 1 1 1
+
+Output
+Test #1
+YES
+1.5000 0.0000
+5.5000 0.0000
+1.5000 4.0000
+
+Test #2
+YES
+0.0000 0.0000
+0.0000 2.4495
+2.4495 0.0000
+2.4495 2.4495
+Author:	Alexey Preobrajensky
+Resource:	Petrozavodsk Summer Training Sessions 2004
+Date:	August 25, 2004
+
+<|response|>
+## 1) Abridged problem statement
+
+You are given \(N\) (\(3 \le N \le 8\)) positive integers \(R_1,\dots,R_N\) (“special numbers”), with a guarantee \(R_{N-1}=R_N\).  
+Find coordinates \((x_i,y_i)\) for \(N\) points such that for **every** triple of distinct points \((i,j,k)\),
+
+\[
+\text{Area}(\triangle ijk) = R_i + R_j + R_k.
+\]
+
+Output **YES** and any valid coordinates (4 decimals) if possible, otherwise output **NO**.
+
+---
+
+## 2) Key observations needed to solve the problem
+
+1. **Triangle area via cross product (doubled area):**  
+   For points \(i,j,k\),
+   \[
+   2\cdot \text{Area} = \left| \text{cross}(i,j,k) \right|
+   \]
+   where
+   \[
+   \text{cross}(i,j,k)=x_i(y_k-y_j)+x_j(y_i-y_k)+x_k(y_j-y_i).
+   \]
+
+2. **Turn constraints into equations without absolute value:**  
+   Required:
+   \[
+   |\text{cross}(i,j,k)| = 2(R_i+R_j+R_k).
+   \]
+   Remove \(|\cdot|\) by squaring:
+   \[
+   \text{cross}(i,j,k)^2 = \left(2(R_i+R_j+R_k)\right)^2.
+   \]
+
+3. **Solve as nonlinear least squares (numerical):**  
+   For each triple define residual
+   \[
+   f_{ijk} = \text{cross}^2 - T^2,\quad T=2(R_i+R_j+R_k).
+   \]
+   Minimize
+   \[
+   \text{loss}=\sum_{i<j<k} f_{ijk}^2
+   \]
+   over \(2N\) real variables \(\{x_i,y_i\}\).
+
+4. **Analytical gradients are easy and fast (small \(N\)):**  
+   With \(N\le 8\), there are at most \(\binom{8}{3}=56\) triples. We can compute loss+gradient quickly and run an optimizer with random restarts.
+
+5. **Heuristic approach:**  
+   This is a numerical method (Adam + restarts). It works well in practice for this tiny size, but it’s not a symbolic/guaranteed constructive proof.
+
+---
+
+## 3) Full solution approach based on the observations
+
+### Step A — Build the equation for one triple
+For each triple \((i,j,k)\):
+
+- Compute doubled signed area:
+  \[
+  c = \text{cross}(i,j,k)
+  \]
+- Target doubled area:
+  \[
+  T = 2(R_i+R_j+R_k)
+  \]
+- Residual:
+  \[
+  f = c^2 - T^2
+  \]
+We want \(f=0\) for all triples.
+
+### Step B — Define the objective (loss)
+\[
+\text{loss} = \sum_{i<j<k} f(i,j,k)^2.
+\]
+If loss is ~0, all constraints are satisfied (up to numeric error).
+
+### Step C — Compute gradients
+For one triple,
+\[
+\frac{\partial}{\partial p}(f^2)=2f\cdot \frac{\partial f}{\partial p}
+=2f\cdot 2c\cdot \frac{\partial c}{\partial p}
+=4fc\cdot \frac{\partial c}{\partial p}.
+\]
+Let \(\text{coef}=4fc\).
+
+From
+\[
+c=x_i(y_k-y_j)+x_j(y_i-y_k)+x_k(y_j-y_i),
+\]
+the partial derivatives are:
+- w.r.t. x:
+  - \(\partial c/\partial x_i = (y_k-y_j)\)
+  - \(\partial c/\partial x_j = (y_i-y_k)\)
+  - \(\partial c/\partial x_k = (y_j-y_i)\)
+- w.r.t. y:
+  - \(\partial c/\partial y_i = (x_j-x_k)\)
+  - \(\partial c/\partial y_j = (x_k-x_i)\)
+  - \(\partial c/\partial y_k = (x_i-x_j)\)
+
+Each triple updates gradients of exactly 6 variables.
+
+### Step D — Minimize loss with Adam + random restarts
+Because the loss is non-convex, we:
+- Randomly initialize all points in some box (e.g. \([-15,15]\)).
+- Run Adam for a fixed number of steps.
+- Repeat several restarts and keep the best.
+
+### Step E — Decide YES/NO
+- If best loss < small threshold (e.g. \(10^{-4}\)), print **YES** and coordinates.
+- Otherwise print **NO**.
+
+---
+
+## 4) C++ implementation with detailed comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+/*
+  Polymania (p251) - numerical construction via least squares + Adam.
+
+  We search for coordinates (x[i], y[i]) such that for every triple i<j<k:
+      Area(i,j,k) = R[i] + R[j] + R[k]
+
+  Using doubled signed area (cross product):
+      cross = x_i(y_k-y_j) + x_j(y_i-y_k) + x_k(y_j-y_i)
+      2*Area = |cross|
+  Constraint:
+      |cross| = 2*(R_i+R_j+R_k)
+
+  Square to remove absolute:
+      cross^2 = target^2, target = 2*(sum R)
+
+  Residual:
+      f = cross^2 - target^2
+  Loss:
+      sum f^2
+
+  We compute analytic gradients and minimize loss using Adam with random restarts.
+*/
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+    vector<double> R(n);
+    for (int i = 0; i < n; i++) cin >> R[i];
+
+    // Variables: coordinates and gradients
+    vector<double> x(n), y(n), gx(n), gy(n);
+
+    // Adam state
+    vector<double> mx(n), my(n), vx(n), vy(n);
+
+    mt19937 rng(987654321);
+    uniform_real_distribution<double> init_dist(-15.0, 15.0);
+
+    // Compute loss; if need_grad = true, also fill gx, gy.
+    auto compute = [&](bool need_grad) -> double {
+        if (need_grad) {
+            fill(gx.begin(), gx.end(), 0.0);
+            fill(gy.begin(), gy.end(), 0.0);
+        }
+
+        double loss = 0.0;
+
+        for (int i = 0; i < n; i++) {
+            for (int j = i + 1; j < n; j++) {
+                for (int k = j + 1; k < n; k++) {
+
+                    // cross is doubled signed area
+                    double cross =
+                        x[i] * (y[k] - y[j]) +
+                        x[j] * (y[i] - y[k]) +
+                        x[k] * (y[j] - y[i]);
+
+                    double target = 2.0 * (R[i] + R[j] + R[k]);
+
+                    // residual after squaring (no abs)
+                    double f = cross * cross - target * target;
+
+                    // squared residual contributes to total loss
+                    loss += f * f;
+
+                    if (need_grad) {
+                        // d(f^2)/dp = 4*f*cross * d(cross)/dp
+                        double coef = 4.0 * f * cross;
+
+                        // d(cross)/d(x_*) terms
+                        gx[i] += coef * (y[k] - y[j]);
+                        gx[j] += coef * (y[i] - y[k]);
+                        gx[k] += coef * (y[j] - y[i]);
+
+                        // d(cross)/d(y_*) terms
+                        gy[i] += coef * (x[j] - x[k]);
+                        gy[j] += coef * (x[k] - x[i]);
+                        gy[k] += coef * (x[i] - x[j]);
+                    }
+                }
+            }
+        }
+
+        return loss;
+    };
+
+    // Best result over restarts
+    double best_loss = numeric_limits<double>::infinity();
+    vector<double> best_x(n), best_y(n);
+
+    // Adam hyperparameters
+    const double beta1 = 0.9;
+    const double beta2 = 0.999;
+    const double eps = 1e-8;
+    const double lr = 0.1;
+
+    const int max_restarts = 80;
+    const int max_steps = 2500;
+
+    for (int restart = 0; restart < max_restarts; restart++) {
+        // Random initialization
+        for (int i = 0; i < n; i++) {
+            x[i] = init_dist(rng);
+            y[i] = init_dist(rng);
+        }
+
+        // Reset Adam moments
+        fill(mx.begin(), mx.end(), 0.0);
+        fill(my.begin(), my.end(), 0.0);
+        fill(vx.begin(), vx.end(), 0.0);
+        fill(vy.begin(), vy.end(), 0.0);
+
+        // For bias correction we maintain beta1^t and beta2^t
+        double b1t = 1.0, b2t = 1.0;
+
+        for (int step = 1; step <= max_steps; step++) {
+            double loss = compute(true);
+
+            // If extremely small, we are done for this restart
+            if (loss < 1e-20) break;
+
+            b1t *= beta1;
+            b2t *= beta2;
+
+            double bc1 = 1.0 - b1t; // 1 - beta1^t
+            double bc2 = 1.0 - b2t; // 1 - beta2^t
+
+            // Adam update per variable
+            for (int i = 0; i < n; i++) {
+                mx[i] = beta1 * mx[i] + (1.0 - beta1) * gx[i];
+                my[i] = beta1 * my[i] + (1.0 - beta1) * gy[i];
+
+                vx[i] = beta2 * vx[i] + (1.0 - beta2) * gx[i] * gx[i];
+                vy[i] = beta2 * vy[i] + (1.0 - beta2) * gy[i] * gy[i];
+
+                // Bias-corrected moments
+                double mx_hat = mx[i] / bc1;
+                double my_hat = my[i] / bc1;
+                double vx_hat = vx[i] / bc2;
+                double vy_hat = vy[i] / bc2;
+
+                // Parameter update
+                x[i] -= lr * mx_hat / (sqrt(vx_hat) + eps);
+                y[i] -= lr * my_hat / (sqrt(vy_hat) + eps);
+            }
+        }
+
+        double final_loss = compute(false);
+        if (final_loss < best_loss) {
+            best_loss = final_loss;
+            best_x = x;
+            best_y = y;
+        }
+
+        // early exit if already very good
+        if (best_loss < 1e-12) break;
+    }
+
+    // Decide
+    if (best_loss < 1e-4) {
+        cout << "YES\n";
+        cout << fixed << setprecision(4);
+        for (int i = 0; i < n; i++) {
+            cout << best_x[i] << ' ' << best_y[i] << "\n";
+        }
+    } else {
+        cout << "NO\n";
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 5) Python implementation with detailed comments
+
+```python
+import sys
+import math
+import random
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    R = [float(next(it)) for _ in range(n)]
+
+    # Variables: coordinates
+    x = [0.0] * n
+    y = [0.0] * n
+
+    # Gradients
+    gx = [0.0] * n
+    gy = [0.0] * n
+
+    # Adam state
+    mx = [0.0] * n
+    my = [0.0] * n
+    vx = [0.0] * n
+    vy = [0.0] * n
+
+    rng = random.Random(987654321)
+
+    def compute(need_grad: bool) -> float:
+        """Return total loss. If need_grad=True, also fills gx, gy with gradients."""
+        if need_grad:
+            for i in range(n):
+                gx[i] = 0.0
+                gy[i] = 0.0
+
+        loss = 0.0
+        for i in range(n):
+            for j in range(i + 1, n):
+                for k in range(j + 1, n):
+                    # doubled signed area (cross product)
+                    cross = (
+                        x[i] * (y[k] - y[j]) +
+                        x[j] * (y[i] - y[k]) +
+                        x[k] * (y[j] - y[i])
+                    )
+                    target = 2.0 * (R[i] + R[j] + R[k])
+
+                    # residual after squaring (removes abs)
+                    f = cross * cross - target * target
+                    loss += f * f
+
+                    if need_grad:
+                        # d(f^2)/dp = 4*f*cross * d(cross)/dp
+                        coef = 4.0 * f * cross
+
+                        # d(cross)/d(x_*)
+                        gx[i] += coef * (y[k] - y[j])
+                        gx[j] += coef * (y[i] - y[k])
+                        gx[k] += coef * (y[j] - y[i])
+
+                        # d(cross)/d(y_*)
+                        gy[i] += coef * (x[j] - x[k])
+                        gy[j] += coef * (x[k] - x[i])
+                        gy[k] += coef * (x[i] - x[j])
+
+        return loss
+
+    # Adam hyperparameters
+    beta1 = 0.9
+    beta2 = 0.999
+    eps = 1e-8
+    lr = 0.1
+
+    max_restarts = 80
+    max_steps = 2500
+
+    best_loss = float("inf")
+    best_x = None
+    best_y = None
+
+    for _ in range(max_restarts):
+        # random init in [-15, 15]
+        for i in range(n):
+            x[i] = rng.uniform(-15.0, 15.0)
+            y[i] = rng.uniform(-15.0, 15.0)
+
+        # reset Adam
+        for i in range(n):
+            mx[i] = my[i] = 0.0
+            vx[i] = vy[i] = 0.0
+
+        b1t = 1.0
+        b2t = 1.0
+
+        for _step in range(1, max_steps + 1):
+            loss = compute(True)
+            if loss < 1e-20:
+                break
+
+            b1t *= beta1
+            b2t *= beta2
+            bc1 = 1.0 - b1t
+            bc2 = 1.0 - b2t
+
+            for i in range(n):
+                mx[i] = beta1 * mx[i] + (1.0 - beta1) * gx[i]
+                my[i] = beta1 * my[i] + (1.0 - beta1) * gy[i]
+
+                vx[i] = beta2 * vx[i] + (1.0 - beta2) * gx[i] * gx[i]
+                vy[i] = beta2 * vy[i] + (1.0 - beta2) * gy[i] * gy[i]
+
+                # bias-corrected moments
+                mhatx = mx[i] / bc1
+                mhaty = my[i] / bc1
+                vhatx = vx[i] / bc2
+                vhaty = vy[i] / bc2
+
+                # Adam update
+                x[i] -= lr * mhatx / (math.sqrt(vhatx) + eps)
+                y[i] -= lr * mhaty / (math.sqrt(vhaty) + eps)
+
+        final_loss = compute(False)
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_x = x[:]
+            best_y = y[:]
+
+        if best_loss < 1e-12:
+            break
+
+    if best_loss < 1e-4:
+        out = ["YES"]
+        for i in range(n):
+            out.append(f"{best_x[i]:.4f} {best_y[i]:.4f}")
+        sys.stdout.write("\n".join(out) + "\n")
+    else:
+        sys.stdout.write("NO\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+--- 
+
+If you want a more “judge-safe” approach, I can try to derive a deterministic constructive method (if one exists for this problem) or add a final verification pass that checks all triangle areas and, if needed, retries with different random seeds.

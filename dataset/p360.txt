@@ -1,0 +1,948 @@
+## 1. Abridged problem statement
+
+A robot moves on an `N x M` grid. Some cells contain `*`, one cell contains the robot’s start position `R`, and other cells contain `~`.
+
+The robot initially faces upward. It understands three primitive commands:
+
+- `L`: turn left 90°
+- `R`: turn right 90°
+- `C`: move forward one cell, unless that would leave the grid
+
+A B++ program consists of functions named by lowercase letters. Each function has 0 to 2 arguments, where arguments are uppercase letters other than `L`, `R`, `C`. A function body is a sequence of operators:
+
+1. A primitive command `L`, `R`, or `C`
+2. A function call
+3. An argument, which evaluates to one of `L`, `R`, or `C`
+
+Execution starts from `m()`. The program is valid, terminates, and executes at most 1000 primitive commands.
+
+Output all `*` cells visited by the robot, in the order they are first visited.
+
+---
+
+## 2. Detailed editorial
+
+### Parsing the program
+
+The B++ program may contain arbitrary whitespace, so the first step is to remove all whitespace from the program source.
+
+After whitespace removal, every function definition has the form:
+
+```text
+f(args){body}
+```
+
+where:
+
+- `f` is one lowercase letter
+- `args` is empty, one uppercase letter, or two uppercase letters separated by a comma
+- `body` is a sequence of operators
+
+Each function is parsed into an abstract syntax tree-like representation.
+
+Each operator in a function body can be represented as one of:
+
+1. Direct command:
+   ```cpp
+   L / R / C
+   ```
+2. Argument command:
+   ```cpp
+   X
+   ```
+   where `X` is an uppercase argument name.
+3. Function call:
+   ```cpp
+   f(...)
+   ```
+
+For example:
+
+```text
+a(X,Y){XYCL}
+```
+
+becomes:
+
+```text
+argument X
+argument Y
+command C
+command L
+```
+
+Function names are mapped to integer IDs to simplify storage.
+
+---
+
+### Executing commands
+
+The robot state consists of:
+
+```text
+row, column, direction
+```
+
+Directions are encoded as:
+
+```text
+0 = up
+1 = right
+2 = down
+3 = left
+```
+
+The movement arrays are:
+
+```cpp
+dr = {-1, 0, 1, 0}
+dc = {0, 1, 0, -1}
+```
+
+For each primitive command:
+
+- `L`: direction becomes `(direction + 3) % 4`
+- `R`: direction becomes `(direction + 1) % 4`
+- `C`: attempt to move one cell forward
+  - if the new cell is inside the grid, move there
+  - otherwise ignore the command
+
+Whenever the robot enters a `*` cell, we check whether it has already been visited. If not, we append it to the answer.
+
+---
+
+### Function calls and arguments
+
+When executing a function, we know the values of its parameters.
+
+For example:
+
+```text
+a(X,Y){XY}
+```
+
+called as:
+
+```text
+a(L,C)
+```
+
+means inside `a`:
+
+```text
+X = L
+Y = C
+```
+
+So execution becomes:
+
+```text
+L C
+```
+
+Function calls may pass either constants `L`, `R`, `C` or caller arguments.
+
+Example:
+
+```text
+b(A){a(A,C)}
+```
+
+If `b` is called as `b(R)`, then `a(A,C)` becomes `a(R,C)`.
+
+---
+
+### Memoization optimization
+
+The official constraints say the robot executes at most 1000 primitive commands, so direct recursive simulation is already enough.
+
+The provided C++ solution also uses memoization.
+
+A function call is deterministic based on:
+
+```text
+function id
+argument bindings
+starting row
+starting column
+starting direction
+```
+
+So we can cache:
+
+```text
+ending row
+ending column
+ending direction
+number of primitive commands executed
+list of star cells stepped on during this call
+```
+
+When the same function is called again with the same arguments and same starting robot state, we reuse the cached result.
+
+Important detail: the cached star list stores all `*` cells stepped on during the call, not only newly visited ones. On replay, each star is checked against the global visited set. This preserves the correct first-visit order.
+
+---
+
+### Complexity
+
+Let `S` be the program size and `K` be the number of executed primitive commands.
+
+The constraints guarantee:
+
+```text
+K <= 1000
+```
+
+Parsing is linear in the program size.
+
+Simulation is easily fast enough. With memoization, repeated identical function calls are avoided.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ library headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs, useful for debugging or printing coordinates.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair as "first second".
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second values.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Read every element of the vector.
+        in >> x;
+    }
+    return in; // Return stream to allow chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Print every element.
+        out << x << ' ';
+    }
+    return out; // Return stream to allow chaining.
+};
+
+// Represents one parsed operator in a function body.
+struct ast_node {
+    char kind;              // Type of node: 'C' = direct command, 'A' = argument, 'F' = function call.
+    char val;               // Command value for direct command nodes.
+    int func_id;            // Function ID for function-call nodes.
+    vector<char> args;      // Argument expressions for function-call nodes.
+};
+
+int n, m;                   // Grid dimensions.
+vector<string> grid;        // Grid map.
+int start_r, start_c;       // Robot starting row and column, zero-based.
+string source;              // Program source after removing whitespace.
+
+map<char, int> func_id_of;  // Maps function name character to integer ID.
+vector<vector<ast_node>> func_body;   // Function bodies indexed by function ID.
+vector<vector<char>> func_params;     // Function parameter names indexed by function ID.
+
+// Returns the ID of a function, creating a new ID if needed.
+int get_or_create_func(char name) {
+    auto it = func_id_of.find(name); // Check whether this function already has an ID.
+    if(it != func_id_of.end()) {     // If yes,
+        return it->second;           // return the existing ID.
+    }
+
+    int id = (int)func_id_of.size(); // New ID is the current number of known functions.
+    func_id_of[name] = id;           // Store the mapping.
+    func_body.emplace_back();        // Add empty body storage for this function.
+    func_params.emplace_back();      // Add empty parameter-list storage.
+    return id;                       // Return the new ID.
+}
+
+int parse_pos = 0; // Current position while parsing source.
+
+// Parses an argument list like "(X,Y)" or "()".
+// The parser assumes parse_pos currently points to '('.
+vector<char> parse_arg_letters() {
+    parse_pos++;              // Skip '('.
+    vector<char> args;        // Store parsed argument symbols.
+
+    while(source[parse_pos] != ')') { // Continue until closing parenthesis.
+        if(source[parse_pos] != ',') { // Ignore commas.
+            args.push_back(source[parse_pos]); // Store argument character.
+        }
+        parse_pos++;          // Move to next character.
+    }
+
+    parse_pos++;              // Skip ')'.
+    return args;              // Return parsed arguments.
+}
+
+// Parses a function body block "{...}".
+// The parser assumes parse_pos currently points to '{'.
+vector<ast_node> parse_block() {
+    vector<ast_node> ops;     // Parsed operators.
+    parse_pos++;              // Skip '{'.
+
+    while(source[parse_pos] != '}') { // Parse until end of block.
+        char c = source[parse_pos];   // Current character.
+
+        if(c == 'L' || c == 'R' || c == 'C') { // Direct robot command.
+            ops.push_back({'C', c, -1, {}});   // Store command node.
+            parse_pos++;                       // Consume command character.
+        } else if(islower((unsigned char)c)) { // Lowercase means function call.
+            parse_pos++;                       // Consume function name.
+            int fid = get_or_create_func(c);   // Get called function ID.
+            vector<char> args = parse_arg_letters(); // Parse call arguments.
+            ops.push_back({'F', 0, fid, args});       // Store function-call node.
+        } else {                                // Otherwise it is an uppercase function argument.
+            ops.push_back({'A', c, -1, {}});    // Store argument-reference node.
+            parse_pos++;                       // Consume argument character.
+        }
+    }
+
+    parse_pos++;              // Skip '}'.
+    return ops;               // Return parsed body.
+}
+
+// Parses one function definition.
+void parse_function_def() {
+    char name = source[parse_pos];       // Function name.
+    parse_pos++;                         // Consume function name.
+    int fid = get_or_create_func(name);  // Get/create its ID.
+
+    func_params[fid] = parse_arg_letters(); // Parse formal parameters.
+    func_body[fid] = parse_block();         // Parse function body.
+}
+
+// Reads grid and raw program input.
+void read() {
+    cin >> n >> m;            // Read dimensions.
+    grid.resize(n);           // Allocate grid rows.
+
+    for(int i = 0; i < n; i++) {
+        cin >> grid[i];       // Read each grid row.
+    }
+
+    char ch;                  // Temporary character for reading program.
+    while(cin.get(ch)) {      // Read rest of input character by character.
+        if(!isspace((unsigned char)ch)) { // Ignore all whitespace.
+            source += ch;     // Append non-whitespace character to source.
+        }
+    }
+
+    // Locate starting cell marked by 'R'.
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            if(grid[i][j] == 'R') {
+                start_r = i;  // Store zero-based row.
+                start_c = j;  // Store zero-based column.
+            }
+        }
+    }
+}
+
+// Direction row deltas: up, right, down, left.
+int dr[4] = {-1, 0, 1, 0};
+
+// Direction column deltas: up, right, down, left.
+int dc[4] = {0, 1, 0, -1};
+
+int total_commands;                  // Total primitive commands executed globally.
+vector<pair<int, int>> visit_order;  // First-visit order of starred cells.
+set<pair<int, int>> visited_set;     // Set of starred cells already reported.
+
+// Result of executing a function call.
+struct call_result {
+    int end_r, end_c, end_d;          // Robot state after call.
+    int cmd_count;                    // Number of primitive commands executed by this call.
+    vector<pair<int, int>> stars;     // Starred cells stepped on during this call.
+};
+
+// Memoization cache.
+// Key is: function id, packed arguments, start row, start column, start direction.
+map<tuple<int, int, int, int, int>, call_result> cache;
+
+// Packs argument bindings into a base-3 integer.
+// L -> 0, R -> 1, C -> 2.
+int pack_args(const vector<char>& args) {
+    int p = 0;                        // Packed value.
+    for(char c: args) {               // Process each bound argument.
+        int v = (c == 'L' ? 0 : (c == 'R' ? 1 : 2)); // Convert to digit.
+        p = p * 3 + v;                // Append digit in base 3.
+    }
+    return p;                         // Return packed arguments.
+}
+
+// Records a starred cell if this is its first global visit.
+void register_star(int r, int c) {
+    if(grid[r][c] == '*' && !visited_set.count({r, c})) { // If cell is a new star.
+        visited_set.insert({r, c});       // Mark it visited.
+        visit_order.push_back({r, c});    // Remember first-visit order.
+    }
+}
+
+// Applies one primitive command to the robot.
+void apply_command(
+    char cmd, int& r, int& c, int& d, vector<pair<int, int>>& star_log
+) {
+    if(cmd == 'L') {                  // Turn left.
+        d = (d + 3) % 4;
+    } else if(cmd == 'R') {           // Turn right.
+        d = (d + 1) % 4;
+    } else if(cmd == 'C') {           // Move forward.
+        int nr = r + dr[d];           // Candidate new row.
+        int nc = c + dc[d];           // Candidate new column.
+
+        if(nr >= 0 && nr < n && nc >= 0 && nc < m) { // If inside grid.
+            r = nr;                   // Move row.
+            c = nc;                   // Move column.
+
+            if(grid[r][c] == '*') {   // If robot entered a starred cell.
+                star_log.push_back({r, c}); // Log this step for memoization.
+                register_star(r, c);        // Register first global visit if needed.
+            }
+        }
+    }
+
+    total_commands++;                 // Every primitive command counts, even blocked C.
+}
+
+// Forward declaration because execute_block calls execute_function.
+call_result execute_function(
+    int fid, const vector<char>& bindings, int r, int c, int d
+);
+
+// Executes a list of parsed operators.
+call_result execute_block(
+    const vector<ast_node>& ops,      // Operators in the function body.
+    const vector<char>& params,       // Formal parameter names of current function.
+    const vector<char>& bindings,     // Actual values bound to parameters.
+    int r, int c, int d               // Starting robot state.
+) {
+    call_result res;                  // Result object.
+    res.cmd_count = 0;                // No commands executed yet inside this block.
+
+    for(const auto& op: ops) {        // Execute operators in order.
+        if(op.kind == 'C') {          // Direct primitive command.
+            int prev = total_commands; // Save command counter before execution.
+            apply_command(op.val, r, c, d, res.stars); // Execute command.
+            res.cmd_count += total_commands - prev;    // Add commands used.
+        } else if(op.kind == 'A') {   // Argument used as command.
+            char cmd = 0;             // Actual command value.
+
+            for(int i = 0; i < (int)params.size(); i++) { // Find matching parameter.
+                if(params[i] == op.val) {
+                    cmd = bindings[i]; // Use bound value.
+                    break;
+                }
+            }
+
+            int prev = total_commands; // Save command count.
+            apply_command(cmd, r, c, d, res.stars); // Execute resolved command.
+            res.cmd_count += total_commands - prev; // Add command count.
+        } else {                       // Function call.
+            vector<char> sub;          // Actual argument bindings for child call.
+            sub.reserve(op.args.size());
+
+            for(char a: op.args) {     // Resolve each argument expression.
+                if(a == 'L' || a == 'R' || a == 'C') { // Constant command.
+                    sub.push_back(a);
+                } else {               // Argument from caller.
+                    for(int i = 0; i < (int)params.size(); i++) {
+                        if(params[i] == a) {
+                            sub.push_back(bindings[i]); // Substitute actual value.
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Execute called function starting from current state.
+            call_result child = execute_function(op.func_id, sub, r, c, d);
+
+            r = child.end_r;           // Update current row.
+            c = child.end_c;           // Update current column.
+            d = child.end_d;           // Update current direction.
+
+            for(const auto& s: child.stars) { // Append all child star steps.
+                res.stars.push_back(s);
+            }
+
+            res.cmd_count += child.cmd_count; // Add child command count.
+        }
+    }
+
+    res.end_r = r;                    // Store final row.
+    res.end_c = c;                    // Store final column.
+    res.end_d = d;                    // Store final direction.
+    return res;                       // Return execution summary.
+}
+
+// Executes one function call with concrete argument bindings.
+call_result execute_function(
+    int fid, const vector<char>& bindings, int r, int c, int d
+) {
+    // Build memoization key.
+    auto key = make_tuple(fid, pack_args(bindings), r, c, d);
+
+    auto it = cache.find(key);        // Look for cached result.
+    if(it != cache.end()) {           // If found,
+        const auto& cached = it->second;
+
+        // Replay star visits from cached execution.
+        for(const auto& [sr, sc]: cached.stars) {
+            register_star(sr, sc);
+        }
+
+        total_commands += cached.cmd_count; // Account for skipped primitive commands.
+        return cached;                      // Return cached end state and logs.
+    }
+
+    // Otherwise execute function body normally.
+    call_result res =
+        execute_block(func_body[fid], func_params[fid], bindings, r, c, d);
+
+    cache[key] = res;                // Store result for future identical calls.
+    return res;                      // Return computed result.
+}
+
+// Main solving routine.
+void solve() {
+    /*
+       Parse every function definition from the whitespace-free source.
+       Then execute m() from the robot's start cell, initially facing up.
+
+       The execution is deterministic, so memoization can skip repeated
+       identical calls.
+    */
+
+    parse_pos = 0;                   // Start parsing at beginning of source.
+
+    while(parse_pos < (int)source.size()) { // Parse all function definitions.
+        parse_function_def();
+    }
+
+    int main_id = get_or_create_func('m'); // Get ID of entry point m().
+    total_commands = 0;                    // Reset command counter.
+
+    execute_function(main_id, {}, start_r, start_c, 0); // Execute m(), direction 0 = up.
+
+    cout << visit_order.size() << '\n';    // Print number of visited stars.
+
+    for(auto [r, c]: visit_order) {        // Print stars in first-visit order.
+        cout << (r + 1) << ' ' << (c + 1) << '\n'; // Convert to one-based coordinates.
+    }
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up I/O.
+    cin.tie(nullptr);                 // Untie cin from cout.
+
+    int T = 1;                        // Only one test case.
+    // cin >> T;                      // Multiple tests are not used.
+
+    for(int test = 1; test <= T; test++) {
+        read();                       // Read input.
+        solve();                      // Solve instance.
+    }
+
+    return 0;                         // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+# Read the whole input as lines.
+lines = sys.stdin.read().splitlines()
+
+# The first line contains N and M.
+n, m = map(int, lines[0].split())
+
+# The next N lines contain the grid.
+grid = [lines[i + 1].strip() for i in range(n)]
+
+# The remaining lines contain the B++ program.
+# All whitespace in the program must be ignored.
+program_text = "".join(lines[n + 1:])
+
+# Remove every whitespace character from the program source.
+source = "".join(ch for ch in program_text if not ch.isspace())
+
+# Find the robot's starting position.
+start_r = start_c = -1
+for i in range(n):
+    for j in range(m):
+        if grid[i][j] == "R":
+            start_r, start_c = i, j
+
+
+# Function-name to integer-ID mapping.
+func_id_of = {}
+
+# Function bodies indexed by function ID.
+# Each body is a list of parsed operators.
+func_body = []
+
+# Function formal parameters indexed by function ID.
+func_params = []
+
+
+def get_or_create_func(name):
+    """
+    Return the integer ID of a function.
+    If this is the first time we see this function name, create storage for it.
+    """
+    if name in func_id_of:
+        return func_id_of[name]
+
+    fid = len(func_id_of)
+    func_id_of[name] = fid
+    func_body.append([])
+    func_params.append([])
+    return fid
+
+
+# Current parser position in source.
+pos = 0
+
+
+def parse_arg_letters():
+    """
+    Parse an argument list.
+
+    The current character must be '('.
+    Examples:
+        ()      -> []
+        (X)     -> ['X']
+        (X,Y)   -> ['X', 'Y']
+        (L,C)   -> ['L', 'C'] for call arguments
+    """
+    global pos
+
+    # Skip '('.
+    pos += 1
+
+    args = []
+
+    # Read until ')'.
+    while source[pos] != ")":
+        # Commas are separators and ignored.
+        if source[pos] != ",":
+            args.append(source[pos])
+        pos += 1
+
+    # Skip ')'.
+    pos += 1
+
+    return args
+
+
+def parse_block():
+    """
+    Parse a function body block.
+
+    The current character must be '{'.
+
+    Operators can be:
+    - primitive commands L/R/C
+    - uppercase argument references
+    - lowercase function calls
+    """
+    global pos
+
+    # Skip '{'.
+    pos += 1
+
+    ops = []
+
+    # Parse until matching '}'.
+    while source[pos] != "}":
+        ch = source[pos]
+
+        # Direct primitive command.
+        if ch in "LRC":
+            ops.append(("cmd", ch))
+            pos += 1
+
+        # Lowercase character means a function call.
+        elif "a" <= ch <= "z":
+            # Function name.
+            name = ch
+            pos += 1
+
+            # Get called function ID.
+            fid = get_or_create_func(name)
+
+            # Parse actual arguments.
+            args = parse_arg_letters()
+
+            # Store call operator.
+            ops.append(("call", fid, args))
+
+        # Otherwise it is an uppercase argument reference.
+        else:
+            ops.append(("arg", ch))
+            pos += 1
+
+    # Skip '}'.
+    pos += 1
+
+    return ops
+
+
+def parse_function_def():
+    """
+    Parse one full function definition:
+
+        name(args){body}
+    """
+    global pos
+
+    # Function name is one lowercase character.
+    name = source[pos]
+    pos += 1
+
+    # Get this function's ID.
+    fid = get_or_create_func(name)
+
+    # Parse formal parameters.
+    params = parse_arg_letters()
+
+    # Parse body.
+    body = parse_block()
+
+    # Store parsed definition.
+    func_params[fid] = params
+    func_body[fid] = body
+
+
+# Parse all function definitions in the source.
+while pos < len(source):
+    parse_function_def()
+
+
+# Direction vectors: 0=up, 1=right, 2=down, 3=left.
+dr = [-1, 0, 1, 0]
+dc = [0, 1, 0, -1]
+
+# Global total primitive-command count.
+total_commands = 0
+
+# Set of already reported starred cells.
+visited = set()
+
+# First-visit order of starred cells.
+visit_order = []
+
+
+def register_star(r, c):
+    """
+    If cell (r, c) is a starred cell not previously visited,
+    record it in the answer.
+    """
+    if grid[r][c] == "*" and (r, c) not in visited:
+        visited.add((r, c))
+        visit_order.append((r, c))
+
+
+def apply_command(cmd, r, c, d, star_log):
+    """
+    Execute one primitive robot command.
+
+    Returns the new robot state:
+        r, c, d
+
+    star_log receives all starred cells stepped on during this execution.
+    """
+    global total_commands
+
+    if cmd == "L":
+        # Turn left.
+        d = (d + 3) % 4
+
+    elif cmd == "R":
+        # Turn right.
+        d = (d + 1) % 4
+
+    else:
+        # Command C: move forward.
+        nr = r + dr[d]
+        nc = c + dc[d]
+
+        # Ignore movement if it leaves the grid.
+        if 0 <= nr < n and 0 <= nc < m:
+            r, c = nr, nc
+
+            # If a star is entered, log it and register first visit.
+            if grid[r][c] == "*":
+                star_log.append((r, c))
+                register_star(r, c)
+
+    # Every primitive command counts, including blocked movement.
+    total_commands += 1
+
+    return r, c, d
+
+
+# Memoization dictionary.
+# Key:
+#   (function id, argument bindings tuple, start row, start col, start direction)
+#
+# Value:
+#   (end row, end col, end direction, command count, tuple of star steps)
+cache = {}
+
+
+def execute_function(fid, bindings, r, c, d):
+    """
+    Execute function fid with concrete argument bindings.
+
+    bindings is a tuple/list containing actual command values for parameters,
+    each being one of 'L', 'R', or 'C'.
+    """
+    global total_commands
+
+    bindings = tuple(bindings)
+
+    # Build cache key from function identity, arguments, and starting state.
+    key = (fid, bindings, r, c, d)
+
+    # If this exact call was executed before, reuse it.
+    if key in cache:
+        end_r, end_c, end_d, cmd_count, stars = cache[key]
+
+        # Replay star visits in order.
+        for sr, sc in stars:
+            register_star(sr, sc)
+
+        # Add skipped primitive commands to global counter.
+        total_commands += cmd_count
+
+        return end_r, end_c, end_d, cmd_count, stars
+
+    # Execute body normally.
+    params = func_params[fid]
+    ops = func_body[fid]
+
+    # Map parameter names to actual command values.
+    env = dict(zip(params, bindings))
+
+    # Local command counter at call start.
+    before_commands = total_commands
+
+    # All star steps made during this function call.
+    stars = []
+
+    # Execute each operator in the function body.
+    for op in ops:
+        kind = op[0]
+
+        if kind == "cmd":
+            # Direct command L/R/C.
+            cmd = op[1]
+            r, c, d = apply_command(cmd, r, c, d, stars)
+
+        elif kind == "arg":
+            # Argument reference, resolved to L/R/C.
+            arg_name = op[1]
+            cmd = env[arg_name]
+            r, c, d = apply_command(cmd, r, c, d, stars)
+
+        else:
+            # Function call.
+            _, child_fid, call_args = op
+
+            # Resolve actual arguments for child function.
+            child_bindings = []
+
+            for a in call_args:
+                if a in "LRC":
+                    # Literal command argument.
+                    child_bindings.append(a)
+                else:
+                    # Caller argument; substitute its actual value.
+                    child_bindings.append(env[a])
+
+            # Execute child function from current robot state.
+            child_r, child_c, child_d, child_count, child_stars = execute_function(
+                child_fid,
+                child_bindings,
+                r,
+                c,
+                d,
+            )
+
+            # Update current robot state.
+            r, c, d = child_r, child_c, child_d
+
+            # Append all child star steps to this call's log.
+            stars.extend(child_stars)
+
+    # Number of primitive commands executed by this function call.
+    cmd_count = total_commands - before_commands
+
+    # Store immutable star list in cache.
+    result = (r, c, d, cmd_count, tuple(stars))
+    cache[key] = result
+
+    return result
+
+
+# Entry point is m().
+main_id = get_or_create_func("m")
+
+# Execute from starting position, initially facing up.
+execute_function(main_id, (), start_r, start_c, 0)
+
+# Output result.
+out = [str(len(visit_order))]
+
+for r, c in visit_order:
+    # Convert from zero-based to one-based coordinates.
+    out.append(f"{r + 1} {c + 1}")
+
+print("\n".join(out))
+```
+
+---
+
+## 5. Compressed editorial
+
+Remove all whitespace from the program and parse each function into a list of operators:
+
+- primitive command `L/R/C`
+- argument reference
+- function call
+
+Store functions by integer ID.
+
+Simulate execution starting from `m()`. The robot state is `(row, col, direction)`, with directions encoded as up/right/down/left. For a primitive command, update direction or move forward if the target cell is inside the grid. Whenever the robot enters a `*` cell for the first time, append it to the answer.
+
+Function arguments are substituted at call time. Each formal parameter is bound to one of `L`, `R`, or `C`.
+
+The provided C++ solution memoizes calls by:
+
+```text
+(function id, actual arguments, starting row, starting col, starting direction)
+```
+
+and stores the ending state, command count, and starred cells stepped on during that call. On a cache hit, it replays the stored star list to preserve global first-visit order.
+
+Finally, print the number of visited `*` cells and their one-based coordinates in first-visit order.

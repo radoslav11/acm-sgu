@@ -1,0 +1,866 @@
+## 1. Abridged problem statement
+
+Given a rectangular box asylum with opposite corners `(0,0,0)` and `(W,H,D)`, and `N ≤ 10` existing spherical ghosts, find a point where the center of a new spherical ghost can be placed so that its radius is as large as possible.
+
+The new ghost:
+
+- must lie completely inside the box,
+- must not intersect any existing ghost,
+- may touch walls or existing ghosts.
+
+Existing ghosts may intersect each other or the box boundaries.
+
+Output any center point whose achievable radius is within `1 mm` of optimal.
+
+---
+
+## 2. Detailed editorial
+
+### Reformulation
+
+Suppose we want to check whether a new ghost of radius `r` can be placed.
+
+Its center `p = (x,y,z)` must satisfy:
+
+1. It must be at least distance `r` from every wall:
+
+\[
+r \le x \le W-r
+\]
+\[
+r \le y \le H-r
+\]
+\[
+r \le z \le D-r
+\]
+
+2. It must be outside every old ghost inflated by `r`.
+
+If an old ghost has center `c_i` and radius `R_i`, then:
+
+\[
+|p-c_i| \ge R_i+r
+\]
+
+So for fixed `r`, we need to know whether the set
+
+\[
+F(r)=\{p : p \text{ is inside the shrunken box and outside all inflated ghosts}\}
+\]
+
+is non-empty.
+
+The answer radius is monotone:
+
+- if radius `r` is feasible, then every smaller radius is feasible,
+- if radius `r` is impossible, every larger radius is impossible.
+
+Therefore we can binary search the maximum radius.
+
+---
+
+### Feasibility checking
+
+For a fixed `r`, the boundary surfaces are:
+
+- six box planes:
+
+\[
+x=r,\ x=W-r,\ y=r,\ y=H-r,\ z=r,\ z=D-r
+\]
+
+- `N` inflated ghost spheres:
+
+\[
+|p-c_i|=R_i+r
+\]
+
+There are at most `6 + 10 = 16` surfaces.
+
+If the feasible region is non-empty, there is a feasible point that is locally extremal in some direction. Such an extremal point must lie on at least three boundary surfaces.
+
+So it is enough to enumerate all triples of boundary surfaces and test their intersection points.
+
+There are only:
+
+\[
+\binom{16}{3}=560
+\]
+
+triples, which is tiny.
+
+---
+
+### Intersections of three surfaces
+
+There are two cases.
+
+---
+
+#### Case 1: Three planes
+
+Three box planes intersect in one point if they correspond to three different axes.
+
+For example:
+
+\[
+x=r,\ y=H-r,\ z=D-r
+\]
+
+gives one corner of the shrunken box.
+
+We test that point.
+
+---
+
+#### Case 2: At least one sphere
+
+Choose one sphere as the main sphere.
+
+The other two surfaces are converted into planes:
+
+- if the surface is already a box plane, keep it,
+- if it is another sphere, subtract its equation from the main sphere equation.
+
+For two spheres:
+
+\[
+|p-c_0|^2=\rho_0^2
+\]
+
+\[
+|p-c_j|^2=\rho_j^2
+\]
+
+Subtracting gives a plane:
+
+\[
+2(c_j-c_0)\cdot p
+=
+\rho_0^2-\rho_j^2-|c_0|^2+|c_j|^2
+\]
+
+This is the radical plane of the two spheres.
+
+Now the problem becomes:
+
+- intersect two planes, obtaining a line,
+- intersect that line with the main sphere.
+
+A line can intersect a sphere in:
+
+- zero points,
+- one tangent point,
+- two points.
+
+Each candidate point is checked against all constraints.
+
+---
+
+### Binary search
+
+The largest possible radius is at most:
+
+\[
+\frac{\min(W,H,D)}{2}
+\]
+
+We binary search in `[0, min(W,H,D)/2]`.
+
+The provided solution uses 45 iterations, enough for much better than `1 mm` accuracy.
+
+After the binary search, it calls `feasible(lo)` once more to recover a valid witness point for the final radius.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output operator for pairs, useful for debugging.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Read every element of the vector.
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) { // Print every element followed by a space.
+        out << x << ' ';
+    }
+    return out;
+};
+
+// Dimensions of the box.
+long double W, H, D;
+
+// Number of existing ghosts.
+int n;
+
+// ghosts[i] stores {x, y, z, radius}.
+vector<array<long double, 4>> ghosts;
+
+// A feasible center found during the latest feasibility check.
+array<long double, 3> witness;
+
+// Reads the input.
+void read() {
+    cin >> W >> H >> D >> n; // Read box dimensions and number of ghosts.
+
+    ghosts.assign(n, {}); // Allocate storage for n ghosts.
+
+    for(auto& g: ghosts) {
+        // Read center coordinates and radius.
+        cin >> g[0] >> g[1] >> g[2] >> g[3];
+    }
+}
+
+// A 3D vector represented by an array of 3 long doubles.
+using vec = array<long double, 3>;
+
+// Vector subtraction.
+vec operator-(vec a, vec b) {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+// Dot product of two 3D vectors.
+long double dot(vec a, vec b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+// Cross product of two 3D vectors.
+vec cross(vec a, vec b) {
+    return {
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+    };
+}
+
+// Checks whether point p can be the center of a new ghost with radius r.
+bool valid_center(vec p, long double r) {
+    long double eps = 1e-6L; // Small tolerance for floating-point errors.
+
+    // Check whether the sphere of radius r lies inside the box.
+    if(p[0] < r - eps || p[0] > W - r + eps ||
+       p[1] < r - eps || p[1] > H - r + eps ||
+       p[2] < r - eps || p[2] > D - r + eps) {
+        return false;
+    }
+
+    // Check that the new ghost does not intersect any old ghost.
+    for(auto& g: ghosts) {
+        long double dx = p[0] - g[0]; // Difference in x-coordinate.
+        long double dy = p[1] - g[1]; // Difference in y-coordinate.
+        long double dz = p[2] - g[2]; // Difference in z-coordinate.
+
+        // Required minimum distance between centers.
+        long double rho = r + g[3];
+
+        // Actual distance must be at least rho.
+        if(sqrtl(dx * dx + dy * dy + dz * dz) < rho - eps) {
+            return false;
+        }
+    }
+
+    // All constraints are satisfied.
+    return true;
+}
+
+// Given two planes and one sphere, checks whether their intersection
+// contains a valid center.
+//
+// Plane 1: n1 · p = d1
+// Plane 2: n2 · p = d2
+// Sphere:  |p - c| = rho
+bool line_sphere(
+    vec n1, long double d1,
+    vec n2, long double d2,
+    vec c, long double rho,
+    long double r
+) {
+    // Direction vector of the intersection line of the two planes.
+    vec u = cross(n1, n2);
+
+    // Squared length of the direction vector.
+    long double lu2 = dot(u, u);
+
+    // If the normals are parallel, the planes do not define a unique line.
+    if(lu2 < 1e-18L) {
+        return false;
+    }
+
+    // p0 will be one point on the intersection line.
+    vec p0;
+
+    // Formula for a point satisfying both plane equations.
+    vec t1 = cross(n2, u);
+    vec t2 = cross(u, n1);
+
+    for(int a = 0; a < 3; a++) {
+        p0[a] = (d1 * t1[a] + d2 * t2[a]) / lu2;
+    }
+
+    // Any point on the line is p(t) = p0 + t * u.
+    // We intersect this line with the sphere.
+    vec w = p0 - c;
+
+    // Quadratic coefficient for t:
+    // |p0 + t u - c|^2 = rho^2
+    // => lu2*t^2 + b*t + cc = 0
+    long double b = 2 * dot(u, w);
+    long double cc = dot(w, w) - rho * rho;
+
+    // Discriminant of the quadratic.
+    long double disc = b * b - 4 * lu2 * cc;
+
+    // If slightly negative due to precision, clamp to zero.
+    if(disc < 0) {
+        disc = 0;
+    }
+
+    long double sq = sqrtl(disc); // Square root of discriminant.
+
+    // Try both roots.
+    for(int s = -1; s <= 1; s += 2) {
+        long double t = (-b + s * sq) / (2 * lu2);
+
+        // Candidate point on the line.
+        vec p = {
+            p0[0] + t * u[0],
+            p0[1] + t * u[1],
+            p0[2] + t * u[2]
+        };
+
+        // If it is globally valid, remember it and report success.
+        if(valid_center(p, r)) {
+            witness = p;
+            return true;
+        }
+    }
+
+    // No valid point found.
+    return false;
+}
+
+// Checks whether a radius r is feasible.
+bool feasible(long double r) {
+    // If diameter exceeds any box dimension, impossible.
+    if(2 * r > W || 2 * r > H || 2 * r > D) {
+        return false;
+    }
+
+    // Total number of boundary surfaces:
+    // 6 box planes + n inflated ghost spheres.
+    int m = 6 + n;
+
+    // Normals of the six box planes.
+    // Plane 0: x = r
+    // Plane 1: x = W - r
+    // Plane 2: y = r
+    // Plane 3: y = H - r
+    // Plane 4: z = r
+    // Plane 5: z = D - r
+    vec pn[6] = {
+        {1, 0, 0}, {1, 0, 0},
+        {0, 1, 0}, {0, 1, 0},
+        {0, 0, 1}, {0, 0, 1}
+    };
+
+    // Right-hand sides of the six plane equations.
+    long double pd[6] = {
+        r, W - r,
+        r, H - r,
+        r, D - r
+    };
+
+    // Returns the center of sphere surface id.
+    // Sphere ids start from 6.
+    auto sphere_center = [&](int id) -> vec {
+        return {
+            ghosts[id - 6][0],
+            ghosts[id - 6][1],
+            ghosts[id - 6][2]
+        };
+    };
+
+    // Returns the inflated radius of sphere surface id.
+    auto sphere_rho = [&](int id) -> long double {
+        return r + ghosts[id - 6][3];
+    };
+
+    // Enumerate all triples of boundary surfaces.
+    for(int a = 0; a < m; a++) {
+        for(int b = a + 1; b < m; b++) {
+            for(int c = b + 1; c < m; c++) {
+                int id[3] = {a, b, c};
+
+                // sph will hold one sphere among the triple, if any.
+                int sph = -1;
+
+                for(int t = 0; t < 3; t++) {
+                    if(id[t] >= 6) {
+                        sph = id[t];
+                    }
+                }
+
+                // Case 1: all three surfaces are planes.
+                if(sph == -1) {
+                    // A useful triple must contain one x-plane, one y-plane,
+                    // and one z-plane.
+                    if(id[0] / 2 != id[1] / 2 &&
+                       id[1] / 2 != id[2] / 2 &&
+                       id[0] / 2 != id[2] / 2) {
+                        vec p;
+
+                        // Assign coordinates from the chosen planes.
+                        p[id[0] / 2] = pd[id[0]];
+                        p[id[1] / 2] = pd[id[1]];
+                        p[id[2] / 2] = pd[id[2]];
+
+                        // Test whether this corner is valid.
+                        if(valid_center(p, r)) {
+                            witness = p;
+                            return true;
+                        }
+                    }
+
+                    // Continue to next triple.
+                    continue;
+                }
+
+                // Case 2: at least one surface is a sphere.
+                // Pick one sphere as the main sphere.
+                vec rc = sphere_center(sph);
+                long double rrho = sphere_rho(sph);
+
+                // The other two surfaces are represented as planes.
+                vec pl[2];
+                long double pld[2];
+                int cnt = 0;
+
+                for(int t = 0; t < 3; t++) {
+                    if(id[t] == sph) {
+                        continue;
+                    }
+
+                    if(id[t] < 6) {
+                        // Box plane remains unchanged.
+                        pl[cnt] = pn[id[t]];
+                        pld[cnt] = pd[id[t]];
+                    } else {
+                        // Another sphere is converted into a radical plane
+                        // with respect to the main sphere.
+                        vec oc = sphere_center(id[t]);
+                        long double orho = sphere_rho(id[t]);
+
+                        // Plane normal:
+                        // 2 * (other_center - main_center)
+                        pl[cnt] = {
+                            2 * (oc[0] - rc[0]),
+                            2 * (oc[1] - rc[1]),
+                            2 * (oc[2] - rc[2])
+                        };
+
+                        // Plane constant after subtracting sphere equations.
+                        pld[cnt] =
+                            rrho * rrho - orho * orho
+                            - dot(rc, rc) + dot(oc, oc);
+                    }
+
+                    cnt++;
+                }
+
+                // Intersect the two planes with the main sphere.
+                if(line_sphere(pl[0], pld[0], pl[1], pld[1], rc, rrho, r)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // No candidate point was feasible.
+    return false;
+}
+
+// Solves the problem.
+void solve() {
+    // Lower and upper bounds for binary search.
+    long double lo = 0;
+    long double hi = min({W, H, D}) / 2;
+
+    // Initial fallback witness.
+    witness = {W / 2, H / 2, D / 2};
+
+    // Binary search the maximum feasible radius.
+    for(int it = 0; it < 45; it++) {
+        long double mid = (lo + hi) / 2;
+
+        if(feasible(mid)) {
+            // Radius mid is possible, try larger.
+            lo = mid;
+        } else {
+            // Radius mid is impossible, try smaller.
+            hi = mid;
+        }
+    }
+
+    // Recompute witness for the final radius.
+    feasible(lo);
+
+    // Print with high precision.
+    cout << fixed << setprecision(12);
+    cout << witness[0] << ' ' << witness[1] << ' ' << witness[2] << '\n';
+}
+
+int main() {
+    // Speed up input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // There is only one test case.
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+import math
+from itertools import combinations
+
+
+# ---------- Basic vector operations ----------
+
+def sub(a, b):
+    """Return a - b for 3D vectors."""
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+
+def dot(a, b):
+    """Return dot product of two 3D vectors."""
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def cross(a, b):
+    """Return cross product of two 3D vectors."""
+    return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+
+
+# ---------- Input ----------
+
+data = sys.stdin.read().strip().split()
+
+W = float(data[0])
+H = float(data[1])
+D = float(data[2])
+
+n = int(data[3])
+
+ghosts = []
+ptr = 4
+
+for _ in range(n):
+    x = float(data[ptr])
+    y = float(data[ptr + 1])
+    z = float(data[ptr + 2])
+    r = float(data[ptr + 3])
+    ptr += 4
+    ghosts.append((x, y, z, r))
+
+
+# Global witness point.
+witness = [W / 2.0, H / 2.0, D / 2.0]
+
+
+def valid_center(p, r):
+    """
+    Check whether p can be the center of a new ghost with radius r.
+    """
+    eps = 1e-7
+
+    # Check box constraints.
+    if p[0] < r - eps or p[0] > W - r + eps:
+        return False
+    if p[1] < r - eps or p[1] > H - r + eps:
+        return False
+    if p[2] < r - eps or p[2] > D - r + eps:
+        return False
+
+    # Check distance from every old ghost.
+    for gx, gy, gz, gr in ghosts:
+        dx = p[0] - gx
+        dy = p[1] - gy
+        dz = p[2] - gz
+
+        need = r + gr
+        dist2 = dx * dx + dy * dy + dz * dz
+
+        if dist2 < (need - eps) * (need - eps):
+            return False
+
+    return True
+
+
+def line_sphere(n1, d1, n2, d2, c, rho, r):
+    """
+    Intersect:
+        n1 · p = d1
+        n2 · p = d2
+        |p - c| = rho
+
+    Test produced points as possible centers.
+    """
+    global witness
+
+    # Direction of intersection line of the two planes.
+    u = cross(n1, n2)
+    lu2 = dot(u, u)
+
+    # Parallel or almost-parallel planes.
+    if lu2 < 1e-18:
+        return False
+
+    # Find one point p0 on the line of intersection.
+    t1 = cross(n2, u)
+    t2 = cross(u, n1)
+
+    p0 = [
+        (d1 * t1[i] + d2 * t2[i]) / lu2
+        for i in range(3)
+    ]
+
+    # Parametrize line as p(t) = p0 + t*u.
+    w = sub(p0, c)
+
+    # Quadratic equation:
+    # |p0 + t*u - c|^2 = rho^2
+    b = 2.0 * dot(u, w)
+    cc = dot(w, w) - rho * rho
+
+    disc = b * b - 4.0 * lu2 * cc
+
+    # If negative only due to floating error, clamp to zero.
+    if disc < 0.0:
+        disc = 0.0
+
+    sq = math.sqrt(disc)
+
+    # Try both roots.
+    for sign in (-1.0, 1.0):
+        t = (-b + sign * sq) / (2.0 * lu2)
+
+        p = [
+            p0[0] + t * u[0],
+            p0[1] + t * u[1],
+            p0[2] + t * u[2],
+        ]
+
+        if valid_center(p, r):
+            witness = p
+            return True
+
+    return False
+
+
+def feasible(r):
+    """
+    Return True if a new ghost of radius r can be placed.
+    Also stores one valid center in witness.
+    """
+    global witness
+
+    # Radius too large for the box.
+    if 2.0 * r > W or 2.0 * r > H or 2.0 * r > D:
+        return False
+
+    # There are six box planes and n ghost spheres.
+    m = 6 + n
+
+    # Normals of six box planes.
+    plane_normals = [
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ]
+
+    # Constants of six box planes.
+    plane_ds = [
+        r,
+        W - r,
+        r,
+        H - r,
+        r,
+        D - r,
+    ]
+
+    def sphere_center(surface_id):
+        """Return center of ghost sphere surface."""
+        gx, gy, gz, _ = ghosts[surface_id - 6]
+        return [gx, gy, gz]
+
+    def sphere_radius(surface_id):
+        """Return inflated radius of ghost sphere surface."""
+        return ghosts[surface_id - 6][3] + r
+
+    # Enumerate all triples of surfaces.
+    for a, b, c in combinations(range(m), 3):
+        ids = [a, b, c]
+
+        # Pick one sphere from the triple, if any.
+        sph = -1
+        for surface_id in ids:
+            if surface_id >= 6:
+                sph = surface_id
+
+        # Case 1: three box planes.
+        if sph == -1:
+            # They must correspond to three different axes.
+            axes = [surface_id // 2 for surface_id in ids]
+
+            if len(set(axes)) == 3:
+                p = [0.0, 0.0, 0.0]
+
+                for surface_id in ids:
+                    axis = surface_id // 2
+                    p[axis] = plane_ds[surface_id]
+
+                if valid_center(p, r):
+                    witness = p
+                    return True
+
+            continue
+
+        # Case 2: at least one sphere.
+        # Use this sphere as the main sphere.
+        rc = sphere_center(sph)
+        rrho = sphere_radius(sph)
+
+        # Convert the other two surfaces into planes.
+        planes_n = []
+        planes_d = []
+
+        for surface_id in ids:
+            if surface_id == sph:
+                continue
+
+            if surface_id < 6:
+                # Box plane.
+                planes_n.append(plane_normals[surface_id])
+                planes_d.append(plane_ds[surface_id])
+            else:
+                # Sphere converted to radical plane.
+                oc = sphere_center(surface_id)
+                orho = sphere_radius(surface_id)
+
+                normal = [
+                    2.0 * (oc[0] - rc[0]),
+                    2.0 * (oc[1] - rc[1]),
+                    2.0 * (oc[2] - rc[2]),
+                ]
+
+                dval = (
+                    rrho * rrho
+                    - orho * orho
+                    - dot(rc, rc)
+                    + dot(oc, oc)
+                )
+
+                planes_n.append(normal)
+                planes_d.append(dval)
+
+        # Intersect two planes and the main sphere.
+        if line_sphere(
+            planes_n[0],
+            planes_d[0],
+            planes_n[1],
+            planes_d[1],
+            rc,
+            rrho,
+            r,
+        ):
+            return True
+
+    return False
+
+
+# ---------- Binary search ----------
+
+lo = 0.0
+hi = min(W, H, D) / 2.0
+
+# 60 iterations are plenty for millimeter accuracy.
+for _ in range(60):
+    mid = (lo + hi) / 2.0
+
+    if feasible(mid):
+        lo = mid
+    else:
+        hi = mid
+
+# Recover witness for final radius.
+feasible(lo)
+
+print("{:.12f} {:.12f} {:.12f}".format(witness[0], witness[1], witness[2]))
+```
+
+---
+
+## 5. Compressed editorial
+
+Binary search the answer radius `r`.
+
+For fixed `r`, the center must lie inside the shrunken box:
+
+\[
+[r,W-r]\times[r,H-r]\times[r,D-r]
+\]
+
+and outside every inflated old ghost sphere:
+
+\[
+|p-c_i|\ge R_i+r
+\]
+
+The boundary surfaces are six box planes and at most ten spheres. If the feasible region is non-empty, some feasible extremal point lies on at least three boundary surfaces. Therefore enumerate all triples of surfaces.
+
+For three planes, test their unique box-corner intersection if they use three different axes.
+
+For triples containing a sphere, keep one sphere as quadratic. Convert any other sphere into a radical plane by subtracting equations, and keep box planes as planes. Then intersect two planes into a line and intersect that line with the chosen sphere, giving at most two candidate points. Test each candidate against all constraints.
+
+Feasibility is monotone in `r`, so binary search up to `min(W,H,D)/2`. Output the witness point from the final feasible radius.

@@ -1,0 +1,1156 @@
+## 1. Abridged Problem Statement
+
+Bencoding represents four kinds of objects:
+
+- **String**: `k:s`, where `k` is the length of `s`, written without leading zeros except `0`.
+- **Integer**: `i<n>e`, where `n` is a non-negative integer without leading zeros except `0`.
+- **List**: `l<item1><item2>...e`
+- **Dictionary**: `d<key1><value1><key2><value2>...e`
+
+Lists and dictionaries may be empty. Dictionary keys and values can be any bencoded object.
+
+Given:
+
+- an integer `m`, the maximum allowed length of a valid bencoded object,
+- a string `c`,
+
+determine whether `c` itself is a valid single bencoded object of length at most `m`.
+
+If yes, print:
+
+```text
+ok
+```
+
+Otherwise, find the maximum position `j` such that `c[0:j]` can still be extended into some valid bencoded object of total length at most `m`, and print:
+
+```text
+Error at position j!
+```
+
+Positions are zero-based, and `j` is also the prefix length.
+
+---
+
+## 2. Detailed Editorial
+
+We need to parse a possibly incomplete bencoded string and determine the longest prefix that can be extended to a valid complete bencoded object of total length at most `m`.
+
+A naive recursive parser is not enough because we also need to know, after every prefix, whether it is still possible to finish the object within the length limit `m`.
+
+The provided solution performs one left-to-right scan using a state machine.
+
+---
+
+### Parsing states
+
+While scanning, we maintain two kinds of state.
+
+#### 1. Stack of open containers
+
+The stack stores currently open lists and dictionaries.
+
+For dictionaries, we need to know whether we are currently expecting a key or a value.
+
+There are three possible frame types:
+
+```cpp
+LIST
+DICT_K  // dictionary currently expecting a key, or it may close
+DICT_V  // dictionary currently expecting a value, cannot close yet
+```
+
+For example:
+
+- In a list, at a boundary, either another item may start or the list may end with `e`.
+- In a dictionary expecting a key, either a key may start or the dictionary may end with `e`.
+- In a dictionary expecting a value, an item must start; `e` is illegal.
+
+---
+
+#### 2. Current partial object state
+
+Besides containers, we may be in the middle of reading an integer or string.
+
+There are four possibilities:
+
+```cpp
+NONE      // currently at a clean object boundary
+INT       // after reading 'i', reading integer digits until 'e'
+STR_LEN   // reading string length digits until ':'
+STR_BODY  // reading raw string body characters
+```
+
+For integers and string lengths, we also track leading-zero validity.
+
+---
+
+### Completing a parsed item
+
+Whenever an item finishes:
+
+- If there is no open container, then the root object has completed.
+- If the parent is a dictionary expecting a key, it now expects a value.
+- If the parent is a dictionary expecting a value, it now expects another key or closing `e`.
+- If the parent is a list, nothing changes; another list item may follow or the list may close.
+
+---
+
+### Detecting invalid syntax
+
+During parsing, a prefix becomes invalid immediately if, for example:
+
+- an integer has no digits before `e`,
+- an integer or string length has illegal leading zeros,
+- an unexpected character appears,
+- a dictionary expecting a value receives `e`,
+- characters appear after the root object is already complete.
+
+When this happens, scanning stops.
+
+---
+
+### Length feasibility
+
+Even if the prefix is syntactically possible, it may be impossible to finish within length `m`.
+
+So after every successfully consumed character, we compute the minimum number of extra characters needed to finish a valid object.
+
+If:
+
+```text
+current_prefix_length + minimum_remaining_length > m
+```
+
+then this prefix cannot be extended into a valid object within the limit, so scanning stops.
+
+---
+
+### Minimum remaining length
+
+The key part of the solution is computing the shortest possible suffix that completes the current prefix.
+
+The smallest complete bencoded object has length `2`, for example:
+
+```text
+0:
+le
+de
+```
+
+So before anything starts, the minimum remaining length is `2`.
+
+---
+
+### Container closing costs
+
+For each open frame, we maintain a value called `g_cost`.
+
+This is the minimum number of characters needed to finish that frame assuming the currently active item inside it has just completed.
+
+The values are:
+
+```cpp
+LIST   -> 1
+DICT_K -> 3
+DICT_V -> 1
+```
+
+Why?
+
+#### LIST
+
+After an item inside a list finishes, we can close the list with:
+
+```text
+e
+```
+
+Cost: `1`.
+
+#### DICT_K
+
+If a dictionary is expecting a key, and we are currently parsing that key, then after the key finishes, the dictionary will require a value before closing.
+
+The shortest value is an empty string:
+
+```text
+0:
+```
+
+Then close dictionary:
+
+```text
+e
+```
+
+So cost:
+
+```text
+0:e
+```
+
+Length `3`.
+
+#### DICT_V
+
+If a dictionary is expecting a value, and that value finishes, then the dictionary can close immediately with:
+
+```text
+e
+```
+
+Cost `1`.
+
+---
+
+### Clean-boundary costs
+
+When we are at a clean boundary inside a frame, the minimum cost is slightly different.
+
+We define `f_cost`:
+
+```cpp
+LIST   -> 1
+DICT_K -> 1
+DICT_V -> 3
+```
+
+Why?
+
+- Inside a list, we can close with `e`.
+- Inside a dictionary expecting a key, we can close with `e`.
+- Inside a dictionary expecting a value, we must provide a shortest value `0:` and then close with `e`, total length `3`.
+
+---
+
+### Maintaining `g_sum`
+
+Instead of recomputing costs over the entire stack each time, the solution maintains:
+
+```cpp
+g_sum = sum of g_cost(frame) over all open frames
+```
+
+This allows `min_remaining()` to run in `O(1)` time.
+
+---
+
+### Computing minimum remaining length
+
+There are two main cases.
+
+---
+
+#### Case 1: We are at a clean boundary
+
+If no root object has started:
+
+```cpp
+return 2;
+```
+
+If root is completed:
+
+```cpp
+return 0;
+```
+
+If inside a container, then:
+
+```cpp
+f_cost(top_frame) + g_sum - g_cost(top_frame)
+```
+
+That means:
+
+- finish or close the current innermost frame using `f_cost`,
+- then finish all outer frames using their `g_cost`.
+
+---
+
+#### Case 2: We are in the middle of an item
+
+First compute how many characters are needed to finish that item:
+
+- Integer:
+  - if no digits yet: need one digit plus `e`, cost `2`
+  - otherwise: need just `e`, cost `1`
+- String length:
+  - need `:` plus exactly `length` body characters
+- String body:
+  - need remaining body characters
+
+Then add `g_sum`, because after this item completes, every open container still needs to be completed.
+
+---
+
+### Final answer
+
+We track:
+
+```cpp
+j_max
+```
+
+the largest prefix length seen so far that is both:
+
+1. syntactically valid so far,
+2. completable within length `m`.
+
+At the end:
+
+- if the whole string was consumed,
+- and the root object is completed,
+
+then print `ok`.
+
+Otherwise print:
+
+```text
+Error at position j_max!
+```
+
+The algorithm is linear:
+
+```text
+O(|c|)
+```
+
+Memory usage is proportional to nesting depth:
+
+```text
+O(|c|)
+```
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ headers.
+
+using namespace std; // Avoid writing std:: everywhere.
+
+// Output operator for pairs.
+// This is a generic utility and is not essential to the core solution.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input operator for pairs.
+// Also a generic helper, unused in the main algorithm.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input operator for vectors.
+// Reads all elements of an already-sized vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {
+        in >> x;
+    }
+    return in;
+};
+
+// Output operator for vectors.
+// Prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int m;       // Maximum allowed length of a valid bencoded object.
+string c;   // Input character sequence.
+
+// Reads input.
+void read() {
+    cin >> m >> c;
+}
+
+void solve() {
+    /*
+        We scan the string once using a state machine.
+
+        There are two major parts of state:
+
+        1. frames:
+           Stack of currently open containers.
+
+           LIST   : currently inside a list.
+           DICT_K : inside a dictionary, expecting a key or 'e' to close it.
+           DICT_V : inside a dictionary, expecting a value; 'e' is not allowed.
+
+        2. progress:
+           Describes whether we are currently reading an atomic object.
+
+           NONE     : at a clean item boundary.
+           INT      : reading digits of an integer after 'i'.
+           STR_LEN  : reading digits of a string length.
+           STR_BODY : reading raw body characters of a string.
+
+        The hard part is not only checking syntax, but also checking whether
+        the current prefix can still be completed within total length m.
+
+        For this, we maintain g_sum, the sum of "completion costs" of all
+        open frames.
+    */
+
+    // Possible types of open containers.
+    enum Frame { LIST, DICT_K, DICT_V };
+
+    // Possible parser progress states.
+    enum Progress { NONE, INT, STR_LEN, STR_BODY };
+
+    vector<Frame> frames; // Stack of open list/dictionary frames.
+
+    Progress progress = NONE; // Initially we are not inside an atom.
+
+    int int_digits = 0;       // Number of digits read for current integer.
+    bool int_zero = false;    // Whether current integer started with zero.
+
+    long long str_val = 0;    // Current string length, or remaining body chars.
+    int str_len_digits = 0;   // Number of digits read in string length.
+    bool str_len_zero = false;// Whether string length started with zero.
+
+    bool root_started = false;   // Whether the top-level object has begun.
+    bool root_completed = false; // Whether the top-level object has completed.
+
+    long long g_sum = 0; // Sum of g_cost for all open frames.
+
+    // g_cost(frame):
+    // Minimum extra chars to finish this frame assuming the current item
+    // inside that frame finishes by itself first.
+    auto g_cost = [](Frame f) -> int {
+        // If a dictionary was expecting a key, then after that key finishes,
+        // it still needs a shortest value "0:" and closing 'e', total 3.
+        // Otherwise, list or dictionary-value side can close with one 'e'.
+        return (f == DICT_K) ? 3 : 1;
+    };
+
+    // f_cost(frame):
+    // Minimum extra chars to finish this frame when we are at a clean boundary
+    // directly inside it.
+    auto f_cost = [](Frame f) -> int {
+        // If a dictionary expects a value, we must insert shortest value "0:"
+        // and then close with 'e', total 3.
+        // Lists and dictionaries expecting keys can close with one 'e'.
+        return (f == DICT_V) ? 3 : 1;
+    };
+
+    // Computes the minimum number of extra characters required to complete
+    // the current prefix into a valid bencoded object.
+    auto min_remaining = [&]() -> long long {
+        // If the root object is already complete, nothing more is required.
+        if(root_completed) {
+            return 0;
+        }
+
+        // If we are not in the middle of an integer/string.
+        if(progress == NONE) {
+            // Before any object starts, the shortest object has length 2:
+            // "0:", "le", or "de".
+            if(!root_started) {
+                return 2;
+            }
+
+            // If root started and no frames are open, root is complete or
+            // syntactically impossible. In the normal complete case, return 0.
+            if(frames.empty()) {
+                return 0;
+            }
+
+            // At a clean boundary inside the innermost frame:
+            // finish the top frame using f_cost(top), and all outer frames
+            // using their g_cost values.
+            Frame top = frames.back();
+            return f_cost(top) + (g_sum - g_cost(top));
+        }
+
+        // Otherwise, we are in the middle of an atom.
+        long long finish_cost = 0;
+
+        if(progress == INT) {
+            // An integer needs at least one digit and a final 'e'.
+            // If no digits have been read yet, add one digit plus 'e'.
+            // If digits already exist, only 'e' is needed.
+            finish_cost = (int_digits == 0 ? 1 : 0) + 1;
+        } else if(progress == STR_LEN) {
+            // A string length needs ':' and then exactly str_val body chars.
+            finish_cost = 1 + str_val;
+        } else {
+            // Inside string body, str_val stores remaining body characters.
+            finish_cost = str_val;
+        }
+
+        // After the current atom finishes, all open containers must close.
+        return finish_cost + g_sum;
+    };
+
+    // Called when a complete item has just been parsed.
+    auto item_completed = [&]() {
+        // If no container is open, this item is the root object.
+        if(frames.empty()) {
+            root_completed = true;
+        } else {
+            // Otherwise, update the state of the parent dictionary if needed.
+            Frame& top = frames.back();
+
+            if(top == DICT_K) {
+                // A dictionary key has just completed.
+                // It now expects a value.
+                g_sum -= g_cost(DICT_K);
+                top = DICT_V;
+                g_sum += g_cost(DICT_V);
+            } else if(top == DICT_V) {
+                // A dictionary value has just completed.
+                // It now expects the next key or closing 'e'.
+                g_sum -= g_cost(DICT_V);
+                top = DICT_K;
+                g_sum += g_cost(DICT_K);
+            }
+
+            // If top == LIST, nothing changes.
+        }
+    };
+
+    // Starts parsing a new item beginning with character ch.
+    // Returns false if ch cannot begin a bencoded item.
+    auto start_item = [&](char ch) -> bool {
+        if(ch == 'i') {
+            // Start an integer.
+            progress = INT;
+            int_digits = 0;
+            int_zero = false;
+            return true;
+        }
+
+        if(ch == 'l') {
+            // Start a list frame.
+            frames.push_back(LIST);
+            g_sum += g_cost(LIST);
+            return true;
+        }
+
+        if(ch == 'd') {
+            // Start a dictionary frame expecting a key.
+            frames.push_back(DICT_K);
+            g_sum += g_cost(DICT_K);
+            return true;
+        }
+
+        if(ch >= '0' && ch <= '9') {
+            // Start a string length.
+            progress = STR_LEN;
+            str_val = ch - '0';
+            str_len_digits = 1;
+            str_len_zero = (ch == '0');
+            return true;
+        }
+
+        // No other character can begin an item.
+        return false;
+    };
+
+    // Processes one character.
+    // Returns false if this character makes the prefix impossible.
+    auto process = [&](char ch) -> bool {
+        // No characters are allowed after a complete root object.
+        if(root_completed) {
+            return false;
+        }
+
+        // If currently reading integer digits.
+        if(progress == INT) {
+            if(ch >= '0' && ch <= '9') {
+                // Leading zero is illegal unless the integer is exactly "0".
+                if(int_zero && int_digits >= 1) {
+                    return false;
+                }
+
+                // Mark that the integer starts with zero.
+                if(ch == '0' && int_digits == 0) {
+                    int_zero = true;
+                }
+
+                // Count this digit.
+                int_digits++;
+                return true;
+            }
+
+            if(ch == 'e') {
+                // Integer must contain at least one digit.
+                if(int_digits == 0) {
+                    return false;
+                }
+
+                // Integer is complete.
+                progress = NONE;
+                item_completed();
+                return true;
+            }
+
+            // Any other character is illegal inside integer.
+            return false;
+        }
+
+        // If currently reading string length digits.
+        if(progress == STR_LEN) {
+            if(ch >= '0' && ch <= '9') {
+                // Leading zero in string length is illegal unless length is 0.
+                if(str_len_zero && str_len_digits >= 1) {
+                    return false;
+                }
+
+                // Accumulate decimal length.
+                str_val = str_val * 10 + (ch - '0');
+
+                // Count length digit.
+                str_len_digits++;
+                return true;
+            }
+
+            if(ch == ':') {
+                // Length is complete; now read body characters.
+                progress = STR_BODY;
+
+                // Empty string completes immediately.
+                if(str_val == 0) {
+                    progress = NONE;
+                    item_completed();
+                }
+
+                return true;
+            }
+
+            // Only digits and ':' are allowed while reading string length.
+            return false;
+        }
+
+        // If currently reading raw string body.
+        if(progress == STR_BODY) {
+            // Any input character is valid as raw body content.
+            str_val--;
+
+            // Once enough characters are consumed, the string is complete.
+            if(str_val == 0) {
+                progress = NONE;
+                item_completed();
+            }
+
+            return true;
+        }
+
+        // If progress == NONE, we are at a boundary.
+
+        if(frames.empty()) {
+            // If no frame is open and root already started, another item
+            // would mean extra data after root.
+            if(root_started) {
+                return false;
+            }
+
+            // Start the root item.
+            root_started = true;
+            return start_item(ch);
+        }
+
+        // Inspect innermost open container.
+        Frame top = frames.back();
+
+        if(top == LIST || top == DICT_K) {
+            // Lists and dictionaries expecting keys may close with 'e'.
+            if(ch == 'e') {
+                // Close this container.
+                g_sum -= g_cost(top);
+                frames.pop_back();
+
+                // The closed container itself is now a completed item.
+                item_completed();
+                return true;
+            }
+
+            // Otherwise, a new item starts inside the list/dictionary.
+            return start_item(ch);
+        }
+
+        // If top == DICT_V, a value is mandatory.
+        // 'e' cannot close a dictionary while it expects a value.
+        if(ch == 'e') {
+            return false;
+        }
+
+        // Start the dictionary value item.
+        return start_item(ch);
+    };
+
+    int n = (int)c.size(); // Length of input string.
+    int j_max = 0;         // Largest feasible prefix length found.
+
+    // Scan characters one by one.
+    for(int i = 0; i < n; i++) {
+        // If syntax breaks, stop.
+        if(!process(c[i])) {
+            break;
+        }
+
+        // Prefix length after consuming character i.
+        long long new_j = i + 1;
+
+        // If even the shortest possible completion exceeds m, stop.
+        if(new_j + min_remaining() > (long long)m) {
+            break;
+        }
+
+        // This prefix is feasible.
+        j_max = (int)new_j;
+    }
+
+    // The whole input is valid only if all characters are feasible and the root
+    // object has completed exactly at the end.
+    if(j_max == n && root_completed) {
+        cout << "ok\n";
+    } else {
+        cout << "Error at position " << j_max << "!\n";
+    }
+}
+
+int main() {
+    // Fast input/output.
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+
+    // There is only one test case.
+    // cin >> T;
+
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+
+
+def solve() -> None:
+    # Read all input lines.
+    data = sys.stdin.read().splitlines()
+
+    # First line: maximum allowed valid-object length.
+    m = int(data[0])
+
+    # Second line: character sequence to process.
+    c = data[1]
+
+    # Frame types for the stack of open containers.
+    LIST = 0      # Inside a list.
+    DICT_K = 1    # Inside a dictionary, expecting a key or closing 'e'.
+    DICT_V = 2    # Inside a dictionary, expecting a value.
+
+    # Parser progress states.
+    NONE = 0      # At a clean boundary.
+    INT = 1       # Reading integer digits after 'i'.
+    STR_LEN = 2   # Reading string length digits.
+    STR_BODY = 3  # Reading string body characters.
+
+    # Stack of open containers.
+    frames = []
+
+    # Current parser progress.
+    progress = NONE
+
+    # Integer parsing state.
+    int_digits = 0
+    int_zero = False
+
+    # String parsing state.
+    #
+    # While reading STR_LEN, str_val is the parsed string length.
+    # While reading STR_BODY, str_val is the number of body characters remaining.
+    str_val = 0
+    str_len_digits = 0
+    str_len_zero = False
+
+    # Whether the top-level object has started/completed.
+    root_started = False
+    root_completed = False
+
+    # Sum of g_cost(frame) over all open frames.
+    g_sum = 0
+
+    # We never need string lengths larger than this cap for feasibility checks.
+    # If a length exceeds m, then completion is certainly too long.
+    CAP = m + 1
+
+    def g_cost(frame: int) -> int:
+        """
+        Cost to complete this frame assuming the currently active item inside it
+        has just completed.
+        """
+        if frame == DICT_K:
+            # A key just finished; need shortest value "0:" and closing 'e'.
+            return 3
+        else:
+            # List or dictionary after value can close with 'e'.
+            return 1
+
+    def f_cost(frame: int) -> int:
+        """
+        Cost to complete this frame from a clean boundary directly inside it.
+        """
+        if frame == DICT_V:
+            # Must provide shortest value "0:" and then close with 'e'.
+            return 3
+        else:
+            # List or dictionary expecting key can close with 'e'.
+            return 1
+
+    def min_remaining() -> int:
+        """
+        Return the minimum number of additional characters needed to finish the
+        current prefix as a valid bencoded object.
+        """
+        nonlocal progress, root_started, root_completed
+        nonlocal frames, g_sum
+        nonlocal int_digits, str_val
+
+        # Already complete: need nothing.
+        if root_completed:
+            return 0
+
+        # At a clean boundary, not inside an integer/string.
+        if progress == NONE:
+            # If no root item has started, shortest possible object has length 2.
+            if not root_started:
+                return 2
+
+            # If no frames are open, the root is effectively complete.
+            if not frames:
+                return 0
+
+            # Complete the innermost frame using f_cost,
+            # and all outer frames using their g_cost.
+            top = frames[-1]
+            return f_cost(top) + (g_sum - g_cost(top))
+
+        # If inside an unfinished integer.
+        if progress == INT:
+            # Need one digit if no digits yet, then final 'e'.
+            finish_cost = (1 if int_digits == 0 else 0) + 1
+
+        # If reading string length.
+        elif progress == STR_LEN:
+            # Need ':' and then str_val body characters.
+            finish_cost = 1 + str_val
+
+        # If reading string body.
+        else:
+            # Need exactly str_val more raw characters.
+            finish_cost = str_val
+
+        # After this item finishes, all open containers still need closing.
+        return finish_cost + g_sum
+
+    def item_completed() -> None:
+        """
+        Called whenever a full item has just been parsed.
+        Updates the parent container state, or marks root complete.
+        """
+        nonlocal root_completed, g_sum
+
+        # If no container is open, this item is the root object.
+        if not frames:
+            root_completed = True
+            return
+
+        # Otherwise, update dictionary state if needed.
+        top = frames[-1]
+
+        if top == DICT_K:
+            # A dictionary key completed; now it expects a value.
+            g_sum -= g_cost(DICT_K)
+            frames[-1] = DICT_V
+            g_sum += g_cost(DICT_V)
+
+        elif top == DICT_V:
+            # A dictionary value completed; now it expects another key or 'e'.
+            g_sum -= g_cost(DICT_V)
+            frames[-1] = DICT_K
+            g_sum += g_cost(DICT_K)
+
+        # If top is LIST, nothing changes.
+
+    def start_item(ch: str) -> bool:
+        """
+        Try to start a new bencoded item with character ch.
+        Return True if successful, False otherwise.
+        """
+        nonlocal progress, int_digits, int_zero
+        nonlocal str_val, str_len_digits, str_len_zero
+        nonlocal g_sum
+
+        if ch == "i":
+            # Start integer.
+            progress = INT
+            int_digits = 0
+            int_zero = False
+            return True
+
+        if ch == "l":
+            # Start list.
+            frames.append(LIST)
+            g_sum += g_cost(LIST)
+            return True
+
+        if ch == "d":
+            # Start dictionary, initially expecting a key.
+            frames.append(DICT_K)
+            g_sum += g_cost(DICT_K)
+            return True
+
+        if "0" <= ch <= "9":
+            # Start string length.
+            progress = STR_LEN
+            str_val = ord(ch) - ord("0")
+            str_len_digits = 1
+            str_len_zero = (ch == "0")
+            return True
+
+        # No other character can begin an item.
+        return False
+
+    def process(ch: str) -> bool:
+        """
+        Process one input character.
+        Return False if the prefix becomes syntactically invalid.
+        """
+        nonlocal progress
+        nonlocal int_digits, int_zero
+        nonlocal str_val, str_len_digits, str_len_zero
+        nonlocal root_started, root_completed
+        nonlocal g_sum
+
+        # Extra characters after the root object are forbidden.
+        if root_completed:
+            return False
+
+        # Currently reading integer.
+        if progress == INT:
+            if "0" <= ch <= "9":
+                # Leading zero is illegal unless integer is exactly "0".
+                if int_zero and int_digits >= 1:
+                    return False
+
+                if ch == "0" and int_digits == 0:
+                    int_zero = True
+
+                int_digits += 1
+                return True
+
+            if ch == "e":
+                # Integer must contain at least one digit.
+                if int_digits == 0:
+                    return False
+
+                progress = NONE
+                item_completed()
+                return True
+
+            return False
+
+        # Currently reading string length.
+        if progress == STR_LEN:
+            if "0" <= ch <= "9":
+                # Leading zero in string length is illegal unless length is 0.
+                if str_len_zero and str_len_digits >= 1:
+                    return False
+
+                # Accumulate length, but cap to avoid huge Python integers.
+                if str_val <= CAP:
+                    str_val = str_val * 10 + (ord(ch) - ord("0"))
+                    if str_val > CAP:
+                        str_val = CAP
+
+                str_len_digits += 1
+                return True
+
+            if ch == ":":
+                # Start reading string body.
+                progress = STR_BODY
+
+                # Empty string completes immediately.
+                if str_val == 0:
+                    progress = NONE
+                    item_completed()
+
+                return True
+
+            return False
+
+        # Currently reading string body.
+        if progress == STR_BODY:
+            # Any character is allowed in string body.
+            str_val -= 1
+
+            # String completes after exactly the required number of chars.
+            if str_val == 0:
+                progress = NONE
+                item_completed()
+
+            return True
+
+        # progress == NONE: we are at a boundary between items.
+
+        if not frames:
+            # If root already started, a new item would be trailing garbage.
+            if root_started:
+                return False
+
+            # Start root object.
+            root_started = True
+            return start_item(ch)
+
+        # Inspect current innermost container.
+        top = frames[-1]
+
+        if top == LIST or top == DICT_K:
+            # Lists and dictionaries expecting keys may close with 'e'.
+            if ch == "e":
+                g_sum -= g_cost(top)
+                frames.pop()
+
+                # The closed list/dictionary is itself one completed item.
+                item_completed()
+                return True
+
+            # Otherwise, start an item inside the container.
+            return start_item(ch)
+
+        # top == DICT_V: dictionary expects a value.
+        # It cannot close here.
+        if ch == "e":
+            return False
+
+        # Start dictionary value.
+        return start_item(ch)
+
+    n = len(c)
+
+    # Largest feasible prefix length found so far.
+    j_max = 0
+
+    # Scan input.
+    for i, ch in enumerate(c):
+        # Stop on syntax error.
+        if not process(ch):
+            break
+
+        # Current prefix length.
+        new_j = i + 1
+
+        # Stop if even the shortest completion exceeds m.
+        if new_j + min_remaining() > m:
+            break
+
+        # This prefix can still be completed within m.
+        j_max = new_j
+
+    # Valid iff entire input was consumed as a complete root object.
+    if j_max == n and root_completed:
+        print("ok")
+    else:
+        print(f"Error at position {j_max}!")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Parse the string in one pass with a stack.
+
+Each open container is one of:
+
+- `LIST`
+- `DICT_K`: dictionary expecting key or closing `e`
+- `DICT_V`: dictionary expecting value
+
+The parser is also in one of:
+
+- `NONE`
+- `INT`
+- `STR_LEN`
+- `STR_BODY`
+
+After each consumed character, check both:
+
+1. syntax is still valid,
+2. the prefix can still be completed within total length `m`.
+
+To do the second check in `O(1)`, maintain `g_sum`, the sum of completion costs of all open frames.
+
+For a frame, define:
+
+```text
+g_cost(LIST)   = 1
+g_cost(DICT_K) = 3
+g_cost(DICT_V) = 1
+```
+
+This is the cost to finish the frame after the currently parsed item inside it completes.
+
+Also define clean-boundary costs:
+
+```text
+f_cost(LIST)   = 1
+f_cost(DICT_K) = 1
+f_cost(DICT_V) = 3
+```
+
+At a clean boundary inside the top frame, the minimum remaining length is:
+
+```text
+f_cost(top) + g_sum - g_cost(top)
+```
+
+If currently parsing an unfinished atom:
+
+- integer needs either `e`, or digit plus `e`,
+- string length needs `:` plus body,
+- string body needs remaining body characters,
+
+then add `g_sum`.
+
+Track the largest prefix length `j_max` satisfying:
+
+```text
+prefix_length + min_remaining <= m
+```
+
+If the whole input is consumed and the root object is complete, print `ok`; otherwise print `Error at position j_max!`.
+
+Complexity:
+
+```text
+O(n) time
+O(n) memory in worst-case nesting
+```

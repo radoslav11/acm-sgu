@@ -1,0 +1,649 @@
+## 1) Abridged problem statement
+
+You are given an \(N \times M\) grid (\(3 \le N,M \le 15\)) of:
+
+- `X` = crater cell (land depression),
+- `.` = normal land cell where pipes may be built.
+
+4-adjacent `X` cells form a single crater (component). The ocean is “outside” the rectangle, so any `.` cell on the border can connect to the ocean, but **no `X` cell touches the ocean**.
+
+You must build water pipes by changing some `.` cells into `*` (pipe cells). Pipes are 4-connected through `*`/`.` adjacency, and a pipe is connected to a crater if a pipe cell shares an edge with any `X` cell of that crater.
+
+Goal: choose a set of `.` cells to mark `*` so that **at least two distinct craters become connected to the ocean (via pipes)**, minimizing the number of `*` cells. Output any optimal resulting grid.
+
+(You may connect more than two craters, but at least two must be connected.)
+
+---
+
+## 2) Detailed editorial (how the solution works)
+
+### Key observations
+
+- The grid is tiny (\(\le 15 \times 15\)), so we can run many BFS’s.
+- Pipes can only occupy `.` cells; `X` cells cannot be used as pipe.
+- We need to connect the ocean to **at least two craters** with minimum number of pipe cells.
+
+Model the `.` cells as vertices of an unweighted graph with edges between 4-neighbors.
+
+A crater (an `X` component) can be connected to the pipe network via any adjacent `.` cell (“port”). Similarly, the ocean can be connected via any border `.` cell (“ocean port”).
+
+So we have terminals:
+- Ocean terminal = set of border `.` cells
+- Each crater terminal \(k\) = set of `.` cells adjacent to crater \(k\)
+
+We want a minimum-size set of `.` vertices forming a connected subgraph that touches the ocean and at least two crater terminals. But it might be cheaper to use **two disconnected pipes**: one from crater A to ocean, one from crater B to ocean (the statement explicitly allows this and says sometimes it’s better).
+
+Thus any optimal solution falls into one of two shapes:
+
+#### Shape (a): two independent connections
+Pick two craters \(a,b\), build a shortest path of `.` cells from a port of \(a\) to the ocean, and independently for \(b\). The final cost is the size of the **union** of used cells (paths may overlap).
+
+#### Shape (b): one connected branched network (Steiner-like)
+Build a single connected `*` component that touches:
+- the ocean, and
+- ports of two craters \(i\) and \(j\)
+
+For three terminals in an unweighted graph, an optimal Steiner tree can be seen as **three shortest paths meeting at one vertex \(m\)** (a “meeting point”). So we can enumerate meeting cell \(m\) and compute:
+- shortest distance from \(m\) to ocean
+- shortest distance from \(m\) to crater \(i\) (via its ports)
+- shortest distance from \(m\) to crater \(j\)
+
+Then the union size is:
+\[
+\text{distO}[m] + (\text{distC}_i[m] - 1) + (\text{distC}_j[m] - 1)
+\]
+Because `distO[m]` already counts the meeting cell \(m\), and each crater distance also counts \(m\), we subtract 1 twice.
+
+Also, although you’re allowed to connect more than two craters, **the minimum for “at least two” is always achieved by connecting some pair**; adding extra craters can only add pipe cells, never reduce them.
+
+So it suffices to:
+- consider best “two separate pipes” solution, and
+- consider best “one branched component connecting ocean + two craters” solution,
+then pick the cheaper.
+
+---
+
+### Step-by-step algorithm
+
+#### 1) Identify craters (`X` components)
+Flood-fill (BFS/DFS) over `X` cells, assign `crater_id[r][c]` in \([0..K-1]\).
+
+#### 2) Collect ports for each crater
+For every `.` cell, check its 4 neighbors; if neighbor is `X`, then this `.` is a port of that crater.
+
+Also collect **ocean sources** = all border `.` cells.
+
+#### 3) BFS distances
+We use BFS over `.` cells only.
+
+- Multi-source BFS from all ocean sources:
+  - `dist_o[r][c]` = minimum number of pipe cells needed to connect (r,c) to ocean if we include (r,c) itself.
+  - Initialize ocean sources with distance 1.
+  - Store parent pointers `par_o` to reconstruct a shortest path to ocean.
+
+- For each crater \(k\), multi-source BFS from all its ports (distance 1):
+  - `dist_c[k][r][c]` = minimum cells from (r,c) to reach crater k’s ports (counting the port itself as 1).
+
+These BFS’s are cheap: grid size ≤ 225.
+
+#### 4) Candidate (a): two separate pipes
+For each crater \(k\), compute:
+\[
+\text{cost}[k] = \min_{p \in ports[k]} dist_o[p]
+\]
+Pick two craters with smallest finite costs. Reconstruct the ocean paths from their best ports using `par_o`, take union set \(S_{sep}\), cost is `|S_sep|`.
+
+(Union matters because the two shortest paths might overlap.)
+
+#### 5) Candidate (b): one branched network
+Enumerate:
+- crater pair \(i<j\),
+- meeting cell \(m\) where `grid[m]=='.'`
+
+If all three distances are finite (`dist_o[m]`, `dist_c[i][m]`, `dist_c[j][m]`), compute:
+\[
+v = dist_o[m] + dist_c[i][m] - 1 + dist_c[j][m] - 1
+\]
+Keep the minimum \(v\) and remember best \((i,j,m)\).
+
+To reconstruct actual cells:
+- Path from \(m\) to ocean: trace `par_o` from \(m\) back to a border source.
+- For paths from \(m\) to craters: run a BFS **from \(m\)** (single-source) with start distance 0, keep parents `par_m`.
+  - Choose the best port of crater \(i\) by minimizing `dist_m[port]`, similarly for crater \(j\).
+  - Trace both port paths back to \(m\) using `par_m`.
+- Union all traced cells into \(S_{multi}\).
+
+Compute cost as `|S_multi|` (again using union).
+
+#### 6) Output
+Choose the smaller of `S_sep` and `S_multi`, mark those cells as `*` (only on `.` cells), print the grid.
+
+---
+
+### Correctness sketch
+
+- Any connection from a crater to ocean through `.` cells has a shortest path captured by BFS.
+- For two independent pipes, picking the two lowest individual crater-to-ocean shortest paths minimizes total union among “two independent shortest-to-ocean choices” (and since paths are reconstructible, union size is computed exactly).
+- For a single connected component connecting ocean + two craters, an optimal solution in an unweighted grid graph can be transformed into three shortest paths meeting at some node \(m\) (take a minimal tree, choose a branching node). Enumerating all \(m\) finds the optimal such tree.
+- Global optimum must be either two separate components (a) or one component connecting the required terminals (b). We take the best of both.
+
+Complexity:  
+Let \(V \le 225\), craters \(K \le 225\) but typically small.  
+BFS is \(O(V)\). We do \(K\) crater BFS’s plus ocean BFS plus enumeration \(O(K^2 V)\). Well within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Convenience printing for pairs (not actually used in final output).
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Convenience reading for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read a whole vector of items.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for (auto& x: a) in >> x;
+    return in;
+}
+
+// Print a vector (unused).
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for (auto x: a) out << x << ' ';
+    return out;
+}
+
+int N, M;                 // Grid dimensions.
+vector<string> grid;      // The grid itself.
+
+void read() {
+    cin >> N >> M;        // Read N rows and M columns.
+    grid.assign(N, "");
+    for (int i = 0; i < N; i++) {
+        cin >> grid[i];   // Read each row as a string of '.' and 'X'.
+    }
+}
+
+void solve() {
+    // Directions for 4-neighborhood moves.
+    const int dr[] = {-1, 1, 0, 0};
+    const int dc[] = {0, 0, -1, 1};
+    const int INF = INT_MAX;
+
+    // Lambda to test grid bounds.
+    auto in_bounds = [&](int r, int c) {
+        return r >= 0 && r < N && c >= 0 && c < M;
+    };
+
+    // crater_id[r][c] = which crater component this 'X' cell belongs to, else -1.
+    vector<vector<int>> crater_id(N, vector<int>(M, -1));
+
+    int K = 0; // number of craters found
+
+    // 1) Flood-fill all 'X' components and assign crater ids.
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < M; j++) {
+
+            // Skip non-crater cells or already-visited crater cells.
+            if (grid[i][j] != 'X' || crater_id[i][j] != -1) continue;
+
+            // BFS to mark this crater component.
+            queue<pair<int,int>> q;
+            q.push({i, j});
+            crater_id[i][j] = K;
+
+            while (!q.empty()) {
+                auto [r, c] = q.front();
+                q.pop();
+
+                // Explore 4 neighbors.
+                for (int d = 0; d < 4; d++) {
+                    int nr = r + dr[d], nc = c + dc[d];
+
+                    // If neighbor is an 'X' and not yet assigned, it belongs to this crater.
+                    if (in_bounds(nr, nc) && grid[nr][nc] == 'X' &&
+                        crater_id[nr][nc] == -1) {
+                        crater_id[nr][nc] = K;
+                        q.push({nr, nc});
+                    }
+                }
+            }
+            K++; // done with this crater
+        }
+    }
+
+    // ports[k] will store all '.' cells adjacent to crater k (pipe can touch crater there).
+    vector<vector<pair<int,int>>> ports(K);
+
+    // 2) Collect ports for each crater.
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < M; j++) {
+            if (grid[i][j] != '.') continue; // only '.' can be ports
+
+            set<int> seen; // avoid adding same '.' cell twice for same crater
+            for (int d = 0; d < 4; d++) {
+                int ni = i + dr[d], nj = j + dc[d];
+                if (in_bounds(ni, nj) && grid[ni][nj] == 'X') {
+                    int cid = crater_id[ni][nj];
+                    if (seen.insert(cid).second) {
+                        ports[cid].push_back({i, j});
+                    }
+                }
+            }
+        }
+    }
+
+    // Generic BFS over '.' cells.
+    // sources: starting cells
+    // start_dist: distance value assigned to sources (1 for counting the source cell itself)
+    // Returns: (dist matrix, parent matrix for path reconstruction)
+    auto bfs = [&](const vector<pair<int,int>>& sources, int start_dist) {
+        vector<vector<int>> dist(N, vector<int>(M, INF));
+        vector<vector<pair<int,int>>> par(
+            N, vector<pair<int,int>>(M, {-1, -1})
+        );
+        queue<pair<int,int>> q;
+
+        // Initialize all sources.
+        for (auto [r, c] : sources) {
+            if (dist[r][c] == INF) {      // only insert once
+                dist[r][c] = start_dist;  // distance convention chosen by the author
+                q.push({r, c});
+            }
+        }
+
+        // Standard BFS expansion.
+        while (!q.empty()) {
+            auto [r, c] = q.front();
+            q.pop();
+
+            for (int d = 0; d < 4; d++) {
+                int nr = r + dr[d], nc = c + dc[d];
+
+                // Move only through '.' cells, and only if unvisited.
+                if (in_bounds(nr, nc) && grid[nr][nc] == '.' &&
+                    dist[nr][nc] == INF) {
+                    dist[nr][nc] = dist[r][c] + 1; // unweighted step cost = 1
+                    par[nr][nc] = {r, c};           // store parent to reconstruct a shortest path
+                    q.push({nr, nc});
+                }
+            }
+        }
+        return make_pair(dist, par);
+    };
+
+    // 3) Build list of ocean sources = '.' cells on the border.
+    vector<pair<int,int>> ocean_sources;
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < M; j++) {
+            if (grid[i][j] == '.' &&
+                (i == 0 || i == N - 1 || j == 0 || j == M - 1)) {
+                ocean_sources.push_back({i, j});
+            }
+        }
+    }
+
+    // BFS from all ocean border '.' cells.
+    auto [dist_o, par_o] = bfs(ocean_sources, 1);
+
+    // 4) For each crater k, BFS from all its ports.
+    vector<vector<vector<int>>> dist_c(K);
+    for (int k = 0; k < K; k++) {
+        dist_c[k] = bfs(ports[k], 1).first; // only distances are needed here
+    }
+
+    // Helper: choose the port of crater k that is best according to a given dist matrix d.
+    auto best_port = [&](int k, const vector<vector<int>>& d) {
+        pair<int,int> best = {-1, -1};
+        int bd = INF;
+        for (auto [r, c] : ports[k]) {
+            if (d[r][c] < bd) {
+                bd = d[r][c];
+                best = {r, c};
+            }
+        }
+        return best;
+    };
+
+    // Helper: reconstruct path by following parent pointers until (-1,-1),
+    // and return it as a set of cells (for union counting).
+    auto trace_path = [&](pair<int,int> start,
+                          const vector<vector<pair<int,int>>>& par) {
+        set<pair<int,int>> path;
+        auto cur = start;
+        while (cur.first != -1) {
+            path.insert(cur);
+            cur = par[cur.first][cur.second];
+        }
+        return path;
+    };
+
+    // 5a) Candidate (a): two separate crater-to-ocean pipes.
+    vector<int> cost(K, INF);
+    for (int k = 0; k < K; k++) {
+        for (auto [r, c] : ports[k]) {
+            cost[k] = min(cost[k], dist_o[r][c]); // shortest from any port to ocean
+        }
+    }
+
+    // Sort craters by their best individual cost.
+    vector<int> order(K);
+    iota(order.begin(), order.end(), 0);
+    sort(order.begin(), order.end(), [&](int a, int b) {
+        return cost[a] < cost[b];
+    });
+
+    set<pair<int,int>> S_sep; // union of cells in the separate-pipes solution
+    int cost_sep = INF;
+
+    // Need at least two reachable craters to make this candidate.
+    if (K >= 2 && cost[order[0]] != INF && cost[order[1]] != INF) {
+        // Best port for each of the two cheapest craters, measured by dist_o.
+        auto pa = best_port(order[0], dist_o);
+        auto pb = best_port(order[1], dist_o);
+
+        // Reconstruct each shortest path port->ocean using ocean BFS parents.
+        auto sa = trace_path(pa, par_o);
+        auto sb = trace_path(pb, par_o);
+
+        // Union them to count overlapping cells only once.
+        S_sep.insert(sa.begin(), sa.end());
+        S_sep.insert(sb.begin(), sb.end());
+
+        cost_sep = (int)S_sep.size();
+    }
+
+    // 5b) Candidate (b): one connected branched component (ocean + two craters).
+    int min_multi = INF;
+    int best_i = -1, best_j = -1;
+    pair<int,int> best_m = {-1, -1};
+
+    // Enumerate crater pairs and meeting cell m.
+    for (int i = 0; i < K; i++) {
+        for (int j = i + 1; j < K; j++) {
+            for (int r = 0; r < N; r++) {
+                for (int c = 0; c < M; c++) {
+                    if (grid[r][c] != '.') continue;
+
+                    // m must be reachable from ocean and from both craters.
+                    if (dist_o[r][c] == INF || dist_c[i][r][c] == INF ||
+                        dist_c[j][r][c] == INF) continue;
+
+                    // Union size of three shortest paths meeting at m:
+                    // dist_o[m] counts m once; each crater distance counts m too, so subtract 1 twice.
+                    int v = dist_o[r][c] + dist_c[i][r][c] - 1 +
+                            dist_c[j][r][c] - 1;
+
+                    if (v < min_multi) {
+                        min_multi = v;
+                        best_i = i;
+                        best_j = j;
+                        best_m = {r, c};
+                    }
+                }
+            }
+        }
+    }
+
+    set<pair<int,int>> S_multi; // union of cells in the branched solution
+    int cost_multi = INF;
+
+    if (best_i != -1) {
+        // Path from meeting point to ocean using ocean BFS parents.
+        auto ocean_path = trace_path(best_m, par_o);
+
+        // Run BFS from meeting point to be able to reconstruct paths to ports of both craters.
+        auto [dist_m, par_m] = bfs({best_m}, 0); // start_dist=0 so dist is number of steps from m
+
+        // Choose the closest port of each crater measured from m.
+        auto pi = best_port(best_i, dist_m);
+        auto pj = best_port(best_j, dist_m);
+
+        // Reconstruct paths port->m (following parents backwards from port to m).
+        auto path_i = trace_path(pi, par_m);
+        auto path_j = trace_path(pj, par_m);
+
+        // Union all pieces.
+        S_multi.insert(ocean_path.begin(), ocean_path.end());
+        S_multi.insert(path_i.begin(), path_i.end());
+        S_multi.insert(path_j.begin(), path_j.end());
+
+        cost_multi = (int)S_multi.size();
+    }
+
+    // 6) Choose the better candidate and mark those '.' cells as '*'.
+    set<pair<int,int>>& chosen = (cost_sep <= cost_multi) ? S_sep : S_multi;
+    for (auto [r, c] : chosen) {
+        grid[r][c] = '*';
+    }
+
+    // Output final grid.
+    for (auto& row : grid) {
+        cout << row << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1;
+    // cin >> T; // single test in this problem
+    for (int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same approach, detailed comments)
+
+```python
+from collections import deque
+import sys
+
+INF = 10**9
+
+def solve() -> None:
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    N = int(next(it))
+    M = int(next(it))
+    grid = [list(next(it).strip()) for _ in range(N)]
+
+    # 4-neighborhood directions
+    DR = (-1, 1, 0, 0)
+    DC = (0, 0, -1, 1)
+
+    def in_bounds(r: int, c: int) -> bool:
+        return 0 <= r < N and 0 <= c < M
+
+    # 1) Label crater components (connected components of 'X')
+    crater_id = [[-1] * M for _ in range(N)]
+    K = 0
+    for i in range(N):
+        for j in range(M):
+            if grid[i][j] != 'X' or crater_id[i][j] != -1:
+                continue
+            q = deque([(i, j)])
+            crater_id[i][j] = K
+            while q:
+                r, c = q.popleft()
+                for d in range(4):
+                    nr, nc = r + DR[d], c + DC[d]
+                    if in_bounds(nr, nc) and grid[nr][nc] == 'X' and crater_id[nr][nc] == -1:
+                        crater_id[nr][nc] = K
+                        q.append((nr, nc))
+            K += 1
+
+    # 2) Collect ports: '.' cells adjacent to each crater
+    ports = [[] for _ in range(K)]
+    for r in range(N):
+        for c in range(M):
+            if grid[r][c] != '.':
+                continue
+            seen = set()
+            for d in range(4):
+                nr, nc = r + DR[d], c + DC[d]
+                if in_bounds(nr, nc) and grid[nr][nc] == 'X':
+                    cid = crater_id[nr][nc]
+                    if cid not in seen:
+                        seen.add(cid)
+                        ports[cid].append((r, c))
+
+    # BFS over '.' cells with parent pointers for path reconstruction.
+    # sources: list of starting '.' cells
+    # start_dist: distance assigned to sources
+    def bfs(sources, start_dist):
+        dist = [[INF] * M for _ in range(N)]
+        par = [[(-1, -1)] * M for _ in range(N)]  # parent cell; (-1,-1) means start
+        q = deque()
+
+        for (r, c) in sources:
+            if dist[r][c] == INF:
+                dist[r][c] = start_dist
+                q.append((r, c))
+
+        while q:
+            r, c = q.popleft()
+            for d in range(4):
+                nr, nc = r + DR[d], c + DC[d]
+                if in_bounds(nr, nc) and grid[nr][nc] == '.' and dist[nr][nc] == INF:
+                    dist[nr][nc] = dist[r][c] + 1
+                    par[nr][nc] = (r, c)
+                    q.append((nr, nc))
+        return dist, par
+
+    # Ocean sources are border '.' cells
+    ocean_sources = []
+    for r in range(N):
+        for c in range(M):
+            if grid[r][c] == '.' and (r == 0 or r == N - 1 or c == 0 or c == M - 1):
+                ocean_sources.append((r, c))
+
+    dist_o, par_o = bfs(ocean_sources, 1)
+
+    # Distances from each crater (multi-source from its ports)
+    dist_c = []
+    for k in range(K):
+        d, _ = bfs(ports[k], 1)
+        dist_c.append(d)
+
+    # Pick best port of crater k according to distance matrix d
+    def best_port(k, d):
+        best = (-1, -1)
+        best_val = INF
+        for (r, c) in ports[k]:
+            if d[r][c] < best_val:
+                best_val = d[r][c]
+                best = (r, c)
+        return best
+
+    # Trace path by following parent pointers until (-1,-1), return set of visited cells
+    def trace_path(start, par):
+        path = set()
+        r, c = start
+        while r != -1:
+            path.add((r, c))
+            r, c = par[r][c]
+        return path
+
+    # Candidate (a): two separate pipes (choose two smallest crater->ocean costs)
+    cost = [INF] * K
+    for k in range(K):
+        for (r, c) in ports[k]:
+            if dist_o[r][c] < cost[k]:
+                cost[k] = dist_o[r][c]
+
+    order = list(range(K))
+    order.sort(key=lambda x: cost[x])
+
+    S_sep = set()
+    cost_sep = INF
+    if K >= 2 and cost[order[0]] < INF and cost[order[1]] < INF:
+        pa = best_port(order[0], dist_o)
+        pb = best_port(order[1], dist_o)
+        S_sep |= trace_path(pa, par_o)
+        S_sep |= trace_path(pb, par_o)
+        cost_sep = len(S_sep)
+
+    # Candidate (b): one branched component. Enumerate pair of craters and meeting cell m.
+    min_multi = INF
+    best_i = best_j = -1
+    best_m = (-1, -1)
+
+    for i in range(K):
+        for j in range(i + 1, K):
+            for r in range(N):
+                for c in range(M):
+                    if grid[r][c] != '.':
+                        continue
+                    if dist_o[r][c] >= INF or dist_c[i][r][c] >= INF or dist_c[j][r][c] >= INF:
+                        continue
+                    v = dist_o[r][c] + (dist_c[i][r][c] - 1) + (dist_c[j][r][c] - 1)
+                    if v < min_multi:
+                        min_multi = v
+                        best_i, best_j = i, j
+                        best_m = (r, c)
+
+    S_multi = set()
+    cost_multi = INF
+    if best_i != -1:
+        # Ocean path (m -> ocean) using ocean BFS parents
+        S_multi |= trace_path(best_m, par_o)
+
+        # BFS from meeting point to reconstruct paths to crater ports
+        dist_m, par_m = bfs([best_m], 0)
+
+        pi = best_port(best_i, dist_m)
+        pj = best_port(best_j, dist_m)
+
+        S_multi |= trace_path(pi, par_m)
+        S_multi |= trace_path(pj, par_m)
+
+        cost_multi = len(S_multi)
+
+    # Choose best solution and apply it
+    chosen = S_sep if cost_sep <= cost_multi else S_multi
+    for (r, c) in chosen:
+        grid[r][c] = '*'
+
+    out = "\n".join("".join(row) for row in grid)
+    sys.stdout.write(out + "\n")
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+- Flood-fill `X` cells to label each crater (component).
+- For each crater, collect its **ports** = adjacent `.` cells. Ocean ports are border `.` cells.
+- Run multi-source BFS on `.` cells:
+  - from ocean ports → `dist_o` + parents `par_o`
+  - from each crater’s ports → `dist_c[k]`
+- Evaluate two optimal-shape candidates:
+  1) **Two separate pipes**: for each crater \(k\), `cost[k]=min_{port} dist_o[port]`; take two smallest, reconstruct both paths with `par_o`, union their cells.
+  2) **One branched pipe**: for every crater pair \(i<j\) and meeting `.` cell \(m\),
+     minimize `dist_o[m] + dist_c[i][m]-1 + dist_c[j][m]-1`.
+     Reconstruct union: (m→ocean via `par_o`) + (m→best port of i and j via BFS from m).
+- Pick the smaller union, mark those `.` cells as `*`, print the grid.

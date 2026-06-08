@@ -1,0 +1,574 @@
+## 1. Abridged Problem Statement
+
+There are stones in a row, each colored blue `b`, red `r`, yellow `y`, or white `w`.
+
+A replacement rule has the form:
+
+```text
+xy -> c
+```
+
+meaning two adjacent stones with colors `x` then `y` may be replaced by one stone of color `c`.
+
+The input gives all rules grouped by resulting color, then gives the initial row of stones.
+
+For each color, determine whether there exists some sequence of valid replacements that reduces the entire row to exactly one stone of that color. Output all such colors, or `Nobody` if no color can win.
+
+The order of colors in the output may be arbitrary.
+
+Constraints:
+
+- Initial row length: `1..200`
+- Each color has `1..16` replacement rules.
+
+
+
+## 2. Detailed Editorial
+
+This problem asks whether the whole string of stones can be reduced to a single stone of each possible color.
+
+This is very similar to parsing a string with a context-free grammar:
+
+- Each color is a nonterminal.
+- A rule `xy -> c` means a segment reducible to color `x` followed by a segment reducible to color `y` can together be reduced to color `c`.
+
+Since the row length is at most `200`, we can use interval dynamic programming.
+
+### State
+
+Let:
+
+```text
+dp[l][r]
+```
+
+be the set of colors into which the substring `row[l..r]` can be reduced.
+
+There are only 4 colors, so we store this set as a 4-bit integer mask:
+
+```text
+bit 0 -> blue
+bit 1 -> red
+bit 2 -> yellow
+bit 3 -> white
+```
+
+For example, if `dp[l][r] = 5`, binary `0101`, then the segment can be reduced to blue and yellow.
+
+### Base Case
+
+A segment of length `1` is just one stone, so it can only be reduced to its own color:
+
+```text
+dp[i][i] = mask(row[i])
+```
+
+### Transition
+
+For a longer segment `row[l..r]`, the last replacement must merge two adjacent already-reduced parts:
+
+```text
+row[l..mid]     -> color a
+row[mid+1..r]   -> color b
+```
+
+If the rule `ab -> c` exists, then:
+
+```text
+row[l..r] -> color c
+```
+
+So for every split point `mid`, and every possible pair of colors from the left and right masks, we add all possible resulting colors.
+
+Formally:
+
+```text
+for mid in [l, r-1]:
+    for a in dp[l][mid]:
+        for b in dp[mid+1][r]:
+            dp[l][r] includes rule_mask[a][b]
+```
+
+Here:
+
+```text
+rule_mask[a][b]
+```
+
+is also a 4-bit mask containing all colors that can be produced from adjacent colors `a b`.
+
+Multiple rules may have the same pair but different result colors, so a mask is convenient.
+
+### Answer
+
+After filling DP, `dp[0][n-1]` contains exactly the colors into which the whole row can be reduced.
+
+Output those colors. If the mask is zero, output:
+
+```text
+Nobody
+```
+
+### Correctness Argument
+
+We prove that `dp[l][r]` contains exactly the colors into which segment `row[l..r]` can be reduced.
+
+#### Base Case
+
+For `l = r`, the segment consists of a single stone. It can only already be its own color and cannot be reduced further. The initialization stores exactly that color.
+
+#### Transition Soundness
+
+Whenever the algorithm adds color `c` to `dp[l][r]`, it found a split `mid`, a color `a` reachable from `row[l..mid]`, and a color `b` reachable from `row[mid+1..r]`, with a valid rule `ab -> c`.
+
+By the induction hypothesis, the left and right parts can indeed be reduced to stones of colors `a` and `b`. Then the rule allows replacing those two stones by `c`. Therefore `row[l..r]` can be reduced to `c`.
+
+#### Transition Completeness
+
+Suppose `row[l..r]` can be reduced to color `c`. Consider the final replacement in this reduction. Immediately before it, the segment consists of two stones produced from two adjacent subsegments:
+
+```text
+row[l..mid] and row[mid+1..r]
+```
+
+for some `mid`.
+
+Let their colors be `a` and `b`. Then there must be a rule `ab -> c`. By induction, `a` is in `dp[l][mid]` and `b` is in `dp[mid+1][r]`. The algorithm considers this split and pair, so it adds `c`.
+
+Thus the DP is exact.
+
+### Complexity
+
+There are `O(n^2)` intervals and `O(n)` split points per interval. For each split we try at most `4 * 4 = 16` color pairs.
+
+So the complexity is:
+
+```text
+O(n^3 * 16) = O(n^3)
+```
+
+Memory usage is:
+
+```text
+O(n^2)
+```
+
+
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+// Include almost all standard C++ library headers.
+#include <bits/stdc++.h>
+
+// Use the standard namespace so we can write vector, string, cin, cout, etc.
+using namespace std;
+
+// Overload output operator for pairs.
+// This helper is not actually needed for the solution, but is part of the provided template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    // Print the first and second elements separated by a space.
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pairs.
+// Also not needed directly in this problem.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    // Read the first and second elements of the pair.
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vectors.
+// Reads all existing elements of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    // Iterate through every element by reference.
+    for(auto& x: a) {
+        // Read the element.
+        in >> x;
+    }
+
+    // Return the input stream to allow chaining.
+    return in;
+};
+
+// Overload output operator for vectors.
+// Prints all elements separated by spaces.
+// Not needed directly in this problem.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    // Iterate through every element.
+    for(auto x: a) {
+        // Print the element followed by a space.
+        out << x << ' ';
+    }
+
+    // Return the output stream to allow chaining.
+    return out;
+};
+
+// rule_mask[a][b] is a 4-bit mask of all colors that can result
+// from replacing adjacent colors a followed by b.
+int rule_mask[4][4];
+
+// The initial row of stones.
+string row;
+
+// Convert a color character to an integer id.
+// b -> 0, r -> 1, y -> 2, w -> 3.
+int color_id(char c) {
+    return c == 'b' ? 0 : c == 'r' ? 1 : c == 'y' ? 2 : 3;
+}
+
+// Read all input.
+void read() {
+    // cnt[c] stores the number of rules producing color c.
+    int cnt[4];
+
+    // Read the numbers B, R, Y, W.
+    for(int c = 0; c < 4; c++) {
+        cin >> cnt[c];
+    }
+
+    // For every resulting color c...
+    for(int c = 0; c < 4; c++) {
+        // Read cnt[c] rules that produce color c.
+        for(int i = 0; i < cnt[c]; i++) {
+            // A rule is a two-character string, such as "br".
+            string rule;
+
+            // Read the rule.
+            cin >> rule;
+
+            // Convert the two input colors to ids.
+            // If rule = "br", then first color is b and second color is r.
+            int first = color_id(rule[0]);
+            int second = color_id(rule[1]);
+
+            // Mark that first + second can produce color c.
+            // Since several output colors may be possible for the same pair,
+            // we store all possible outputs in a bit mask.
+            rule_mask[first][second] |= 1 << c;
+        }
+    }
+
+    // Read the initial row of stones.
+    cin >> row;
+}
+
+// Solve the problem using interval DP.
+void solve() {
+    // n is the number of stones in the initial row.
+    int n = (int)row.size();
+
+    // dp[l][r] is a 4-bit mask.
+    // A bit c is set if row[l..r] can be reduced to one stone of color c.
+    vector<vector<int>> dp(n, vector<int>(n, 0));
+
+    // Base case: a single stone can only be reduced to its own color.
+    for(int i = 0; i < n; i++) {
+        dp[i][i] = 1 << color_id(row[i]);
+    }
+
+    // Process segments by increasing length.
+    for(int len = 2; len <= n; len++) {
+        // Enumerate all segments [l, r] of this length.
+        for(int l = 0, r = len - 1; r < n; l++, r++) {
+            // mask will collect all colors achievable for row[l..r].
+            int mask = 0;
+
+            // Try every possible place where the final merge could split the segment.
+            for(int mid = l; mid < r; mid++) {
+                // Colors achievable from the left part row[l..mid].
+                int left = dp[l][mid];
+
+                // Colors achievable from the right part row[mid+1..r].
+                int right = dp[mid + 1][r];
+
+                // Try every possible resulting color a of the left segment.
+                for(int a = 0; a < 4; a++) {
+                    // Try every possible resulting color b of the right segment.
+                    for(int b = 0; b < 4; b++) {
+                        // Check whether color a is possible on the left
+                        // and color b is possible on the right.
+                        if((left >> a & 1) && (right >> b & 1)) {
+                            // If both are possible, add every color that the
+                            // pair (a, b) can be replaced with.
+                            mask |= rule_mask[a][b];
+                        }
+                    }
+                }
+            }
+
+            // Store the completed set of achievable colors for this interval.
+            dp[l][r] = mask;
+        }
+    }
+
+    // Characters corresponding to color ids 0, 1, 2, 3.
+    string colors = "bryw";
+
+    // The answer string will contain all winning colors.
+    string ans;
+
+    // Inspect every color.
+    for(int c = 0; c < 4; c++) {
+        // If color c is achievable for the whole row, it is a possible winner.
+        if(dp[0][n - 1] >> c & 1) {
+            // Append its character to the answer.
+            ans += colors[c];
+        }
+    }
+
+    // If no color is achievable, print Nobody.
+    // Otherwise print the list of possible winning colors.
+    cout << (ans.empty() ? "Nobody" : ans) << '\n';
+}
+
+// Program entry point.
+int main() {
+    // Disable synchronization with C stdio for faster input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout for faster input.
+    cin.tie(nullptr);
+
+    // The original solution is written as if multiple tests were possible.
+    // In this problem there is exactly one test case.
+    int T = 1;
+
+    // Multiple test input is disabled.
+    // cin >> T;
+
+    // Solve each test case.
+    for(int test = 1; test <= T; test++) {
+        // Read input.
+        read();
+
+        // Compute and print answer.
+        solve();
+    }
+
+    // Return success.
+    return 0;
+}
+```
+
+
+
+## 4. Python Solution with Detailed Comments
+
+This Python version uses the same DP idea, with one small optimization: it precomputes transitions between masks.
+
+Instead of trying all `4 * 4` color pairs for every split, we precompute:
+
+```text
+transition[left_mask][right_mask]
+```
+
+which directly gives all colors obtainable by merging any color from `left_mask` with any color from `right_mask`.
+
+```python
+import sys
+
+
+def color_id(c):
+    """
+    Convert a color character to an integer id.
+
+    b -> 0
+    r -> 1
+    y -> 2
+    w -> 3
+    """
+    if c == 'b':
+        return 0
+    if c == 'r':
+        return 1
+    if c == 'y':
+        return 2
+    return 3
+
+
+def main():
+    # Read all input tokens.
+    data = sys.stdin.read().split()
+
+    # Pointer to the current token.
+    ptr = 0
+
+    # Read counts B, R, Y, W.
+    cnt = list(map(int, data[ptr:ptr + 4]))
+    ptr += 4
+
+    # rule_mask[a][b] is a 4-bit mask of colors that can be produced
+    # by replacing adjacent stones of colors a followed by b.
+    rule_mask = [[0] * 4 for _ in range(4)]
+
+    # Rules are given grouped by resulting color:
+    # first rules producing blue, then red, then yellow, then white.
+    for result_color in range(4):
+        # Read all rules for this result color.
+        for _ in range(cnt[result_color]):
+            # Rule is a two-character string like "br".
+            rule = data[ptr]
+            ptr += 1
+
+            # Convert both input colors to ids.
+            a = color_id(rule[0])
+            b = color_id(rule[1])
+
+            # Mark that pair (a, b) can produce result_color.
+            rule_mask[a][b] |= 1 << result_color
+
+    # Read the initial row of stones.
+    row = data[ptr]
+
+    # Number of stones.
+    n = len(row)
+
+    # Precompute transition between masks.
+    #
+    # transition[left_mask][right_mask] gives all colors obtainable by:
+    # choosing one color a from left_mask,
+    # choosing one color b from right_mask,
+    # then applying a rule a b -> result.
+    transition = [[0] * 16 for _ in range(16)]
+
+    # There are only 16 possible 4-bit masks.
+    for left_mask in range(16):
+        for right_mask in range(16):
+            # Store all possible resulting colors here.
+            result_mask = 0
+
+            # Try every color a from the left mask.
+            for a in range(4):
+                if not (left_mask & (1 << a)):
+                    continue
+
+                # Try every color b from the right mask.
+                for b in range(4):
+                    if not (right_mask & (1 << b)):
+                        continue
+
+                    # Add all possible result colors for pair (a, b).
+                    result_mask |= rule_mask[a][b]
+
+            # Save the precomputed result.
+            transition[left_mask][right_mask] = result_mask
+
+    # dp[l][r] is a 4-bit mask of colors into which row[l..r] can reduce.
+    dp = [[0] * n for _ in range(n)]
+
+    # Base case: each one-character segment is already one stone of its color.
+    for i, ch in enumerate(row):
+        dp[i][i] = 1 << color_id(ch)
+
+    # Process intervals by increasing length.
+    for length in range(2, n + 1):
+        # l is the left boundary.
+        for l in range(0, n - length + 1):
+            # r is the right boundary.
+            r = l + length - 1
+
+            # Accumulate all colors possible for this interval.
+            mask = 0
+
+            # Try all final split positions.
+            for mid in range(l, r):
+                # Left part is row[l..mid].
+                left_mask = dp[l][mid]
+
+                # Right part is row[mid+1..r].
+                right_mask = dp[mid + 1][r]
+
+                # Add all colors obtainable by merging these two parts.
+                mask |= transition[left_mask][right_mask]
+
+                # All four colors are already possible, no need to continue.
+                if mask == 15:
+                    break
+
+            # Store result for row[l..r].
+            dp[l][r] = mask
+
+    # Characters in the order matching ids 0, 1, 2, 3.
+    colors = "bryw"
+
+    # Full-row achievable colors.
+    final_mask = dp[0][n - 1]
+
+    # Build answer.
+    answer = []
+
+    # Add every color whose bit is set.
+    for c in range(4):
+        if final_mask & (1 << c):
+            answer.append(colors[c])
+
+    # Print answer or Nobody.
+    if answer:
+        print("".join(answer))
+    else:
+        print("Nobody")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+
+
+## 5. Compressed Editorial
+
+Use interval DP.
+
+Encode colors as:
+
+```text
+b = 0, r = 1, y = 2, w = 3
+```
+
+Store every set of possible colors as a 4-bit mask.
+
+Let:
+
+```text
+dp[l][r]
+```
+
+be the mask of colors into which substring `row[l..r]` can be reduced.
+
+Base:
+
+```text
+dp[i][i] = 1 << color_id(row[i])
+```
+
+For each rule `ab -> c`, store:
+
+```text
+rule_mask[a][b] |= 1 << c
+```
+
+Transition:
+
+```text
+dp[l][r] = OR over all splits mid:
+           OR over a in dp[l][mid], b in dp[mid+1][r]:
+           rule_mask[a][b]
+```
+
+The last move reducing an interval must merge two already-reduced adjacent subintervals, so this recurrence considers every possible valid reduction.
+
+Finally, inspect `dp[0][n-1]`. Output all colors whose bits are set, or `Nobody` if the mask is zero.
+
+Complexity:
+
+```text
+O(n^3 * 16)
+```
+
+or `O(n^3)` with precomputed mask transitions.

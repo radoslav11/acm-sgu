@@ -1,0 +1,743 @@
+## 1. Abridged problem statement
+
+We are given an `N × M` grid of digits `0..9`. Each mafia leader owns one 4-connected region, and neighboring leaders always have different digits. Therefore, each maximal 4-connected component of equal digits is one leader’s territory.
+
+A leader is **big** if its territory contains at least `K` cells.
+
+A cell is **dangerous** if either:
+
+1. it belongs to a big leader, or
+2. there exists a big leader such that every path from this cell to the border of the grid must pass through that big leader’s territory.
+
+Find the total number of dangerous cells.
+
+Constraints:
+
+```text
+1 ≤ N, M ≤ 500
+1 ≤ K ≤ 250000
+```
+
+---
+
+## 2. Detailed editorial
+
+### Key observation: compress equal-digit components
+
+Because adjacent territories cannot have the same digit, every maximal 4-connected component of equal digits corresponds to exactly one mafia leader.
+
+So first, we flood-fill the grid and assign each cell a component ID.
+
+For every component we store:
+
+- its size,
+- whether it touches the border,
+- which other components are adjacent to it.
+
+This gives us a graph:
+
+- each vertex is a mafia leader/component,
+- edges connect neighboring components.
+
+We also add one extra vertex called `OUTSIDE`.
+
+Every component touching the grid border is connected to `OUTSIDE`.
+
+Now a path from a cell to the border corresponds to a path in this component graph from that cell’s component to `OUTSIDE`.
+
+---
+
+### Dangerous cells in graph terms
+
+A component is immediately dangerous if it is big.
+
+Now consider a non-big component `C`.
+
+It is dangerous if there exists a big component `B` such that every path from `C` to `OUTSIDE` passes through `B`.
+
+In graph theory, this means:
+
+> `B` is an articulation point separating `C` from `OUTSIDE`.
+
+So the task becomes:
+
+- build the component graph,
+- root a DFS at `OUTSIDE`,
+- find articulation relationships,
+- whenever a big component separates a DFS subtree from `OUTSIDE`, all components in that subtree are dangerous.
+
+---
+
+### Tarjan articulation DFS
+
+Run Tarjan’s DFS from `OUTSIDE`.
+
+For each vertex `u`, compute:
+
+- `disc[u]`: DFS discovery time,
+- `low[u]`: smallest discovery time reachable from `u`’s subtree using at most one back edge.
+
+For a DFS tree edge `u -> v`, if:
+
+```text
+low[v] >= disc[u]
+```
+
+then `v`’s subtree cannot reach an ancestor of `u` without passing through `u`.
+
+Therefore, if `u` is a big component, then every component in `v`’s DFS subtree is dangerous.
+
+---
+
+### Efficiently marking whole DFS subtrees
+
+DFS discovery times form contiguous intervals for subtrees.
+
+If subtree rooted at `v` has Euler interval:
+
+```text
+[disc[v], subtree_end[v]]
+```
+
+then all components in that interval should be marked dangerous.
+
+Instead of marking each component one by one, use a difference array:
+
+```text
+diff[disc[v]] += 1
+diff[subtree_end[v] + 1] -= 1
+```
+
+After DFS, prefix-sum the difference array.
+
+A component is dominated by some big separator if its discovery time has positive prefix value.
+
+---
+
+### Final answer
+
+For every component:
+
+- if it is big, add its size,
+- else if it is marked dominated by a big articulation component, add its size.
+
+---
+
+### Correctness sketch
+
+Each grid path corresponds to a path in the component graph, and vice versa at the component level. Reaching the grid border is equivalent to reaching the virtual `OUTSIDE` vertex.
+
+A component is dangerous due to a big leader exactly when all paths from it to `OUTSIDE` pass through that big leader. This is exactly the definition of being separated by an articulation point.
+
+Tarjan’s condition `low[v] >= disc[u]` correctly identifies when the DFS subtree of `v` is separated from `OUTSIDE` by `u`. Therefore, marking such subtrees for every big `u` marks exactly all components that cannot escape without passing through a big component.
+
+Finally, all cells in big components are dangerous by definition, so summing sizes of big or marked components gives the required answer.
+
+---
+
+### Complexity
+
+Let `S = N × M`.
+
+Flood fill takes `O(S)` grid visits.
+
+The component graph has `O(S)` vertices and edges.
+
+Tarjan DFS is `O(S)`.
+
+The provided C++ solution uses `set` for neighbor lists, so practically it is `O(S log S)` in the worst case due to insertions, but still easily fits.
+
+Memory usage is `O(S)`.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std::.
+
+// Output operator for pairs, useful for debugging/general utilities.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return stream for chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all elements.
+        out << x << ' '; // Print element followed by a space.
+    }
+    return out;       // Return stream for chaining.
+};
+
+int n, m, k;          // Grid dimensions and threshold for a big component.
+vector<string> grid;  // The input grid.
+
+// comp_id[i][j] is the compressed component ID of cell (i, j).
+vector<vector<int>> comp_id;
+
+// comp_size[c] is the number of cells in component c.
+vector<int> comp_size;
+
+// comp_touches_border[c] is true if component c has at least one border cell.
+vector<char> comp_touches_border;
+
+// comp_neighbours[c] contains IDs of components adjacent to component c.
+vector<set<int>> comp_neighbours;
+
+// Reads the input.
+void read() {
+    cin >> n >> m >> k; // Read grid height, width, and big threshold.
+    grid.resize(n);     // Allocate n rows.
+    for(int i = 0; i < n; i++) {
+        cin >> grid[i]; // Read each row as a string of digits.
+    }
+}
+
+// Direction arrays for four-neighbor movement.
+const int di[4] = {-1, 0, 1, 0}; // Row changes: up, right, down, left.
+const int dj[4] = {0, 1, 0, -1}; // Column changes.
+
+// Flood-fills all maximal same-digit connected regions.
+void label_zones() {
+    // Initially, no cell has a component ID.
+    comp_id.assign(n, vector<int>(m, -1));
+
+    // Clear component data from possible previous test cases.
+    comp_size.clear();
+    comp_touches_border.clear();
+    comp_neighbours.clear();
+
+    // Iterate over every grid cell.
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            // If this cell already belongs to a component, skip it.
+            if(comp_id[i][j] != -1) {
+                continue;
+            }
+
+            // Create a new component ID.
+            int cid = comp_size.size();
+
+            // Initialize this component's size.
+            comp_size.push_back(0);
+
+            // Initially assume it does not touch the border.
+            comp_touches_border.push_back(0);
+
+            // Create an empty neighbor set for this component.
+            comp_neighbours.emplace_back();
+
+            // All cells in this component have this digit.
+            char color = grid[i][j];
+
+            // BFS queue for flood fill.
+            queue<pair<int, int>> q;
+
+            // Start BFS from cell (i, j).
+            q.push({i, j});
+
+            // Assign the component ID to the starting cell.
+            comp_id[i][j] = cid;
+
+            // Standard BFS loop.
+            while(!q.empty()) {
+                // Take next cell from queue.
+                auto [x, y] = q.front();
+                q.pop();
+
+                // Count this cell in the current component.
+                comp_size[cid]++;
+
+                // If this cell lies on grid border, component touches border.
+                if(x == 0 || x == n - 1 || y == 0 || y == m - 1) {
+                    comp_touches_border[cid] = 1;
+                }
+
+                // Check all four neighboring cells.
+                for(int d = 0; d < 4; d++) {
+                    int nx = x + di[d]; // Neighbor row.
+                    int ny = y + dj[d]; // Neighbor column.
+
+                    // Ignore neighbors outside the grid.
+                    if(nx < 0 || nx >= n || ny < 0 || ny >= m) {
+                        continue;
+                    }
+
+                    // If neighbor has same digit, it belongs to this component.
+                    if(grid[nx][ny] == color) {
+                        // If it has not been visited, assign it and enqueue it.
+                        if(comp_id[nx][ny] == -1) {
+                            comp_id[nx][ny] = cid;
+                            q.push({nx, ny});
+                        }
+                    }
+                    // If neighbor has different color and was already labeled,
+                    // then it belongs to an adjacent component.
+                    else if(comp_id[nx][ny] != -1) {
+                        // Add undirected edge between the two components.
+                        comp_neighbours[cid].insert(comp_id[nx][ny]);
+                        comp_neighbours[comp_id[nx][ny]].insert(cid);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Finds components separated from OUTSIDE by some big component.
+vector<char> dominated_by_big_zone(const vector<char>& is_big) {
+    int num_comps = comp_size.size(); // Number of compressed components.
+
+    int outside = num_comps; // ID of virtual OUTSIDE vertex.
+    int V = num_comps + 1;   // Total vertices including OUTSIDE.
+
+    vector<vector<int>> adj(V); // Adjacency list of component graph.
+
+    // Build graph.
+    for(int c = 0; c < num_comps; c++) {
+        // Add component-component edges.
+        for(int u: comp_neighbours[c]) {
+            adj[c].push_back(u);
+        }
+
+        // If component touches border, connect it to OUTSIDE.
+        if(comp_touches_border[c]) {
+            adj[c].push_back(outside);
+            adj[outside].push_back(c);
+        }
+    }
+
+    // disc[v] is DFS discovery time; -1 means unvisited.
+    vector<int> disc(V, -1);
+
+    // low[v] is Tarjan low-link value.
+    vector<int> low(V, 0);
+
+    // in_t[v] stores the same DFS entry time, used for interval marking.
+    vector<int> in_t(V, 0);
+
+    // Difference array over DFS discovery order.
+    vector<int> dom(V + 2, 0);
+
+    // Iterative DFS stack: tuple(vertex, next adjacency index, parent).
+    vector<tuple<int, int, int>> st;
+
+    // Reserve memory for efficiency.
+    st.reserve(V);
+
+    int timer = 0; // DFS timestamp counter.
+
+    // Start DFS from OUTSIDE.
+    st.emplace_back(outside, 0, -1);
+
+    // Assign discovery time to OUTSIDE.
+    disc[outside] = low[outside] = in_t[outside] = timer++;
+
+    // Iterative DFS simulation.
+    while(!st.empty()) {
+        // Reference to top stack frame.
+        auto& [u, it, p] = st.back();
+
+        // If there are still neighbors to process.
+        if(it < (int)adj[u].size()) {
+            int v = adj[u][it++]; // Take next neighbor and advance iterator.
+
+            // Ignore the tree edge back to parent.
+            if(v == p) {
+                continue;
+            }
+
+            // If neighbor is unvisited, go deeper.
+            if(disc[v] == -1) {
+                disc[v] = low[v] = in_t[v] = timer++; // Assign discovery time.
+                st.emplace_back(v, 0, u);             // Push child frame.
+            }
+            // Otherwise, this is a back/cross edge in undirected DFS.
+            else {
+                low[u] = min(low[u], disc[v]); // Update low-link.
+            }
+        }
+        // All neighbors have been processed; finish vertex u.
+        else {
+            int u_low = low[u];       // Final low value of u.
+            int u_in = in_t[u];       // Entry time of subtree rooted at u.
+            int u_out = timer - 1;    // Last discovered vertex in u's subtree.
+            int parent = p;           // Parent of u in DFS tree.
+
+            st.pop_back();            // Remove u from DFS stack.
+
+            // OUTSIDE has no parent.
+            if(parent == -1) {
+                continue;
+            }
+
+            // Propagate low-link value to parent.
+            low[parent] = min(low[parent], u_low);
+
+            // If parent is a big component and separates u's subtree,
+            // then the whole subtree is dangerous.
+            if(u_low >= disc[parent] && parent < num_comps && is_big[parent]) {
+                dom[u_in] += 1;       // Begin marking subtree interval.
+                dom[u_out + 1] -= 1;  // End marking subtree interval.
+            }
+        }
+    }
+
+    // Prefix sum converts difference array to actual coverage count.
+    for(int t = 1; t < timer; t++) {
+        dom[t] += dom[t - 1];
+    }
+
+    // Result for each component.
+    vector<char> result(num_comps, 0);
+
+    // A component is dominated if its DFS entry time is covered.
+    for(int c = 0; c < num_comps; c++) {
+        result[c] = dom[in_t[c]] > 0;
+    }
+
+    return result; // Return dominated components.
+}
+
+// Solves the problem.
+void solve() {
+    /*
+        Group same-color 4-connected cells into zones.
+
+        A cell is dangerous iff:
+        - its zone is big, or
+        - its zone is separated from OUTSIDE by some big zone.
+
+        In the compressed zone graph with a virtual OUTSIDE node,
+        this is exactly an articulation-point condition.
+    */
+
+    label_zones(); // Compress the grid into connected components.
+
+    int num_comps = comp_size.size(); // Number of components.
+
+    vector<char> is_big(num_comps, 0); // Whether each component is big.
+
+    // Determine big components.
+    for(int c = 0; c < num_comps; c++) {
+        is_big[c] = comp_size[c] >= k;
+    }
+
+    // Find components that cannot reach OUTSIDE without crossing a big one.
+    auto dominated = dominated_by_big_zone(is_big);
+
+    int ans = 0; // Final number of dangerous cells.
+
+    // Sum sizes of all dangerous components.
+    for(int c = 0; c < num_comps; c++) {
+        if(is_big[c] || dominated[c]) {
+            ans += comp_size[c];
+        }
+    }
+
+    cout << ans << '\n'; // Print answer.
+}
+
+// Program entry point.
+int main() {
+    ios_base::sync_with_stdio(false); // Fast input/output.
+    cin.tie(nullptr);                 // Do not flush cout before cin.
+
+    int T = 1; // There is one test case.
+
+    // cin >> T; // Multiple tests are not used in this problem.
+
+    // Process test cases.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve and output answer.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def solve():
+    # Read all input lines.
+    data = sys.stdin.read().strip().split()
+
+    # If input is empty, do nothing.
+    if not data:
+        return
+
+    # First three tokens are N, M, K.
+    n = int(data[0])
+    m = int(data[1])
+    k = int(data[2])
+
+    # Next n tokens are grid rows.
+    rows = data[3:3 + n]
+
+    # Flatten the grid into one string for simpler indexing.
+    # Cell (r, c) has flat index r * m + c.
+    flat = ''.join(rows)
+
+    # Total number of cells.
+    total = n * m
+
+    # comp_id[idx] is the component ID of cell idx.
+    comp_id = [-1] * total
+
+    # Size of each component.
+    comp_size = []
+
+    # Whether each component touches the grid border.
+    touches_border = []
+
+    # Four movement directions.
+    directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+
+    # Flood-fill all same-digit connected components.
+    for start in range(total):
+        # Skip already labeled cells.
+        if comp_id[start] != -1:
+            continue
+
+        # New component ID.
+        cid = len(comp_size)
+
+        # Digit/color of this component.
+        color = flat[start]
+
+        # Mark starting cell.
+        comp_id[start] = cid
+
+        # Stack for iterative DFS flood fill.
+        stack = [start]
+
+        # Component size counter.
+        size = 0
+
+        # Whether this component touches the border.
+        border = False
+
+        # Process all cells in this component.
+        while stack:
+            # Pop one cell.
+            v = stack.pop()
+
+            # Count it.
+            size += 1
+
+            # Convert flat index to row and column.
+            r = v // m
+            c = v % m
+
+            # Check whether it is on the border.
+            if r == 0 or r == n - 1 or c == 0 or c == m - 1:
+                border = True
+
+            # Explore four neighbors.
+            for dr, dc in directions:
+                nr = r + dr
+                nc = c + dc
+
+                # Ignore outside-grid positions.
+                if nr < 0 or nr >= n or nc < 0 or nc >= m:
+                    continue
+
+                # Neighbor flat index.
+                to = nr * m + nc
+
+                # Same digit and unvisited means it belongs to this component.
+                if flat[to] == color and comp_id[to] == -1:
+                    comp_id[to] = cid
+                    stack.append(to)
+
+        # Store component information.
+        comp_size.append(size)
+        touches_border.append(border)
+
+    # Number of components.
+    num_comps = len(comp_size)
+
+    # Build component graph.
+    outside = num_comps
+    vertex_count = num_comps + 1
+
+    # Use a set to avoid duplicate edges between the same components.
+    edge_set = set()
+
+    # Scan horizontal and vertical neighboring cell pairs.
+    for r in range(n):
+        base = r * m
+        for c in range(m):
+            idx = base + c
+            a = comp_id[idx]
+
+            # Right neighbor.
+            if c + 1 < m:
+                b = comp_id[idx + 1]
+                if a != b:
+                    x, y = (a, b) if a < b else (b, a)
+                    edge_set.add(x * num_comps + y)
+
+            # Down neighbor.
+            if r + 1 < n:
+                b = comp_id[idx + m]
+                if a != b:
+                    x, y = (a, b) if a < b else (b, a)
+                    edge_set.add(x * num_comps + y)
+
+    # Adjacency list including OUTSIDE vertex.
+    adj = [[] for _ in range(vertex_count)]
+
+    # Add component-component edges.
+    for code in edge_set:
+        a = code // num_comps
+        b = code % num_comps
+        adj[a].append(b)
+        adj[b].append(a)
+
+    # Connect border-touching components to OUTSIDE.
+    for c in range(num_comps):
+        if touches_border[c]:
+            adj[c].append(outside)
+            adj[outside].append(c)
+
+    # Mark big components.
+    is_big = [size >= k for size in comp_size]
+
+    # Tarjan arrays.
+    disc = [-1] * vertex_count
+    low = [0] * vertex_count
+
+    # Difference array over DFS order.
+    diff = [0] * (vertex_count + 2)
+
+    # DFS timer.
+    timer = 0
+
+    # Start DFS from OUTSIDE.
+    disc[outside] = low[outside] = timer
+    timer += 1
+
+    # Stack frame format:
+    # [vertex, next_neighbor_index, parent]
+    stack = [[outside, 0, -1]]
+
+    # Iterative Tarjan DFS.
+    while stack:
+        u, it, parent = stack[-1]
+
+        # If there are still neighbors to process.
+        if it < len(adj[u]):
+            # Take next neighbor.
+            v = adj[u][it]
+
+            # Advance iterator in the top stack frame.
+            stack[-1][1] += 1
+
+            # Ignore tree edge to parent.
+            if v == parent:
+                continue
+
+            # Tree edge to an unvisited vertex.
+            if disc[v] == -1:
+                disc[v] = low[v] = timer
+                timer += 1
+                stack.append([v, 0, u])
+
+            # Back edge to an already visited vertex.
+            else:
+                low[u] = min(low[u], disc[v])
+
+        # All neighbors processed; finish u.
+        else:
+            # Entry time of u's subtree.
+            u_in = disc[u]
+
+            # Since DFS preorder intervals are contiguous,
+            # the last discovered vertex so far is subtree end.
+            u_out = timer - 1
+
+            # Final low-link value.
+            u_low = low[u]
+
+            # Remove u from stack.
+            stack.pop()
+
+            # OUTSIDE has no parent.
+            if parent == -1:
+                continue
+
+            # Propagate low-link value upward.
+            low[parent] = min(low[parent], u_low)
+
+            # If parent is a big component and separates u's subtree,
+            # mark that whole subtree as dangerous.
+            if parent < num_comps and is_big[parent] and u_low >= disc[parent]:
+                diff[u_in] += 1
+                diff[u_out + 1] -= 1
+
+    # Prefix sum of difference array.
+    for i in range(1, timer):
+        diff[i] += diff[i - 1]
+
+    # Count dangerous cells.
+    answer = 0
+
+    for c in range(num_comps):
+        # Component is dangerous if it is big or dominated by a big separator.
+        if is_big[c] or diff[disc[c]] > 0:
+            answer += comp_size[c]
+
+    # Output answer.
+    print(answer)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Compress the grid into maximal 4-connected equal-digit components. Each component is one leader. Record its size and whether it touches the border.
+
+Build a graph of components. Add a virtual `OUTSIDE` node connected to every border-touching component. A grid cell can escape Berland iff its component can reach `OUTSIDE`.
+
+A component is dangerous if it is big, or if some big component lies on every path from it to `OUTSIDE`. In the component graph, this means the big component is an articulation point separating that component from `OUTSIDE`.
+
+Run Tarjan DFS rooted at `OUTSIDE`. For every DFS tree edge `u -> v`, if:
+
+```text
+low[v] >= disc[u]
+```
+
+then `u` separates the subtree of `v` from `OUTSIDE`. If `u` is big, mark the whole subtree of `v` dangerous. Use DFS discovery intervals and a difference array to mark subtrees efficiently.
+
+Finally, sum sizes of all components that are either big or marked dangerous.

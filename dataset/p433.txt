@@ -1,0 +1,993 @@
+## 1. Abridged problem statement
+
+Given an `N x M` rectangle and infinitely many bricks of sizes `1 x L1, 1 x L2, ..., 1 x LK`, determine whether the rectangle can be tiled without overlaps or holes. Bricks may be placed horizontally or vertically.
+
+If impossible, print `NO`.
+
+If possible, print `YES` and an `N x M` grid of lowercase letters. Cells belonging to the same brick must have the same letter, and neighboring cells belonging to different bricks must have different letters.
+
+Constraints:
+
+- `2 ≤ N + M ≤ 20`
+- `1 ≤ K ≤ 5`
+- `Li ≤ 1000`
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+Instead of directly placing bricks, first decide only the orientation of the brick covering each cell.
+
+Let:
+
+- `1` mean the cell belongs to a horizontal brick.
+- `0` mean the cell belongs to a vertical brick.
+
+Then:
+
+- In every row, every maximal consecutive segment of `1`s must have length representable as a sum of allowed brick lengths.
+- In every column, every maximal consecutive segment of `0`s must have length representable as a sum of allowed brick lengths.
+
+For example, if the available brick lengths are `3` and `4`, then a horizontal run of length `7` is valid because `7 = 3 + 4`.
+
+After such a valid orientation matrix is built, every run can be split into actual bricks using a simple dynamic programming parent array.
+
+---
+
+### Step 1: Compute representable lengths
+
+Let `rep[x]` mean that length `x` can be written as a non-negative sum of given brick lengths.
+
+We compute it like the classic unbounded knapsack / coin change DP:
+
+```cpp
+rep[0] = true;
+for s = 1..max(N, M):
+    for len in lengths:
+        if s >= len and rep[s - len]:
+            rep[s] = true;
+```
+
+We also store `par[s]`, one brick length used to form `s`, so later we can reconstruct the actual bricks.
+
+---
+
+### Step 2: Handle easy cases
+
+Let:
+
+```cpp
+h = min(N, M)
+w = max(N, M)
+```
+
+The algorithm internally works with the shorter side as height to keep masks small.
+
+There are two easy cases:
+
+#### Case 1: `w` is representable
+
+Then every row can be tiled horizontally.
+
+So the whole internal matrix is filled with `1`.
+
+#### Case 2: `w` is not representable, but `h` is representable
+
+Then every column can be tiled vertically.
+
+So the whole internal matrix is filled with `0`.
+
+---
+
+### Step 3: Hard case — neither side is directly representable
+
+Now we need a mixed orientation matrix.
+
+We process the rectangle column by column.
+
+Each column is represented by a bitmask of length `h`.
+
+For example, if `h = 5`, then a column mask has 5 bits. Bit `r` tells whether row `r` in this column is horizontal or vertical.
+
+A column mask is valid if all maximal vertical runs of `0`s inside it have representable lengths.
+
+Example:
+
+```text
+mask bits: 1 0 0 1 0
+```
+
+The zero runs have lengths `2` and `1`. Both must be representable.
+
+All valid column masks are precomputed.
+
+---
+
+### Step 4: Dynamic programming over columns
+
+The DP state stores, for every row, the current length of an open horizontal run.
+
+For example:
+
+```text
+runs = [0, 3, 1, 0]
+```
+
+means:
+
+- row `0` currently has no open horizontal run,
+- row `1` has an open horizontal run of length `3`,
+- row `2` has an open horizontal run of length `1`,
+- row `3` currently has no open horizontal run.
+
+When we add a new column mask:
+
+- If bit `r` is `1`, then the horizontal run in row `r` extends by one.
+- If bit `r` is `0`, then the horizontal run in row `r` ends. Its length must be representable.
+
+After processing all `w` columns, every still-open horizontal run must also be representable.
+
+If such a DP path exists, we reconstruct the masks and get a valid orientation matrix.
+
+---
+
+### Step 5: State compression
+
+Naively, every row’s open run length could be from `0` to `w`, giving up to `(w + 1)^h` states.
+
+The solution compresses run lengths using eventual periodicity.
+
+Let `g` be the gcd of usable brick lengths. For large enough lengths, representability only depends on length modulo `g`.
+
+So the code maps every run length to a canonical representative before storing it in the visited map.
+
+This greatly reduces the number of states.
+
+---
+
+### Step 6: Convert orientation matrix into actual bricks
+
+Once we have the `0/1` orientation matrix:
+
+- For every horizontal run of `1`s, split it into bricks using `par[]`.
+- For every vertical run of `0`s, split it into bricks using `par[]`.
+
+Each brick receives a unique integer ID.
+
+---
+
+### Step 7: Color bricks with letters
+
+Neighboring bricks must have different letters.
+
+Build a graph:
+
+- Each brick is a vertex.
+- Two bricks are connected if they share an edge.
+
+This graph is planar. The code uses a smallest-last greedy coloring:
+
+1. Repeatedly remove a vertex of minimum degree.
+2. Then color vertices in reverse removal order using the smallest available color.
+
+For planar graphs, this uses at most 6 colors, so lowercase letters are more than enough.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std::.
+
+// Output operator for pairs, useful for debugging or generic vector output.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print pair as "first second".
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second values.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return stream for chaining.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all elements.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out;       // Return stream for chaining.
+};
+
+int n, m, k;              // Rectangle dimensions and number of brick lengths.
+vector<int> lengths;      // Allowed brick lengths.
+
+void read() {
+    cin >> n >> m >> k;   // Read input dimensions and K.
+    lengths.resize(k);    // Allocate space for K lengths.
+    cin >> lengths;       // Read all brick lengths using overloaded operator.
+}
+
+void solve() {
+    int dim = max(n, m);  // We only need representability up to the larger side.
+
+    vector<char> rep(dim + 1, false); // rep[x] = whether x is representable.
+    vector<int> par(dim + 1, -1);     // par[x] = one brick length used to form x.
+
+    rep[0] = true; // Length 0 is representable using no bricks.
+
+    // Unbounded coin-change DP for representable lengths.
+    for(int s = 1; s <= dim; s++) {
+        for(int len: lengths) {
+            if(len <= s && rep[s - len]) { // If we can append brick len.
+                rep[s] = true;             // Then s is representable.
+                par[s] = len;              // Remember last used brick length.
+                break;                     // One construction is enough.
+            }
+        }
+    }
+
+    int g = 0; // GCD of relevant brick lengths.
+
+    for(int len: lengths) {
+        if(len <= dim) {       // Lengths larger than dim cannot be used.
+            g = gcd(g, len);   // Update gcd.
+        }
+    }
+
+    vector<int> canon(dim + 1); // canon[x] is compressed representative of x.
+
+    if(g == 0) { // No brick length can fit at all.
+        for(int s = 0; s <= dim; s++) {
+            canon[s] = s; // No compression possible.
+        }
+    } else {
+        int pre = 0; // Boundary before eventual periodic behavior.
+
+        // Find a suffix where representability matches divisibility by gcd.
+        for(int s = 0; s <= dim; s++) {
+            if((bool)rep[s] != (s % g == 0)) {
+                pre = s + 1;
+            }
+        }
+
+        // Values before pre remain unchanged.
+        // Values from pre onward are compressed by modulo gcd.
+        for(int s = 0; s <= dim; s++) {
+            canon[s] = s < pre ? s : pre + (s - pre) % g;
+        }
+    }
+
+    bool transposed = n > m;       // Work internally with smaller dimension as height.
+    int h = min(n, m), w = max(n, m); // Internal height and width.
+
+    // horiz[r][c] = 1 if cell is part of a horizontal brick, 0 otherwise.
+    vector<vector<int>> horiz(h, vector<int>(w, 0));
+
+    bool possible = true; // Will become false if no orientation matrix exists.
+
+    if(rep[w]) {
+        // If width is representable, tile every row horizontally.
+        for(auto& row: horiz) {
+            fill(row.begin(), row.end(), 1);
+        }
+    } else if(!rep[h]) {
+        // Hard case: neither width nor height is representable directly.
+
+        vector<int> valid_cols; // All column masks satisfying vertical constraints.
+
+        // Enumerate all possible 0/1 columns of height h.
+        for(int mask = 0; mask < (1 << h); mask++) {
+            bool ok = true; // Whether this column mask is vertically valid.
+            int r = 0;      // Current row.
+
+            while(r < h) {
+                if(((mask >> r) & 1) == 0) {
+                    // Found start of a vertical zero-run.
+                    int r2 = r;
+
+                    // Move to the end of this zero-run.
+                    while(r2 < h && ((mask >> r2) & 1) == 0) {
+                        r2++;
+                    }
+
+                    // The zero-run length must be representable.
+                    if(!rep[r2 - r]) {
+                        ok = false;
+                        break;
+                    }
+
+                    r = r2; // Continue after the zero-run.
+                } else {
+                    r++;    // Bit is 1, no vertical run here.
+                }
+            }
+
+            if(ok) {
+                valid_cols.push_back(mask); // Keep this valid column mask.
+            }
+        }
+
+        // DP node representing one reachable state.
+        struct node {
+            vector<int> runs; // Current horizontal run lengths in each row.
+            int parent;       // Index of previous node in previous layer.
+            int mask;         // Column mask used to reach this node.
+        };
+
+        vector<vector<node>> layers(w + 1);       // layers[c] = states after c columns.
+        vector<map<vector<int>, int>> seen(w + 1); // Deduplication maps for each layer.
+
+        // Initial state before placing any columns: all runs are zero.
+        layers[0].push_back({vector<int>(h, 0), -1, -1});
+        seen[0][vector<int>(h, 0)] = 0;
+
+        // Function that canonicalizes a run-length vector for deduplication.
+        auto key_of = [&](const vector<int>& runs) {
+            vector<int> key(h); // Compressed key.
+
+            for(int r = 0; r < h; r++) {
+                key[r] = canon[runs[r]]; // Compress each row independently.
+            }
+
+            return key; // Return canonical key.
+        };
+
+        // Process columns from left to right.
+        for(int c = 0; c < w; c++) {
+            // Try extending every state in current layer.
+            for(int i = 0; i < (int)layers[c].size(); i++) {
+                const vector<int>& runs = layers[c][i].runs; // Current open runs.
+
+                // Try every vertically valid column.
+                for(int mask: valid_cols) {
+                    vector<int> nxt(h); // Next run-length vector.
+                    bool ok = true;     // Whether transition is valid.
+
+                    for(int r = 0; r < h; r++) {
+                        if((mask >> r) & 1) {
+                            // Cell is horizontal, extend current horizontal run.
+                            nxt[r] = runs[r] + 1;
+                        } else {
+                            // Cell is vertical, so horizontal run ends here.
+                            if(runs[r] > 0 && !rep[runs[r]]) {
+                                ok = false; // Cannot close invalid-length run.
+                                break;
+                            }
+
+                            nxt[r] = 0; // No open horizontal run in this row.
+                        }
+                    }
+
+                    if(!ok) {
+                        continue; // Transition rejected.
+                    }
+
+                    vector<int> key = key_of(nxt); // Deduplication key.
+
+                    // Add state only if no equivalent state was seen in next layer.
+                    if(seen[c + 1].find(key) == seen[c + 1].end()) {
+                        seen[c + 1][key] = layers[c + 1].size();
+                        layers[c + 1].push_back({nxt, i, mask});
+                    }
+                }
+            }
+        }
+
+        int final_idx = -1; // Index of accepting final state.
+
+        // Search for a final state whose still-open runs are representable.
+        for(int i = 0; i < (int)layers[w].size(); i++) {
+            bool ok = true;
+
+            for(int r = 0; r < h; r++) {
+                if(layers[w][i].runs[r] > 0 && !rep[layers[w][i].runs[r]]) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if(ok) {
+                final_idx = i;
+                break;
+            }
+        }
+
+        if(final_idx == -1) {
+            possible = false; // No valid orientation matrix exists.
+        } else {
+            // Reconstruct chosen column masks by walking parent pointers backward.
+            int idx = final_idx;
+
+            for(int c = w; c >= 1; c--) {
+                int mask = layers[c][idx].mask; // Mask used for column c - 1.
+
+                for(int r = 0; r < h; r++) {
+                    horiz[r][c - 1] = (mask >> r) & 1; // Store orientation bit.
+                }
+
+                idx = layers[c][idx].parent; // Move to previous state.
+            }
+        }
+    }
+
+    // If rep[w] was false and rep[h] was true, horiz remains all zero,
+    // which means all bricks are vertical.
+
+    if(!possible) {
+        cout << "NO\n"; // No tiling exists.
+        return;
+    }
+
+    // bid[r][c] = brick ID covering internal cell (r, c).
+    vector<vector<int>> bid(h, vector<int>(w, -1));
+
+    int next_id = 0; // Next unused brick ID.
+
+    // Split all horizontal 1-runs into actual bricks.
+    for(int r = 0; r < h; r++) {
+        int c = 0;
+
+        while(c < w) {
+            if(horiz[r][c] == 1) {
+                int c2 = c;
+
+                // Find maximal horizontal run of 1s.
+                while(c2 < w && horiz[r][c2] == 1) {
+                    c2++;
+                }
+
+                int pos = c;        // Current position inside the run.
+                int rem = c2 - c;   // Remaining run length.
+
+                // Decompose run length using par[].
+                while(rem > 0) {
+                    int len = par[rem]; // Last brick length in decomposition.
+
+                    for(int t = 0; t < len; t++) {
+                        bid[r][pos + t] = next_id; // Assign cells to this brick.
+                    }
+
+                    next_id++; // Move to next brick ID.
+                    pos += len;
+                    rem -= len;
+                }
+
+                c = c2; // Continue after the run.
+            } else {
+                c++; // Not horizontal.
+            }
+        }
+    }
+
+    // Split all vertical 0-runs into actual bricks.
+    for(int c = 0; c < w; c++) {
+        int r = 0;
+
+        while(r < h) {
+            if(horiz[r][c] == 0) {
+                int r2 = r;
+
+                // Find maximal vertical run of 0s.
+                while(r2 < h && horiz[r2][c] == 0) {
+                    r2++;
+                }
+
+                int pos = r;        // Current row inside the run.
+                int rem = r2 - r;   // Remaining run length.
+
+                // Decompose run length using par[].
+                while(rem > 0) {
+                    int len = par[rem]; // Last brick length in decomposition.
+
+                    for(int t = 0; t < len; t++) {
+                        bid[pos + t][c] = next_id; // Assign cells to this brick.
+                    }
+
+                    next_id++; // New brick ID.
+                    pos += len;
+                    rem -= len;
+                }
+
+                r = r2; // Continue after the run.
+            } else {
+                r++; // Not vertical.
+            }
+        }
+    }
+
+    int b = next_id; // Total number of bricks.
+
+    vector<set<int>> nbr(b); // Adjacency graph of bricks.
+
+    // Build graph: neighboring different brick IDs get an edge.
+    for(int r = 0; r < h; r++) {
+        for(int c = 0; c < w; c++) {
+            if(c + 1 < w && bid[r][c] != bid[r][c + 1]) {
+                nbr[bid[r][c]].insert(bid[r][c + 1]);
+                nbr[bid[r][c + 1]].insert(bid[r][c]);
+            }
+
+            if(r + 1 < h && bid[r][c] != bid[r + 1][c]) {
+                nbr[bid[r][c]].insert(bid[r + 1][c]);
+                nbr[bid[r + 1][c]].insert(bid[r][c]);
+            }
+        }
+    }
+
+    vector<int> deg(b), order;          // Degrees and smallest-last removal order.
+    vector<char> removed(b, false);     // Whether a brick has been removed.
+
+    for(int i = 0; i < b; i++) {
+        deg[i] = nbr[i].size(); // Initial degree.
+    }
+
+    // Smallest-last ordering.
+    for(int step = 0; step < b; step++) {
+        int u = -1;
+
+        // Find not-yet-removed vertex with minimum current degree.
+        for(int i = 0; i < b; i++) {
+            if(!removed[i] && (u == -1 || deg[i] < deg[u])) {
+                u = i;
+            }
+        }
+
+        removed[u] = true; // Remove it.
+        order.push_back(u); // Store removal order.
+
+        // Decrease degrees of its remaining neighbors.
+        for(int v: nbr[u]) {
+            if(!removed[v]) {
+                deg[v]--;
+            }
+        }
+    }
+
+    vector<int> color(b, -1); // Assigned color for every brick.
+
+    // Greedy coloring in reverse smallest-last order.
+    for(int i = b - 1; i >= 0; i--) {
+        int u = order[i];
+
+        set<int> used; // Colors already used by colored neighbors.
+
+        for(int v: nbr[u]) {
+            if(color[v] != -1) {
+                used.insert(color[v]);
+            }
+        }
+
+        int col = 0; // Smallest possible color.
+
+        while(used.count(col)) {
+            col++;
+        }
+
+        color[u] = col; // Assign color.
+    }
+
+    // Output grid in original orientation.
+    vector<string> out(n, string(m, '?'));
+
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < m; j++) {
+            // If transposed internally, map coordinates back.
+            int id = transposed ? bid[j][i] : bid[i][j];
+
+            // Convert color number to lowercase letter.
+            out[i][j] = 'a' + color[id];
+        }
+    }
+
+    cout << "YES\n"; // Tiling found.
+
+    for(auto& row: out) {
+        cout << row << '\n'; // Print each row.
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O.
+    cin.tie(nullptr);                 // Do not flush cout before cin.
+
+    int T = 1; // Single test case.
+    // cin >> T; // Multiple tests are not used in this problem.
+
+    for(int test = 1; test <= T; test++) {
+        read();  // Read test.
+        solve(); // Solve test.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from math import gcd
+
+
+def solve():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # First three integers are N, M, K.
+    n, m, k = data[0], data[1], data[2]
+
+    # Next K integers are allowed brick lengths.
+    lengths = data[3:3 + k]
+
+    # We only care about lengths up to the larger rectangle dimension.
+    dim = max(n, m)
+
+    # rep[x] tells whether length x can be represented as a sum of brick lengths.
+    rep = [False] * (dim + 1)
+
+    # par[x] stores one brick length used in a representation of x.
+    par = [-1] * (dim + 1)
+
+    # Zero length is representable using no bricks.
+    rep[0] = True
+
+    # Unbounded knapsack / coin-change DP.
+    for s in range(1, dim + 1):
+        for length in lengths:
+            if length <= s and rep[s - length]:
+                rep[s] = True
+                par[s] = length
+                break
+
+    # Compute gcd of all usable brick lengths.
+    g = 0
+    for length in lengths:
+        if length <= dim:
+            g = gcd(g, length)
+
+    # canon[x] is a compressed representative of run length x.
+    canon = [0] * (dim + 1)
+
+    if g == 0:
+        # No brick can fit at all, so no periodic compression.
+        for s in range(dim + 1):
+            canon[s] = s
+    else:
+        # Find where representability stabilizes to "s is divisible by gcd".
+        pre = 0
+        for s in range(dim + 1):
+            if rep[s] != (s % g == 0):
+                pre = s + 1
+
+        # Before pre, keep exact lengths.
+        # From pre onward, only residue modulo gcd matters.
+        for s in range(dim + 1):
+            if s < pre:
+                canon[s] = s
+            else:
+                canon[s] = pre + (s - pre) % g
+
+    # Work internally with the smaller dimension as height.
+    transposed = n > m
+    h = min(n, m)
+    w = max(n, m)
+
+    # horiz[r][c] = 1 means horizontal brick orientation,
+    # horiz[r][c] = 0 means vertical brick orientation.
+    horiz = [[0] * w for _ in range(h)]
+
+    possible = True
+
+    if rep[w]:
+        # If the width is representable, make every row horizontal.
+        for r in range(h):
+            for c in range(w):
+                horiz[r][c] = 1
+
+    elif not rep[h]:
+        # Hard case: neither width nor height is directly representable.
+
+        valid_cols = []
+
+        # Enumerate all column masks of height h.
+        for mask in range(1 << h):
+            ok = True
+            r = 0
+
+            while r < h:
+                # Bit 0 means vertical orientation.
+                if ((mask >> r) & 1) == 0:
+                    r2 = r
+
+                    # Find maximal vertical zero-run.
+                    while r2 < h and ((mask >> r2) & 1) == 0:
+                        r2 += 1
+
+                    # Its length must be representable.
+                    if not rep[r2 - r]:
+                        ok = False
+                        break
+
+                    r = r2
+                else:
+                    r += 1
+
+            if ok:
+                valid_cols.append(mask)
+
+        # Each DP layer is a list of states.
+        # A state is (runs, parent_index, mask_used).
+        layers = [[] for _ in range(w + 1)]
+
+        # seen[c] maps canonical state keys to indices in layers[c].
+        seen = [dict() for _ in range(w + 1)]
+
+        # Initial state: no open horizontal runs.
+        start_runs = tuple([0] * h)
+        layers[0].append((start_runs, -1, -1))
+        seen[0][start_runs] = 0
+
+        def key_of(runs):
+            # Compress each run length using canon[].
+            return tuple(canon[x] for x in runs)
+
+        # Process all columns left to right.
+        for c in range(w):
+            for i, (runs, parent, old_mask) in enumerate(layers[c]):
+                # Try every vertically valid column mask.
+                for mask in valid_cols:
+                    nxt = [0] * h
+                    ok = True
+
+                    for r in range(h):
+                        if (mask >> r) & 1:
+                            # Horizontal cell extends the run.
+                            nxt[r] = runs[r] + 1
+                        else:
+                            # Vertical cell closes the horizontal run.
+                            if runs[r] > 0 and not rep[runs[r]]:
+                                ok = False
+                                break
+
+                            nxt[r] = 0
+
+                    if not ok:
+                        continue
+
+                    nxt_tuple = tuple(nxt)
+                    key = key_of(nxt_tuple)
+
+                    # Store only one representative of equivalent states.
+                    if key not in seen[c + 1]:
+                        seen[c + 1][key] = len(layers[c + 1])
+                        layers[c + 1].append((nxt_tuple, i, mask))
+
+        # Find accepting final state.
+        final_idx = -1
+
+        for i, (runs, parent, mask) in enumerate(layers[w]):
+            ok = True
+
+            for r in range(h):
+                if runs[r] > 0 and not rep[runs[r]]:
+                    ok = False
+                    break
+
+            if ok:
+                final_idx = i
+                break
+
+        if final_idx == -1:
+            possible = False
+        else:
+            # Reconstruct column masks.
+            idx = final_idx
+
+            for c in range(w, 0, -1):
+                runs, parent, mask = layers[c][idx]
+
+                for r in range(h):
+                    horiz[r][c - 1] = (mask >> r) & 1
+
+                idx = parent
+
+    # Else:
+    # rep[w] is false and rep[h] is true.
+    # The default all-zero matrix means all bricks are vertical.
+
+    if not possible:
+        print("NO")
+        return
+
+    # bid[r][c] stores the integer brick ID covering internal cell (r, c).
+    bid = [[-1] * w for _ in range(h)]
+
+    next_id = 0
+
+    # Process horizontal runs.
+    for r in range(h):
+        c = 0
+
+        while c < w:
+            if horiz[r][c] == 1:
+                c2 = c
+
+                # Find maximal horizontal run of 1s.
+                while c2 < w and horiz[r][c2] == 1:
+                    c2 += 1
+
+                pos = c
+                rem = c2 - c
+
+                # Split run into bricks using par[].
+                while rem > 0:
+                    length = par[rem]
+
+                    for t in range(length):
+                        bid[r][pos + t] = next_id
+
+                    next_id += 1
+                    pos += length
+                    rem -= length
+
+                c = c2
+            else:
+                c += 1
+
+    # Process vertical runs.
+    for c in range(w):
+        r = 0
+
+        while r < h:
+            if horiz[r][c] == 0:
+                r2 = r
+
+                # Find maximal vertical run of 0s.
+                while r2 < h and horiz[r2][c] == 0:
+                    r2 += 1
+
+                pos = r
+                rem = r2 - r
+
+                # Split run into bricks using par[].
+                while rem > 0:
+                    length = par[rem]
+
+                    for t in range(length):
+                        bid[pos + t][c] = next_id
+
+                    next_id += 1
+                    pos += length
+                    rem -= length
+
+                r = r2
+            else:
+                r += 1
+
+    # Total number of bricks.
+    b = next_id
+
+    # Build adjacency graph between bricks.
+    nbr = [set() for _ in range(b)]
+
+    for r in range(h):
+        for c in range(w):
+            # Right neighbor.
+            if c + 1 < w and bid[r][c] != bid[r][c + 1]:
+                a = bid[r][c]
+                bb = bid[r][c + 1]
+                nbr[a].add(bb)
+                nbr[bb].add(a)
+
+            # Bottom neighbor.
+            if r + 1 < h and bid[r][c] != bid[r + 1][c]:
+                a = bid[r][c]
+                bb = bid[r + 1][c]
+                nbr[a].add(bb)
+                nbr[bb].add(a)
+
+    # Smallest-last ordering for greedy coloring.
+    deg = [len(nbr[i]) for i in range(b)]
+    removed = [False] * b
+    order = []
+
+    for _ in range(b):
+        u = -1
+
+        # Pick remaining vertex with minimum degree.
+        for i in range(b):
+            if not removed[i] and (u == -1 or deg[i] < deg[u]):
+                u = i
+
+        removed[u] = True
+        order.append(u)
+
+        # Update degrees.
+        for v in nbr[u]:
+            if not removed[v]:
+                deg[v] -= 1
+
+    # Greedy color in reverse removal order.
+    color = [-1] * b
+
+    for u in reversed(order):
+        used = set()
+
+        for v in nbr[u]:
+            if color[v] != -1:
+                used.add(color[v])
+
+        col = 0
+        while col in used:
+            col += 1
+
+        color[u] = col
+
+    # Build output grid in original orientation.
+    out = [['?'] * m for _ in range(n)]
+
+    for i in range(n):
+        for j in range(m):
+            if transposed:
+                brick_id = bid[j][i]
+            else:
+                brick_id = bid[i][j]
+
+            out[i][j] = chr(ord('a') + color[brick_id])
+
+    print("YES")
+    for row in out:
+        print(''.join(row))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Compute which segment lengths are representable as sums of allowed brick lengths.
+
+Represent a tiling by a `0/1` orientation matrix:
+
+- `1` = horizontal brick cell,
+- `0` = vertical brick cell.
+
+Every horizontal run of `1`s must have representable length. Every vertical run of `0`s must have representable length.
+
+Work with the smaller rectangle side as height `h`, so columns can be represented as bitmasks.
+
+If the width is representable, use all-horizontal bricks. If the height is representable, use all-vertical bricks.
+
+Otherwise:
+
+1. Precompute all valid column masks whose zero-runs have representable lengths.
+2. Do DP over columns.
+3. State stores current open horizontal run length in each row.
+4. When a `0` appears, the corresponding run closes and must be representable.
+5. After the last column, all still-open runs must also be representable.
+
+Compress run lengths using gcd-based eventual periodicity of representability.
+
+After reconstructing a valid orientation matrix, split each representable run into real bricks using the DP parent array.
+
+Finally, build the brick adjacency graph and greedily color it using smallest-last order. Output colors as lowercase letters.

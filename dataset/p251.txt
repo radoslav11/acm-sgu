@@ -1,0 +1,516 @@
+## 1) Abridged problem statement
+
+Given \(N\) points (\(3 \le N \le 8\)) on a plane, each point \(i\) has a positive “special number” \(R_i\) (\(1 \le R_i \le 100\)), and it is guaranteed that \(R_{N-1} = R_N\) (last two are equal).
+
+An arrangement of points is called **awful** if for **every** triple of distinct points \((i,j,k)\), the **area** of triangle \(\triangle ijk\) equals:
+\[
+\text{Area}(i,j,k) = R_i + R_j + R_k.
+\]
+
+You must output **YES** and any coordinates \((x_i, y_i)\) (4 decimals) that satisfy all constraints, or **NO** if impossible.
+
+---
+
+## 2) Detailed editorial (explaining the provided solution approach)
+
+### Key geometry identity
+
+For three points \((x_i,y_i)\), \((x_j,y_j)\), \((x_k,y_k)\), the **signed doubled area** is the 2D cross product:
+\[
+2 \cdot \text{Area} = \left| (x_i-x_j)(y_k-y_j) - (x_k-x_j)(y_i-y_j) \right|.
+\]
+
+Equivalently, expanding (a common determinant form):
+\[
+\text{cross}(i,j,k) = x_i(y_k-y_j) + x_j(y_i-y_k) + x_k(y_j-y_i),
+\]
+and
+\[
+2\cdot \text{Area} = |\text{cross}(i,j,k)|.
+\]
+
+The requirement \(\text{Area} = R_i+R_j+R_k\) becomes:
+\[
+|\text{cross}(i,j,k)| = 2(R_i+R_j+R_k).
+\]
+
+### Removing the absolute value
+
+The absolute value causes branching (two possible signs). The code avoids it by squaring:
+\[
+\text{cross}^2 = \left(2(R_i+R_j+R_k)\right)^2.
+\]
+
+Define:
+- \(T = 2(R_i+R_j+R_k)\)
+- \(f = \text{cross}^2 - T^2\)
+
+We want \(f=0\) for all triples. There are \(\binom{N}{3}\) triples (at most \(\binom{8}{3}=56\)), so this is small.
+
+### Turn it into optimization (least squares)
+
+Instead of solving polynomial equations directly, the solution minimizes:
+\[
+\text{loss} = \sum_{i<j<k} f(i,j,k)^2.
+\]
+If loss becomes (near) 0, we have a valid configuration.
+
+This transforms the problem into a continuous optimization over \(2N\) variables:
+\[
+(x_0,\dots,x_{N-1}, y_0,\dots,y_{N-1}).
+\]
+
+### Gradient computation
+
+For one triple, with:
+\[
+f = \text{cross}^2 - T^2,
+\quad \text{loss term} = f^2,
+\]
+the derivative is:
+\[
+\frac{\partial}{\partial p}(f^2) = 2f \cdot \frac{\partial f}{\partial p}
+= 2f \cdot 2\cdot \text{cross}\cdot \frac{\partial \text{cross}}{\partial p}
+= 4 f\cdot \text{cross}\cdot \frac{\partial \text{cross}}{\partial p}.
+\]
+
+Let \(\text{coef} = 4 f\cdot \text{cross}\).
+
+Now, from
+\[
+\text{cross} = x_i(y_k-y_j) + x_j(y_i-y_k) + x_k(y_j-y_i),
+\]
+we get partials:
+- \(\partial \text{cross}/\partial x_i = (y_k-y_j)\)
+- \(\partial \text{cross}/\partial x_j = (y_i-y_k)\)
+- \(\partial \text{cross}/\partial x_k = (y_j-y_i)\)
+
+And for y’s (collect coefficients of \(y_i,y_j,y_k\)):
+- \(\partial \text{cross}/\partial y_i = (x_j - x_k)\)
+- \(\partial \text{cross}/\partial y_j = (x_k - x_i)\)
+- \(\partial \text{cross}/\partial y_k = (x_i - x_j)\)
+
+So each triple contributes to gradients of exactly 6 variables.
+
+### Optimizer: Adam + random restarts
+
+The loss is a high-degree polynomial and non-convex, so local minima exist. The code uses:
+- **Random initialization** of all points in a square \([-15,15]\times[-15,15]\)
+- **Adam** optimizer (adaptive moments), which is robust for poorly scaled problems
+- **Multiple restarts** (up to 80) to escape bad basins
+
+Stopping/acceptance:
+- If a restart achieves extremely tiny loss, stop early.
+- After all restarts, if best loss is below a threshold (\(1e{-4}\)), print **YES** and coordinates; else **NO**.
+
+### Complexity
+
+For each gradient evaluation:
+- \(O(\binom{N}{3})\) triples, each O(1) work
+- With \(N\le 8\), max 56 triples
+So even a few thousand steps and many restarts can fit, though the approach is heuristic.
+
+### Important note
+
+This is a **numerical / heuristic** approach, not a guaranteed constructive proof. It often works for such small \(N\) but is not theoretically certain under all judges. (The original problem likely expects an exact constructive method; the provided solution instead “searches” for coordinates.)
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>          // Includes almost all standard headers (GNU extension)
+
+using namespace std;
+
+// Pretty-print a pair: "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Read a pair from input
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Read an entire vector from input (assumes correct size already)
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) {             // Iterate by reference to write into elements
+        in >> x;
+    }
+    return in;
+};
+
+// Print a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {
+        out << x << ' ';
+    }
+    return out;
+};
+
+int n;                             // Number of points
+vector<double> r_vals;             // Special numbers R[i] stored as doubles for arithmetic
+
+void read() {
+    cin >> n;                      // Read N
+    r_vals.assign(n, 0.0);         // Resize and fill with 0
+    cin >> r_vals;                 // Read N values
+}
+
+void solve() {
+    // Numerical approach:
+    // Variables: (x[i], y[i]) for i=0..n-1
+    // Constraints for each triple (i,j,k):
+    //   Area(i,j,k) = R[i] + R[j] + R[k]
+    // Using doubled area:
+    //   |cross| = 2*(R[i]+R[j]+R[k])
+    // Square to remove abs:
+    //   cross^2 = target^2
+    // Convert to least-squares: sum (cross^2 - target^2)^2 and minimize via Adam.
+
+    vector<double> x(n), y(n);     // Current coordinates
+    vector<double> gx(n), gy(n);   // Gradients d(loss)/d(x[i]) and d(loss)/d(y[i])
+
+    // Adam moment estimates:
+    vector<double> m_x(n), m_y(n); // First moment (mean) estimates
+    vector<double> v_x(n), v_y(n); // Second moment (uncentered variance) estimates
+
+    mt19937 rng(987654321);        // Fixed seed RNG for reproducibility
+    uniform_real_distribution<double> init_dist(-15.0, 15.0); // Initial coordinate range
+
+    // Computes loss; if need_grad==true, also fills gx,gy with gradients.
+    auto compute = [&](bool need_grad) -> double {
+        if(need_grad) {
+            fill(gx.begin(), gx.end(), 0.0); // Reset gradients
+            fill(gy.begin(), gy.end(), 0.0);
+        }
+
+        double loss = 0.0;         // Sum of squared residuals over all triples
+
+        // Iterate over all triples i<j<k
+        for(int i = 0; i < n; i++) {
+            for(int j = i + 1; j < n; j++) {
+                for(int k = j + 1; k < n; k++) {
+
+                    // cross = 2 * signed area of triangle (i,j,k)
+                    // Equivalent to determinant expansion:
+                    // cross = x_i(y_k-y_j) + x_j(y_i-y_k) + x_k(y_j-y_i)
+                    double cross = x[i] * (y[k] - y[j]) + x[j] * (y[i] - y[k]) +
+                                   x[k] * (y[j] - y[i]);
+
+                    // target = 2*(R_i+R_j+R_k) because cross is doubled area
+                    double target = 2.0 * (r_vals[i] + r_vals[j] + r_vals[k]);
+
+                    // Residual equation after squaring:
+                    // want cross^2 - target^2 = 0
+                    double f = cross * cross - target * target;
+
+                    // Add squared residual to loss: f^2
+                    loss += f * f;
+
+                    if(need_grad) {
+                        // d(f^2)/d(p) = 4*f*cross * d(cross)/d(p)
+                        double coef = 4.0 * f * cross;
+
+                        // Partial derivatives of cross w.r.t x's
+                        gx[i] += coef * (y[k] - y[j]);
+                        gx[j] += coef * (y[i] - y[k]);
+                        gx[k] += coef * (y[j] - y[i]);
+
+                        // Partial derivatives of cross w.r.t y's
+                        gy[i] += coef * (x[j] - x[k]);
+                        gy[j] += coef * (x[k] - x[i]);
+                        gy[k] += coef * (x[i] - x[j]);
+                    }
+                }
+            }
+        }
+        return loss;
+    };
+
+    double best_loss = numeric_limits<double>::infinity(); // Best loss among restarts
+    vector<double> best_x(n), best_y(n);                   // Best coordinates found
+
+    // Adam hyperparameters
+    const double beta1 = 0.9, beta2 = 0.999, adam_eps = 1e-8;
+    const double lr = 0.1;                 // Learning rate
+    const int max_restarts = 80;           // Random restarts to escape local minima
+    const int max_steps = 2500;            // Adam iterations per restart
+
+    for(int restart = 0; restart < max_restarts; restart++) {
+
+        // Random initialization for this restart
+        for(int i = 0; i < n; i++) {
+            x[i] = init_dist(rng);
+            y[i] = init_dist(rng);
+        }
+
+        // Reset Adam state
+        fill(m_x.begin(), m_x.end(), 0.0);
+        fill(m_y.begin(), m_y.end(), 0.0);
+        fill(v_x.begin(), v_x.end(), 0.0);
+        fill(v_y.begin(), v_y.end(), 0.0);
+
+        // For bias correction: keep track of beta1^t and beta2^t
+        double b1t = 1.0, b2t = 1.0;
+
+        for(int step = 1; step <= max_steps; step++) {
+            double loss = compute(true);   // Compute loss and gradients
+
+            // If loss is essentially zero, stop early
+            if(loss < 1e-20) {
+                break;
+            }
+
+            // Update powers for bias correction
+            b1t *= beta1;
+            b2t *= beta2;
+
+            // Bias-correction denominators: (1 - beta^t)
+            double bc1 = 1.0 - b1t;
+            double bc2 = 1.0 - b2t;
+
+            // Adam update for each variable x[i], y[i]
+            for(int i = 0; i < n; i++) {
+                // First moment estimate (exponential moving average of gradients)
+                m_x[i] = beta1 * m_x[i] + (1.0 - beta1) * gx[i];
+                m_y[i] = beta1 * m_y[i] + (1.0 - beta1) * gy[i];
+
+                // Second moment estimate (EMA of squared gradients)
+                v_x[i] = beta2 * v_x[i] + (1.0 - beta2) * gx[i] * gx[i];
+                v_y[i] = beta2 * v_y[i] + (1.0 - beta2) * gy[i] * gy[i];
+
+                // Bias-corrected m and v are m/bc1 and v/bc2
+                // Parameter update: p -= lr * m_hat / (sqrt(v_hat)+eps)
+                x[i] -= lr * (m_x[i] / bc1) / (sqrt(v_x[i] / bc2) + adam_eps);
+                y[i] -= lr * (m_y[i] / bc1) / (sqrt(v_y[i] / bc2) + adam_eps);
+            }
+        }
+
+        // Evaluate final loss for this restart (no gradients needed)
+        double final_loss = compute(false);
+
+        // Keep the best solution across restarts
+        if(final_loss < best_loss) {
+            best_loss = final_loss;
+            best_x = x;
+            best_y = y;
+        }
+
+        // If we already got very small loss, no need to try more restarts
+        if(best_loss < 1e-12) {
+            break;
+        }
+    }
+
+    // If loss is sufficiently small, output coordinates
+    if(best_loss < 1e-4) {
+        cout << "YES\n";
+        cout << fixed << setprecision(4);
+        for(int i = 0; i < n; i++) {
+            cout << best_x[i] << ' ' << best_y[i] << '\n';
+        }
+    } else {
+        // Otherwise declare failure
+        cout << "NO\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Faster I/O
+    cin.tie(nullptr);                 // Untie cin/cout
+
+    int T = 1;                        // Problem has a single test
+    // cin >> T;                      // (Disabled) would read multiple tests
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same numerical method) with detailed comments
+
+```python
+import sys
+import math
+import random
+
+def solve():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    r = [float(next(it)) for _ in range(n)]
+
+    # Variables: x[i], y[i]
+    x = [0.0] * n
+    y = [0.0] * n
+
+    # Gradients
+    gx = [0.0] * n
+    gy = [0.0] * n
+
+    # Adam state
+    mx = [0.0] * n
+    my = [0.0] * n
+    vx = [0.0] * n
+    vy = [0.0] * n
+
+    rng = random.Random(987654321)
+
+    def compute(need_grad: bool) -> float:
+        """Compute total loss; if need_grad, also compute gradients into gx,gy."""
+        if need_grad:
+            for i in range(n):
+                gx[i] = 0.0
+                gy[i] = 0.0
+
+        loss = 0.0
+        # All triples i < j < k
+        for i in range(n):
+            for j in range(i + 1, n):
+                for k in range(j + 1, n):
+                    # cross is doubled signed area:
+                    # cross = x_i(y_k-y_j) + x_j(y_i-y_k) + x_k(y_j-y_i)
+                    cross = (
+                        x[i] * (y[k] - y[j]) +
+                        x[j] * (y[i] - y[k]) +
+                        x[k] * (y[j] - y[i])
+                    )
+
+                    # Target doubled area
+                    target = 2.0 * (r[i] + r[j] + r[k])
+
+                    # Residual after squaring to remove abs:
+                    # want cross^2 = target^2
+                    f = cross * cross - target * target
+                    loss += f * f
+
+                    if need_grad:
+                        # d(f^2)/d(p) = 4*f*cross * d(cross)/d(p)
+                        coef = 4.0 * f * cross
+
+                        # d(cross)/d(x_i) etc.
+                        gx[i] += coef * (y[k] - y[j])
+                        gx[j] += coef * (y[i] - y[k])
+                        gx[k] += coef * (y[j] - y[i])
+
+                        # d(cross)/d(y_i) etc.
+                        gy[i] += coef * (x[j] - x[k])
+                        gy[j] += coef * (x[k] - x[i])
+                        gy[k] += coef * (x[i] - x[j])
+
+        return loss
+
+    # Hyperparameters (mirrors the C++ code)
+    beta1 = 0.9
+    beta2 = 0.999
+    eps = 1e-8
+    lr = 0.1
+    max_restarts = 80
+    max_steps = 2500
+
+    best_loss = float("inf")
+    best_x = None
+    best_y = None
+
+    for _ in range(max_restarts):
+        # Random init in [-15,15]
+        for i in range(n):
+            x[i] = rng.uniform(-15.0, 15.0)
+            y[i] = rng.uniform(-15.0, 15.0)
+
+        # Reset Adam
+        for i in range(n):
+            mx[i] = my[i] = 0.0
+            vx[i] = vy[i] = 0.0
+
+        b1t = 1.0  # beta1^t
+        b2t = 1.0  # beta2^t
+
+        for _step in range(1, max_steps + 1):
+            loss = compute(True)
+
+            # Converged extremely well
+            if loss < 1e-20:
+                break
+
+            # Update bias-correction powers
+            b1t *= beta1
+            b2t *= beta2
+            bc1 = 1.0 - b1t
+            bc2 = 1.0 - b2t
+
+            # Adam parameter update
+            for i in range(n):
+                mx[i] = beta1 * mx[i] + (1.0 - beta1) * gx[i]
+                my[i] = beta1 * my[i] + (1.0 - beta1) * gy[i]
+
+                vx[i] = beta2 * vx[i] + (1.0 - beta2) * gx[i] * gx[i]
+                vy[i] = beta2 * vy[i] + (1.0 - beta2) * gy[i] * gy[i]
+
+                # Bias-corrected moments
+                mhatx = mx[i] / bc1
+                mhaty = my[i] / bc1
+                vhatx = vx[i] / bc2
+                vhaty = vy[i] / bc2
+
+                x[i] -= lr * mhatx / (math.sqrt(vhatx) + eps)
+                y[i] -= lr * mhaty / (math.sqrt(vhaty) + eps)
+
+        final_loss = compute(False)
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_x = x[:]
+            best_y = y[:]
+
+        if best_loss < 1e-12:
+            break
+
+    if best_loss < 1e-4:
+        out = ["YES"]
+        for i in range(n):
+            out.append(f"{best_x[i]:.4f} {best_y[i]:.4f}")
+        sys.stdout.write("\n".join(out) + "\n")
+    else:
+        sys.stdout.write("NO\n")
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5) Compressed editorial
+
+We need coordinates so that for every triple \((i,j,k)\),
+\[
+\text{Area}(i,j,k)=R_i+R_j+R_k.
+\]
+Using doubled area via cross product:
+\[
+|\text{cross}(i,j,k)| = 2(R_i+R_j+R_k),
+\]
+square to remove absolute:
+\[
+\text{cross}^2 - \text{target}^2 = 0,\quad \text{target}=2(R_i+R_j+R_k).
+\]
+Minimize least-squares loss:
+\[
+\sum_{i<j<k}(\text{cross}^2-\text{target}^2)^2
+\]
+over variables \((x_i,y_i)\). Compute gradients analytically:
+\(\nabla = 4 f \cdot \text{cross} \cdot \nabla(\text{cross})\).
+Run Adam optimizer for a few thousand steps with multiple random restarts; if best loss is small enough, output coordinates, otherwise output NO.

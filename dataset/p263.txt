@@ -1,0 +1,1034 @@
+## 1. Abridged problem statement
+
+There are `10^6` cells in a row, initially empty. A **tower** is a maximal contiguous segment of non-empty cells. Towers are numbered from left to right; columns inside a tower are also numbered from left to right.
+
+Process up to `10^6` commands:
+
+- `put x c`: add `c` cubes to cell `x`.
+- `tput t x c`: add `c` cubes to column `x` of tower `t`.
+- `towers`: print number of towers.
+- `cubes t`: print total cubes in tower `t`.
+- `length t`: print length of tower `t`.
+- `tcubes t x`: print cubes in column `x` of tower `t`.
+
+All commands are valid. Output must exactly follow the sample format, including `1 towers`, `1th`, etc.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+Cubes are only added, never removed.
+
+Therefore:
+
+- an empty cell can become non-empty;
+- a non-empty cell stays non-empty forever;
+- towers can appear, extend, or merge;
+- towers never split.
+
+A tower is just a maximal interval of positive-height cells.
+
+For each tower we need to know:
+
+- its starting cell;
+- its ending cell;
+- the total number of cubes inside it.
+
+We also need to find the `t`-th tower from left to right quickly.
+
+This suggests maintaining all current towers in an **ordered balanced binary search tree** keyed by starting position, augmented with subtree sizes. The submitted solution uses a randomized treap.
+
+Additionally, keep an array:
+
+```cpp
+height[x] = number of cubes on cell x
+```
+
+Since cell indices are at most `10^6`, this array is small enough.
+
+---
+
+### Treap contents
+
+Each treap node represents one tower.
+
+For a tower `[l, r]`, the node stores:
+
+```cpp
+key = l
+data.end = r
+data.sum = total cubes in cells l..r
+```
+
+The treap is ordered by `key`, i.e. by tower start position.
+
+Each node also stores its subtree size, allowing us to find the `k`-th tower in `O(log n)` expected time.
+
+---
+
+### Handling commands
+
+#### `towers`
+
+The number of towers is simply the size of the treap root:
+
+```cpp
+root ? root->size : 0
+```
+
+---
+
+#### `length t`
+
+Find the `t`-th tower by order statistic.
+
+If its node is `[l, r]`, length is:
+
+```cpp
+r - l + 1
+```
+
+---
+
+#### `cubes t`
+
+Find the `t`-th tower and output its stored sum.
+
+---
+
+#### `tcubes t x`
+
+Find the `t`-th tower. Suppose it starts at `l`.
+
+Column `x` of this tower corresponds to global cell:
+
+```cpp
+cell = l + x - 1
+```
+
+Then answer is:
+
+```cpp
+height[cell]
+```
+
+---
+
+#### `tput t x c`
+
+Again map tower-local column `x` to a global cell.
+
+Then:
+
+```cpp
+height[cell] += c
+tower.sum += c
+```
+
+This operation never changes the tower structure because the command is guaranteed to refer to an existing column inside an existing tower.
+
+---
+
+#### `put x c`
+
+This is the only command that can change tower structure.
+
+There are two cases.
+
+---
+
+### Case 1: cell `x` is already non-empty
+
+Then no interval boundaries change.
+
+We only add cubes to the cell and to the containing tower sum.
+
+The tower containing `x` is the tower with the greatest start position `<= x`, i.e. the predecessor by key.
+
+```cpp
+height[x] += c
+pred_node(root, x)->data.sum += c
+```
+
+---
+
+### Case 2: cell `x` is empty
+
+Now it becomes non-empty.
+
+Check whether its immediate neighbors are non-empty:
+
+```cpp
+left = height[x - 1] > 0
+right = height[x + 1] > 0
+```
+
+There are four possibilities.
+
+---
+
+#### Neither neighbor is occupied
+
+A new length-1 tower appears:
+
+```cpp
+[x, x]
+```
+
+Insert new treap node:
+
+```cpp
+start = x
+end = x
+sum = c
+```
+
+---
+
+#### Only left neighbor is occupied
+
+Cell `x` extends the tower ending at `x - 1`.
+
+Find the predecessor tower and update:
+
+```cpp
+end = x
+sum += c
+```
+
+---
+
+#### Only right neighbor is occupied
+
+Cell `x` extends the tower starting at `x + 1` to the left.
+
+Find the tower starting at `x + 1`.
+
+Its new start becomes `x`.
+
+The submitted C++ solution directly changes the treap node key from `x + 1` to `x`.
+
+This is safe because:
+
+- `x - 1` is empty;
+- therefore no previous tower touches `x`;
+- no other tower start lies between `x` and `x + 1`.
+
+So the BST order remains valid.
+
+Update:
+
+```cpp
+key = x
+sum += c
+```
+
+---
+
+#### Both neighbors are occupied
+
+Cell `x` bridges two towers:
+
+```text
+[left tower] x [right tower]
+```
+
+They merge into one tower.
+
+Let:
+
+- left tower be `[l1, r1]`, where `r1 = x - 1`;
+- right tower be `[l2, r2]`, where `l2 = x + 1`.
+
+New tower is:
+
+```text
+[l1, r2]
+```
+
+Update the left tower node:
+
+```cpp
+end = right.end
+sum += c + right.sum
+```
+
+Then erase the right tower node from the treap.
+
+---
+
+### Complexity
+
+Let `T` be the current number of towers.
+
+Each treap operation costs expected:
+
+```text
+O(log T)
+```
+
+Each command is processed in expected:
+
+```text
+O(log T)
+```
+
+Memory usage:
+
+```text
+O(10^6 + number_of_towers)
+```
+
+---
+
+## 3. Commented C++ solution
+
+```cpp
+#include <bits/stdc++.h>              // Includes the whole standard library.
+
+using namespace std;                   // Avoid writing std:: everywhere.
+
+// A tower is represented by one treap node.
+// The node key stores the left boundary of the tower.
+// This structure stores the remaining tower data.
+struct Tower {
+    int end;                           // Right boundary of the tower.
+    int64_t sum;                       // Total number of cubes in the tower.
+};
+
+// Treap node.
+struct Node {
+    int key;                           // Start position of this tower.
+    Tower data;                        // End position and cube sum of this tower.
+    uint64_t prior;                    // Random priority used by treap balancing.
+    int size;                          // Number of treap nodes in this subtree.
+    Node* left;                        // Left child.
+    Node* right;                       // Right child.
+
+    Node(int key_, Tower data_)        // Constructor for a new node.
+        : key(key_),                   // Store tower start.
+          data(data_),                 // Store tower information.
+          prior(rng()),                // Generate random priority.
+          size(1),                     // A new node has subtree size 1.
+          left(nullptr),               // Initially no left child.
+          right(nullptr) {}            // Initially no right child.
+
+    static uint64_t rng() {            // Random number generator for priorities.
+        static mt19937_64 gen(         // 64-bit Mersenne Twister.
+            random_device{}()          // Seeded from the system.
+        );
+        return gen();                  // Return a random 64-bit value.
+    }
+
+    void pull() {                      // Recalculate subtree metadata.
+        size = 1;                      // Count this node.
+        if (left)                      // If there is a left subtree,
+            size += left->size;        // add its size.
+        if (right)                     // If there is a right subtree,
+            size += right->size;       // add its size.
+    }
+};
+
+// The treap root.
+Node* root = nullptr;
+
+// height[x] stores cubes in cell x.
+// Extra cells avoid boundary checks for x - 1 and x + 1.
+int height[1000002];
+
+// Splits treap t into:
+// first  = nodes with key <= key,
+// second = nodes with key > key.
+pair<Node*, Node*> split(Node* t, int key) {
+    if (!t)                            // Empty treap splits into two empty treaps.
+        return {nullptr, nullptr};
+
+    if (key < t->key) {                // Current node belongs to the right part.
+        auto parts = split(t->left, key); // Split the left subtree.
+        t->left = parts.second;        // The greater part of left subtree stays with t.
+        t->pull();                     // Update size after child change.
+        return {parts.first, t};       // Return resulting pair.
+    } else {                           // Current node belongs to the left part.
+        auto parts = split(t->right, key); // Split the right subtree.
+        t->right = parts.first;        // The smaller part of right subtree stays with t.
+        t->pull();                     // Update size after child change.
+        return {t, parts.second};      // Return resulting pair.
+    }
+}
+
+// Merges two treaps l and r.
+// All keys in l must be <= all keys in r.
+Node* merge(Node* l, Node* r) {
+    if (!l || !r)                      // If one treap is empty,
+        return l ? l : r;              // return the other one.
+
+    if (l->prior > r->prior) {         // Higher priority root becomes new root.
+        l->right = merge(l->right, r); // Merge r into l's right child.
+        l->pull();                     // Update size.
+        return l;                      // Return new root.
+    } else {
+        r->left = merge(l, r->left);   // Merge l into r's left child.
+        r->pull();                     // Update size.
+        return r;                      // Return new root.
+    }
+}
+
+// Inserts node it into treap t.
+void insert_node(Node*& t, Node* it) {
+    if (!t) {                          // Empty position found.
+        t = it;                        // Put node here.
+    } else if (it->prior > t->prior) { // New node should become subtree root.
+        auto parts = split(t, it->key);// Split old tree by new key.
+        it->left = parts.first;        // Smaller/equal keys become left child.
+        it->right = parts.second;      // Greater keys become right child.
+        t = it;                        // New node is now root.
+    } else {                           // Otherwise descend by BST key.
+        if (it->key < t->key)          // If key is smaller,
+            insert_node(t->left, it);  // insert into left subtree.
+        else                           // Otherwise,
+            insert_node(t->right, it); // insert into right subtree.
+    }
+
+    t->pull();                         // Recalculate subtree size.
+}
+
+// Erases the node with given key from treap t.
+void erase_node(Node*& t, int key) {
+    if (t->key == key) {               // Found node to erase.
+        Node* old = t;                 // Save pointer for deletion.
+        t = merge(t->left, t->right);  // Replace it with merged children.
+        delete old;                    // Free erased node.
+    } else {                           // Need to continue searching.
+        if (key < t->key)              // Key is in the left subtree.
+            erase_node(t->left, key);
+        else                           // Key is in the right subtree.
+            erase_node(t->right, key);
+    }
+
+    if (t)                             // If subtree is non-empty,
+        t->pull();                     // update its size.
+}
+
+// Returns the k-th treap node in sorted order, zero-based.
+Node* kth_tower(Node* t, int k) {
+    while (t) {                        // Iterate down the treap.
+        int left_size = t->left ? t->left->size : 0; // Size of left subtree.
+
+        if (k < left_size)             // Desired node is in left subtree.
+            t = t->left;
+        else if (k == left_size)       // Current node is exactly k-th.
+            return t;
+        else {                         // Desired node is in right subtree.
+            k -= left_size + 1;        // Skip left subtree and current node.
+            t = t->right;              // Continue right.
+        }
+    }
+
+    return nullptr;                    // Should not happen for valid input.
+}
+
+// Finds node with exact key.
+Node* find_node(Node* t, int key) {
+    while (t) {                        // Standard BST search.
+        if (t->key == key)             // Key found.
+            return t;
+        if (key < t->key)              // Search left if key is smaller.
+            t = t->left;
+        else                           // Otherwise search right.
+            t = t->right;
+    }
+
+    return nullptr;                    // Not found.
+}
+
+// Finds the node with largest key <= x.
+Node* pred_node(Node* t, int x) {
+    Node* res = nullptr;               // Best predecessor found so far.
+
+    while (t) {                        // Traverse the BST.
+        if (t->key <= x) {             // Current key is a valid predecessor.
+            res = t;                   // Remember it.
+            t = t->right;              // Try to find a larger valid key.
+        } else {
+            t = t->left;               // Current key too large, go left.
+        }
+    }
+
+    return res;                        // Return predecessor.
+}
+
+// Fast input/output namespace.
+namespace fastio {
+    constexpr int BUF_SIZE = 1 << 16;  // Input buffer size.
+    char buf[BUF_SIZE];                // Input buffer.
+    int pos = 0;                       // Current reading position.
+    int len = 0;                       // Number of loaded bytes.
+
+    int get_char() {                   // Reads one character.
+        if (pos == len) {              // Buffer exhausted.
+            len = fread(buf, 1, BUF_SIZE, stdin); // Refill it.
+            pos = 0;                   // Reset position.
+        }
+        return pos < len ? buf[pos++] : EOF; // Return next char or EOF.
+    }
+
+    int skip_ws() {                    // Skips whitespace.
+        int c = get_char();            // Read first character.
+        while (c == ' ' || c == '\n' || c == '\r' || c == '\t')
+            c = get_char();            // Continue while whitespace.
+        return c;                      // Return first non-whitespace char.
+    }
+
+    int read_int() {                   // Reads an integer.
+        int c = skip_ws();             // Skip leading whitespace.
+        int x = 0;                     // Accumulated number.
+
+        while ('0' <= c && c <= '9') { // Parse digits.
+            x = x * 10 + c - '0';      // Append digit.
+            c = get_char();            // Read next character.
+        }
+
+        return x;                      // Return parsed integer.
+    }
+
+    void read_word(char* s) {          // Reads a command word.
+        int c = skip_ws();             // Skip leading whitespace.
+        int n = 0;                     // Current length.
+
+        while (c != EOF && c > ' ') {  // Continue until whitespace.
+            s[n++] = char(c);          // Store character.
+            c = get_char();            // Read next character.
+        }
+
+        s[n] = '\0';                   // Null-terminate string.
+    }
+
+    constexpr int OUT_SIZE = 1 << 22;  // Output buffer size.
+    char out[OUT_SIZE];                // Output buffer.
+    int out_pos = 0;                   // Current output position.
+
+    void flush() {                     // Flushes output buffer.
+        fwrite(out, 1, out_pos, stdout);
+        out_pos = 0;
+    }
+
+    void put_char(char c) {            // Writes one character.
+        if (out_pos == OUT_SIZE)       // If buffer full,
+            flush();                   // flush it.
+        out[out_pos++] = c;            // Store character.
+    }
+
+    void put_str(const char* s) {      // Writes a C-string.
+        while (*s)                     // Until null terminator,
+            put_char(*s++);            // write current character.
+    }
+
+    void put_int(int64_t x) {          // Writes integer.
+        if (x == 0) {                  // Special case zero.
+            put_char('0');
+            return;
+        }
+
+        char tmp[24];                  // Temporary reversed digits.
+        int n = 0;                     // Number of digits.
+
+        while (x > 0) {                // Extract digits.
+            tmp[n++] = char('0' + x % 10);
+            x /= 10;
+        }
+
+        while (n > 0)                  // Print in reverse order.
+            put_char(tmp[--n]);
+    }
+
+    void put_ordinal(int64_t x) {      // Prints x followed by "th".
+        put_int(x);
+        put_str("th");
+    }
+}
+
+// Handles command: put x cubes.
+void do_put(int x, int cubes) {
+    if (height[x] > 0) {               // Cell already belongs to some tower.
+        height[x] += cubes;            // Increase column height.
+        pred_node(root, x)->data.sum += cubes; // Add cubes to containing tower.
+        return;                        // No structural changes needed.
+    }
+
+    height[x] = cubes;                 // Cell becomes non-empty.
+
+    bool has_left = height[x - 1] > 0; // Whether left neighbor is occupied.
+    bool has_right = height[x + 1] > 0;// Whether right neighbor is occupied.
+
+    if (!has_left && !has_right) {     // New isolated tower.
+        insert_node(root, new Node(x, Tower{x, cubes}));
+    } else if (has_left && !has_right) { // Extends tower on the left.
+        Node* lt = pred_node(root, x - 1); // Find left tower.
+        lt->data.end = x;              // Extend its right boundary.
+        lt->data.sum += cubes;         // Add cubes to its sum.
+    } else if (!has_left && has_right) { // Extends tower on the right to the left.
+        Node* rt = find_node(root, x + 1); // Right tower starts at x + 1.
+        rt->key = x;                   // Move its start to x.
+        rt->data.sum += cubes;         // Add cubes to its sum.
+    } else {                           // Both neighbors occupied: merge towers.
+        Node* lt = pred_node(root, x - 1); // Tower on the left.
+        Node* rt = find_node(root, x + 1); // Tower on the right.
+
+        lt->data.end = rt->data.end;   // Merged tower ends where right tower ended.
+        lt->data.sum += cubes + rt->data.sum; // Add new cell and right tower sum.
+
+        erase_node(root, x + 1);       // Remove right tower node.
+    }
+}
+
+int main() {
+    int n = fastio::read_int();        // Read number of commands.
+
+    char cmd[8];                       // Command name buffer.
+
+    for (int i = 0; i < n; ++i) {      // Process all commands.
+        fastio::read_word(cmd);        // Read command name.
+
+        if (cmd[0] == 'p') {           // "put"
+            int x = fastio::read_int();// Cell index.
+            int c = fastio::read_int();// Cubes to add.
+            do_put(x, c);              // Execute put.
+        } else if (cmd[0] == 'c') {    // "cubes"
+            int t = fastio::read_int();// Tower number, one-based.
+            Node* nd = kth_tower(root, t - 1); // Find tower node.
+
+            fastio::put_int(nd->data.sum);
+            fastio::put_str(" cubes in ");
+            fastio::put_ordinal(t);
+            fastio::put_str(" tower\n");
+        } else if (cmd[0] == 'l') {    // "length"
+            int t = fastio::read_int();// Tower number.
+            Node* nd = kth_tower(root, t - 1); // Find tower.
+
+            fastio::put_str("length of ");
+            fastio::put_ordinal(t);
+            fastio::put_str(" tower is ");
+            fastio::put_int(nd->data.end - nd->key + 1);
+            fastio::put_char('\n');
+        } else if (cmd[1] == 'o') {    // "towers"
+            fastio::put_int(root ? root->size : 0);
+            fastio::put_str(" towers\n");
+        } else if (cmd[1] == 'p') {    // "tput"
+            int t = fastio::read_int();// Tower number.
+            int x = fastio::read_int();// Column inside tower.
+            int c = fastio::read_int();// Cubes to add.
+
+            Node* nd = kth_tower(root, t - 1); // Find tower.
+            int cell = nd->key + x - 1;        // Convert to global cell.
+
+            height[cell] += c;         // Increase cell height.
+            nd->data.sum += c;         // Increase tower sum.
+        } else {                       // "tcubes"
+            int t = fastio::read_int();// Tower number.
+            int x = fastio::read_int();// Column inside tower.
+
+            Node* nd = kth_tower(root, t - 1); // Find tower.
+            int cell = nd->key + x - 1;        // Convert to global cell.
+
+            fastio::put_int(height[cell]);
+            fastio::put_str(" cubes in ");
+            fastio::put_ordinal(x);
+            fastio::put_str(" column of ");
+            fastio::put_ordinal(t);
+            fastio::put_str(" tower\n");
+        }
+    }
+
+    fastio::flush();                   // Flush remaining output.
+
+    return 0;                          // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution
+
+```python
+import sys
+import random
+from array import array
+
+# ------------------------------------------------------------
+# Fast scanner.
+# It reads the whole input once and parses tokens manually.
+# This avoids creating a huge list with split().
+# ------------------------------------------------------------
+
+class FastScanner:
+    def __init__(self):
+        self.data = sys.stdin.buffer.read()
+        self.i = 0
+        self.n = len(self.data)
+
+    def next_token(self):
+        data = self.data
+        n = self.n
+        i = self.i
+
+        while i < n and data[i] <= 32:
+            i += 1
+
+        j = i
+        while j < n and data[j] > 32:
+            j += 1
+
+        self.i = j
+        return data[i:j]
+
+    def next_int(self):
+        data = self.data
+        n = self.n
+        i = self.i
+
+        while i < n and data[i] <= 32:
+            i += 1
+
+        x = 0
+        while i < n and data[i] > 32:
+            x = x * 10 + data[i] - 48
+            i += 1
+
+        self.i = i
+        return x
+
+
+# ------------------------------------------------------------
+# Treap stored in compact arrays.
+#
+# Node index 0 means null.
+#
+# For node v:
+#   key[v]   = starting cell of tower
+#   end[v]   = ending cell of tower
+#   sumv[v]  = total cubes in tower
+#   left[v]  = left child
+#   right[v] = right child
+#   size[v]  = subtree size
+#   prio[v]  = random priority
+# ------------------------------------------------------------
+
+key = array("i", [0])
+end = array("i", [0])
+sumv = array("q", [0])
+left = array("i", [0])
+right = array("i", [0])
+size = array("i", [0])
+prio = array("Q", [0])
+
+# Deterministic xorshift RNG for treap priorities.
+seed = 88172645463393265
+
+
+def rng():
+    global seed
+    seed ^= (seed << 7) & ((1 << 64) - 1)
+    seed ^= seed >> 9
+    return seed & ((1 << 64) - 1)
+
+
+def new_node(k, r, s):
+    """Create a new treap node and return its index."""
+    idx = len(key)
+
+    key.append(k)
+    end.append(r)
+    sumv.append(s)
+    left.append(0)
+    right.append(0)
+    size.append(1)
+    prio.append(rng())
+
+    return idx
+
+
+def pull(v):
+    """Recalculate subtree size of node v."""
+    size[v] = 1 + size[left[v]] + size[right[v]]
+
+
+sys.setrecursionlimit(2_000_000)
+
+
+def split(t, k):
+    """
+    Split treap t into:
+      a: all nodes with key <= k
+      b: all nodes with key > k
+    """
+    if t == 0:
+        return 0, 0
+
+    if k < key[t]:
+        a, b = split(left[t], k)
+        left[t] = b
+        pull(t)
+        return a, t
+    else:
+        a, b = split(right[t], k)
+        right[t] = a
+        pull(t)
+        return t, b
+
+
+def merge(a, b):
+    """Merge two treaps where every key in a is <= every key in b."""
+    if a == 0 or b == 0:
+        return a or b
+
+    if prio[a] > prio[b]:
+        right[a] = merge(right[a], b)
+        pull(a)
+        return a
+    else:
+        left[b] = merge(a, left[b])
+        pull(b)
+        return b
+
+
+def insert(t, v):
+    """Insert node v into treap t and return new root."""
+    if t == 0:
+        return v
+
+    if prio[v] > prio[t]:
+        a, b = split(t, key[v])
+        left[v] = a
+        right[v] = b
+        pull(v)
+        return v
+
+    if key[v] < key[t]:
+        left[t] = insert(left[t], v)
+    else:
+        right[t] = insert(right[t], v)
+
+    pull(t)
+    return t
+
+
+def erase(t, k):
+    """Erase node with key k from treap t and return new root."""
+    if key[t] == k:
+        return merge(left[t], right[t])
+
+    if k < key[t]:
+        left[t] = erase(left[t], k)
+    else:
+        right[t] = erase(right[t], k)
+
+    pull(t)
+    return t
+
+
+def kth(t, k):
+    """Return index of zero-based k-th node by key order."""
+    while t:
+        ls = size[left[t]]
+
+        if k < ls:
+            t = left[t]
+        elif k == ls:
+            return t
+        else:
+            k -= ls + 1
+            t = right[t]
+
+    return 0
+
+
+def find_node(t, k):
+    """Find node with exact key k."""
+    while t:
+        if key[t] == k:
+            return t
+        if k < key[t]:
+            t = left[t]
+        else:
+            t = right[t]
+    return 0
+
+
+def pred_node(t, x):
+    """Find node with maximum key <= x."""
+    ans = 0
+
+    while t:
+        if key[t] <= x:
+            ans = t
+            t = right[t]
+        else:
+            t = left[t]
+
+    return ans
+
+
+# ------------------------------------------------------------
+# Main command processing.
+# ------------------------------------------------------------
+
+def main():
+    scanner = FastScanner()
+
+    n = scanner.next_int()
+
+    # height[x] = cubes in global cell x.
+    # Use 1_000_002 so x-1 and x+1 are safe for x in [1, 10^6].
+    height = array("i", [0]) * 1_000_002
+
+    root = 0
+
+    out = []
+
+    def ordinal(x):
+        return str(x) + "th"
+
+    def do_put(x, c):
+        nonlocal root
+
+        # If cell already belongs to a tower, only heights and sums change.
+        if height[x] > 0:
+            height[x] += c
+            v = pred_node(root, x)
+            sumv[v] += c
+            return
+
+        # Cell becomes non-empty.
+        height[x] = c
+
+        has_left = height[x - 1] > 0
+        has_right = height[x + 1] > 0
+
+        if not has_left and not has_right:
+            # New isolated tower [x, x].
+            root = insert(root, new_node(x, x, c))
+
+        elif has_left and not has_right:
+            # Extend the left tower to the right.
+            lt = pred_node(root, x - 1)
+            end[lt] = x
+            sumv[lt] += c
+
+        elif not has_left and has_right:
+            # Extend the right tower to the left.
+            rt = find_node(root, x + 1)
+            key[rt] = x
+            sumv[rt] += c
+
+        else:
+            # Merge left tower, new cell x, and right tower.
+            lt = pred_node(root, x - 1)
+            rt = find_node(root, x + 1)
+
+            end[lt] = end[rt]
+            sumv[lt] += c + sumv[rt]
+
+            root = erase(root, x + 1)
+
+    for _ in range(n):
+        cmd = scanner.next_token()
+
+        if cmd[0] == ord("p"):
+            # put x c
+            x = scanner.next_int()
+            c = scanner.next_int()
+            do_put(x, c)
+
+        elif cmd[0] == ord("c"):
+            # cubes t
+            t = scanner.next_int()
+            v = kth(root, t - 1)
+            out.append(f"{sumv[v]} cubes in {ordinal(t)} tower\n")
+
+        elif cmd[0] == ord("l"):
+            # length t
+            t = scanner.next_int()
+            v = kth(root, t - 1)
+            length = end[v] - key[v] + 1
+            out.append(f"length of {ordinal(t)} tower is {length}\n")
+
+        elif cmd[1] == ord("o"):
+            # towers
+            out.append(f"{size[root]} towers\n")
+
+        elif cmd[1] == ord("p"):
+            # tput t x c
+            t = scanner.next_int()
+            x = scanner.next_int()
+            c = scanner.next_int()
+
+            v = kth(root, t - 1)
+            cell = key[v] + x - 1
+
+            height[cell] += c
+            sumv[v] += c
+
+        else:
+            # tcubes t x
+            t = scanner.next_int()
+            x = scanner.next_int()
+
+            v = kth(root, t - 1)
+            cell = key[v] + x - 1
+
+            out.append(
+                f"{height[cell]} cubes in {ordinal(x)} column of {ordinal(t)} tower\n"
+            )
+
+    sys.stdout.write("".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+Maintain every current tower as one node in an order-statistic treap keyed by its left endpoint. Each node stores:
+
+```text
+start, end, total cubes, subtree size
+```
+
+Also store per-cell cube counts in `height[1..10^6]`.
+
+Queries:
+
+- `towers`: treap size.
+- `cubes t`: find `t`-th node, print its sum.
+- `length t`: find `t`-th node, print `end - start + 1`.
+- `tcubes t x`: find `t`-th node, convert to global cell `start + x - 1`, print `height[cell]`.
+
+Updates:
+
+- `tput t x c`: find `t`-th node, convert local column to global cell, add `c` to `height[cell]` and tower sum.
+- `put x c`:
+  - if `height[x] > 0`, add to cell and containing tower sum;
+  - otherwise inspect `height[x-1]` and `height[x+1]`:
+    - neither occupied: insert new tower `[x, x]`;
+    - only left occupied: extend left tower’s end to `x`;
+    - only right occupied: change right tower start from `x+1` to `x`;
+    - both occupied: merge left and right towers, erase right node.
+
+Because cubes are never removed, towers never split, so these cases are sufficient.
+
+Expected complexity per command:
+
+```text
+O(log number_of_towers)
+```
+
+Memory:
+
+```text
+O(10^6 + number_of_towers)
+```

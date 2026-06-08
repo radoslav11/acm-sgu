@@ -1,0 +1,722 @@
+## 1. Abridged Problem Statement
+
+An equilateral triangle of side length `N` is divided into `N²` small unit triangles. Each unit triangle is one of 4 kinds, where kind `i` has a fixed pattern of black/white edges, and triangles may be rotated freely.
+
+You are given counts `n1, n2, n3, n4` of the four kinds, summing to `N²`. Count how many different ways to assemble the big triangle so that every pair of adjacent unit triangles has matching colors on their shared edge.
+
+The big triangle’s orientation is fixed, so rotated whole-triangle colorings are considered different.
+
+Constraints:
+
+```text
+1 ≤ N ≤ 5
+n1 + n2 + n3 + n4 = N²
+```
+
+---
+
+## 2. Detailed Editorial
+
+### Geometry of the board
+
+A triangle of side `N` contains `N²` unit triangles.
+
+We process the board row by row. Row `r`, using 1-based indexing, contains:
+
+```text
+2r - 1
+```
+
+unit triangles.
+
+Positions inside a row are indexed by `p`, from `0` to `2r - 2`.
+
+The orientation alternates:
+
+- even `p`: upward-facing triangle
+- odd `p`: downward-facing triangle
+
+So row `r` looks like:
+
+```text
+up, down, up, down, ..., up
+```
+
+---
+
+### Edge representation
+
+Each small triangle has 3 edges. The solution represents their colors as bits:
+
+```text
+0 = white
+1 = black
+```
+
+For a triangle, the three relevant sides are stored as:
+
+```text
+left, right, third
+```
+
+where:
+
+- for an upward triangle, `third` is its bottom side
+- for a downward triangle, `third` is its top side
+
+The four triangle kinds correspond to having:
+
+```text
+kind 0: 0 black edges
+kind 1: 1 black edge
+kind 2: 2 black edges
+kind 3: 3 black edges
+```
+
+The input gives counts of kinds `1..4`, but internally the code stores them as `cnt[0..3]`.
+
+For a triangle of kind `k`, we enumerate every 3-bit mask with exactly `k` bits set. This corresponds to all possible rotations/orientations of that triangle kind.
+
+---
+
+### Shared edges
+
+There are two types of edges shared between neighboring cells.
+
+#### 1. Vertical-ish edges inside the same row
+
+`v_edge[r][p]` stores the edge between cells `p` and `p + 1` of row `r`.
+
+It is:
+
+- the right side of cell `(r, p)`
+- the left side of cell `(r, p + 1)`
+
+#### 2. Horizontal edges between rows
+
+`h_edge[r][k]` stores the edge between row `r` and row `r + 1`.
+
+It is:
+
+- the bottom side of upward cell `(r, 2k)`
+- the top side of downward cell `(r + 1, 2k + 1)`
+
+---
+
+### DFS with memoization
+
+We process cells in row-major order.
+
+At each cell `(r, p)`, some edges may already be fixed by previously placed triangles:
+
+- If `p > 0`, the left edge is fixed by the previous cell in the same row.
+- If the current triangle is downward-facing, its top edge is fixed by a triangle in the previous row.
+
+For each available triangle kind, we try every orientation, keeping only those that match already-fixed neighboring edges.
+
+Then we store the newly determined outgoing edges:
+
+- the right edge into `v_edge[r][p]`
+- if upward-facing, the bottom edge into `h_edge[r][p / 2]`
+
+Then recurse to the next cell.
+
+---
+
+### Why memoization is possible
+
+Naively, the search tree is huge. However, at any point, most already-written edges will never be used again.
+
+The future only depends on:
+
+1. Current cell position `(r, p)`
+2. Remaining counts of the four triangle kinds
+3. A small active boundary of edge colors that future cells still need
+
+This active boundary consists of:
+
+- unconsumed horizontal edges from the previous row
+- the immediate left edge of the current cell
+- already built horizontal edges from the current row that the next row will need
+
+The function `active_mask(r, p)` packs these still-relevant edge colors into a bitmask.
+
+Then memoization key is:
+
+```text
+(r, p, active_mask, cnt[0], cnt[1], cnt[2], cnt[3])
+```
+
+Since `N ≤ 5`, the number of active edges is tiny, so this DP is very fast.
+
+---
+
+### Base case
+
+When `r > N`, all cells have been filled successfully, so we return `1`.
+
+---
+
+### Complexity
+
+There are only `N² ≤ 25` cells.
+
+For each state, we try:
+
+- 4 triangle kinds
+- up to 8 edge masks
+
+So each transition is small.
+
+The memoized state space is also small because the active boundary has only `O(N)` bits and the counts sum to at most 25.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+// Include all standard C++ libraries.
+#include <bits/stdc++.h>
+
+// Use the standard namespace to avoid writing std:: repeatedly.
+using namespace std;
+
+// Overload output operator for pairs.
+// This helper is not essential for this problem, but is included in the template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    // Print the first and second elements separated by a space.
+    return out << x.first << ' ' << x.second;
+}
+
+// Overload input operator for pairs.
+// This helper is also part of the template.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    // Read the first and second elements.
+    return in >> x.first >> x.second;
+}
+
+// Overload input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    // Read every element of the vector.
+    for(auto& x: a) {
+        in >> x;
+    }
+
+    // Return the input stream.
+    return in;
+};
+
+// Overload output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    // Print every element followed by a space.
+    for(auto x: a) {
+        out << x << ' ';
+    }
+
+    // Return the output stream.
+    return out;
+};
+
+// Side length of the large triangle.
+int n;
+
+// cnt[i] stores how many triangles remain of internal kind i.
+// Internal kind i has exactly i black edges.
+// Input kinds 1..4 are stored as indices 0..3.
+array<int, 4> cnt;
+
+// Read input.
+void read() {
+    // Read side length.
+    cin >> n;
+
+    // Read counts of the 4 triangle kinds.
+    for(int i = 0; i < 4; i++) {
+        cin >> cnt[i];
+    }
+}
+
+// v_edge[r][p] stores the shared edge between cells p and p+1 in row r.
+// It is the right side of cell p and the left side of cell p+1.
+array<array<int, 16>, 8> v_edge{};
+
+// h_edge[r][k] stores the shared edge between row r and row r+1.
+// It is the bottom edge of upward cell (r, 2k)
+// and the top edge of downward cell (r+1, 2k+1).
+array<array<int, 16>, 8> h_edge{};
+
+// Memoization table.
+// The key packs the current position, active edge mask, and remaining counts.
+// The value is the number of completions from that state.
+unordered_map<int64_t, int64_t> memo;
+
+// Compute the active edge mask before placing cell (r, p).
+// Only these previously assigned edges can affect the future.
+int64_t active_mask(int r, int p) {
+    // Resulting bitmask.
+    int64_t mask = 0;
+
+    // Current bit position inside the mask.
+    int bit = 0;
+
+    // If r >= 2, there may be horizontal edges from the previous row
+    // that have not yet been consumed by downward triangles in this row.
+    if(r >= 2) {
+        // Previous-row horizontal edges h_edge[r-1][k] are consumed by
+        // downward cells in current row.
+        //
+        // At position p, edges with k < p/2 have already been consumed.
+        // Edges from p/2 to r-2 may still matter.
+        for(int k = p / 2; k <= r - 2; k++) {
+            // Store the color bit of this edge.
+            mask |= (int64_t)(h_edge[r - 1][k] & 1) << bit++;
+        }
+    }
+
+    // If p > 0, the current cell has a left neighbor.
+    // Its left edge is already fixed by v_edge[r][p-1].
+    if(p > 0) {
+        // Store that left-edge color in the active mask.
+        mask |= (int64_t)(v_edge[r][p - 1] & 1) << bit++;
+    }
+
+    // Count how many upward triangles in the current row have already been placed.
+    //
+    // Upward cells are at even positions 0, 2, 4, ...
+    // Before position p, the number of built upward cells is (p + 1) / 2.
+    int built = (p + 1) / 2;
+
+    // Their bottom edges will be needed by the next row.
+    for(int k = 0; k < built; k++) {
+        // Store h_edge[r][k] in the active mask.
+        mask |= (int64_t)(h_edge[r][k] & 1) << bit++;
+    }
+
+    // Return the compact active boundary.
+    return mask;
+}
+
+// Encode the DP state into one integer key.
+int64_t encode_key(int r, int p, int64_t mask) {
+    // Convert the cell position into a linear-ish index.
+    //
+    // Rows before r contain:
+    // 1 + 3 + 5 + ... + (2r - 3) = (r - 1)^2 cells.
+    // So the current cell index is (r - 1)^2 + p.
+    int64_t key = (r - 1) * (r - 1) + p;
+
+    // Add the active edge mask.
+    // 16 bits is more than enough for N <= 5.
+    key = (key << 16) | mask;
+
+    // Add the remaining counts.
+    for(int i = 0; i < 4; i++) {
+        // Each count is at most 25, so 5 bits are enough.
+        key = (key << 5) | cnt[i];
+    }
+
+    // Return the packed key.
+    return key;
+}
+
+// Recursive DP.
+// Returns the number of valid completions starting before cell (r, p).
+int64_t rec(int r, int p) {
+    // If r is past the last row, all cells have been placed successfully.
+    if(r > n) {
+        return 1;
+    }
+
+    // Compute the memoization key using position, active boundary, and counts.
+    int64_t key = encode_key(r, p, active_mask(r, p));
+
+    // Check whether this state has already been solved.
+    auto it = memo.find(key);
+
+    // If yes, return the stored answer.
+    if(it != memo.end()) {
+        return it->second;
+    }
+
+    // Compute the next cell in row-major order.
+    int next_r = r;
+    int next_p = p + 1;
+
+    // Row r has 2r - 1 cells, with last index 2r - 2.
+    // If next_p reaches 2r - 1, move to the next row.
+    if(next_p >= 2 * r - 1) {
+        next_r = r + 1;
+        next_p = 0;
+    }
+
+    // Even positions are upward triangles, odd positions are downward triangles.
+    bool is_up = (p % 2 == 0);
+
+    // The current cell's left edge is fixed if there is a left neighbor.
+    // Otherwise there is no constraint, represented by -1.
+    int fixed_left = (p > 0) ? v_edge[r][p - 1] : -1;
+
+    // For a downward triangle, its top edge is fixed by the previous row.
+    // For an upward triangle, there is no top-edge constraint.
+    int fixed_top = is_up ? -1 : h_edge[r - 1][(p - 1) / 2];
+
+    // Accumulate the number of valid completions.
+    int64_t total = 0;
+
+    // Try each internal kind.
+    // kind means the number of black edges: 0, 1, 2, or 3.
+    for(int kind = 0; kind < 4; kind++) {
+        // Cannot use a kind if none remain.
+        if(cnt[kind] == 0) {
+            continue;
+        }
+
+        // This kind requires exactly kind black edges.
+        int num_black = kind;
+
+        // Enumerate all possible assignments of colors to the 3 sides.
+        // Bit 0 = left edge.
+        // Bit 1 = right edge.
+        // Bit 2 = third edge, which is bottom for upward and top for downward.
+        for(int mask = 0; mask < 8; mask++) {
+            // Only orientations with the correct number of black edges are valid.
+            if(__builtin_popcount(mask) != num_black) {
+                continue;
+            }
+
+            // Extract the left-edge color.
+            int e_left = (mask >> 0) & 1;
+
+            // Extract the right-edge color.
+            int e_right = (mask >> 1) & 1;
+
+            // Extract the third-edge color.
+            int e_third = (mask >> 2) & 1;
+
+            // If the left edge was already fixed, it must match.
+            if(fixed_left != -1 && fixed_left != e_left) {
+                continue;
+            }
+
+            // If this is a downward triangle, the top edge was already fixed.
+            // The third edge is the top edge for downward triangles.
+            if(!is_up && fixed_top != e_third) {
+                continue;
+            }
+
+            // Store the right edge for the next cell in the same row.
+            v_edge[r][p] = e_right;
+
+            // If this is an upward triangle, its third edge is its bottom edge.
+            // It will be used by a downward triangle in the next row.
+            if(is_up) {
+                h_edge[r][p / 2] = e_third;
+            }
+
+            // Use one triangle of this kind.
+            cnt[kind]--;
+
+            // Recurse to the next cell and add all completions.
+            total += rec(next_r, next_p);
+
+            // Backtrack: restore the count.
+            cnt[kind]++;
+        }
+    }
+
+    // Store the computed answer in the memoization table.
+    memo[key] = total;
+
+    // Return the number of completions.
+    return total;
+}
+
+// Solve one test case.
+void solve() {
+    /*
+        The big triangle has n rows.
+
+        Row r contains 2r - 1 unit triangles.
+        Positions are 0-based.
+
+        Even positions are upward-facing triangles.
+        Odd positions are downward-facing triangles.
+
+        The DP fills the board in row-major order.
+
+        At each step, we try all possible triangle kinds and orientations,
+        respecting already-fixed shared edges.
+
+        Memoization uses:
+        - current cell
+        - remaining counts
+        - active boundary mask
+    */
+
+    // Clear memoization table.
+    memo.clear();
+
+    // Start before the first cell: row 1, position 0.
+    cout << rec(1, 0) << '\n';
+}
+
+// Main function.
+int main() {
+    // Speed up C++ input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout for faster input.
+    cin.tie(nullptr);
+
+    // Number of test cases.
+    // The official input has one test case.
+    int T = 1;
+
+    // If multiple test cases were needed, this line could be enabled.
+    // cin >> T;
+
+    // Process each test case.
+    for(int test = 1; test <= T; test++) {
+        // Read input.
+        read();
+
+        // Solve and print answer.
+        solve();
+    }
+
+    // Successful program termination.
+    return 0;
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+from functools import lru_cache
+
+
+def solve():
+    # Read all integers from standard input.
+    data = list(map(int, sys.stdin.read().split()))
+
+    # First integer is the side length of the large triangle.
+    n = data[0]
+
+    # Next four integers are counts of triangle kinds 1..4.
+    #
+    # Internally:
+    # cnt[0] = number of triangles with 0 black edges
+    # cnt[1] = number of triangles with 1 black edge
+    # cnt[2] = number of triangles with 2 black edges
+    # cnt[3] = number of triangles with 3 black edges
+    cnt = data[1:5]
+
+    # v_edge[r][p] stores the shared edge between cells p and p+1 in row r.
+    #
+    # N <= 5, so small fixed arrays are enough.
+    v_edge = [[0] * 16 for _ in range(8)]
+
+    # h_edge[r][k] stores the shared edge between row r and row r+1.
+    #
+    # It is the bottom side of upward cell (r, 2k)
+    # and the top side of downward cell (r+1, 2k+1).
+    h_edge = [[0] * 16 for _ in range(8)]
+
+    # Memoization dictionary.
+    #
+    # Key:
+    #   (r, p, active_mask, cnt0, cnt1, cnt2, cnt3)
+    #
+    # Value:
+    #   number of valid completions from this state.
+    memo = {}
+
+    def active_mask(r, p):
+        """
+        Compute a compact bitmask of already-written edges that can still affect
+        future placements.
+
+        Edges that will never be read again are intentionally ignored.
+        """
+
+        # Result bitmask.
+        mask = 0
+
+        # Current bit position.
+        bit = 0
+
+        # Horizontal edges from the previous row that have not yet been consumed.
+        #
+        # h_edge[r-1][k] is consumed by downward cells in row r.
+        # At position p, edges with index smaller than p//2 have already been used.
+        if r >= 2:
+            for k in range(p // 2, r - 1):
+                # Store this edge color as one bit.
+                mask |= (h_edge[r - 1][k] & 1) << bit
+                bit += 1
+
+        # The immediate left edge of the current cell, if there is a left neighbor.
+        if p > 0:
+            mask |= (v_edge[r][p - 1] & 1) << bit
+            bit += 1
+
+        # Bottom edges of upward cells already placed in the current row.
+        #
+        # These edges will be read by downward cells in the next row.
+        built = (p + 1) // 2
+
+        for k in range(built):
+            mask |= (h_edge[r][k] & 1) << bit
+            bit += 1
+
+        # Return the active boundary.
+        return mask
+
+    def rec(r, p):
+        """
+        Return the number of valid ways to complete the board starting before
+        cell (r, p).
+        """
+
+        # If we are past the final row, the whole triangle was filled correctly.
+        if r > n:
+            return 1
+
+        # Current active boundary.
+        mask = active_mask(r, p)
+
+        # Memoization key includes the current position, active boundary,
+        # and remaining triangle counts.
+        key = (r, p, mask, cnt[0], cnt[1], cnt[2], cnt[3])
+
+        # Reuse the result if this state was already solved.
+        if key in memo:
+            return memo[key]
+
+        # Determine the next cell in row-major order.
+        next_r = r
+        next_p = p + 1
+
+        # Row r contains 2r - 1 cells.
+        # If we passed the last cell, move to row r+1.
+        if next_p >= 2 * r - 1:
+            next_r = r + 1
+            next_p = 0
+
+        # Even positions are upward-facing triangles.
+        is_up = (p % 2 == 0)
+
+        # The left edge is fixed by the previous cell in the same row,
+        # unless this is the first cell of the row.
+        fixed_left = v_edge[r][p - 1] if p > 0 else -1
+
+        # For downward triangles, the top edge is fixed by the row above.
+        # For upward triangles, there is no top-edge constraint.
+        if is_up:
+            fixed_top = -1
+        else:
+            fixed_top = h_edge[r - 1][(p - 1) // 2]
+
+        # Total number of completions from this state.
+        total = 0
+
+        # Try every triangle kind.
+        for kind in range(4):
+            # Skip if no triangle of this kind remains.
+            if cnt[kind] == 0:
+                continue
+
+            # Internal kind equals the required number of black edges.
+            num_black = kind
+
+            # Enumerate all 3-bit edge color assignments.
+            #
+            # bit 0: left edge
+            # bit 1: right edge
+            # bit 2: third edge
+            #
+            # For upward triangles, third = bottom.
+            # For downward triangles, third = top.
+            for orient_mask in range(8):
+                # This orientation is only valid if it has the required
+                # number of black edges.
+                if orient_mask.bit_count() != num_black:
+                    continue
+
+                # Extract edge colors.
+                e_left = (orient_mask >> 0) & 1
+                e_right = (orient_mask >> 1) & 1
+                e_third = (orient_mask >> 2) & 1
+
+                # Match the already-fixed left edge, if any.
+                if fixed_left != -1 and fixed_left != e_left:
+                    continue
+
+                # For downward triangles, the third edge is the top edge,
+                # which must match the fixed edge from the row above.
+                if not is_up and fixed_top != e_third:
+                    continue
+
+                # Write the right edge for the next cell in this row.
+                v_edge[r][p] = e_right
+
+                # If upward, write the bottom edge for the next row.
+                if is_up:
+                    h_edge[r][p // 2] = e_third
+
+                # Use one triangle of this kind.
+                cnt[kind] -= 1
+
+                # Count all completions after this placement.
+                total += rec(next_r, next_p)
+
+                # Backtrack.
+                cnt[kind] += 1
+
+        # Store answer for this DP state.
+        memo[key] = total
+
+        # Return computed result.
+        return total
+
+    # Start at the first row and first position.
+    print(rec(1, 0))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Process the triangular board row by row. Row `r` has `2r - 1` cells; even positions are upward triangles and odd positions are downward triangles.
+
+Represent edge colors as bits. Internally, kind `k` means a triangle with exactly `k` black edges, for `k = 0..3`. For each placement, enumerate all 3-bit masks with exactly `k` set bits, corresponding to all rotations of that triangle kind.
+
+Maintain shared edges:
+
+- `v_edge[r][p]`: edge between adjacent cells in the same row
+- `h_edge[r][k]`: edge between row `r` and row `r + 1`
+
+When placing cell `(r, p)`, its left edge may already be fixed by `v_edge[r][p-1]`. If it is downward-facing, its top edge is fixed by `h_edge[r-1][(p-1)/2]`.
+
+Use DFS with memoization. The full edge history is unnecessary; the future only depends on:
+
+- current position
+- remaining counts of each kind
+- a small active mask of already-created edges that future cells will still read
+
+Try every valid kind and orientation, write outgoing edges, recurse, then backtrack.
+
+Base case: after row `N`, return `1`.
+
+This works easily for `N ≤ 5` because there are at most 25 cells and only `O(N)` active edge bits.

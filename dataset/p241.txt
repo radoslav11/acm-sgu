@@ -1,0 +1,546 @@
+## 1. Abridged problem statement
+
+Given two chessboards:
+
+- first board: `N × N`, with bottom-left corner at `(0, 0)`;
+- second board: `M × M`, with bottom-left corner at `(W, H)`.
+
+Both boards are aligned to the integer grid. Consider the union of their cells.
+
+Count the number of ways to place exactly `K` rooks on cells of this union so that no two rooks share the same row or column.
+
+Constraints:
+
+- `0 ≤ N, M ≤ 20`
+- `0 ≤ W, H ≤ 10^9`
+- `0 ≤ K ≤ 10^9`
+
+The answer may be very large and must be printed exactly.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+A peaceful placement of rooks is the same as choosing cells such that:
+
+- no two chosen cells have the same column;
+- no two chosen cells have the same row.
+
+So we can view the problem as counting matchings of size `K` in a bipartite graph:
+
+- left part = relevant columns;
+- right part = relevant rows;
+- an edge exists if the corresponding cell belongs to at least one of the two boards.
+
+Although `W` and `H` may be huge, each board has size at most `20`, so there are at most `N + M ≤ 40` relevant columns and at most `N + M ≤ 40` relevant rows.
+
+The huge empty gaps do not matter.
+
+---
+
+### Column and row types
+
+The first board occupies:
+
+```text
+columns [0, N)
+rows    [0, N)
+```
+
+The second board occupies:
+
+```text
+columns [W, W + M)
+rows    [H, H + M)
+```
+
+Columns can be split into three types:
+
+1. columns belonging only to the first board;
+2. columns belonging to both boards;
+3. columns belonging only to the second board.
+
+Let:
+
+```text
+c_a  = number of first-only columns
+c_ab = number of shared columns
+c_b  = number of second-only columns
+```
+
+Similarly rows are split into:
+
+```text
+r1      = first-only rows
+r_both  = shared rows
+r2      = second-only rows
+```
+
+The overlap length of intervals `[0, N)` and `[W, W + M)` is:
+
+```text
+max(0, min(N, W + M) - max(0, W))
+```
+
+The same formula applies vertically using `H`.
+
+---
+
+### Which column type can use which row type?
+
+A first-only column contains cells only from the first board, so it can use:
+
+- first-only rows;
+- shared rows.
+
+A second-only column can use:
+
+- shared rows;
+- second-only rows.
+
+A shared column belongs to both boards, so it can use:
+
+- first-only rows;
+- shared rows;
+- second-only rows.
+
+So the allowed transitions are:
+
+| Column type | first-only rows | shared rows | second-only rows |
+|---|---:|---:|---:|
+| first-only column | yes | yes | no |
+| shared column | yes | yes | yes |
+| second-only column | no | yes | yes |
+
+---
+
+### Dynamic programming state
+
+We process columns one by one.
+
+Let:
+
+```text
+dp[b][m][t]
+```
+
+be the number of ways after processing some columns, where:
+
+- `b` first-only rows are still unused;
+- `m` shared rows are still unused;
+- `t` second-only rows are still unused.
+
+Initially, no rows are used:
+
+```text
+dp[r1][r_both][r2] = 1
+```
+
+For each column, we have two choices:
+
+1. place no rook in this column;
+2. place one rook in one of the allowed row categories.
+
+If we place a rook in a row category with `x` currently free rows, there are `x` choices for the actual row, so we multiply by `x`.
+
+For example, if the current column may use first-only rows and `b > 0`, then:
+
+```text
+next[b - 1][m][t] += dp[b][m][t] * b
+```
+
+because we choose one of the `b` free first-only rows.
+
+Since each column is processed once, no column can be reused. Since row counts decrease when used, no row can be reused.
+
+---
+
+### Extracting the answer
+
+At the end, for each state `(b, m, t)`, the number of placed rooks is:
+
+```text
+(r1 - b) + (r_both - m) + (r2 - t)
+```
+
+If this equals `K`, add `dp[b][m][t]` to the answer.
+
+If `K` is larger than the total number of relevant rows, no state matches and the answer is `0`.
+
+---
+
+### Complexity
+
+There are at most:
+
+```text
+(r1 + 1) * (r_both + 1) * (r2 + 1) ≤ 21^3
+```
+
+states, and at most `N + M ≤ 40` columns.
+
+So the time complexity is:
+
+```text
+O((N + M) * (r1 + 1) * (r_both + 1) * (r2 + 1))
+```
+
+This is easily fast enough.
+
+The answer may be large, so arbitrary-precision integers are needed.
+
+---
+
+## 3. Annotated C++ solution
+
+The original submitted code includes a long custom `bigint` implementation. Below is the same algorithm written with `boost::multiprecision::cpp_int`, which serves the same purpose: exact arbitrary-precision arithmetic.
+
+```cpp
+#include <bits/stdc++.h>                 // Include all standard C++ headers.
+#include <boost/multiprecision/cpp_int.hpp> // Include arbitrary-precision integer type.
+
+using namespace std;                      // Avoid writing std:: everywhere.
+using boost::multiprecision::cpp_int;     // cpp_int is an arbitrary-precision integer.
+
+int n, m;                                 // Sizes of the two boards.
+long long w, h, k;                        // Offset of second board and required rook count.
+
+void read() {                             // Function to read input.
+    cin >> n >> m >> w >> h >> k;         // Read N, M, W, H, K.
+}
+
+void solve() {                            // Main solving function.
+
+    // This helper computes the length of overlap between:
+    // first interval:  [0, len_a)
+    // second interval: [lo_b, lo_b + len_b)
+    auto clamp_overlap = [](long long lo_b, long long len_b, int len_a) -> int {
+        long long lo = max(0LL, lo_b);             // Left end of intersection.
+        long long hi = min((long long)len_a, lo_b + len_b); // Right end of intersection.
+        return (int)max(0LL, hi - lo);             // Non-negative intersection length.
+    };
+
+    int c_ab = clamp_overlap(w, m, n);     // Number of columns common to both boards.
+    int c_a = n - c_ab;                    // Columns belonging only to the first board.
+    int c_b = m - c_ab;                    // Columns belonging only to the second board.
+
+    int r_both = clamp_overlap(h, m, n);   // Number of rows common to both boards.
+    int r1 = n - r_both;                   // Rows belonging only to the first board.
+    int r2 = m - r_both;                   // Rows belonging only to the second board.
+
+    // dp[b][mid][t] = number of ways where:
+    // b   first-only rows are still unused,
+    // mid shared rows are still unused,
+    // t   second-only rows are still unused.
+    vector<vector<vector<cpp_int>>> dp(
+        r1 + 1,
+        vector<vector<cpp_int>>(
+            r_both + 1,
+            vector<cpp_int>(r2 + 1)
+        )
+    );
+
+    dp[r1][r_both][r2] = 1;                // Initially all rows are unused.
+
+    // Process one column.
+    // use_r1    tells whether this column may use first-only rows.
+    // use_both  tells whether this column may use shared rows.
+    // use_r2    tells whether this column may use second-only rows.
+    auto place_column = [&](bool use_r1, bool use_both, bool use_r2) {
+
+        // Create a fresh DP table for the next step.
+        vector<vector<vector<cpp_int>>> nd(
+            r1 + 1,
+            vector<vector<cpp_int>>(
+                r_both + 1,
+                vector<cpp_int>(r2 + 1)
+            )
+        );
+
+        // Iterate over all possible counts of still-free first-only rows.
+        for (int b = 0; b <= r1; b++) {
+
+            // Iterate over all possible counts of still-free shared rows.
+            for (int mid = 0; mid <= r_both; mid++) {
+
+                // Iterate over all possible counts of still-free second-only rows.
+                for (int t = 0; t <= r2; t++) {
+
+                    const cpp_int &cur = dp[b][mid][t]; // Current number of ways.
+
+                    if (cur == 0) {             // If this state is unreachable,
+                        continue;               // skip it.
+                    }
+
+                    nd[b][mid][t] += cur;       // Option 1: put no rook in this column.
+
+                    if (use_r1 && b > 0) {      // If first-only rows are allowed and available,
+                        nd[b - 1][mid][t] += cur * b; // choose one of b such rows.
+                    }
+
+                    if (use_both && mid > 0) {  // If shared rows are allowed and available,
+                        nd[b][mid - 1][t] += cur * mid; // choose one of mid such rows.
+                    }
+
+                    if (use_r2 && t > 0) {      // If second-only rows are allowed and available,
+                        nd[b][mid][t - 1] += cur * t; // choose one of t such rows.
+                    }
+                }
+            }
+        }
+
+        dp = move(nd);                          // Replace old DP table by the new one.
+    };
+
+    // Process all first-only columns.
+    // They may use first-only rows and shared rows.
+    for (int i = 0; i < c_a; i++) {
+        place_column(true, true, false);
+    }
+
+    // Process all shared columns.
+    // They may use all three row types.
+    for (int i = 0; i < c_ab; i++) {
+        place_column(true, true, true);
+    }
+
+    // Process all second-only columns.
+    // They may use shared rows and second-only rows.
+    for (int i = 0; i < c_b; i++) {
+        place_column(false, true, true);
+    }
+
+    cpp_int answer = 0;                         // Final answer.
+
+    // Check every final state.
+    for (int b = 0; b <= r1; b++) {
+        for (int mid = 0; mid <= r_both; mid++) {
+            for (int t = 0; t <= r2; t++) {
+
+                // Number of rows that have been consumed equals number of rooks placed.
+                long long rooks =
+                    (long long)(r1 - b) +
+                    (long long)(r_both - mid) +
+                    (long long)(r2 - t);
+
+                if (rooks == k) {              // If exactly K rooks were placed,
+                    answer += dp[b][mid][t];   // add this state's count.
+                }
+            }
+        }
+    }
+
+    cout << answer << '\n';                    // Print the exact answer.
+}
+
+int main() {                                   // Program entry point.
+    ios_base::sync_with_stdio(false);          // Fast I/O.
+    cin.tie(nullptr);                          // Untie cin from cout.
+
+    read();                                    // Read input.
+    solve();                                   // Solve the problem.
+
+    return 0;                                  // Successful termination.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+Python integers are arbitrary-precision by default, so no custom big integer code is needed.
+
+```python
+# Read input values:
+# n, m are board sizes.
+# w, h are horizontal and vertical shifts of the second board.
+# k is the number of rooks to place.
+n, m, w, h, k = map(int, input().split())
+
+
+def overlap(lo_b, len_b, len_a):
+    """
+    Compute the size of the intersection of intervals:
+        [0, len_a)
+        [lo_b, lo_b + len_b)
+
+    The first board always starts at coordinate 0.
+    The second board starts at coordinate lo_b.
+    """
+
+    # Left border of the intersection.
+    lo = max(0, lo_b)
+
+    # Right border of the intersection.
+    hi = min(len_a, lo_b + len_b)
+
+    # If hi < lo, there is no overlap.
+    return max(0, hi - lo)
+
+
+# Number of shared columns between the two boards.
+c_ab = overlap(w, m, n)
+
+# Columns only in the first board.
+c_a = n - c_ab
+
+# Columns only in the second board.
+c_b = m - c_ab
+
+# Number of shared rows between the two boards.
+r_both = overlap(h, m, n)
+
+# Rows only in the first board.
+r1 = n - r_both
+
+# Rows only in the second board.
+r2 = m - r_both
+
+
+# dp[b][mid][t] means:
+# b   = number of unused first-only rows,
+# mid = number of unused shared rows,
+# t   = number of unused second-only rows.
+dp = [
+    [
+        [0 for _ in range(r2 + 1)]
+        for _ in range(r_both + 1)
+    ]
+    for _ in range(r1 + 1)
+]
+
+# Initially, every row is unused.
+dp[r1][r_both][r2] = 1
+
+
+def process_column(use_r1, use_both, use_r2):
+    """
+    Process one concrete column.
+
+    use_r1:
+        whether this column can place a rook in a first-only row.
+
+    use_both:
+        whether this column can place a rook in a shared row.
+
+    use_r2:
+        whether this column can place a rook in a second-only row.
+    """
+
+    global dp
+
+    # New DP table after processing this column.
+    ndp = [
+        [
+            [0 for _ in range(r2 + 1)]
+            for _ in range(r_both + 1)
+        ]
+        for _ in range(r1 + 1)
+    ]
+
+    # Iterate over all possible states.
+    for b in range(r1 + 1):
+        for mid in range(r_both + 1):
+            for t in range(r2 + 1):
+
+                # Current number of ways to reach this state.
+                cur = dp[b][mid][t]
+
+                # Skip unreachable states.
+                if cur == 0:
+                    continue
+
+                # Option 1: place no rook in this column.
+                ndp[b][mid][t] += cur
+
+                # Option 2: place a rook in a first-only row.
+                if use_r1 and b > 0:
+                    # There are b choices for the actual row.
+                    ndp[b - 1][mid][t] += cur * b
+
+                # Option 3: place a rook in a shared row.
+                if use_both and mid > 0:
+                    # There are mid choices for the actual row.
+                    ndp[b][mid - 1][t] += cur * mid
+
+                # Option 4: place a rook in a second-only row.
+                if use_r2 and t > 0:
+                    # There are t choices for the actual row.
+                    ndp[b][mid][t - 1] += cur * t
+
+    # Replace the old table with the updated one.
+    dp = ndp
+
+
+# First-only columns can use first-only rows and shared rows.
+for _ in range(c_a):
+    process_column(True, True, False)
+
+# Shared columns can use all row types.
+for _ in range(c_ab):
+    process_column(True, True, True)
+
+# Second-only columns can use shared rows and second-only rows.
+for _ in range(c_b):
+    process_column(False, True, True)
+
+
+# Accumulate the answer from states where exactly k rows were consumed.
+answer = 0
+
+for b in range(r1 + 1):
+    for mid in range(r_both + 1):
+        for t in range(r2 + 1):
+
+            # Used rows correspond exactly to placed rooks.
+            rooks = (r1 - b) + (r_both - mid) + (r2 - t)
+
+            # Keep only placements with exactly k rooks.
+            if rooks == k:
+                answer += dp[b][mid][t]
+
+# Print the exact result.
+print(answer)
+```
+
+---
+
+## 5. Compressed editorial
+
+Only rows and columns occupied by at least one board matter. Split columns into:
+
+- first-board-only,
+- shared,
+- second-board-only.
+
+Do the same for rows.
+
+The numbers of shared columns/rows are just interval intersection lengths:
+
+```text
+overlap([0, N), [W, W + M))
+overlap([0, N), [H, H + M))
+```
+
+A first-only column can use first-only and shared rows.  
+A shared column can use all row types.  
+A second-only column can use shared and second-only rows.
+
+Use DP over numbers of unused row types:
+
+```text
+dp[b][s][t]
+```
+
+where `b`, `s`, `t` are unused first-only, shared, and second-only rows.
+
+For every column:
+
+- skip it;
+- or place one rook in an allowed row type, multiplying by the number of currently free rows of that type.
+
+At the end, sum states where the number of used rows equals `K`.
+
+Use arbitrary-precision integers. Python has them automatically; C++ needs `bigint` or `boost::multiprecision::cpp_int`.

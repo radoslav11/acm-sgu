@@ -1,0 +1,731 @@
+## 1. Abridged Problem Statement
+
+Given a sequence of `N` 3D space transformations applied in order:
+
+- `T x y z`: translate every point by vector `(x, y, z)`.
+- `S x y z`: scale coordinates independently by factors `(x, y, z)`.
+- `R x y z a`: rotate clockwise by `a` degrees about the ray from the origin through point `(x, y, z)`.
+
+Then given `M` vertices, output each vertex after all transformations are applied.
+
+Constraints:
+
+- `1 <= N <= 1000`
+- `1 <= M <= 100000`
+- Coordinates and parameters have absolute value at most `1000`
+- Rotation axis is nonzero.
+
+---
+
+## 2. Detailed Editorial
+
+### Key idea
+
+Each transformation is an affine transformation in 3D.
+
+Affine transformations can be represented as `4 x 4` matrices using homogeneous coordinates.
+
+A point `(x, y, z)` is represented as:
+
+```text
+[x]
+[y]
+[z]
+[1]
+```
+
+Then translation, scaling, and rotation can all be expressed as matrix multiplication.
+
+If a transformation matrix is `A`, then applying it to point `p` gives:
+
+```text
+p' = A * p
+```
+
+If transformations are applied in order:
+
+```text
+T1, T2, T3, ..., TN
+```
+
+then the final matrix is:
+
+```text
+M = TN * ... * T3 * T2 * T1
+```
+
+The newest transformation is multiplied on the left.
+
+So instead of applying all `N` transformations to all `M` points, which would cost `O(NM)`, we first combine all transformations into one matrix in `O(N)`, then apply that matrix to each point in `O(M)`.
+
+Since matrix size is fixed `4 x 4`, multiplication is constant time.
+
+Total complexity:
+
+```text
+O(N + M)
+```
+
+---
+
+### Translation matrix
+
+Translation by `(tx, ty, tz)`:
+
+```text
+[1 0 0 tx]
+[0 1 0 ty]
+[0 0 1 tz]
+[0 0 0  1]
+```
+
+Applying this to `(x, y, z, 1)` gives:
+
+```text
+(x + tx, y + ty, z + tz, 1)
+```
+
+---
+
+### Scaling matrix
+
+Scaling by `(sx, sy, sz)`:
+
+```text
+[sx 0  0  0]
+[0  sy 0  0]
+[0  0  sz 0]
+[0  0  0  1]
+```
+
+Applying this gives:
+
+```text
+(sx * x, sy * y, sz * z, 1)
+```
+
+---
+
+### Rotation matrix
+
+Rotation is around an arbitrary axis from the origin through `(x, y, z)`.
+
+First normalize the axis:
+
+```text
+len = sqrt(x^2 + y^2 + z^2)
+
+ux = x / len
+uy = y / len
+uz = z / len
+```
+
+Let the angle in radians be:
+
+```text
+rad = angle * pi / 180
+```
+
+Using Rodrigues' rotation formula, the rotation matrix is:
+
+```text
+R = I * cos(a) + (1 - cos(a)) * u*u^T + sin(a) * K
+```
+
+where `K` is the cross-product matrix of the unit axis vector.
+
+Expanded, the upper-left `3 x 3` block is:
+
+```text
+[ c + ux²(1-c)       uxuy(1-c)-uzs    uxuz(1-c)+uys ]
+[ uyux(1-c)+uzs      c + uy²(1-c)     uyuz(1-c)-uxs ]
+[ uzux(1-c)-uys      uzuy(1-c)+uxs    c + uz²(1-c)  ]
+```
+
+where:
+
+```text
+c = cos(angle)
+s = sin(angle)
+```
+
+The full `4 x 4` rotation matrix keeps the last row and column as in the identity matrix.
+
+---
+
+### Applying the final matrix
+
+After building the final matrix `M`, each point `(x, y, z)` is transformed as:
+
+```text
+x' = M[0][0] * x + M[0][1] * y + M[0][2] * z + M[0][3]
+y' = M[1][0] * x + M[1][1] * y + M[1][2] * z + M[1][3]
+z' = M[2][0] * x + M[2][1] * y + M[2][2] * z + M[2][3]
+```
+
+The answer is printed with two digits after the decimal point.
+
+---
+
+## 3. Provided C++ Solution with Detailed Comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs.
+// This helper is not essential for this problem, but is part of the template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs.
+// Also part of the author's generic template.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+// Reads all elements of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate by reference over all elements.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return stream to allow chaining.
+};
+
+// Output operator for vectors.
+// Prints all elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {       // Iterate over vector elements.
+        out << x << ' ';   // Print element followed by space.
+    }
+    return out;            // Return stream to allow chaining.
+};
+
+// Constant pi.
+const double PI = acos(-1.0);
+
+// Custom fast input namespace.
+// The constraints are large enough that fast input is useful.
+namespace fastio {
+
+// Size of input buffer.
+constexpr int BUF_SIZE = 1 << 16;
+
+// Buffer array.
+char buf[BUF_SIZE];
+
+// Current position in buffer and current buffer length.
+int buf_pos = 0, buf_len = 0;
+
+// Reads one character from stdin using buffering.
+int get_char() {
+    // If buffer is exhausted, refill it.
+    if(buf_pos == buf_len) {
+        buf_len = (int)fread(buf, 1, BUF_SIZE, stdin); // Read bytes from stdin.
+        buf_pos = 0;                                   // Reset position.
+    }
+
+    // Return next character if available, otherwise EOF.
+    return buf_pos < buf_len ? (unsigned char)buf[buf_pos++] : EOF;
+}
+
+// Skips whitespace and returns the first non-whitespace character.
+int skip_ws() {
+    int c = get_char(); // Read first character.
+
+    // Continue while character is whitespace.
+    while(c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+        c = get_char();
+    }
+
+    return c; // Return first non-whitespace character.
+}
+
+// Reads an integer.
+int read_int() {
+    int c = skip_ws(); // Skip whitespace.
+
+    int sign = 1; // Default sign is positive.
+
+    // Handle negative sign.
+    if(c == '-') {
+        sign = -1;
+        c = get_char();
+    } 
+    // Handle optional positive sign.
+    else if(c == '+') {
+        c = get_char();
+    }
+
+    int x = 0; // Parsed integer value.
+
+    // Read digits.
+    while(c >= '0' && c <= '9') {
+        x = x * 10 + (c - '0');
+        c = get_char();
+    }
+
+    return sign * x; // Return signed integer.
+}
+
+// Reads a floating-point number.
+// This implementation supports usual decimal notation.
+double read_double() {
+    int c = skip_ws(); // Skip whitespace.
+
+    int sign = 1; // Default sign.
+
+    // Handle negative sign.
+    if(c == '-') {
+        sign = -1;
+        c = get_char();
+    } 
+    // Handle optional positive sign.
+    else if(c == '+') {
+        c = get_char();
+    }
+
+    double x = 0.0; // Integer part.
+
+    // Read integer digits.
+    while(c >= '0' && c <= '9') {
+        x = x * 10.0 + (c - '0');
+        c = get_char();
+    }
+
+    // Read fractional part if decimal point exists.
+    if(c == '.') {
+        c = get_char();
+
+        double f = 0.1; // Current decimal place.
+
+        // Read fractional digits.
+        while(c >= '0' && c <= '9') {
+            x += (c - '0') * f;
+            f *= 0.1;
+            c = get_char();
+        }
+    }
+
+    return sign * x; // Return signed floating-point number.
+}
+
+// Reads one non-whitespace character.
+char read_char() { 
+    return (char)skip_ws(); 
+}
+
+}  // namespace fastio
+
+// Number of spells and number of points.
+int n, m;
+
+// Each spell stores:
+// - its type character: 'T', 'S', or 'R'
+// - up to four parameters.
+// Translation and scaling use three parameters.
+// Rotation uses four parameters.
+vector<tuple<char, array<double, 4>>> spells;
+
+// Input points, each with three coordinates.
+vector<array<double, 3>> points;
+
+// Reads all input.
+void read() {
+    n = fastio::read_int(); // Read number of transformations.
+
+    spells.assign(n, {}); // Resize and initialize spell array.
+
+    // Read each spell.
+    for(auto& [c, params]: spells) {
+        c = fastio::read_char(); // Read spell type.
+
+        // Rotation has four parameters, translation/scaling have three.
+        int k = (c == 'R') ? 4 : 3;
+
+        // Read the required parameters.
+        for(int i = 0; i < k; i++) {
+            params[i] = fastio::read_double();
+        }
+    }
+
+    m = fastio::read_int(); // Read number of vertices.
+
+    points.assign(m, {}); // Resize point array.
+
+    // Read all points.
+    for(auto& p: points) {
+        p[0] = fastio::read_double(); // x-coordinate.
+        p[1] = fastio::read_double(); // y-coordinate.
+        p[2] = fastio::read_double(); // z-coordinate.
+    }
+}
+
+// Solves the problem.
+void solve() {
+    // Returns a 4x4 identity matrix.
+    auto id = []() {
+        array<array<double, 4>, 4> r{}; // Zero-initialized matrix.
+
+        // Put ones on the diagonal.
+        for(int i = 0; i < 4; i++) {
+            r[i][i] = 1.0;
+        }
+
+        return r; // Return identity matrix.
+    };
+
+    // Multiplies two 4x4 matrices: result = a * b.
+    auto mul = [](const array<array<double, 4>, 4>& a,
+                  const array<array<double, 4>, 4>& b) {
+        array<array<double, 4>, 4> r{}; // Result matrix, initialized with zeros.
+
+        // Standard cubic matrix multiplication.
+        for(int i = 0; i < 4; i++) {          // Row of result.
+            for(int j = 0; j < 4; j++) {      // Column of result.
+                double s = 0.0;               // Accumulator for dot product.
+
+                for(int k = 0; k < 4; k++) {  // Index over row/column.
+                    s += a[i][k] * b[k][j];
+                }
+
+                r[i][j] = s; // Store computed entry.
+            }
+        }
+
+        return r; // Return product matrix.
+    };
+
+    auto M = id(); // Current combined transformation matrix.
+
+    // Process spells in the order they are applied.
+    for(auto& [c, p]: spells) {
+        auto t = id(); // Matrix for the current spell.
+
+        // Translation spell.
+        if(c == 'T') {
+            // Translation values go in the last column.
+            t[0][3] = p[0];
+            t[1][3] = p[1];
+            t[2][3] = p[2];
+        } 
+        // Scaling spell.
+        else if(c == 'S') {
+            // Scaling factors go on the diagonal.
+            t[0][0] = p[0];
+            t[1][1] = p[1];
+            t[2][2] = p[2];
+        } 
+        // Rotation spell.
+        else {
+            // Axis vector.
+            double x = p[0], y = p[1], z = p[2];
+
+            // Compute axis length.
+            double len = sqrt(x * x + y * y + z * z);
+
+            // Normalize axis vector to unit length.
+            x /= len;
+            y /= len;
+            z /= len;
+
+            // Convert angle from degrees to radians.
+            double rad = p[3] * PI / 180.0;
+
+            // Compute cosine and sine of the angle.
+            double co = cos(rad), si = sin(rad);
+
+            // Fill the upper-left 3x3 block using Rodrigues' rotation formula.
+            t[0][0] = co + x * x * (1 - co);
+            t[0][1] = x * y * (1 - co) - z * si;
+            t[0][2] = x * z * (1 - co) + y * si;
+
+            t[1][0] = y * x * (1 - co) + z * si;
+            t[1][1] = co + y * y * (1 - co);
+            t[1][2] = y * z * (1 - co) - x * si;
+
+            t[2][0] = z * x * (1 - co) - y * si;
+            t[2][1] = z * y * (1 - co) + x * si;
+            t[2][2] = co + z * z * (1 - co);
+        }
+
+        // Compose transformations.
+        // Since t is applied after all previous transformations,
+        // it must multiply the existing matrix on the left.
+        M = mul(t, M);
+    }
+
+    // Output numbers with exactly two digits after the decimal point.
+    cout << fixed << setprecision(2);
+
+    // Transform every input point by the final matrix.
+    for(auto& v: points) {
+        // Compute transformed x-coordinate.
+        double x = M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2] + M[0][3];
+
+        // Compute transformed y-coordinate.
+        double y = M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2] + M[1][3];
+
+        // Compute transformed z-coordinate.
+        double z = M[2][0] * v[0] + M[2][1] * v[1] + M[2][2] * v[2] + M[2][3];
+
+        // Print transformed point.
+        cout << x << ' ' << y << ' ' << z << '\n';
+    }
+}
+
+// Program entry point.
+int main() {
+    // Disable synchronization between C and C++ standard streams.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout.
+    cin.tie(nullptr);
+
+    int T = 1; // There is only one test case.
+
+    // Process the single test case.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve and output answer.
+    }
+
+    return 0; // Successful termination.
+}
+```
+
+---
+
+## 4. Python Solution with Detailed Comments
+
+```python
+import sys
+import math
+
+
+def identity_matrix():
+    """
+    Create and return a 4x4 identity matrix.
+    """
+    # Start with a 4x4 zero matrix.
+    mat = [[0.0] * 4 for _ in range(4)]
+
+    # Put 1.0 on the main diagonal.
+    for i in range(4):
+        mat[i][i] = 1.0
+
+    return mat
+
+
+def multiply(a, b):
+    """
+    Multiply two 4x4 matrices.
+
+    Returns:
+        a * b
+    """
+    # Result matrix initialized with zeros.
+    res = [[0.0] * 4 for _ in range(4)]
+
+    # Standard matrix multiplication.
+    for i in range(4):
+        for j in range(4):
+            s = 0.0
+            for k in range(4):
+                s += a[i][k] * b[k][j]
+            res[i][j] = s
+
+    return res
+
+
+def main():
+    # Read all input tokens at once.
+    # This is fast enough for 100000 points.
+    data = sys.stdin.buffer.read().split()
+
+    # Token pointer.
+    idx = 0
+
+    # Read number of transformations.
+    n = int(data[idx])
+    idx += 1
+
+    # Combined transformation matrix.
+    # Initially it does nothing.
+    final = identity_matrix()
+
+    # Process each spell in order.
+    for _ in range(n):
+        # Spell type: b'T', b'S', or b'R'.
+        typ = data[idx].decode()
+        idx += 1
+
+        # Matrix of the current transformation.
+        cur = identity_matrix()
+
+        if typ == 'T':
+            # Translation has three parameters.
+            tx = float(data[idx])
+            ty = float(data[idx + 1])
+            tz = float(data[idx + 2])
+            idx += 3
+
+            # Translation values are placed in the last column.
+            cur[0][3] = tx
+            cur[1][3] = ty
+            cur[2][3] = tz
+
+        elif typ == 'S':
+            # Scaling has three parameters.
+            sx = float(data[idx])
+            sy = float(data[idx + 1])
+            sz = float(data[idx + 2])
+            idx += 3
+
+            # Scaling factors are placed on the diagonal.
+            cur[0][0] = sx
+            cur[1][1] = sy
+            cur[2][2] = sz
+
+        else:
+            # Rotation has four parameters:
+            # axis point x, y, z and angle in degrees.
+            x = float(data[idx])
+            y = float(data[idx + 1])
+            z = float(data[idx + 2])
+            angle = float(data[idx + 3])
+            idx += 4
+
+            # Normalize the axis vector.
+            length = math.sqrt(x * x + y * y + z * z)
+            x /= length
+            y /= length
+            z /= length
+
+            # Convert degrees to radians.
+            rad = angle * math.pi / 180.0
+
+            # Precompute cosine and sine.
+            co = math.cos(rad)
+            si = math.sin(rad)
+
+            # Common value used in Rodrigues' formula.
+            one_minus_co = 1.0 - co
+
+            # Fill the upper-left 3x3 part with Rodrigues' rotation matrix.
+            cur[0][0] = co + x * x * one_minus_co
+            cur[0][1] = x * y * one_minus_co - z * si
+            cur[0][2] = x * z * one_minus_co + y * si
+
+            cur[1][0] = y * x * one_minus_co + z * si
+            cur[1][1] = co + y * y * one_minus_co
+            cur[1][2] = y * z * one_minus_co - x * si
+
+            cur[2][0] = z * x * one_minus_co - y * si
+            cur[2][1] = z * y * one_minus_co + x * si
+            cur[2][2] = co + z * z * one_minus_co
+
+        # Compose transformations.
+        # If current spell is applied after previous spells:
+        #
+        #   new_final = cur * final
+        #
+        # because points are column vectors.
+        final = multiply(cur, final)
+
+    # Read number of points.
+    m = int(data[idx])
+    idx += 1
+
+    # Prepare output lines.
+    out = []
+
+    # Apply final transformation to every point.
+    for _ in range(m):
+        # Read point coordinates.
+        px = float(data[idx])
+        py = float(data[idx + 1])
+        pz = float(data[idx + 2])
+        idx += 3
+
+        # Multiply final matrix by homogeneous point vector [px, py, pz, 1].
+        x = final[0][0] * px + final[0][1] * py + final[0][2] * pz + final[0][3]
+        y = final[1][0] * px + final[1][1] * py + final[1][2] * pz + final[1][3]
+        z = final[2][0] * px + final[2][1] * py + final[2][2] * pz + final[2][3]
+
+        # Avoid printing "-0.00" for tiny floating-point noise.
+        if abs(x) < 0.0005:
+            x = 0.0
+        if abs(y) < 0.0005:
+            y = 0.0
+        if abs(z) < 0.0005:
+            z = 0.0
+
+        # Print with two digits after the decimal point.
+        out.append(f"{x:.2f} {y:.2f} {z:.2f}")
+
+    # Write all output at once.
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed Editorial
+
+Represent every point as a homogeneous vector:
+
+```text
+(x, y, z, 1)
+```
+
+Then every spell is a `4 x 4` matrix:
+
+- Translation: identity with translation vector in the last column.
+- Scaling: diagonal matrix.
+- Rotation: Rodrigues' formula in the upper-left `3 x 3` block.
+
+If spells are applied in input order, and points are column vectors, compose as:
+
+```text
+M = current_spell_matrix * M
+```
+
+After all spells, transform every vertex once:
+
+```text
+p' = M * p
+```
+
+Rotation uses normalized axis `(x, y, z)` and angle in radians. Its matrix is:
+
+```text
+[ c+x²(1-c)   xy(1-c)-zs   xz(1-c)+ys ]
+[ yx(1-c)+zs  c+y²(1-c)    yz(1-c)-xs ]
+[ zx(1-c)-ys  zy(1-c)+xs   c+z²(1-c)  ]
+```
+
+where:
+
+```text
+c = cos(angle)
+s = sin(angle)
+```
+
+Complexity:
+
+```text
+O(N + M)
+```
+
+because matrix size is constant.

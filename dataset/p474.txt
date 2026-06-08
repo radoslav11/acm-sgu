@@ -1,0 +1,1078 @@
+## 1. Abridged problem statement
+
+You are given a large right isosceles triangle with vertices `(0,0)`, `(0,n)`, `(n,0)` and `m` small triangles, each described by its three vertices.
+
+Determine whether the small triangles form a correct covering of the large triangle:
+
+- every small triangle is right isosceles;
+- its catheti are parallel to the catheti of the large triangle, i.e. horizontal/vertical;
+- every small triangle lies inside the large triangle;
+- triangles do not overlap incorrectly;
+- the whole large triangle is covered.
+
+For each test case, output `YES` or `NO`.
+
+Constraints:
+
+- `t ≤ 10`
+- `1 ≤ n ≤ 25000`
+- `1 ≤ m ≤ 100000`
+- total `m` over all tests ≤ `200000`
+
+---
+
+## 2. Detailed editorial
+
+### Key observations
+
+The large triangle is
+
+\[
+x \ge 0,\quad y \ge 0,\quad x+y \le n
+\]
+
+with area
+
+\[
+\frac{n^2}{2}
+\]
+
+Since all valid small triangles must be right isosceles with horizontal and vertical catheti, every valid small triangle has:
+
+- one horizontal edge,
+- one vertical edge,
+- one diagonal edge of slope `+1` or `-1`.
+
+So every edge belongs to one of four direction classes:
+
+1. horizontal,
+2. vertical,
+3. diagonal with slope `+1`,
+4. diagonal with slope `-1`.
+
+---
+
+### Step 1: Validate each small triangle
+
+For every triangle, find its right-angle vertex.
+
+For a vertex `A` with other vertices `B` and `C`, define:
+
+```text
+u = B - A
+v = C - A
+```
+
+The angle at `A` is a valid right isosceles angle iff:
+
+```text
+u · v = 0
+|u|² = |v|²
+```
+
+Additionally, both catheti must be axis-aligned. That means each of `u` and `v` must be either horizontal or vertical.
+
+If no vertex satisfies this, answer is `NO`.
+
+Also every vertex must lie inside the large triangle:
+
+```text
+x >= 0
+y >= 0
+x + y <= n
+```
+
+---
+
+### Step 2: Check total area
+
+Let `area2` denote twice the area.
+
+For a triangle with vertices `A, B, C`:
+
+\[
+2S = |(B-A) \times (C-A)|
+\]
+
+The large triangle has doubled area:
+
+\[
+n^2
+\]
+
+So the sum of doubled areas of all small triangles must be exactly `n²`.
+
+If not, answer is `NO`.
+
+Area equality alone is not enough, because triangles can overlap and leave holes.
+
+---
+
+### Step 3: Angle-sum criterion
+
+At every important vertex, the sum of angles contributed by all triangles around that point must match the angle of the large triangle region at that point.
+
+Expected angle:
+
+| Point location | Expected angle |
+|---|---:|
+| `(0,0)` | `90°` |
+| `(n,0)` or `(0,n)` | `45°` |
+| on boundary edge but not corner | `180°` |
+| strictly inside large triangle | `360°` |
+
+Each valid small triangle contributes:
+
+- `90°` at its right-angle vertex,
+- `45°` at each acute vertex.
+
+So we can initially add these angle contributions to all listed triangle vertices.
+
+---
+
+### T-junction problem
+
+A vertex of one triangle may lie strictly inside an edge of another triangle.
+
+Example:
+
+```text
+A ----- P ----- B
+```
+
+Here `P` is not an endpoint of segment `AB`, but another triangle has vertex `P`.
+
+The edge `AB` passes straight through `P`, contributing an additional `180°` around `P`.
+
+Therefore, for every listed vertex, we must count how many triangle edges strictly contain it, and add `180°` per such edge.
+
+---
+
+### Step 4: Efficiently detect T-junctions
+
+Naively checking every vertex against every edge is too slow.
+
+But edges only have four possible directions.
+
+For each direction, reduce the problem to one-dimensional interval stabbing.
+
+#### Direction classes
+
+For each direction, define:
+
+| Direction | Line level | Position on line |
+|---|---|---|
+| horizontal | `y` | `x` |
+| vertical | `x` | `y` |
+| slope `+1` | `y - x` | `x` |
+| slope `-1` | `x + y` | `x` |
+
+Edges with the same direction and same `level` lie on the same geometric line.
+
+For each such line:
+
+- every edge becomes an interval `[lo, hi]`,
+- every triangle vertex becomes a query point `pos`.
+
+We need to know how many intervals strictly contain each query point.
+
+---
+
+### Sweep events
+
+For each direction, create events:
+
+| Event type | Meaning |
+|---:|---|
+| `0` | edge closes |
+| `1` | query vertex |
+| `2` | edge opens |
+
+Events are sorted by:
+
+```text
+(level, position, type)
+```
+
+Because type order is:
+
+```text
+close < query < open
+```
+
+a vertex exactly at an edge endpoint is not counted as being inside that edge.
+
+While sweeping one level:
+
+- `active` = number of currently open intervals,
+- at a query, add `180 * active` to that vertex's angle sum.
+
+Do this for all four directions.
+
+---
+
+### Step 5: Final verification
+
+For every unique vertex from the input:
+
+1. compute its expected angle based on its location;
+2. compare with accumulated angle.
+
+If all match, output `YES`; otherwise `NO`.
+
+---
+
+### Complexity
+
+Let `m` be number of triangles and `V ≤ 3m` be number of unique vertices.
+
+For each of four directions, we sort `O(m + V)` events.
+
+Total complexity:
+
+\[
+O((m+V)\log(m+V))
+\]
+
+which is acceptable for the constraints.
+
+Memory:
+
+\[
+O(m+V)
+\]
+
+---
+
+## 3. Commented C++ solution
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// We use 64-bit integers for areas and angle sums.
+// Coordinates are integers, so exact arithmetic is possible.
+using int64 = long long;
+
+// A point with integer coordinates.
+struct Point {
+    int x, y;
+};
+
+// Number of triangles and side length of the large triangle.
+int n, m;
+
+// triangles[i] stores the three vertices of the i-th small triangle.
+vector<array<Point, 3>> triangles;
+
+// Cross product of vectors AB and AC.
+int64 cross(const Point& a, const Point& b, const Point& c) {
+    // Vector AB = b - a.
+    int64 x1 = b.x - a.x;
+    int64 y1 = b.y - a.y;
+
+    // Vector AC = c - a.
+    int64 x2 = c.x - a.x;
+    int64 y2 = c.y - a.y;
+
+    // Return AB x AC.
+    return x1 * y2 - y1 * x2;
+}
+
+// Squared length of vector AB.
+int64 dist2(const Point& a, const Point& b) {
+    int64 dx = b.x - a.x;
+    int64 dy = b.y - a.y;
+    return dx * dx + dy * dy;
+}
+
+// Dot product of vectors AB and AC.
+int64 dot(const Point& a, const Point& b, const Point& c) {
+    int64 x1 = b.x - a.x;
+    int64 y1 = b.y - a.y;
+    int64 x2 = c.x - a.x;
+    int64 y2 = c.y - a.y;
+    return x1 * x2 + y1 * y2;
+}
+
+// Returns true if vector AB is horizontal or vertical.
+bool axis_aligned_vector(const Point& a, const Point& b) {
+    return a.x == b.x || a.y == b.y;
+}
+
+// Find the index of the right-angle vertex of a valid small triangle.
+// Returns -1 if the triangle is not a valid right isosceles triangle
+// with horizontal/vertical catheti.
+int right_angle_index(const array<Point, 3>& t) {
+    // Try each vertex as the right-angle vertex.
+    for (int i = 0; i < 3; i++) {
+        // The other two vertices.
+        int j = (i + 1) % 3;
+        int k = (i + 2) % 3;
+
+        // Need perpendicular vectors.
+        if (dot(t[i], t[j], t[k]) != 0) {
+            continue;
+        }
+
+        // Need equal side lengths.
+        if (dist2(t[i], t[j]) != dist2(t[i], t[k])) {
+            continue;
+        }
+
+        // Both catheti must be parallel to axes.
+        if (!axis_aligned_vector(t[i], t[j])) {
+            continue;
+        }
+
+        if (!axis_aligned_vector(t[i], t[k])) {
+            continue;
+        }
+
+        // Found valid right-angle vertex.
+        return i;
+    }
+
+    // No valid right-angle vertex.
+    return -1;
+}
+
+// Check whether point p is inside or on the boundary of the large triangle.
+bool inside_large(const Point& p) {
+    return p.x >= 0 && p.y >= 0 && p.x + p.y <= n;
+}
+
+// Read one test case.
+void read_case() {
+    cin >> n >> m;
+
+    // Allocate storage for m triangles.
+    triangles.assign(m, {});
+
+    // Read every triangle.
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < 3; j++) {
+            cin >> triangles[i][j].x >> triangles[i][j].y;
+        }
+    }
+}
+
+// Information about a point projected onto a line direction.
+struct DirInfo {
+    int level;
+    int pos;
+};
+
+// Convert a point to (level, position) for direction d.
+//
+// d = 0: horizontal lines, level = y,     pos = x
+// d = 1: vertical lines,   level = x,     pos = y
+// d = 2: slope +1 lines,   level = y - x, pos = x
+// d = 3: slope -1 lines,   level = x + y, pos = x
+DirInfo level_pos(int d, int x, int y) {
+    if (d == 0) {
+        return {y, x};
+    }
+
+    if (d == 1) {
+        return {x, y};
+    }
+
+    if (d == 2) {
+        return {y - x, x};
+    }
+
+    return {x + y, x};
+}
+
+// Determine edge direction class.
+//
+// 0: horizontal
+// 1: vertical
+// 2: slope +1
+// 3: slope -1
+int edge_direction(int dx, int dy) {
+    if (dy == 0) {
+        return 0;
+    }
+
+    if (dx == 0) {
+        return 1;
+    }
+
+    if (dx == dy) {
+        return 2;
+    }
+
+    return 3;
+}
+
+// Solve one test case.
+void solve_case() {
+    // right_idx[i] stores the right-angle vertex of triangle i.
+    vector<int> right_idx(m);
+
+    // Twice total area of all small triangles.
+    int64 total_area2 = 0;
+
+    // Validate all triangles.
+    for (int i = 0; i < m; i++) {
+        // Find right-angle vertex.
+        int r = right_angle_index(triangles[i]);
+
+        // Invalid triangle shape.
+        if (r < 0) {
+            cout << "NO\n";
+            return;
+        }
+
+        // Store right-angle vertex index.
+        right_idx[i] = r;
+
+        // Every vertex must be inside the large triangle.
+        for (int j = 0; j < 3; j++) {
+            if (!inside_large(triangles[i][j])) {
+                cout << "NO\n";
+                return;
+            }
+        }
+
+        // Add doubled area.
+        total_area2 += llabs(cross(triangles[i][0], triangles[i][1], triangles[i][2]));
+    }
+
+    // Large triangle doubled area is n^2.
+    if (total_area2 != 1LL * n * n) {
+        cout << "NO\n";
+        return;
+    }
+
+    // Collect all vertices.
+    vector<pair<int, int>> all_pts;
+    all_pts.reserve(3 * m);
+
+    // tri_int[i] stores triangle i as x0,y0,x1,y1,x2,y2.
+    vector<array<int, 6>> tri_int(m);
+
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < 3; j++) {
+            int x = triangles[i][j].x;
+            int y = triangles[i][j].y;
+
+            tri_int[i][2 * j] = x;
+            tri_int[i][2 * j + 1] = y;
+
+            all_pts.push_back({x, y});
+        }
+    }
+
+    // Coordinate compression of vertices.
+    sort(all_pts.begin(), all_pts.end());
+    all_pts.erase(unique(all_pts.begin(), all_pts.end()), all_pts.end());
+
+    int V = (int)all_pts.size();
+
+    // tri_vid[i][j] is compressed id of j-th vertex of triangle i.
+    vector<array<int, 3>> tri_vid(m);
+
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < 3; j++) {
+            pair<int, int> key = {
+                tri_int[i][2 * j],
+                tri_int[i][2 * j + 1]
+            };
+
+            tri_vid[i][j] =
+                lower_bound(all_pts.begin(), all_pts.end(), key) - all_pts.begin();
+        }
+    }
+
+    // angle_at[v] stores total angle contribution at compressed vertex v.
+    vector<int64> angle_at(V, 0);
+
+    // Add angles from triangle vertices.
+    for (int i = 0; i < m; i++) {
+        int r = right_idx[i];
+
+        // Right-angle vertex contributes 90 degrees.
+        angle_at[tri_vid[i][r]] += 90;
+
+        // Other two vertices are acute, each contributes 45 degrees.
+        angle_at[tri_vid[i][(r + 1) % 3]] += 45;
+        angle_at[tri_vid[i][(r + 2) % 3]] += 45;
+    }
+
+    // We pack events into one integer so sorting is faster.
+    //
+    // Bits layout:
+    // level      : high bits, shifted to be nonnegative
+    // position   : next bits
+    // type       : 0 close, 1 query, 2 open
+    // vertex id  : only meaningful for query
+    auto pack = [](int level, int pos, int type, int vid) -> uint64_t {
+        // Shift signed level into nonnegative range.
+        uint64_t lv = (uint64_t)(level + (1 << 17));
+
+        // Store vid + 1, so 0 can mean "no vertex".
+        uint64_t v = (uint64_t)(vid + 1);
+
+        // Same layout as the original solution.
+        return (lv << 39) | ((uint64_t)pos << 22) | ((uint64_t)type << 20) | v;
+    };
+
+    // Events for one direction at a time.
+    vector<uint64_t> events;
+
+    // Process four edge directions.
+    for (int d = 0; d < 4; d++) {
+        events.clear();
+
+        // Add all edge interval events of this direction.
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < 3; j++) {
+                // Endpoint A.
+                int ax = tri_int[i][2 * j];
+                int ay = tri_int[i][2 * j + 1];
+
+                // Endpoint B.
+                int nj = (j + 1) % 3;
+                int bx = tri_int[i][2 * nj];
+                int by = tri_int[i][2 * nj + 1];
+
+                // Skip edges with another direction.
+                if (edge_direction(bx - ax, by - ay) != d) {
+                    continue;
+                }
+
+                // Convert endpoints to one-dimensional positions.
+                DirInfo a = level_pos(d, ax, ay);
+                DirInfo b = level_pos(d, bx, by);
+
+                // Segment interval on this line.
+                int lo = min(a.pos, b.pos);
+                int hi = max(a.pos, b.pos);
+
+                // Opening event at lower endpoint.
+                events.push_back(pack(a.level, lo, 2, -1));
+
+                // Closing event at upper endpoint.
+                events.push_back(pack(a.level, hi, 0, -1));
+            }
+        }
+
+        // Add all vertex query events for this direction.
+        for (int v = 0; v < V; v++) {
+            int x = all_pts[v].first;
+            int y = all_pts[v].second;
+
+            DirInfo p = level_pos(d, x, y);
+
+            events.push_back(pack(p.level, p.pos, 1, v));
+        }
+
+        // Sort by level, then position, then type.
+        //
+        // Since type order is:
+        // close = 0, query = 1, open = 2,
+        // vertices at segment endpoints are not counted as inside.
+        sort(events.begin(), events.end());
+
+        // Current swept line level.
+        int prev_level = INT_MIN;
+
+        // Number of active intervals on current level.
+        int active = 0;
+
+        // Sweep events.
+        for (uint64_t e : events) {
+            // Recover level.
+            int level = (int)(e >> 39) - (1 << 17);
+
+            // Recover type.
+            int type = (int)((e >> 20) & 3);
+
+            // Recover vertex id + 1.
+            int vid_plus_one = (int)(e & ((1u << 20) - 1));
+
+            // New line level starts with no active intervals.
+            if (level != prev_level) {
+                prev_level = level;
+                active = 0;
+            }
+
+            if (type == 0) {
+                // Segment ends before queries at this same point.
+                active--;
+            } else if (type == 1) {
+                // Query point is strictly inside active intervals.
+                int vid = vid_plus_one - 1;
+                angle_at[vid] += 180LL * active;
+            } else {
+                // Segment starts after queries at this same point.
+                active++;
+            }
+        }
+    }
+
+    // Check expected angle at every unique vertex.
+    for (int v = 0; v < V; v++) {
+        int x = all_pts[v].first;
+        int y = all_pts[v].second;
+
+        int64 expected;
+
+        // Right-angle corner of the large triangle.
+        if (x == 0 && y == 0) {
+            expected = 90;
+        }
+        // Acute corners of the large triangle.
+        else if ((x == n && y == 0) || (x == 0 && y == n)) {
+            expected = 45;
+        }
+        // Other boundary points.
+        else if (x == 0 || y == 0 || x + y == n) {
+            expected = 180;
+        }
+        // Interior points.
+        else {
+            expected = 360;
+        }
+
+        // Angle mismatch means overlap, hole, or invalid contact.
+        if (angle_at[v] != expected) {
+            cout << "NO\n";
+            return;
+        }
+    }
+
+    // All checks passed.
+    cout << "YES\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T;
+    cin >> T;
+
+    while (T--) {
+        read_case();
+        solve_case();
+    }
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def solve():
+    # Read all integers from input at once for speed.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # Pointer into the input array.
+    ptr = 0
+
+    # Number of test cases.
+    T = data[ptr]
+    ptr += 1
+
+    # Answers for all test cases.
+    answers = []
+
+    # Constants used for packing sweep events.
+    #
+    # Event format:
+    #   shifted_level | position | type | vertex_id_plus_one
+    #
+    # type:
+    #   0 = close
+    #   1 = query
+    #   2 = open
+    VID_BITS = 20
+    TYPE_SHIFT = VID_BITS
+    POS_SHIFT = VID_BITS + 2
+    LEVEL_SHIFT = POS_SHIFT + 17
+    LEVEL_OFFSET = 1 << 17
+    VID_MASK = (1 << VID_BITS) - 1
+
+    def pack(level, pos, typ, vid):
+        """
+        Pack an event into one integer.
+
+        level may be negative, so shift it by LEVEL_OFFSET.
+        vid == -1 is used for non-query events.
+        """
+        return (
+            ((level + LEVEL_OFFSET) << LEVEL_SHIFT)
+            | (pos << POS_SHIFT)
+            | (typ << TYPE_SHIFT)
+            | (vid + 1)
+        )
+
+    def inside_large(p, n):
+        """
+        Check whether point p is inside the large triangle:
+            x >= 0, y >= 0, x + y <= n
+        """
+        x, y = p
+        return x >= 0 and y >= 0 and x + y <= n
+
+    def dot(a, b, c):
+        """
+        Dot product of vectors AB and AC.
+        """
+        x1 = b[0] - a[0]
+        y1 = b[1] - a[1]
+        x2 = c[0] - a[0]
+        y2 = c[1] - a[1]
+        return x1 * x2 + y1 * y2
+
+    def dist2(a, b):
+        """
+        Squared distance between a and b.
+        """
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+        return dx * dx + dy * dy
+
+    def cross(a, b, c):
+        """
+        Cross product of AB and AC.
+        Absolute value equals twice the triangle area.
+        """
+        x1 = b[0] - a[0]
+        y1 = b[1] - a[1]
+        x2 = c[0] - a[0]
+        y2 = c[1] - a[1]
+        return x1 * y2 - y1 * x2
+
+    def axis_aligned(a, b):
+        """
+        True if segment AB is horizontal or vertical.
+        """
+        return a[0] == b[0] or a[1] == b[1]
+
+    def right_angle_index(tri):
+        """
+        Return index of right-angle vertex if tri is a valid small triangle.
+
+        A valid small triangle must:
+        - be right,
+        - be isosceles,
+        - have horizontal/vertical catheti.
+
+        Return -1 if invalid.
+        """
+        for i in range(3):
+            j = (i + 1) % 3
+            k = (i + 2) % 3
+
+            a = tri[i]
+            b = tri[j]
+            c = tri[k]
+
+            # Perpendicular sides.
+            if dot(a, b, c) != 0:
+                continue
+
+            # Equal lengths.
+            if dist2(a, b) != dist2(a, c):
+                continue
+
+            # Catheti must be axis-aligned.
+            if not axis_aligned(a, b):
+                continue
+
+            if not axis_aligned(a, c):
+                continue
+
+            return i
+
+        return -1
+
+    def level_pos(d, x, y):
+        """
+        Map point (x, y) to (level, position) for direction d.
+
+        d = 0: horizontal, level = y,     pos = x
+        d = 1: vertical,   level = x,     pos = y
+        d = 2: slope +1,   level = y - x, pos = x
+        d = 3: slope -1,   level = x + y, pos = x
+        """
+        if d == 0:
+            return y, x
+        if d == 1:
+            return x, y
+        if d == 2:
+            return y - x, x
+        return x + y, x
+
+    def edge_direction(dx, dy):
+        """
+        Return direction class of an already valid triangle edge.
+
+        0: horizontal
+        1: vertical
+        2: slope +1
+        3: slope -1
+        """
+        if dy == 0:
+            return 0
+        if dx == 0:
+            return 1
+        if dx == dy:
+            return 2
+        return 3
+
+    for _ in range(T):
+        # Read n and m.
+        n = data[ptr]
+        m = data[ptr + 1]
+        ptr += 2
+
+        # Store triangles.
+        triangles = []
+
+        for _i in range(m):
+            x1, y1, x2, y2, x3, y3 = data[ptr:ptr + 6]
+            ptr += 6
+
+            triangles.append(((x1, y1), (x2, y2), (x3, y3)))
+
+        # right_idx[i] is right-angle vertex of triangle i.
+        right_idx = [-1] * m
+
+        # Sum of doubled areas.
+        total_area2 = 0
+
+        ok = True
+
+        # Validate every triangle.
+        for i, tri in enumerate(triangles):
+            r = right_angle_index(tri)
+
+            # Invalid small triangle.
+            if r < 0:
+                ok = False
+                break
+
+            right_idx[i] = r
+
+            # Every vertex must lie inside the large triangle.
+            for p in tri:
+                if not inside_large(p, n):
+                    ok = False
+                    break
+
+            if not ok:
+                break
+
+            # Add doubled area.
+            total_area2 += abs(cross(tri[0], tri[1], tri[2]))
+
+        if not ok:
+            answers.append("NO")
+            continue
+
+        # Total doubled area must equal n^2.
+        if total_area2 != n * n:
+            answers.append("NO")
+            continue
+
+        # Convert triangles to integer flat representation.
+        tri_int = []
+
+        # Collect all vertices for coordinate compression.
+        all_pts_list = []
+
+        for tri in triangles:
+            flat = []
+
+            for x, y in tri:
+                flat.extend([x, y])
+                all_pts_list.append((x, y))
+
+            tri_int.append(flat)
+
+        # Unique sorted vertices.
+        all_pts = sorted(set(all_pts_list))
+
+        # Number of unique vertices.
+        V = len(all_pts)
+
+        # Point to compressed id.
+        point_id = {p: i for i, p in enumerate(all_pts)}
+
+        # Compressed vertex ids for every triangle.
+        tri_vid = []
+
+        for flat in tri_int:
+            ids = []
+
+            for j in range(3):
+                p = (flat[2 * j], flat[2 * j + 1])
+                ids.append(point_id[p])
+
+            tri_vid.append(ids)
+
+        # Accumulated angle at every unique vertex.
+        angle_at = [0] * V
+
+        # Add direct triangle angle contributions.
+        for i in range(m):
+            r = right_idx[i]
+            ids = tri_vid[i]
+
+            # Right-angle vertex.
+            angle_at[ids[r]] += 90
+
+            # Acute vertices.
+            angle_at[ids[(r + 1) % 3]] += 45
+            angle_at[ids[(r + 2) % 3]] += 45
+
+        # Process T-junction contributions by four direction sweeps.
+        for d in range(4):
+            events = []
+
+            # Add edge open/close events.
+            for flat in tri_int:
+                for j in range(3):
+                    # Current endpoint.
+                    ax = flat[2 * j]
+                    ay = flat[2 * j + 1]
+
+                    # Next endpoint.
+                    nj = (j + 1) % 3
+                    bx = flat[2 * nj]
+                    by = flat[2 * nj + 1]
+
+                    # Only process edges of current direction.
+                    if edge_direction(bx - ax, by - ay) != d:
+                        continue
+
+                    level_a, pos_a = level_pos(d, ax, ay)
+                    level_b, pos_b = level_pos(d, bx, by)
+
+                    lo = min(pos_a, pos_b)
+                    hi = max(pos_a, pos_b)
+
+                    # Edge opens at lower endpoint.
+                    events.append(pack(level_a, lo, 2, -1))
+
+                    # Edge closes at upper endpoint.
+                    events.append(pack(level_a, hi, 0, -1))
+
+            # Add query event for every vertex.
+            for vid, (x, y) in enumerate(all_pts):
+                level, pos = level_pos(d, x, y)
+                events.append(pack(level, pos, 1, vid))
+
+            # Sort by level, then position, then type.
+            #
+            # Important:
+            #   close < query < open
+            #
+            # This prevents endpoints from being counted as strictly inside.
+            events.sort()
+
+            prev_level = None
+
+            # Number of currently active intervals on current line.
+            active = 0
+
+            # Sweep events.
+            for e in events:
+                # Extract level.
+                level = (e >> LEVEL_SHIFT) - LEVEL_OFFSET
+
+                # Extract event type.
+                typ = (e >> TYPE_SHIFT) & 3
+
+                # Extract vertex id + 1.
+                vid_plus_one = e & VID_MASK
+
+                # Reset active count when switching to a new line.
+                if level != prev_level:
+                    prev_level = level
+                    active = 0
+
+                if typ == 0:
+                    # Closing edge endpoint.
+                    active -= 1
+                elif typ == 1:
+                    # Query vertex: active intervals strictly contain it.
+                    vid = vid_plus_one - 1
+                    angle_at[vid] += 180 * active
+                else:
+                    # Opening edge endpoint.
+                    active += 1
+
+        # Final angle verification.
+        for vid, (x, y) in enumerate(all_pts):
+            if x == 0 and y == 0:
+                expected = 90
+            elif (x == n and y == 0) or (x == 0 and y == n):
+                expected = 45
+            elif x == 0 or y == 0 or x + y == n:
+                expected = 180
+            else:
+                expected = 360
+
+            if angle_at[vid] != expected:
+                ok = False
+                break
+
+        answers.append("YES" if ok else "NO")
+
+    # Print all answers.
+    sys.stdout.write("\n".join(answers))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Validate every small triangle: it must be right isosceles, with perpendicular equal catheti, both horizontal/vertical. Also all vertices must satisfy `x ≥ 0`, `y ≥ 0`, `x+y ≤ n`.
+
+Check total doubled area equals `n²`.
+
+Then use angle sums. Each triangle contributes `90°` at its right-angle vertex and `45°` at each acute vertex. At every input vertex, the final angle must be:
+
+- `90°` at `(0,0)`,
+- `45°` at `(n,0)` or `(0,n)`,
+- `180°` on other boundary points,
+- `360°` inside.
+
+Need to account for T-junctions: if a vertex lies strictly inside another triangle edge, that edge contributes `180°`.
+
+Edges have only four directions: horizontal, vertical, slope `+1`, slope `-1`. For each direction, group edges by their supporting line and sweep intervals. Query every vertex; the number of active intervals strictly containing it gives extra `180°` contributions.
+
+Sort events as:
+
+```text
+close < query < open
+```
+
+so endpoints are not counted as being inside an edge.
+
+If all angle sums match expected values, output `YES`; otherwise `NO`.
+
+Complexity:
+
+\[
+O(m \log m)
+\]
+
+up to constant factors from processing four directions.

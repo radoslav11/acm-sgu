@@ -1,0 +1,682 @@
+## 1. Abridged problem statement
+
+You are given a convex polyhedron by listing all of its facets. Each facet is given as a cyclic list of its vertices’ 3D coordinates. Equal vertices have exactly equal printed coordinates. The total number of distinct vertices is at most 100.
+
+The sum of solid angles of the polyhedron is guaranteed to be less than `4` steradians.
+
+Find a Hamiltonian cycle in the edge graph of the polyhedron: a cycle that visits every vertex exactly once and uses only polyhedron edges. If such a cycle exists, print `Yes`, then the vertices of one such cycle in order using the original coordinates. Otherwise print `No`.
+
+---
+
+## 2. Detailed editorial
+
+### Step 1: Convert the polyhedron into a graph
+
+The input gives facets as cyclic lists of vertices. Every pair of consecutive vertices on a facet boundary forms an edge of the polyhedron. The last vertex of the facet is also connected to the first one.
+
+So we:
+
+1. Read every vertex coordinate.
+2. Identify equal vertices.
+3. Assign each distinct vertex an integer id.
+4. For every facet, add edges between consecutive vertex ids.
+
+Because the same geometric vertex may appear in several facets, we need a way to recognize it. The C++ solution converts each coordinate to an integer number of nanounits:
+
+```cpp
+llround(stod(s[j]) * 1e9)
+```
+
+Since coordinates are printed with exactly 9 digits after the decimal point, this uniquely represents the printed coordinate.
+
+After reading all facets, we have an undirected graph with at most 100 vertices.
+
+---
+
+### Step 2: Why a Hamiltonian cycle exists
+
+The condition about the sum of solid angles being less than `4` steradians is not used computationally.
+
+A theorem by Barnette implies that, for convex 3-dimensional polyhedra, sufficiently small total solid angle forces the edge graph to be Hamiltonian. In particular, under the promise in this problem, the required Hamiltonian cycle is guaranteed to exist.
+
+Therefore, the main task is to construct one.
+
+---
+
+### Step 3: Backtracking search
+
+The solution searches for a Hamiltonian cycle using DFS/backtracking.
+
+We fix vertex `0` as the start of the cycle. Then we build a path:
+
+```text
+path[0], path[1], ..., path[depth - 1]
+```
+
+where:
+
+```text
+path[0] = 0
+```
+
+At each step, the current endpoint is `cur = path[depth - 1]`.
+
+We try to extend the path to an unvisited neighbor of `cur`.
+
+If all vertices have been visited, we only need to check whether the last vertex is adjacent to the start vertex. If yes, we found a Hamiltonian cycle.
+
+---
+
+### Step 4: Pruning rule 1 — every remaining vertex needs degree at least 2
+
+In a Hamiltonian cycle, every vertex has exactly two cycle-neighbors.
+
+For an unvisited vertex, its future two neighbors can only be:
+
+- other unvisited vertices,
+- the current path endpoint `cur`,
+- the start vertex `path[0]`.
+
+It cannot connect in the final cycle to an already visited internal path vertex, because that would break the simple cycle structure.
+
+So for every unvisited vertex `u`, the algorithm counts how many neighbors are still usable:
+
+```cpp
+if (!visited[nb] || nb == cur || nb == path[0])
+    avail++;
+```
+
+If some unvisited vertex has fewer than two usable neighbors, the current branch cannot lead to a Hamiltonian cycle and is abandoned.
+
+---
+
+### Step 5: Pruning rule 2 — remaining vertices must be reachable
+
+The path can only grow from the current endpoint `cur`.
+
+Therefore, all still-unvisited vertices must be reachable from `cur` through unvisited vertices.
+
+The algorithm performs a DFS/BFS starting from all unvisited neighbors of `cur`, walking only through unvisited vertices. If it cannot reach every unvisited vertex, the branch is impossible.
+
+---
+
+### Step 6: Candidate ordering heuristic
+
+The search tries next vertices in increasing order of their number of unvisited neighbors.
+
+This is similar to Warnsdorff’s rule for the knight’s tour problem: visit the most constrained vertices first. It greatly reduces backtracking in practice.
+
+For each unvisited neighbor `nb` of `cur`, compute:
+
+```cpp
+deg = number of unvisited neighbors of nb
+```
+
+Then sort candidates by `deg` and try smaller ones first.
+
+---
+
+### Complexity
+
+Hamiltonian cycle search is NP-hard in general, so this backtracking algorithm has exponential worst-case complexity.
+
+However, the input graphs come from convex polyhedra satisfying a strong geometric promise, and the number of vertices is at most 100. The pruning and heuristic make the search fast enough for the intended test data.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ library headers.
+
+using namespace std; // Allows using std:: names without the std:: prefix.
+
+// Output operator for pairs. Not essential for this solution, but useful utility code.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs. Also utility code, not directly needed here.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors. Reads all existing elements of the vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return the stream to allow chaining.
+};
+
+// Output operator for vectors. Prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all elements by value.
+        out << x << ' '; // Print element followed by a space.
+    }
+    return out;       // Return the stream to allow chaining.
+};
+
+// Number of distinct vertices discovered so far.
+int n = 0;
+
+// Original printed coordinates of each vertex.
+// vertex_coord[id] stores three strings: x, y, z.
+vector<array<string, 3>> vertex_coord;
+
+// Adjacency list of the polyhedron graph.
+vector<vector<int>> adj;
+
+// connected[u][v] is true if there is an edge between u and v.
+// This allows O(1) adjacency checks when closing the Hamiltonian cycle.
+vector<vector<char>> connected;
+
+// Maps rounded integer coordinates to vertex id.
+// Each coordinate is multiplied by 1e9 and rounded, because input has 9 digits.
+map<array<int64_t, 3>, int> vertex_id;
+
+// visited[v] is true if vertex v is already in the current Hamiltonian path.
+vector<char> visited;
+
+// path[i] stores the i-th vertex in the currently constructed path.
+vector<int> path;
+
+// Reads input and builds the undirected edge graph of the polyhedron.
+void read() {
+    int f;        // Number of facets.
+    cin >> f;     // Read number of facets.
+
+    // Set of edges to avoid duplicates.
+    // An edge may appear in two facets, but we only want one graph edge.
+    set<pair<int, int>> edges;
+
+    // Process every facet.
+    for(int facet = 0; facet < f; facet++) {
+        int k;    // Number of vertices of this facet.
+        cin >> k; // Read facet size.
+
+        // ids[i] will store the graph id of the i-th vertex of this facet.
+        vector<int> ids(k);
+
+        // Read all vertices of the current facet.
+        for(int i = 0; i < k; i++) {
+            array<string, 3> s; // Store original coordinate strings.
+            cin >> s[0] >> s[1] >> s[2]; // Read x, y, z as strings.
+
+            array<int64_t, 3> key; // Integer key for coordinate comparison.
+
+            // Convert each printed coordinate to integer nanounits.
+            for(int j = 0; j < 3; j++) {
+                key[j] = llround(stod(s[j]) * 1e9);
+            }
+
+            // Check whether this coordinate triple was already seen.
+            auto it = vertex_id.find(key);
+
+            if(it == vertex_id.end()) {
+                // New vertex.
+
+                ids[i] = n++; // Assign a new id and increment vertex count.
+
+                vertex_id[key] = ids[i]; // Store id in the map.
+
+                vertex_coord.push_back(s); // Save original printed coordinates.
+            } else {
+                // Existing vertex.
+
+                ids[i] = it->second; // Reuse its previously assigned id.
+            }
+        }
+
+        // Add all boundary edges of this facet.
+        for(int i = 0; i < k; i++) {
+            int a = ids[i];             // Current vertex.
+            int b = ids[(i + 1) % k];   // Next vertex, wrapping around.
+
+            // Store undirected edges in normalized order (smaller id first).
+            if(a > b) {
+                swap(a, b);
+            }
+
+            edges.insert({a, b}); // Add edge to the set.
+        }
+    }
+
+    // Initialize adjacency list for n vertices.
+    adj.assign(n, {});
+
+    // Initialize adjacency matrix with false values.
+    connected.assign(n, vector<char>(n, 0));
+
+    // Build adjacency list and matrix from the unique edge set.
+    for(auto& e: edges) {
+        adj[e.first].push_back(e.second);  // Add second endpoint to first.
+        adj[e.second].push_back(e.first);  // Add first endpoint to second.
+
+        connected[e.first][e.second] = 1;  // Mark edge in matrix.
+        connected[e.second][e.first] = 1;  // Mark reverse edge too.
+    }
+}
+
+// Recursive DFS that tries to complete a Hamiltonian cycle.
+// cur is the current endpoint of the path.
+// depth is the number of vertices currently in the path.
+bool dfs(int cur, int depth) {
+    // If all vertices are already in the path,
+    // the path is Hamiltonian. It is a cycle only if cur connects to start.
+    if(depth == n) {
+        return connected[cur][path[0]];
+    }
+
+    // Pruning rule:
+    // Every unvisited vertex must still have at least two possible cycle-neighbors.
+    for(int u = 0; u < n; u++) {
+        if(visited[u]) {
+            continue; // Already placed vertices do not need this check.
+        }
+
+        int avail = 0; // Count usable neighbors of u.
+
+        for(int nb: adj[u]) {
+            // A usable neighbor is either:
+            // - still unvisited,
+            // - the current endpoint, which can connect to the next vertex,
+            // - the start vertex, which can close the final cycle.
+            if(!visited[nb] || nb == cur || nb == path[0]) {
+                avail++;
+            }
+        }
+
+        // If fewer than two usable neighbors remain,
+        // u cannot have degree 2 in the final Hamiltonian cycle.
+        if(avail < 2) {
+            return false;
+        }
+    }
+
+    // Second pruning rule:
+    // All unvisited vertices must be reachable from cur through unvisited vertices.
+
+    int target = n - depth; // Number of unvisited vertices.
+
+    vector<char> seen(n, 0); // Marks unvisited vertices reached by the search.
+
+    vector<int> reach; // Stack for DFS over unvisited vertices.
+
+    // Start from each unvisited neighbor of the current endpoint.
+    for(int nb: adj[cur]) {
+        if(!visited[nb] && !seen[nb]) {
+            seen[nb] = 1;       // Mark as seen.
+            reach.push_back(nb); // Push into stack.
+        }
+    }
+
+    int cnt = reach.size(); // Number of reached unvisited vertices so far.
+
+    // DFS through unvisited vertices.
+    while(!reach.empty()) {
+        int x = reach.back(); // Take one vertex.
+        reach.pop_back();     // Remove it from stack.
+
+        for(int nb: adj[x]) {
+            // Continue only through unvisited, unseen vertices.
+            if(!visited[nb] && !seen[nb]) {
+                seen[nb] = 1;    // Mark newly reached vertex.
+                cnt++;           // Increase count.
+                reach.push_back(nb); // Add to stack.
+            }
+        }
+    }
+
+    // If not all unvisited vertices are reachable, this branch is impossible.
+    if(cnt != target) {
+        return false;
+    }
+
+    // Build candidate next vertices.
+    // Each candidate is stored as (degree, vertex), so sorting tries low-degree first.
+    vector<pair<int, int>> cand;
+
+    // Consider all neighbors of current endpoint.
+    for(int nb: adj[cur]) {
+        if(visited[nb]) {
+            continue; // Cannot visit the same vertex twice.
+        }
+
+        int deg = 0; // Number of unvisited neighbors of nb.
+
+        for(int x: adj[nb]) {
+            if(!visited[x]) {
+                deg++;
+            }
+        }
+
+        cand.push_back({deg, nb}); // Store candidate with heuristic key.
+    }
+
+    // Try most constrained candidates first.
+    sort(cand.begin(), cand.end());
+
+    // Recursively try each candidate as the next vertex in the path.
+    for(auto& c: cand) {
+        int nb = c.second; // Candidate vertex id.
+
+        visited[nb] = 1;   // Mark it as used.
+        path[depth] = nb;  // Put it into the path.
+
+        // Recurse with the candidate as the new endpoint.
+        if(dfs(nb, depth + 1)) {
+            return true; // Cycle found; propagate success upward.
+        }
+
+        visited[nb] = 0; // Backtrack: unmark the vertex.
+    }
+
+    // No candidate led to a Hamiltonian cycle.
+    return false;
+}
+
+// Solves the problem after the graph has been built.
+void solve() {
+    // Initialize all vertices as unvisited.
+    visited.assign(n, 0);
+
+    // Allocate space for the Hamiltonian path.
+    path.assign(n, 0);
+
+    // Start the path from vertex 0.
+    visited[0] = 1;
+
+    // First vertex of the path is 0.
+    path[0] = 0;
+
+    // Run DFS from vertex 0 with path length 1.
+    if(dfs(0, 1)) {
+        // Hamiltonian cycle was found.
+
+        cout << "Yes\n" << n << "\n"; // Print success and number of vertices.
+
+        // Print vertices in cycle order.
+        for(int i = 0; i < n; i++) {
+            auto& c = vertex_coord[path[i]]; // Original coordinate strings.
+
+            cout << c[0] << ' ' << c[1] << ' ' << c[2] << '\n';
+        }
+    } else {
+        // DFS failed to find a cycle.
+        cout << "No\n";
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Speed up C++ I/O.
+
+    cin.tie(nullptr); // Untie cin from cout for faster input.
+
+    int T = 1; // There is only one test case in this problem.
+
+    // cin >> T; // Multiple test cases are not used.
+
+    // Process the single test case.
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input and build graph.
+        solve(); // Find and output Hamiltonian cycle.
+    }
+
+    return 0; // End program successfully.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+# Increase recursion limit because the Hamiltonian path can have up to 100 vertices.
+sys.setrecursionlimit(10000)
+
+
+def solve():
+    # Read all input tokens.
+    data = sys.stdin.read().split()
+
+    # Pointer into token list.
+    ptr = 0
+
+    # Number of facets.
+    f = int(data[ptr])
+    ptr += 1
+
+    # Maps coordinate triples to vertex ids.
+    # Coordinates are kept as strings because equal vertices are printed identically.
+    vertex_id = {}
+
+    # vertex_coord[id] stores the original coordinate strings of that vertex.
+    vertex_coord = []
+
+    # Set of undirected edges, stored as pairs (min_id, max_id).
+    edges = set()
+
+    # Process each facet.
+    for _ in range(f):
+        # Number of vertices in this facet.
+        k = int(data[ptr])
+        ptr += 1
+
+        # ids[i] will be the graph id of the i-th vertex of the facet.
+        ids = []
+
+        # Read all vertices of this facet.
+        for _ in range(k):
+            # Read coordinates as strings to preserve exact output formatting.
+            x = data[ptr]
+            y = data[ptr + 1]
+            z = data[ptr + 2]
+            ptr += 3
+
+            # Coordinate triple key.
+            key = (x, y, z)
+
+            # If this vertex was not seen before, assign it a new id.
+            if key not in vertex_id:
+                vertex_id[key] = len(vertex_coord)
+                vertex_coord.append(key)
+
+            # Store the id of this facet vertex.
+            ids.append(vertex_id[key])
+
+        # Add edges between consecutive vertices of the facet boundary.
+        for i in range(k):
+            a = ids[i]
+            b = ids[(i + 1) % k]
+
+            # Normalize undirected edge order.
+            if a > b:
+                a, b = b, a
+
+            # Add to set to remove duplicates.
+            edges.add((a, b))
+
+    # Number of distinct vertices.
+    n = len(vertex_coord)
+
+    # Build adjacency list.
+    adj = [[] for _ in range(n)]
+
+    # Build adjacency matrix for O(1) edge existence checks.
+    connected = [[False] * n for _ in range(n)]
+
+    # Fill graph structures.
+    for a, b in edges:
+        adj[a].append(b)
+        adj[b].append(a)
+        connected[a][b] = True
+        connected[b][a] = True
+
+    # visited[v] is True if v is already in current path.
+    visited = [False] * n
+
+    # path[i] is the i-th vertex in current path.
+    path = [0] * n
+
+    # Start Hamiltonian path from vertex 0.
+    visited[0] = True
+    path[0] = 0
+
+    def dfs(cur, depth):
+        """
+        Try to extend current Hamiltonian path.
+
+        cur:
+            current endpoint of the path
+
+        depth:
+            number of vertices currently included in the path
+        """
+
+        # If all vertices are used, check whether the path closes into a cycle.
+        if depth == n:
+            return connected[cur][path[0]]
+
+        # Pruning 1:
+        # Every unvisited vertex needs at least two possible neighbors
+        # in the final Hamiltonian cycle.
+        for u in range(n):
+            if visited[u]:
+                continue
+
+            # Count usable neighbors of u.
+            avail = 0
+
+            for nb in adj[u]:
+                # A neighbor is usable if:
+                # - it is unvisited,
+                # - it is the current endpoint,
+                # - it is the start vertex.
+                if (not visited[nb]) or nb == cur or nb == path[0]:
+                    avail += 1
+
+            # Fewer than two usable neighbors means impossible branch.
+            if avail < 2:
+                return False
+
+        # Pruning 2:
+        # All unvisited vertices must be reachable from cur through unvisited vertices.
+
+        # Number of vertices still not in the path.
+        target = n - depth
+
+        # seen[v] marks unvisited vertices reachable from cur.
+        seen = [False] * n
+
+        # Stack for DFS over unvisited part of the graph.
+        stack = []
+
+        # Start from all unvisited neighbors of current endpoint.
+        for nb in adj[cur]:
+            if not visited[nb] and not seen[nb]:
+                seen[nb] = True
+                stack.append(nb)
+
+        # Count reached unvisited vertices.
+        cnt = len(stack)
+
+        # DFS through only unvisited vertices.
+        while stack:
+            x = stack.pop()
+
+            for nb in adj[x]:
+                if not visited[nb] and not seen[nb]:
+                    seen[nb] = True
+                    cnt += 1
+                    stack.append(nb)
+
+        # If some unvisited vertex is unreachable, this branch cannot work.
+        if cnt != target:
+            return False
+
+        # Candidate next vertices.
+        # Store pairs (degree, vertex), where degree is number of unvisited neighbors.
+        candidates = []
+
+        # Current path can only be extended to an unvisited neighbor of cur.
+        for nb in adj[cur]:
+            if visited[nb]:
+                continue
+
+            # Count unvisited neighbors of nb.
+            deg = 0
+            for x in adj[nb]:
+                if not visited[x]:
+                    deg += 1
+
+            candidates.append((deg, nb))
+
+        # Try vertices with fewer options first.
+        candidates.sort()
+
+        # Backtracking over candidates.
+        for _, nb in candidates:
+            # Add nb to current path.
+            visited[nb] = True
+            path[depth] = nb
+
+            # Recurse.
+            if dfs(nb, depth + 1):
+                return True
+
+            # Backtrack.
+            visited[nb] = False
+
+        # No extension worked.
+        return False
+
+    # Run DFS.
+    found = dfs(0, 1)
+
+    # Prepare output.
+    out = []
+
+    if found:
+        out.append("Yes")
+        out.append(str(n))
+
+        # Print vertices in Hamiltonian cycle order.
+        for v in path:
+            x, y, z = vertex_coord[v]
+            out.append(f"{x} {y} {z}")
+    else:
+        out.append("No")
+
+    # Write final answer.
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+Build the edge graph of the polyhedron. Assign an id to every distinct coordinate triple. For each facet, connect consecutive vertices, including the last to the first. Duplicate edges are ignored.
+
+The solid-angle condition guarantees, by Barnette’s theorem, that the graph has a Hamiltonian cycle. The solution therefore searches for one using backtracking.
+
+Start from vertex `0` and recursively extend a simple path. When all vertices are used, check whether the last vertex is adjacent to the start.
+
+Use two pruning rules:
+
+1. Every unvisited vertex must still have at least two usable neighbors: unvisited vertices, the current endpoint, or the start vertex.
+2. All unvisited vertices must be reachable from the current endpoint through unvisited vertices.
+
+Try next vertices in increasing order of their number of unvisited neighbors, which explores constrained choices first.
+
+If DFS succeeds, output the vertices of the found cycle in order using their original coordinate strings; otherwise output `No`.

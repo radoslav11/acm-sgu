@@ -1,0 +1,1056 @@
+## 1. Abridged problem statement
+
+Given a convex polygon with `N ≤ 5·10^4` vertices, and `P ≤ 5·10^4` query lines, each line representing a possible cut of the polygon, compute for every query the area of the smaller of the two parts into which the line divides the polygon.
+
+If the line does not properly split the polygon, the answer is `0`.
+
+The polygon vertices are given in clockwise or counterclockwise order. Consecutive collinear vertices may exist. Coordinates are real numbers.
+
+Output each answer with at least 6 digits after the decimal point.
+
+---
+
+## 2. Detailed editorial
+
+### Key geometric idea
+
+For a query line passing through points `a` and `b`, define
+
+```cpp
+d = b - a
+side(p) = d ^ (p - a)
+```
+
+where `^` is the 2D cross product.
+
+`side(p)` tells on which side of the directed line `a → b` the point `p` lies:
+
+- `side(p) > 0`: left side,
+- `side(p) < 0`: right side,
+- `side(p) = 0`: on the line.
+
+For a convex polygon:
+
+- if all vertices have non-positive signed side, the line does not cut the polygon;
+- if all vertices have non-negative signed side, the line does not cut the polygon;
+- otherwise, the line intersects the polygon in exactly two boundary points and splits it into two convex pieces.
+
+So for each query we need:
+
+1. Find whether both positive and negative vertices exist.
+2. Find the two polygon edges crossed by the line.
+3. Compute the area of one side.
+4. Return the smaller of that area and `total_area - area`.
+
+---
+
+### Why not scan all vertices per query?
+
+`N` and `P` can both be `5·10^4`, so an `O(NP)` solution is impossible.
+
+We need roughly `O(log N)` per query.
+
+---
+
+### Preprocessing
+
+First, ensure the polygon is stored counterclockwise.
+
+The signed doubled area of the polygon is:
+
+```cpp
+sum += pts[i] ^ pts[(i + 1) % n]
+```
+
+If this value is negative, the vertices are clockwise, so reverse them.
+
+Then compute prefix sums of shoelace terms:
+
+```cpp
+pref[i + 1] = pref[i] + pts[i] ^ pts[(i + 1) % n]
+```
+
+This lets us get the doubled area contribution of any consecutive boundary chain in `O(1)`.
+
+---
+
+### Splitting the polygon into two monotone chains
+
+Find:
+
+- `l_idx`: lexicographically leftmost vertex,
+- `r_idx`: lexicographically rightmost vertex.
+
+Because the polygon is convex, the boundary from `l_idx` to `r_idx` and the boundary from `r_idx` back to `l_idx` form two convex monotone chains.
+
+The code calls them:
+
+```cpp
+lower chain = l_idx → r_idx
+upper chain = r_idx → l_idx
+```
+
+The point array is duplicated so cyclic ranges can be accessed linearly.
+
+---
+
+### Finding maximum and minimum side values
+
+For a fixed query line, `side(vertex)` is a linear function over the polygon.
+
+On each convex chain, this sequence is unimodal: it has at most one local maximum or one local minimum.
+
+Therefore, on each chain we can find:
+
+- the maximum signed side,
+- the minimum signed side,
+
+using binary search on the slope direction.
+
+Then the global maximum is the larger of the two chain maxima, and the global minimum is the smaller of the two chain minima.
+
+If:
+
+```cpp
+max_side <= 0
+```
+
+or
+
+```cpp
+min_side >= 0
+```
+
+then the polygon lies on one side of the line, so the answer is `0`.
+
+---
+
+### Finding the two intersection edges
+
+Let:
+
+- `i_min` be a vertex with minimum `side`,
+- `i_max` be a vertex with maximum `side`.
+
+Since the polygon is convex:
+
+- going counterclockwise from `i_min` to `i_max`, side values increase from negative to positive;
+- going counterclockwise from `i_max` to `i_min`, side values decrease from positive to negative.
+
+Therefore:
+
+1. On the arc from `i_min` to `i_max`, binary search the first vertex with `side > 0`.
+2. On the arc from `i_max` to `i_min`, binary search the first vertex with `side <= 0`; the previous vertex is the last positive vertex.
+
+These identify the two polygon edges crossed by the query line.
+
+---
+
+### Computing the area of the positive-side polygon piece
+
+Suppose the positive side consists of:
+
+```text
+x → ccw_first → ... → ccw_last → y → x
+```
+
+where:
+
+- `x` is the first intersection point,
+- `y` is the second intersection point,
+- `ccw_first ... ccw_last` are polygon vertices lying on the positive side.
+
+The doubled area is computed by shoelace formula:
+
+```cpp
+doubled =
+    x ^ pts[ccw_first]
+  + chain_sum
+  + pts[ccw_last] ^ y
+  + y ^ x
+```
+
+The chain sum is obtained from prefix sums.
+
+Then:
+
+```cpp
+piece = abs(doubled) / 2
+answer = min(piece, total_area - piece)
+```
+
+Small negative values caused by floating point error are clamped to zero.
+
+---
+
+### Complexity
+
+Preprocessing:
+
+```text
+O(N)
+```
+
+Each query:
+
+```text
+O(log N)
+```
+
+Total:
+
+```text
+O((N + P) log N)
+```
+
+Memory:
+
+```text
+O(N)
+```
+
+---
+
+## 3. Commented C++ solution
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard-library names without std::.
+
+// The coordinate type used by the solution.
+using coord_t = double;
+
+// A 2D point / vector structure.
+struct Point {
+    // Small epsilon used for floating point comparisons.
+    static constexpr coord_t eps = 1e-9;
+
+    // Point coordinates.
+    coord_t x, y;
+
+    // Constructor, defaulting to the origin.
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector addition.
+    Point operator+(const Point& p) const {
+        return Point(x + p.x, y + p.y);
+    }
+
+    // Vector subtraction.
+    Point operator-(const Point& p) const {
+        return Point(x - p.x, y - p.y);
+    }
+
+    // Multiplication by scalar.
+    Point operator*(coord_t c) const {
+        return Point(x * c, y * c);
+    }
+
+    // Division by scalar.
+    Point operator/(coord_t c) const {
+        return Point(x / c, y / c);
+    }
+
+    // Dot product.
+    coord_t operator*(const Point& p) const {
+        return x * p.x + y * p.y;
+    }
+
+    // Cross product.
+    coord_t operator^(const Point& p) const {
+        return x * p.y - y * p.x;
+    }
+
+    // Lexicographic comparison by x, then y.
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+
+    // Squared vector length.
+    coord_t norm2() const {
+        return x * x + y * y;
+    }
+
+    // Vector length.
+    coord_t norm() const {
+        return sqrt(norm2());
+    }
+
+    // Returns the intersection of two infinite lines:
+    // line a1-b1 and line a2-b2.
+    friend Point line_line_intersection(
+        const Point& a1,
+        const Point& b1,
+        const Point& a2,
+        const Point& b2
+    ) {
+        // Direction of first line.
+        Point d1 = b1 - a1;
+
+        // Direction of second line.
+        Point d2 = b2 - a2;
+
+        // Parameter along first line.
+        coord_t t = ((a2 - a1) ^ d2) / (d1 ^ d2);
+
+        // Intersection point.
+        return a1 + d1 * t;
+    }
+};
+
+// Binary search returning the first index in [lo, hi)
+// for which pred(index) is true.
+// Assumes pred is false, false, ..., true, true, ...
+template<typename F>
+int first_true(int lo, int hi, F pred) {
+    while(lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+
+        if(pred(mid)) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    return lo;
+}
+
+// Fast input buffer.
+char in_buf[1 << 16];
+
+// Current position in the input buffer.
+int in_pos = 0;
+
+// Current valid length of the input buffer.
+int in_len = 0;
+
+// Reads the next character from stdin.
+int next_char() {
+    // If buffer is exhausted, refill it.
+    if(in_pos == in_len) {
+        in_len = (int)fread(in_buf, 1, sizeof(in_buf), stdin);
+        in_pos = 0;
+
+        // End of file.
+        if(in_len == 0) {
+            return -1;
+        }
+    }
+
+    // Return next buffered character.
+    return in_buf[in_pos++];
+}
+
+// Reads an integer.
+int read_int() {
+    int c = next_char();
+
+    // Skip whitespace.
+    while(c <= ' ') {
+        c = next_char();
+    }
+
+    // Handle optional minus sign.
+    bool neg = c == '-';
+    if(neg) {
+        c = next_char();
+    }
+
+    int x = 0;
+
+    // Parse digits.
+    while(c > ' ') {
+        x = x * 10 + (c - '0');
+        c = next_char();
+    }
+
+    return neg ? -x : x;
+}
+
+// Reads a floating point value.
+coord_t read_real() {
+    int c = next_char();
+
+    // Skip whitespace.
+    while(c <= ' ') {
+        c = next_char();
+    }
+
+    int sign = 1;
+
+    // Handle sign.
+    if(c == '-') {
+        sign = -1;
+        c = next_char();
+    } else if(c == '+') {
+        c = next_char();
+    }
+
+    long long ival = 0;
+
+    // Read integer part.
+    while(c >= '0' && c <= '9') {
+        ival = ival * 10 + (c - '0');
+        c = next_char();
+    }
+
+    coord_t val = (coord_t)ival;
+
+    // Read fractional part, if any.
+    if(c == '.') {
+        c = next_char();
+
+        long long fval = 0;
+        int fdigits = 0;
+
+        // Store at most 18 fractional digits.
+        while(c >= '0' && c <= '9' && fdigits < 18) {
+            fval = fval * 10 + (c - '0');
+            fdigits++;
+            c = next_char();
+        }
+
+        // Skip remaining fractional digits if present.
+        while(c >= '0' && c <= '9') {
+            c = next_char();
+        }
+
+        // Powers of ten for fractional conversion.
+        static const coord_t ipow10[19] = {
+            1.0,   1e-1,  1e-2,  1e-3,  1e-4,
+            1e-5,  1e-6,  1e-7,  1e-8,  1e-9,
+            1e-10, 1e-11, 1e-12, 1e-13, 1e-14,
+            1e-15, 1e-16, 1e-17, 1e-18
+        };
+
+        // Add fractional value.
+        if(fdigits > 0) {
+            val += (coord_t)fval * ipow10[fdigits];
+        }
+    }
+
+    return sign * val;
+}
+
+// Number of polygon vertices and number of queries.
+int n, q;
+
+// Polygon vertices. Later duplicated to simplify cyclic indexing.
+vector<Point> pts;
+
+// Prefix sums of shoelace cross products.
+vector<coord_t> pref;
+
+// Polygon area.
+coord_t total_area;
+
+// Indices of lexicographically leftmost and rightmost vertices.
+int l_idx, r_idx;
+
+// Lengths of the two chains.
+int lower_len, upper_len;
+
+// Reads and preprocesses the polygon.
+void read() {
+    // Read number of vertices.
+    n = read_int();
+
+    // Allocate vertices.
+    pts.resize(n);
+
+    // Read polygon vertices.
+    for(int i = 0; i < n; i++) {
+        pts[i].x = read_real();
+        pts[i].y = read_real();
+    }
+
+    coord_t s = 0;
+
+    // Compute doubled signed polygon area.
+    for(int i = 0; i < n; i++) {
+        s += pts[i] ^ pts[(i + 1) % n];
+    }
+
+    // If polygon is clockwise, reverse it to make it counterclockwise.
+    if(s < 0) {
+        reverse(pts.begin(), pts.end());
+        s = -s;
+    }
+
+    // Build prefix sums of edge cross products.
+    pref.assign(n + 1, 0);
+
+    for(int i = 0; i < n; i++) {
+        pref[i + 1] = pref[i] + (pts[i] ^ pts[(i + 1) % n]);
+    }
+
+    // Find lexicographically leftmost and rightmost vertices.
+    l_idx = r_idx = 0;
+
+    for(int i = 1; i < n; i++) {
+        if(pts[i] < pts[l_idx]) {
+            l_idx = i;
+        }
+
+        if(pts[r_idx] < pts[i]) {
+            r_idx = i;
+        }
+    }
+
+    // Number of vertices on the chain from leftmost to rightmost.
+    lower_len = ((r_idx - l_idx) % n + n) % n + 1;
+
+    // Number of vertices on the chain from rightmost to leftmost.
+    upper_len = ((l_idx - r_idx) % n + n) % n + 1;
+
+    // Duplicate the polygon to avoid modular indexing on chains.
+    pts.resize(2 * n);
+
+    for(int i = 0; i < n; i++) {
+        pts[n + i] = pts[i];
+    }
+
+    // Actual polygon area.
+    total_area = s / 2;
+
+    // Read number of queries.
+    q = read_int();
+}
+
+// Solves all queries.
+void solve() {
+    // Print exactly six digits after decimal point.
+    cout << fixed << setprecision(6);
+
+    // Process each query independently.
+    for(int qi = 0; qi < q; qi++) {
+        Point a, b;
+
+        // Read two points defining the cutting line.
+        a.x = read_real();
+        a.y = read_real();
+        b.x = read_real();
+        b.y = read_real();
+
+        // Direction vector of the line.
+        Point d = b - a;
+
+        // Signed side of vertex i relative to directed line a -> b.
+        auto side = [&](int i) -> coord_t {
+            return d ^ (pts[i] - a);
+        };
+
+        // Finds either maximum or minimum side value on a convex chain.
+        auto extreme_on_chain = [&](int chain_start,
+                                    int chain_len,
+                                    bool want_max) -> int {
+            // Search over offsets inside the chain.
+            int lo = 0;
+            int hi = chain_len - 1;
+
+            // Binary search on unimodal sequence.
+            while(lo < hi) {
+                int mid = lo + (hi - lo) / 2;
+
+                coord_t sm = side(chain_start + mid);
+                coord_t sn = side(chain_start + mid + 1);
+
+                // For maximum: move right while increasing.
+                // For minimum: move right while decreasing.
+                if(want_max ? sm < sn : sm > sn) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            // Candidate found by unimodal search.
+            int best = lo;
+            coord_t best_v = side(chain_start + lo);
+
+            // Endpoints are also checked because the sequence may be convex
+            // when searching for max, or concave when searching for min.
+            coord_t v0 = side(chain_start);
+
+            if(want_max ? v0 > best_v : v0 < best_v) {
+                best = 0;
+                best_v = v0;
+            }
+
+            coord_t vL = side(chain_start + chain_len - 1);
+
+            if(want_max ? vL > best_v : vL < best_v) {
+                best = chain_len - 1;
+            }
+
+            // Return offset inside the chain.
+            return best;
+        };
+
+        // Maximum on lower chain.
+        int max_lower_k = extreme_on_chain(l_idx, lower_len, true);
+
+        // Maximum on upper chain.
+        int max_upper_k = extreme_on_chain(r_idx, upper_len, true);
+
+        // Their signed side values.
+        coord_t max_lower_v = side(l_idx + max_lower_k);
+        coord_t max_upper_v = side(r_idx + max_upper_k);
+
+        // Global maximum vertex index modulo n.
+        int i_max = max_lower_v >= max_upper_v
+                        ? (l_idx + max_lower_k) % n
+                        : (r_idx + max_upper_k) % n;
+
+        // If even the maximum is not positive, polygon is not split.
+        if(side(i_max) <= Point::eps) {
+            cout << (coord_t)0 << '\n';
+            continue;
+        }
+
+        // Minimum on lower chain.
+        int min_lower_k = extreme_on_chain(l_idx, lower_len, false);
+
+        // Minimum on upper chain.
+        int min_upper_k = extreme_on_chain(r_idx, upper_len, false);
+
+        // Their signed side values.
+        coord_t min_lower_v = side(l_idx + min_lower_k);
+        coord_t min_upper_v = side(r_idx + min_upper_k);
+
+        // Global minimum vertex index modulo n.
+        int i_min = min_lower_v <= min_upper_v
+                        ? (l_idx + min_lower_k) % n
+                        : (r_idx + min_upper_k) % n;
+
+        // If even the minimum is not negative, polygon is not split.
+        if(side(i_min) >= -Point::eps) {
+            cout << (coord_t)0 << '\n';
+            continue;
+        }
+
+        // Arc length from minimum vertex to maximum vertex, counterclockwise.
+        int len_up = ((i_max - i_min) % n + n) % n;
+
+        // Arc length from maximum vertex to minimum vertex, counterclockwise.
+        int len_dn = ((i_min - i_max) % n + n) % n;
+
+        // First positive vertex on arc i_min -> i_max.
+        int ccw_first_k = first_true(1, len_up + 1, [&](int k) {
+            return side(i_min + k) > 0;
+        });
+
+        // Last positive vertex on arc i_max -> i_min.
+        int ccw_last_k =
+            first_true(1, len_dn, [&](int k) {
+                return side(i_max + k) <= 0;
+            }) - 1;
+
+        // Converts duplicated index back into [0, n).
+        auto wrap = [&](int i) {
+            return i < n ? i : i - n;
+        };
+
+        // First and last positive polygon vertices.
+        int ccw_first = wrap(i_min + ccw_first_k);
+        int ccw_last = wrap(i_max + ccw_last_k);
+
+        // Vertex before first positive vertex.
+        int prev_f = ccw_first == 0 ? n - 1 : ccw_first - 1;
+
+        // Vertex after last positive vertex.
+        int next_l = ccw_last + 1 == n ? 0 : ccw_last + 1;
+
+        // First intersection point with polygon boundary.
+        Point x = line_line_intersection(
+            pts[prev_f],
+            pts[ccw_first],
+            a,
+            b
+        );
+
+        // Second intersection point with polygon boundary.
+        Point y = line_line_intersection(
+            pts[ccw_last],
+            pts[next_l],
+            a,
+            b
+        );
+
+        // Shoelace sum of polygon boundary from ccw_first to ccw_last.
+        coord_t chain =
+            ccw_first <= ccw_last
+                ? pref[ccw_last] - pref[ccw_first]
+                : pref[n] - pref[ccw_first] + pref[ccw_last];
+
+        // Doubled area of the positive-side piece.
+        coord_t doubled =
+            (x ^ pts[ccw_first])
+            + chain
+            + (pts[ccw_last] ^ y)
+            + (y ^ x);
+
+        // Actual area of that piece.
+        coord_t piece = fabs(doubled) / 2;
+
+        // Smaller of the two pieces, clamped against tiny negative errors.
+        cout << max(min(piece, total_area - piece), (coord_t)0) << '\n';
+    }
+}
+
+int main() {
+    // Disable synchronization with C stdio.
+    ios_base::sync_with_stdio(false);
+
+    // Untie cin from cout.
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    read();
+
+    // Process all queries.
+    solve();
+
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution
+
+```python
+import sys
+import math
+
+
+EPS = 1e-9
+
+
+def cross(p, q):
+    """
+    Returns the 2D cross product p ^ q.
+    """
+    return p[0] * q[1] - p[1] * q[0]
+
+
+def first_true(lo, hi, pred):
+    """
+    Binary search for the first integer x in [lo, hi)
+    such that pred(x) is True.
+
+    Assumes pred is monotone:
+    False, False, ..., True, True, ...
+    """
+    while lo < hi:
+        mid = (lo + hi) // 2
+
+        if pred(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+
+    return lo
+
+
+def line_intersection(p1, p2, a, d):
+    """
+    Intersects the infinite line p1-p2 with the query line a + t*d.
+
+    p1, p2: endpoints of a polygon edge.
+    a: one point on the query line.
+    d: direction vector of the query line.
+    """
+    edge = (p2[0] - p1[0], p2[1] - p1[1])
+
+    numerator = cross((a[0] - p1[0], a[1] - p1[1]), d)
+    denominator = cross(edge, d)
+
+    t = numerator / denominator
+
+    return (
+        p1[0] + edge[0] * t,
+        p1[1] + edge[1] * t,
+    )
+
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    ptr = 0
+
+    n = int(data[ptr])
+    ptr += 1
+
+    pts = []
+
+    for _ in range(n):
+        x = float(data[ptr])
+        y = float(data[ptr + 1])
+        ptr += 2
+        pts.append((x, y))
+
+    # Compute doubled signed polygon area.
+    area2 = 0.0
+
+    for i in range(n):
+        area2 += cross(pts[i], pts[(i + 1) % n])
+
+    # Make polygon counterclockwise.
+    if area2 < 0:
+        pts.reverse()
+        area2 = -area2
+
+    total_area = area2 / 2.0
+
+    # Prefix sums of shoelace terms.
+    pref = [0.0] * (n + 1)
+
+    for i in range(n):
+        pref[i + 1] = pref[i] + cross(pts[i], pts[(i + 1) % n])
+
+    # Find lexicographically leftmost and rightmost vertices.
+    l_idx = 0
+    r_idx = 0
+
+    for i in range(1, n):
+        if pts[i] < pts[l_idx]:
+            l_idx = i
+
+        if pts[r_idx] < pts[i]:
+            r_idx = i
+
+    # Chain from leftmost to rightmost.
+    lower_len = (r_idx - l_idx) % n + 1
+
+    # Chain from rightmost to leftmost.
+    upper_len = (l_idx - r_idx) % n + 1
+
+    # Duplicate points for easy cyclic indexing.
+    pts2 = pts + pts
+
+    q = int(data[ptr])
+    ptr += 1
+
+    out = []
+
+    for _ in range(q):
+        ax = float(data[ptr])
+        ay = float(data[ptr + 1])
+        bx = float(data[ptr + 2])
+        by = float(data[ptr + 3])
+        ptr += 4
+
+        a = (ax, ay)
+        d = (bx - ax, by - ay)
+
+        def side(i):
+            """
+            Signed side of pts2[i] relative to the directed query line.
+            """
+            p = pts2[i]
+            return cross(d, (p[0] - ax, p[1] - ay))
+
+        def extreme_on_chain(start, length, want_max):
+            """
+            Finds the offset of a maximum or minimum side value
+            on a convex chain.
+
+            Because the side values along a convex chain are unimodal,
+            binary search on neighboring values is enough.
+            """
+            lo = 0
+            hi = length - 1
+
+            while lo < hi:
+                mid = (lo + hi) // 2
+
+                sm = side(start + mid)
+                sn = side(start + mid + 1)
+
+                if want_max:
+                    if sm < sn:
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                else:
+                    if sm > sn:
+                        lo = mid + 1
+                    else:
+                        hi = mid
+
+            best = lo
+            best_val = side(start + best)
+
+            # Check left endpoint.
+            v0 = side(start)
+
+            if want_max:
+                if v0 > best_val:
+                    best = 0
+                    best_val = v0
+            else:
+                if v0 < best_val:
+                    best = 0
+                    best_val = v0
+
+            # Check right endpoint.
+            v_last = side(start + length - 1)
+
+            if want_max:
+                if v_last > best_val:
+                    best = length - 1
+            else:
+                if v_last < best_val:
+                    best = length - 1
+
+            return best
+
+        # Global maximum side vertex.
+        max_lower_k = extreme_on_chain(l_idx, lower_len, True)
+        max_upper_k = extreme_on_chain(r_idx, upper_len, True)
+
+        max_lower_v = side(l_idx + max_lower_k)
+        max_upper_v = side(r_idx + max_upper_k)
+
+        if max_lower_v >= max_upper_v:
+            i_max = (l_idx + max_lower_k) % n
+        else:
+            i_max = (r_idx + max_upper_k) % n
+
+        # No positive vertex means no proper split.
+        if side(i_max) <= EPS:
+            out.append("0.000000")
+            continue
+
+        # Global minimum side vertex.
+        min_lower_k = extreme_on_chain(l_idx, lower_len, False)
+        min_upper_k = extreme_on_chain(r_idx, upper_len, False)
+
+        min_lower_v = side(l_idx + min_lower_k)
+        min_upper_v = side(r_idx + min_upper_k)
+
+        if min_lower_v <= min_upper_v:
+            i_min = (l_idx + min_lower_k) % n
+        else:
+            i_min = (r_idx + min_upper_k) % n
+
+        # No negative vertex means no proper split.
+        if side(i_min) >= -EPS:
+            out.append("0.000000")
+            continue
+
+        # Counterclockwise distance from i_min to i_max.
+        len_up = (i_max - i_min) % n
+
+        # Counterclockwise distance from i_max to i_min.
+        len_dn = (i_min - i_max) % n
+
+        # First positive vertex from i_min to i_max.
+        ccw_first_k = first_true(
+            1,
+            len_up + 1,
+            lambda k: side(i_min + k) > 0
+        )
+
+        # Last positive vertex from i_max toward i_min.
+        ccw_last_k = first_true(
+            1,
+            len_dn,
+            lambda k: side(i_max + k) <= 0
+        ) - 1
+
+        def wrap(i):
+            """
+            Converts an index in the duplicated array back to [0, n).
+            """
+            return i if i < n else i - n
+
+        ccw_first = wrap(i_min + ccw_first_k)
+        ccw_last = wrap(i_max + ccw_last_k)
+
+        prev_f = n - 1 if ccw_first == 0 else ccw_first - 1
+        next_l = 0 if ccw_last + 1 == n else ccw_last + 1
+
+        # Boundary intersections with the cutting line.
+        x = line_intersection(pts[prev_f], pts[ccw_first], a, d)
+        y = line_intersection(pts[ccw_last], pts[next_l], a, d)
+
+        # Shoelace contribution of polygon vertices ccw_first ... ccw_last.
+        if ccw_first <= ccw_last:
+            chain = pref[ccw_last] - pref[ccw_first]
+        else:
+            chain = pref[n] - pref[ccw_first] + pref[ccw_last]
+
+        # Doubled area of the positive-side piece.
+        doubled = (
+            cross(x, pts[ccw_first])
+            + chain
+            + cross(pts[ccw_last], y)
+            + cross(y, x)
+        )
+
+        piece = abs(doubled) / 2.0
+
+        ans = min(piece, total_area - piece)
+
+        # Clamp tiny negative floating point errors.
+        if ans < 0:
+            ans = 0.0
+
+        out.append(f"{ans:.6f}")
+
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+For a query line through `a` and `b`, let `d = b - a` and define:
+
+```text
+side(p) = d × (p - a)
+```
+
+This signed value tells which side of the line a point lies on.
+
+Preprocess the convex polygon:
+
+1. Make vertex order counterclockwise.
+2. Compute prefix shoelace sums.
+3. Find lexicographically leftmost and rightmost vertices.
+4. These split the polygon into two convex chains.
+
+On each chain, the values `side(vertex)` are unimodal for any fixed line. Therefore, binary search can find the maximum and minimum side value on each chain. Taking the best among both chains gives the polygon-wide maximum and minimum.
+
+If the maximum is non-positive or the minimum is non-negative, the line does not split the polygon, so answer `0`.
+
+Otherwise, let `i_min` and `i_max` be vertices with minimum and maximum side. Along the counterclockwise arc from `i_min` to `i_max`, side values go from negative to positive; along the other arc, they go from positive to negative. Binary search on these arcs finds the two crossed edges.
+
+Compute the two intersection points with the cut line. The positive-side piece consists of:
+
+```text
+intersection1 → polygon vertices on positive side → intersection2
+```
+
+Use shoelace formula plus prefix sums to compute its area in `O(1)` after locating the edges.
+
+The answer is:
+
+```text
+min(piece_area, total_area - piece_area)
+```
+
+Complexity:
+
+```text
+Preprocessing: O(N)
+Each query:   O(log N)
+Memory:       O(N)
+```

@@ -1,0 +1,898 @@
+## 1. Abridged problem statement
+
+You are given an undirected connected graph representing a railway network.
+
+The graph has a special structure:
+
+- It consists of several simple cycles called **areas**.
+- Each area shares exactly one station with each of its two neighboring areas.
+- The areas themselves form one big cycle.
+- Therefore every station has degree either:
+  - `2`, if it belongs to exactly one area;
+  - `4`, if it is shared by two neighboring areas.
+
+Two companies want to buy as many stations as possible such that no two adjacent bought stations belong to the same company. Equivalently, after possibly leaving some stations unbought, the remaining induced graph must be **bipartite**.
+
+Find any maximum-size subset of stations that can be split into two independent sets, and output the two parts.
+
+Constraints: `n, m ≤ 100000`.
+
+---
+
+## 2. Detailed editorial
+
+### Key observation
+
+The two companies can buy all remaining stations if and only if the remaining graph is **bipartite**.
+
+So the task is:
+
+> Remove the minimum possible number of vertices so that the remaining graph is bipartite.
+
+Then color the remaining graph with two colors and output the color classes.
+
+---
+
+### Structure of the graph
+
+Every vertex has degree `2` or `4`.
+
+- Degree-`4` vertices are **junctions** shared by two neighboring areas.
+- Degree-`2` vertices are internal vertices of exactly one area.
+
+Each area is a cycle bounded by two junctions. Between those two junctions there are two internally vertex-disjoint paths, called **arcs**.
+
+For one area:
+
+```text
+junction A ---- path 1 ---- junction B
+junction A ---- path 2 ---- junction B
+```
+
+The size of the area is:
+
+```text
+2 + number_of_internal_vertices_on_path_1
+  + number_of_internal_vertices_on_path_2
+```
+
+If this size is odd, the area is an odd cycle and prevents bipartiteness.
+
+---
+
+### Reconstructing areas from the graph
+
+We are not given areas explicitly.
+
+We can reconstruct them as follows:
+
+1. Find all degree-`4` vertices — these are junctions.
+2. From every junction, start walking along each incident edge.
+3. Continue through degree-`2` vertices until reaching another degree-`4` vertex.
+4. This gives an arc between two junctions.
+5. Each area consists of exactly two arcs connecting the same pair of junctions.
+
+To avoid counting an arc twice, mark both directed boundary edges when an arc is discovered.
+
+---
+
+### Area cycle and meta-cycle
+
+The areas themselves form a cycle. Think of each area as a node in a meta-graph. Two neighboring areas share one junction. Since the areas form a cycle, this meta-graph is also a cycle.
+
+If there are `k` areas, then there are also `k` shared junctions between consecutive areas.
+
+We order the areas around this meta-cycle.
+
+---
+
+### Handling odd areas
+
+Every odd area must be destroyed by deleting at least one vertex from it.
+
+The important trick is:
+
+> It is always at least as good to delete a boundary junction as an internal vertex.
+
+Deleting an internal vertex destroys only one area cycle.
+
+Deleting a junction destroys the cycles of both adjacent areas and also breaks the large meta-cycle. So it is never worse.
+
+Therefore, if an area is odd, we want to delete one of its two boundary junctions.
+
+This becomes a covering problem on the meta-cycle:
+
+- Areas are positions on a cycle.
+- A deleted junction between area `i` and area `i + 1` covers both of those areas.
+- We only need to cover odd areas.
+
+If two adjacent odd areas exist, deleting their shared junction fixes both with one deletion.
+
+Thus:
+
+```text
+minimum deletions =
+number of odd areas - maximum number of disjoint adjacent odd pairs
+```
+
+Implementation:
+
+- If all areas are odd:
+  - Pair `(0,1)`, `(2,3)`, ...
+  - If there is one leftover area, delete one more junction.
+- Otherwise:
+  - Start after an even area.
+  - Odd areas form linear runs.
+  - For each run of length `L`, delete `ceil(L / 2)` junctions.
+
+---
+
+### What if there are no odd areas?
+
+If every individual area is even, the graph may still contain another cycle going around the entire network.
+
+For every area, the two arcs between its two junctions have the same parity, because their total length is even.
+
+Let `arc_parity` be the parity of one arc length.
+
+The parity of the big global cycle is:
+
+```text
+xor of arc_parity over all areas
+```
+
+If this parity is odd, then the graph is still not bipartite. Deleting any one junction breaks this global cycle.
+
+So:
+
+- If global parity is even: delete nothing.
+- If global parity is odd: delete one junction.
+
+---
+
+### Final step
+
+After selecting junctions to delete:
+
+1. Ignore deleted vertices.
+2. Run BFS/DFS bipartite coloring on the remaining graph.
+3. Output the two color classes.
+
+The construction guarantees the remaining graph is bipartite.
+
+Complexity:
+
+```text
+O(n + m)
+```
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Include all standard C++ library headers.
+
+using namespace std; // Use the standard namespace.
+
+// Output operator for pairs, useful for debugging or generic printing.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print first and second separated by space.
+}
+
+// Input operator for pairs.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read first and second.
+}
+
+// Input operator for vectors.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over all elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return the input stream.
+};
+
+// Output operator for vectors.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over all elements.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out;       // Return the output stream.
+};
+
+int n, m; // Number of vertices and edges.
+vector<vector<int>> adj; // Adjacency list of the graph.
+
+// Reads the graph.
+void read() {
+    cin >> n >> m; // Read number of stations and roads.
+
+    adj.assign(n + 1, {}); // Initialize adjacency list, vertices are 1-indexed.
+
+    for(int i = 0; i < m; i++) { // Read all roads.
+        int a, b;
+        cin >> a >> b; // Read an undirected edge.
+
+        adj[a].push_back(b); // Add b to a's adjacency list.
+        adj[b].push_back(a); // Add a to b's adjacency list.
+    }
+}
+
+// Solves the problem.
+void solve() {
+    // deg[v] will store the degree of vertex v.
+    vector<int> deg(n + 1);
+
+    for(int v = 1; v <= n; v++) { // Compute degrees.
+        deg[v] = (int)adj[v].size();
+    }
+
+    // An arc is a maximal path between two degree-4 junctions
+    // whose internal vertices all have degree 2.
+    struct Arc {
+        int j1, j2;          // The two endpoint junctions of the arc.
+        int interior_count;  // Number of degree-2 vertices inside the arc.
+    };
+
+    vector<Arc> arcs; // All discovered arcs.
+
+    // Used to avoid discovering the same arc twice.
+    // We store directed first edges from a junction into an arc.
+    set<pair<int, int>> seen_first_edge;
+
+    // Start walking arcs from every junction.
+    for(int j = 1; j <= n; j++) {
+        if(deg[j] != 4) { // Only degree-4 vertices are junctions.
+            continue;
+        }
+
+        // Each incident edge from a junction starts one arc.
+        for(int x: adj[j]) {
+            if(seen_first_edge.count({j, x})) { // If this arc direction is already processed, skip it.
+                continue;
+            }
+
+            int interior_count = 0; // Count degree-2 vertices along this arc.
+            int prev = j;          // Previous vertex in the walk.
+            int cur = x;           // Current vertex in the walk.
+
+            // Walk until reaching another junction.
+            while(deg[cur] == 2) {
+                interior_count++; // cur is an internal degree-2 vertex.
+
+                // Move to the neighbor that is not prev.
+                int nxt = (adj[cur][0] == prev) ? adj[cur][1] : adj[cur][0];
+
+                prev = cur; // Advance previous vertex.
+                cur = nxt;  // Advance current vertex.
+            }
+
+            // Mark both directions of this arc as seen:
+            // from the starting junction and from the ending junction.
+            seen_first_edge.insert({j, x});
+            seen_first_edge.insert({cur, prev});
+
+            // Store the arc between junctions j and cur.
+            arcs.push_back({j, cur, interior_count});
+        }
+    }
+
+    // Group arcs by their unordered pair of endpoint junctions.
+    // Each area consists of exactly two arcs with the same endpoints.
+    map<pair<int, int>, vector<int>> by_pair;
+
+    for(int i = 0; i < (int)arcs.size(); i++) {
+        int a = min(arcs[i].j1, arcs[i].j2); // Smaller endpoint.
+        int b = max(arcs[i].j1, arcs[i].j2); // Larger endpoint.
+
+        by_pair[{a, b}].push_back(i); // Add this arc to its endpoint pair.
+    }
+
+    // Information about one area.
+    struct Area {
+        int j1, j2;      // The two junctions bounding this area.
+        int size;        // Number of vertices in the area's cycle.
+        int arc_parity;  // Parity of either arc length if area size is even.
+        bool odd;        // Whether this area is an odd cycle.
+    };
+
+    vector<Area> areas; // All reconstructed areas.
+
+    // Build areas from pairs of arcs.
+    for(auto& [key, ids]: by_pair) {
+        int len1 = arcs[ids[0]].interior_count; // Internal vertices on first arc.
+        int len2 = arcs[ids[1]].interior_count; // Internal vertices on second arc.
+
+        // Area has both junctions plus internal vertices of both arcs.
+        int sz = 2 + len1 + len2;
+
+        Area ar; // Create an area object.
+        ar.j1 = key.first;  // First junction.
+        ar.j2 = key.second; // Second junction.
+        ar.size = sz;       // Area size.
+        ar.odd = (sz % 2 == 1); // True if the area cycle has odd length.
+
+        // The edge length of an arc equals internal_count + 1.
+        // If the area is even, both arcs have the same parity.
+        ar.arc_parity = (len1 + 1) % 2;
+
+        areas.push_back(ar); // Store the area.
+    }
+
+    int k = (int)areas.size(); // Number of areas.
+
+    // For every junction, store which two areas contain it.
+    map<int, vector<int>> jun_areas;
+
+    for(int i = 0; i < k; i++) {
+        jun_areas[areas[i].j1].push_back(i); // Area i touches j1.
+        jun_areas[areas[i].j2].push_back(i); // Area i touches j2.
+    }
+
+    // Order the areas around the meta-cycle.
+    vector<int> area_order;
+    area_order.reserve(k); // Reserve memory for efficiency.
+
+    int cur_area = 0; // Start from area 0.
+    area_order.push_back(0); // Add it to the order.
+
+    // Choose one of its junctions as the direction of travel.
+    int next_junction = areas[0].j2;
+
+    // Traverse the meta-cycle until all areas are ordered.
+    while((int)area_order.size() < k) {
+        auto& vv = jun_areas[next_junction]; // The two areas sharing this junction.
+
+        // Move to the other area sharing this junction.
+        int next_area = (vv[0] == cur_area) ? vv[1] : vv[0];
+
+        area_order.push_back(next_area); // Add that area to the cyclic order.
+
+        int prev_j = next_junction; // The junction through which we entered next_area.
+
+        // Leave next_area through its other junction.
+        next_junction = (areas[next_area].j1 == prev_j) ? areas[next_area].j2
+                                                        : areas[next_area].j1;
+
+        cur_area = next_area; // Continue from next_area.
+    }
+
+    // ordered_junctions[i] is the junction shared by
+    // area_order[i] and area_order[(i + 1) % k].
+    vector<int> ordered_junctions(k);
+
+    for(int i = 0; i < k; i++) {
+        int a = area_order[i];           // Current area.
+        int b = area_order[(i + 1) % k]; // Next area cyclically.
+
+        int sj; // Shared junction.
+
+        // If areas[a].j1 is also in area b, it is the shared junction.
+        if(areas[a].j1 == areas[b].j1 || areas[a].j1 == areas[b].j2) {
+            sj = areas[a].j1;
+        } else {
+            sj = areas[a].j2; // Otherwise j2 must be shared.
+        }
+
+        ordered_junctions[i] = sj; // Store shared junction.
+    }
+
+    // is_odd[i] tells whether area_order[i] is an odd cycle.
+    vector<bool> is_odd(k);
+
+    for(int i = 0; i < k; i++) {
+        is_odd[i] = areas[area_order[i]].odd;
+    }
+
+    int p = 0; // Number of odd areas.
+
+    for(int i = 0; i < k; i++) {
+        if(is_odd[i]) {
+            p++;
+        }
+    }
+
+    // remove_junction[i] means we delete ordered_junctions[i],
+    // the junction between area i and area i+1 in cyclic order.
+    vector<bool> remove_junction(k, false);
+
+    if(p == 0) {
+        // All individual areas are even.
+        // We only need to check the parity of the global cycle.
+
+        int macro_parity = 0; // XOR of arc parities.
+
+        for(int i = 0; i < k; i++) {
+            macro_parity ^= areas[area_order[i]].arc_parity;
+        }
+
+        // If the global cycle is odd, delete any one junction to break it.
+        if(macro_parity != 0) {
+            remove_junction[0] = true;
+        }
+    } else if(p == k) {
+        // Every area is odd.
+        // Pair neighboring odd areas greedily.
+
+        for(int i = 0; i + 1 < k; i += 2) {
+            remove_junction[i] = true; // Deletes junction between i and i+1.
+        }
+
+        // If k is odd, one odd area remains uncovered.
+        if(k % 2 == 1) {
+            remove_junction[k - 1] = true; // Cover leftover using wrap-around junction.
+        }
+    } else {
+        // There is at least one even area.
+        // Start traversal at an even area so odd areas form linear runs.
+
+        int start_pos = 0;
+
+        while(is_odd[start_pos]) {
+            start_pos = (start_pos + 1) % k;
+        }
+
+        int i = 0;
+
+        while(i < k) {
+            int pos = (start_pos + i) % k; // Actual cyclic position.
+
+            if(!is_odd[pos]) {
+                i++; // Skip even area.
+                continue;
+            }
+
+            // We found a run of consecutive odd areas.
+            int run_len = 0;
+
+            while(i + run_len < k && is_odd[(start_pos + i + run_len) % k]) {
+                run_len++;
+            }
+
+            // Pair adjacent odd areas inside the run.
+            for(int j = 0; j + 1 < run_len; j += 2) {
+                int p1 = (start_pos + i + j) % k;
+
+                // Delete junction between positions p1 and p1+1,
+                // covering two odd areas.
+                remove_junction[p1] = true;
+            }
+
+            // If the run length is odd, one odd area remains.
+            if(run_len % 2 == 1) {
+                int last_pos = (start_pos + i + run_len - 1) % k;
+
+                // Delete the junction after the last odd area,
+                // covering that single leftover odd area.
+                remove_junction[last_pos] = true;
+            }
+
+            i += run_len; // Move past this run.
+        }
+    }
+
+    // Convert selected cyclic junction positions into actual vertex numbers.
+    set<int> removed;
+
+    for(int i = 0; i < k; i++) {
+        if(remove_junction[i]) {
+            removed.insert(ordered_junctions[i]);
+        }
+    }
+
+    // Now color the remaining graph bipartitely.
+    vector<int> color(n + 1, -1); // -1 means uncolored.
+
+    for(int s = 1; s <= n; s++) {
+        // Skip removed vertices and already colored vertices.
+        if(removed.count(s) || color[s] != -1) {
+            continue;
+        }
+
+        queue<int> q; // BFS queue.
+        q.push(s);    // Start BFS from s.
+        color[s] = 0; // Give it color 0.
+
+        while(!q.empty()) {
+            int v = q.front(); // Current vertex.
+            q.pop();
+
+            for(int u: adj[v]) {
+                if(removed.count(u)) {
+                    continue; // Ignore removed vertices.
+                }
+
+                if(color[u] == -1) {
+                    color[u] = 1 - color[v]; // Assign opposite color.
+                    q.push(u);               // Continue BFS.
+                }
+            }
+        }
+    }
+
+    vector<int> c0, c1; // The two companies' station sets.
+
+    for(int v = 1; v <= n; v++) {
+        if(color[v] == 0) {
+            c0.push_back(v); // Vertex belongs to first company.
+        } else if(color[v] == 1) {
+            c1.push_back(v); // Vertex belongs to second company.
+        }
+        // Removed vertices remain color -1 and are not printed.
+    }
+
+    // Output first color class.
+    cout << c0.size();
+
+    for(int v: c0) {
+        cout << ' ' << v;
+    }
+
+    cout << '\n';
+
+    // Output second color class.
+    cout << c1.size();
+
+    for(int v: c1) {
+        cout << ' ' << v;
+    }
+
+    cout << '\n';
+}
+
+int main() {
+    ios_base::sync_with_stdio(false); // Fast I/O.
+    cin.tie(nullptr);                 // Untie cin from cout.
+
+    int T = 1; // There is only one test case.
+
+    // cin >> T; // Multiple tests are not used here.
+
+    for(int test = 1; test <= T; test++) {
+        read();  // Read input.
+        solve(); // Solve and output answer.
+    }
+
+    return 0; // End program.
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+from collections import deque, defaultdict
+
+
+def main():
+    # Read all integers from input.
+    data = list(map(int, sys.stdin.buffer.read().split()))
+
+    # First two integers are n and m.
+    n = data[0]
+    m = data[1]
+
+    # Build adjacency list.
+    adj = [[] for _ in range(n + 1)]
+
+    idx = 2
+    for _ in range(m):
+        a = data[idx]
+        b = data[idx + 1]
+        idx += 2
+
+        adj[a].append(b)
+        adj[b].append(a)
+
+    # Compute degree of each vertex.
+    deg = [0] * (n + 1)
+    for v in range(1, n + 1):
+        deg[v] = len(adj[v])
+
+    # arcs will store triples:
+    # (junction1, junction2, number_of_internal_degree_2_vertices)
+    arcs = []
+
+    # To avoid discovering the same arc twice, remember directed first edges.
+    seen_first_edge = set()
+
+    # Start from every junction.
+    for j in range(1, n + 1):
+        # Junctions are exactly degree-4 vertices.
+        if deg[j] != 4:
+            continue
+
+        # Each neighbor starts one possible arc.
+        for x in adj[j]:
+            # If this directed boundary edge was already processed, skip it.
+            if (j, x) in seen_first_edge:
+                continue
+
+            # Walk from junction j through degree-2 vertices.
+            interior_count = 0
+            prev = j
+            cur = x
+
+            # Continue until another degree-4 junction is reached.
+            while deg[cur] == 2:
+                interior_count += 1
+
+                # Move to the neighbor different from prev.
+                if adj[cur][0] == prev:
+                    nxt = adj[cur][1]
+                else:
+                    nxt = adj[cur][0]
+
+                prev, cur = cur, nxt
+
+            # Now cur is the other junction.
+            # Mark both directions of this arc as seen.
+            seen_first_edge.add((j, x))
+            seen_first_edge.add((cur, prev))
+
+            # Store the arc.
+            arcs.append((j, cur, interior_count))
+
+    # Group arcs by unordered pair of endpoint junctions.
+    by_pair = defaultdict(list)
+
+    for i, (j1, j2, cnt) in enumerate(arcs):
+        a = min(j1, j2)
+        b = max(j1, j2)
+        by_pair[(a, b)].append(i)
+
+    # Reconstruct all areas.
+    #
+    # Each area is represented as a dictionary:
+    # {
+    #   "j1": first junction,
+    #   "j2": second junction,
+    #   "size": number of vertices in area cycle,
+    #   "odd": whether size is odd,
+    #   "arc_parity": parity of one arc edge-length
+    # }
+    areas = []
+
+    for (j1, j2), ids in by_pair.items():
+        # There are exactly two arcs between the same pair of junctions.
+        id1 = ids[0]
+        id2 = ids[1]
+
+        len1 = arcs[id1][2]  # Internal vertices on first arc.
+        len2 = arcs[id2][2]  # Internal vertices on second arc.
+
+        # Area vertices are two junctions plus internal vertices of both arcs.
+        size = 2 + len1 + len2
+
+        # Edge-length parity of first arc is len1 + 1.
+        arc_parity = (len1 + 1) % 2
+
+        areas.append({
+            "j1": j1,
+            "j2": j2,
+            "size": size,
+            "odd": size % 2 == 1,
+            "arc_parity": arc_parity,
+        })
+
+    k = len(areas)
+
+    # For every junction, store the two areas that contain it.
+    jun_areas = defaultdict(list)
+
+    for i, ar in enumerate(areas):
+        jun_areas[ar["j1"]].append(i)
+        jun_areas[ar["j2"]].append(i)
+
+    # Order the areas around the meta-cycle.
+    area_order = [0]
+
+    cur_area = 0
+
+    # Choose one junction of area 0 to define traversal direction.
+    next_junction = areas[0]["j2"]
+
+    # Walk through neighboring areas until all are ordered.
+    while len(area_order) < k:
+        shared_areas = jun_areas[next_junction]
+
+        # Move to the other area sharing next_junction.
+        if shared_areas[0] == cur_area:
+            next_area = shared_areas[1]
+        else:
+            next_area = shared_areas[0]
+
+        area_order.append(next_area)
+
+        # Leave next_area through its other junction.
+        prev_junction = next_junction
+
+        if areas[next_area]["j1"] == prev_junction:
+            next_junction = areas[next_area]["j2"]
+        else:
+            next_junction = areas[next_area]["j1"]
+
+        cur_area = next_area
+
+    # ordered_junctions[i] is the junction between area_order[i]
+    # and area_order[(i + 1) % k].
+    ordered_junctions = [0] * k
+
+    for i in range(k):
+        a = area_order[i]
+        b = area_order[(i + 1) % k]
+
+        # Find the common junction.
+        if areas[a]["j1"] == areas[b]["j1"] or areas[a]["j1"] == areas[b]["j2"]:
+            ordered_junctions[i] = areas[a]["j1"]
+        else:
+            ordered_junctions[i] = areas[a]["j2"]
+
+    # Boolean array telling whether each ordered area is odd.
+    is_odd = [False] * k
+
+    for i in range(k):
+        is_odd[i] = areas[area_order[i]]["odd"]
+
+    # Count odd areas.
+    odd_count = sum(is_odd)
+
+    # remove_junction[i] means deleting ordered_junctions[i],
+    # the junction between ordered area i and i+1.
+    remove_junction = [False] * k
+
+    if odd_count == 0:
+        # All area cycles are even.
+        # Check the possible global cycle parity.
+        macro_parity = 0
+
+        for i in range(k):
+            macro_parity ^= areas[area_order[i]]["arc_parity"]
+
+        # If the global cycle is odd, delete any junction.
+        if macro_parity != 0:
+            remove_junction[0] = True
+
+    elif odd_count == k:
+        # Every area is odd.
+        # Pair consecutive areas greedily.
+        i = 0
+        while i + 1 < k:
+            remove_junction[i] = True
+            i += 2
+
+        # If one odd area remains, delete the wrap-around junction.
+        if k % 2 == 1:
+            remove_junction[k - 1] = True
+
+    else:
+        # There is at least one even area.
+        # Start from an even area so odd areas appear as linear runs.
+        start_pos = 0
+
+        while is_odd[start_pos]:
+            start_pos = (start_pos + 1) % k
+
+        i = 0
+
+        while i < k:
+            pos = (start_pos + i) % k
+
+            # Skip even areas.
+            if not is_odd[pos]:
+                i += 1
+                continue
+
+            # Measure this run of consecutive odd areas.
+            run_len = 0
+
+            while i + run_len < k:
+                cur_pos = (start_pos + i + run_len) % k
+                if not is_odd[cur_pos]:
+                    break
+                run_len += 1
+
+            # Pair odd areas inside the run.
+            j = 0
+            while j + 1 < run_len:
+                p1 = (start_pos + i + j) % k
+
+                # Delete the junction between p1 and p1+1.
+                remove_junction[p1] = True
+
+                j += 2
+
+            # If the run length is odd, cover the leftover odd area.
+            if run_len % 2 == 1:
+                last_pos = (start_pos + i + run_len - 1) % k
+                remove_junction[last_pos] = True
+
+            i += run_len
+
+    # Convert selected junction positions into actual removed vertices.
+    removed = set()
+
+    for i in range(k):
+        if remove_junction[i]:
+            removed.add(ordered_junctions[i])
+
+    # Bipartite-color the remaining graph.
+    color = [-1] * (n + 1)
+
+    for s in range(1, n + 1):
+        # Skip deleted and already colored vertices.
+        if s in removed or color[s] != -1:
+            continue
+
+        # BFS from this component.
+        q = deque([s])
+        color[s] = 0
+
+        while q:
+            v = q.popleft()
+
+            for u in adj[v]:
+                # Removed vertices do not exist in the remaining graph.
+                if u in removed:
+                    continue
+
+                if color[u] == -1:
+                    color[u] = 1 - color[v]
+                    q.append(u)
+
+    # Collect both color classes.
+    c0 = []
+    c1 = []
+
+    for v in range(1, n + 1):
+        if color[v] == 0:
+            c0.append(v)
+        elif color[v] == 1:
+            c1.append(v)
+
+    # Print answer.
+    out = []
+
+    out.append(str(len(c0)) + (" " + " ".join(map(str, c0)) if c0 else ""))
+    out.append(str(len(c1)) + (" " + " ".join(map(str, c1)) if c1 else ""))
+
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5. Compressed editorial
+
+The goal is to delete the minimum number of vertices so that the remaining graph is bipartite.
+
+Vertices of degree `4` are shared junctions between neighboring cycle-areas. Vertices of degree `2` are internal area vertices.
+
+Reconstruct areas:
+
+1. From every degree-`4` junction, walk along every incident edge through degree-`2` vertices until another degree-`4` junction is reached.
+2. This gives an arc between two junctions.
+3. Two arcs with the same pair of endpoint junctions form one area.
+
+Each area is a cycle. If its size is odd, at least one vertex from it must be deleted. It is always optimal to delete a boundary junction rather than an internal vertex, because a junction deletion can destroy two neighboring odd areas at once.
+
+Thus odd areas become marked positions on a cyclic order of areas. Deleting the junction between two consecutive areas covers both marked positions. We need the minimum number of junctions covering all odd areas.
+
+- If all areas are odd, answer is `ceil(k / 2)` junction deletions.
+- Otherwise, split odd areas into maximal consecutive runs and delete `ceil(run_length / 2)` junctions per run.
+
+If there are no odd areas, all local cycles are even. The only possible obstruction is the global cycle around all areas. Its parity is the XOR of one arc parity from each area. If it is odd, delete any one junction.
+
+After deleting the chosen junctions, BFS-color the remaining graph and output the two color classes.
+
+Complexity: `O(n + m)`.

@@ -2,12 +2,18 @@
 
 This repository contains solutions to ACM SGU (Saratov State University) competitive programming problems, enhanced with detailed editorials and reasoning explanations generated using advanced language models. The full page about the project is [here](https://radoslav11.com/sgu-dataset/).
 
+The repository covers **452 of the 453** SGU problems. The only one missing is [problem 145](https://codeforces.com/blog/entry/59070?#comment-1360108), which currently appears to be broken on the judge: there are no passing solutions, and the checker seems to reject any path other than the single one it expects, even though the statement says "if there exist many solutions output any of them".
+
+The editorials were written with a variety of GPT models (OpenAI's o1, o3, and the GPT-5 series). For the later problems, some of the implementation was done with the help of coding agents (namely Claude Code and Codex) based on a solution idea and outline I had provided.
+
+![SGU acmsguru standings, radoslav11 at the top with 452 solved problems](img/problems_solved_20260608.png)
+
 ## Overview
 
 The repository consists of two main components:
 
 1. **Original Solutions**: Competitive programming solutions to SGU problems in C++ or Python.
-2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using gpt5.2 thinking.
+2. **Enhanced Editorials**: Comprehensive problem explanations, solution approaches, and detailed editorials generated using a range of GPT models.
 
 ## Dataset Structure
 
@@ -19,7 +25,7 @@ dataset/
 ├── p101.txt          # Enhanced editorial with solution approach
 ├── p101_raw.txt      # Original source code solution + statemtent + sample input/output
 ├── p101_finetune.txt # Example finetuning format
-└── ...               # Additional problems (100+ problems covered)
+└── ...               # Additional problems (452 of the 453 problems covered)
 ```
 
 Each enhanced editorial (`p*.txt`) contains:
@@ -82,5 +88,5 @@ If you use this dataset please cite:
 ## Acknowledgments
 
 - SGU (Saratov State University) for the original problem set.
-- OpenAI for their GPT models used in editorial generation.
-- Anthropic for claude code.
+- OpenAI for their GPT models used in editorial generation, and for Codex.
+- Anthropic for Claude Code.

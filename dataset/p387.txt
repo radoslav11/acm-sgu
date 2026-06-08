@@ -1,0 +1,853 @@
+## 1) Abridged problem statement
+
+You are given **n (1 ≤ n ≤ 50)** non-overlapping (but possibly intersecting) line segments in the plane. A baseball field must be a **square centered at (0,0)**, with its four bases at the square’s vertices.
+
+A square is valid if **each of its four vertices lies on at least one of the given segments**.
+
+Among all valid squares, consider the set of all possible positions of the **first base** (one chosen vertex). The engineer picks a first-base position **uniformly at random over that feasible set** (uniform over length if it’s a set of segments; if only isolated points exist, uniform over those points). Compute the **expected area** of the square.
+
+Output the expected area with error ≤ 1e-9.
+
+---
+
+## 2) Detailed editorial (explaining the provided approach)
+
+### Geometry model
+
+Let the first base be a point \(P=(x,y)\). Since the square is centered at the origin, the other vertices are rotations of \(P\) by 90° around the origin:
+
+- \(R(x,y)=(-y,x)\) (90° counterclockwise)
+- Vertices: \(P,\ R(P),\ R^2(P),\ R^3(P)\)
+
+The square’s diagonal is the distance between \(P\) and \(-P\), i.e. \(2|P|\).  
+For a square, \(\text{area} = \frac{\text{diagonal}^2}{2} = \frac{(2|P|)^2}{2} = 2|P|^2 = 2(x^2+y^2)\).
+
+So the expected area is:
+\[
+\mathbb{E}[2|P|^2]
+\]
+where \(P\) is chosen uniformly from all feasible first-base positions.
+
+---
+
+### Feasible set definition via rotations
+
+Let \(U\) be the union of all given segments (a 1D set).  
+A point \(P\) is feasible iff all four vertices are on \(U\):
+
+\[
+P\in U,\ R(P)\in U,\ R^2(P)\in U,\ R^3(P)\in U
+\]
+
+Equivalently, for \(k=1,2,3\):
+\[
+P \in R^{-k}(U)
+\]
+Thus feasible first-base positions are:
+\[
+V = U \cap R^{-1}(U) \cap R^{-2}(U) \cap R^{-3}(U)
+\]
+
+So we need the expectation of \(2|P|^2\) when sampling \(P\) uniformly from \(V\).
+
+Key fact: since everything is made of segments and rotations, \(V\) is also a subset of segments, i.e. it is either:
+- a union of subsegments (positive total length), or
+- only isolated points (total length 0).
+
+Uniform distribution is:
+- **by arc length** on the 1D part if length > 0,
+- otherwise uniform over the discrete points.
+
+---
+
+### Reducing to per-input-segment parameterization
+
+Input segments don’t overlap, so we can process each original segment \(S_i=[A,B]\) independently.
+
+Parameterize points on \(S_i\) as:
+\[
+P(t)=A+t(B-A),\quad t\in[0,1]
+\]
+Let \(L_i = |B-A|\). Arc-length element is \(ds = L_i\,dt\).
+
+We need points on \(S_i\) that also lie in \(R^{-k}(U)\) for k=1,2,3.  
+That means: for each k, \(P(t)\) must lie on **some segment** of \(R^{-k}(U)\), i.e. on some rotated segment \(R^{-k}(S_j)\).
+
+So for fixed \(S_i\) and fixed k:
+
+1. For each segment \(S_j=[C,D]\), rotate it by \(R^{-k}\).  
+   The code does this as “rotate clockwise by k”, because:
+   \(R^{-1}\) = 90° clockwise, etc.
+
+2. Compute the intersection between segment \(S_i=[A,B]\) and the rotated segment \([C',D']\).
+   - Intersection can be empty,
+   - a single point,
+   - or a segment (only when collinear overlap; problem guarantees original segments don’t overlap, but rotated ones can be collinear with \(S_i\) and overlap partially).
+
+3. Convert the intersection geometry back to parameter t on \(S_i\).
+   If intersection is point \(P\):  
+   \[
+   t = \frac{(P-A)\cdot(B-A)}{|B-A|^2}
+   \]
+   If intersection is segment \([P,Q]\): map both endpoints to \([t_P,t_Q]\) and get an interval.
+
+4. Union all such t-pieces over all \(j\), and merge them into disjoint intervals \(E_k\subseteq[0,1]\).
+
+After this, for any \(t\), the condition \(P(t)\in R^{-k}(U)\) is exactly “\(t \in E_k\)”.
+
+Thus:
+\[
+P(t) \in V \iff t\in E_1 \cap E_2 \cap E_3
+\]
+(with the implicit \(t\in[0,1]\) already ensured).
+
+---
+
+### Sweeping along t to integrate the expected area
+
+We must compute:
+
+- total feasible arc length on \(S_i\): \(\int_{\text{feasible}} ds\)
+- total integral of area density: \(\int_{\text{feasible}} 2|P|^2\, ds\)
+
+Since \(ds = L_i dt\), it becomes:
+- length contribution: \(L_i \int_{\text{feasible}} dt\)
+- integral contribution: \(L_i \int_{\text{feasible}} 2|P(t)|^2 dt\)
+
+Now observe:
+\[
+|P(t)|^2 = (A+tD)\cdot(A+tD)
+\]
+where \(D=B-A\). Expand:
+\[
+|P(t)|^2 = q_a t^2 + q_b t + q_c
+\]
+with:
+- \(q_a = D_x^2 + D_y^2\)
+- \(q_b = 2(A_xD_x + A_yD_y)\)
+- \(q_c = A_x^2 + A_y^2\)
+
+So:
+\[
+\int 2|P(t)|^2 dt = 2\left(\frac{q_a}{3}t^3 + \frac{q_b}{2}t^2 + q_c t\right)
+\]
+Compute it using an antiderivative \(F(t)\) and evaluate on each feasible interval.
+
+#### How to find feasible intervals
+We have three merged interval sets \(E_1,E_2,E_3\). Their intersection changes only at endpoints of these intervals. So we:
+
+1. Collect all endpoints of intervals in \(E_1,E_2,E_3\), plus 0 and 1.
+2. Sort and deduplicate them: \(t_0 < t_1 < ... < t_m\)
+3. For each consecutive pair \([t_i,t_{i+1}]\):
+   - pick midpoint \(mid\)
+   - test whether \(mid\in E_1,E_2,E_3\)
+   - if yes, the whole open interval is feasible → integrate over it
+
+This avoids explicitly intersecting interval sets and is robust.
+
+---
+
+### Handling the “only points” case (zero total length)
+
+It’s possible \(V\) is only isolated points (e.g., intersections happen only at endpoints / crossing points). Then arc-length is 0 and the “uniform over length” distribution is undefined.
+
+The intended distribution: uniform over feasible first-base positions, which in this case are finitely many points. The code:
+
+- also tests each candidate endpoint \(t_i\) itself; if it satisfies membership in all \(E_k\), record the point \(P(t_i)\).
+- after processing all segments, deduplicate recorded points with a tolerance and average their areas \(2|P|^2\).
+
+The statement guarantees at least one valid square, so there will be at least one feasible point.
+
+---
+
+### Complexity
+
+For each segment \(S_i\), for each rotation k=1..3, we intersect with all segments \(S_j\):  
+\(O(n^2)\) intersections, with \(n\le 50\).  
+Endpoint sweep per segment uses \(O(m)\) candidates where \(m=O(n)\).  
+Overall easily within limits.
+
+---
+
+## 3) Provided C++ solution with detailed line-by-line comments
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+// Output a pair as "first second"
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second;
+}
+
+// Input a pair as "first second"
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second;
+}
+
+// Input a vector by reading each element
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) in >> x;
+    return in;
+}
+
+// Output a vector (space-separated)
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) out << x << ' ';
+    return out;
+}
+
+using coord_t = double;
+
+// 2D point / vector with common operations
+struct Point {
+    // EPS for floating comparisons
+    static constexpr coord_t eps = 1e-9;
+    // PI constant
+    static inline const coord_t PI = acos((coord_t)-1.0);
+
+    coord_t x, y;
+    Point(coord_t x = 0, coord_t y = 0) : x(x), y(y) {}
+
+    // Vector arithmetic
+    Point operator+(const Point& p) const { return Point(x + p.x, y + p.y); }
+    Point operator-(const Point& p) const { return Point(x - p.x, y - p.y); }
+    Point operator*(coord_t c) const { return Point(x * c, y * c); }
+    Point operator/(coord_t c) const { return Point(x / c, y / c); }
+
+    // Dot product
+    coord_t operator*(const Point& p) const { return x * p.x + y * p.y; }
+    // Cross product (2D scalar)
+    coord_t operator^(const Point& p) const { return x * p.y - y * p.x; }
+
+    // Comparisons (exact; used rarely)
+    bool operator==(const Point& p) const { return x == p.x && y == p.y; }
+    bool operator!=(const Point& p) const { return x != p.x || y != p.y; }
+    bool operator<(const Point& p) const {
+        return x != p.x ? x < p.x : y < p.y;
+    }
+    bool operator>(const Point& p) const {
+        return x != p.x ? x > p.x : y > p.y;
+    }
+    bool operator<=(const Point& p) const {
+        return x != p.x ? x < p.x : y <= p.y;
+    }
+    bool operator>=(const Point& p) const {
+        return x != p.x ? x > p.x : y >= p.y;
+    }
+
+    // Squared length and length
+    coord_t norm2() const { return x * x + y * y; }
+    coord_t norm() const { return sqrt(norm2()); }
+
+    // Polar angle
+    coord_t angle() const { return atan2(y, x); }
+
+    // Rotate by angle a (radians)
+    Point rotate(coord_t a) const {
+        return Point(x * cos(a) - y * sin(a), x * sin(a) + y * cos(a));
+    }
+
+    // Perpendicular vector (-y, x)
+    Point perp() const { return Point(-y, x); }
+
+    // Unit vector (normalize)
+    Point unit() const { return *this / norm(); }
+
+    // Unit normal (perp then normalize)
+    Point normal() const { return perp().unit(); }
+
+    // Project p onto this vector (interpreting *this as direction from origin)
+    Point project(const Point& p) const {
+        return *this * (*this * p) / norm2();
+    }
+
+    // Reflect p across the line through origin with direction *this
+    Point reflect(const Point& p) const {
+        return *this * 2 * (*this * p) / norm2() - p;
+    }
+
+    // Stream output / input
+    friend ostream& operator<<(ostream& os, const Point& p) {
+        return os << p.x << ' ' << p.y;
+    }
+    friend istream& operator>>(istream& is, Point& p) {
+        return is >> p.x >> p.y;
+    }
+
+    // Orientation test:
+    //  1 if counterclockwise, -1 if clockwise, 0 if collinear (within eps)
+    friend int ccw(const Point& a, const Point& b, const Point& c) {
+        coord_t v = (b - a) ^ (c - a);
+        if(-eps <= v && v <= eps) return 0;
+        else if(v > 0) return 1;
+        else return -1;
+    }
+
+    // Check if point p lies on segment [a,b] (with eps)
+    friend bool point_on_segment(const Point& a, const Point& b, const Point& p) {
+        return ccw(a, b, p) == 0 &&
+               p.x >= min(a.x, b.x) - eps && p.x <= max(a.x, b.x) + eps &&
+               p.y >= min(a.y, b.y) - eps && p.y <= max(a.y, b.y) + eps;
+    }
+
+    // Check if p is inside or on boundary of triangle abc
+    friend bool point_in_triangle(const Point& a, const Point& b, const Point& c, const Point& p) {
+        int d1 = ccw(a, b, p);
+        int d2 = ccw(b, c, p);
+        int d3 = ccw(c, a, p);
+        return (d1 >= 0 && d2 >= 0 && d3 >= 0) ||
+               (d1 <= 0 && d2 <= 0 && d3 <= 0);
+    }
+
+    // Intersection of infinite lines (a1,b1) and (a2,b2) assuming not parallel
+    friend Point line_line_intersection(
+        const Point& a1, const Point& b1, const Point& a2, const Point& b2
+    ) {
+        return a1 +
+               (b1 - a1) * ((a2 - a1) ^ (b2 - a2)) / ((b1 - a1) ^ (b2 - a2));
+    }
+
+    // Check collinearity of vectors a and b (cross ~ 0)
+    friend bool collinear(const Point& a, const Point& b) {
+        return abs(a ^ b) < eps;
+    }
+
+    // Circumcenter of triangle abc (not used in this solution)
+    friend Point circumcenter(const Point& a, const Point& b, const Point& c) {
+        Point mid_ab = (a + b) / 2.0;
+        Point mid_ac = (a + c) / 2.0;
+        Point perp_ab = (b - a).perp();
+        Point perp_ac = (c - a).perp();
+        return line_line_intersection(
+            mid_ab, mid_ab + perp_ab, mid_ac, mid_ac + perp_ac
+        );
+    }
+
+    // Signed area integral over a circular arc (not used here)
+    friend coord_t arc_area(
+        const Point& center, coord_t r, const Point& p1, const Point& p2
+    ) {
+        coord_t theta1 = (p1 - center).angle();
+        coord_t theta2 = (p2 - center).angle();
+        if(theta2 < theta1 - eps) theta2 += 2 * PI;
+
+        coord_t d_theta = theta2 - theta1;
+        coord_t cx = center.x, cy = center.y;
+        coord_t area = r * cx * (sin(theta2) - sin(theta1)) -
+                       r * cy * (cos(theta2) - cos(theta1)) + r * r * d_theta;
+        return area / 2.0;
+    }
+
+    // Circle-circle intersection (not used here)
+    friend vector<Point> intersect_circles(
+        const Point& c1, coord_t r1, const Point& c2, coord_t r2
+    ) {
+        Point d = c2 - c1;
+        coord_t dist = d.norm();
+
+        if(dist > r1 + r2 + eps || dist < abs(r1 - r2) - eps || dist < eps) {
+            return {};
+        }
+
+        coord_t a = (r1 * r1 - r2 * r2 + dist * dist) / (2 * dist);
+        coord_t h_sq = r1 * r1 - a * a;
+        if(h_sq < -eps) return {};
+        if(h_sq < 0) h_sq = 0;
+        coord_t h = sqrt(h_sq);
+
+        Point mid = c1 + d.unit() * a;
+        Point perp_dir = d.perp().unit();
+
+        if(h < eps) return {mid};
+        return {mid + perp_dir * h, mid - perp_dir * h};
+    }
+
+    // Ray-segment intersection (not used here)
+    friend optional<Point> intersect_ray_segment(
+        const Point& ray_start, const Point& ray_through,
+        const Point& seg_a, const Point& seg_b
+    ) {
+        Point ray_dir = ray_through - ray_start;
+        if(ray_dir.norm2() < Point::eps) return {};
+        Point seg_dir = seg_b - seg_a;
+        coord_t denom = ray_dir ^ seg_dir;
+        if(fabs(denom) < eps) return {};
+        coord_t t = ((seg_a - ray_start) ^ seg_dir) / denom;
+        if(t < eps) return {};
+        coord_t s = ((seg_a - ray_start) ^ ray_dir) / denom;
+        if(s < eps || s > 1 - eps) return {};
+        return ray_start + ray_dir * t;
+    }
+};
+
+int n;
+vector<pair<Point, Point>> segs;
+
+// Read input segments
+void read() {
+    cin >> n;
+    segs.resize(n);
+    for(auto& [a, b]: segs) {
+        cin >> a >> b;
+    }
+}
+
+// Rotate point clockwise by 90 degrees k times.
+// 1 => (x,y)->(y,-x), which is R^{-1}.
+Point rotate_cw(Point p, int k) {
+    k = ((k % 4) + 4) % 4;
+    for(int i = 0; i < k; i++) {
+        p = Point(p.y, -p.x);
+    }
+    return p;
+}
+
+// Compute intersection of segments [a,b] and [c,d].
+// Returns:
+//   {}               no intersection
+//   {P}              intersection at a single point
+//   {P,Q}            overlapping segment from P to Q (collinear overlap)
+vector<Point> segment_segment_intersection(
+    const Point& a, const Point& b, const Point& c, const Point& d
+) {
+    const coord_t eps = 1e-9;
+    Point ab = b - a, cd = d - c;
+    coord_t denom = ab ^ cd;
+
+    // Non-parallel case: unique line intersection point; then check parameters
+    if(fabs(denom) > eps) {
+        coord_t t = ((c - a) ^ cd) / denom;  // parameter along ab
+        coord_t s = ((c - a) ^ ab) / denom;  // parameter along cd
+        if(t >= -eps && t <= 1 + eps && s >= -eps && s <= 1 + eps) {
+            return {a + ab * t};
+        }
+        return {};
+    }
+
+    // Parallel: if not collinear, no intersection
+    if(fabs((c - a) ^ ab) > eps) {
+        return {};
+    }
+
+    // Collinear: compute overlap by projecting endpoints onto ab direction
+    coord_t len2 = ab.norm2();
+    coord_t tc = ((c - a) * ab) / len2; // position of c along [a,b] in t-space
+    coord_t td = ((d - a) * ab) / len2; // position of d along [a,b]
+    if(tc > td) swap(tc, td);
+
+    // Overlap interval in t on [0,1]
+    coord_t lo = max(0.0, tc), hi = min(1.0, td);
+    if(hi < lo - eps) return {};
+
+    Point P = a + ab * lo, Q = a + ab * hi;
+    if(hi - lo < eps) return {P}; // overlap degenerates to a point
+    return {P, Q};                // actual overlapping segment
+}
+
+void solve() {
+    // Accumulate total feasible arc-length (for continuous case)
+    coord_t total_length = 0;
+    // Accumulate integral of area over arc-length: ∫ 2|P|^2 ds
+    coord_t total_integral = 0;
+    // Collect feasible points if feasible set is 0-dimensional
+    vector<Point> discrete_points;
+
+    // Process each original segment S_i = [a,b] as potential location for P
+    for(auto& [a, b]: segs) {
+        Point ab = b - a;
+        coord_t L = ab.norm();
+        // Just in case; input says non-degenerate segments
+        if(L < 1e-12) continue;
+        coord_t len2 = ab.norm2();
+
+        // E[k-1] will store merged parameter intervals t where P(t) lies in R^{-k}(U)
+        vector<vector<pair<coord_t, coord_t>>> E(3);
+
+        // For k=1,2,3: enforce membership in R^{-k}(U)
+        for(int k = 1; k <= 3; k++) {
+            vector<pair<coord_t, coord_t>> raw; // unmerged intervals / points
+
+            // Union over all segments S_j
+            for(auto& [c, d]: segs) {
+                // Rotate segment S_j by R^{-k} (clockwise k*90°)
+                Point c2 = rotate_cw(c, k);
+                Point d2 = rotate_cw(d, k);
+
+                // Intersect S_i with rotated S_j
+                auto pts = segment_segment_intersection(a, b, c2, d2);
+                if(pts.empty()) continue;
+
+                // Map intersection back to t on S_i
+                coord_t t1 = ((pts[0] - a) * ab) / len2;
+                t1 = max(0.0, min(1.0, t1));
+
+                if(pts.size() == 1) {
+                    // Intersection at a single point: store as [t,t]
+                    raw.push_back({t1, t1});
+                } else {
+                    // Overlapping segment: two endpoints -> interval
+                    coord_t t2 = ((pts[1] - a) * ab) / len2;
+                    t2 = max(0.0, min(1.0, t2));
+                    if(t1 > t2) swap(t1, t2);
+                    raw.push_back({t1, t2});
+                }
+            }
+
+            // Merge the raw intervals into disjoint sorted intervals E[k-1]
+            sort(raw.begin(), raw.end());
+            for(auto& p: raw) {
+                if(!E[k - 1].empty() &&
+                   p.first <= E[k - 1].back().second + 1e-12) {
+                    // Overlaps/touches previous -> extend
+                    E[k - 1].back().second =
+                        max(E[k - 1].back().second, p.second);
+                } else {
+                    // Disjoint -> new interval
+                    E[k - 1].push_back(p);
+                }
+            }
+        }
+
+        // Candidate t-values where feasibility can change: all endpoints + 0,1
+        vector<coord_t> ts = {0.0, 1.0};
+        for(int k = 0; k < 3; k++) {
+            for(auto& [lo, hi]: E[k]) {
+                ts.push_back(lo);
+                ts.push_back(hi);
+            }
+        }
+        sort(ts.begin(), ts.end());
+
+        // Deduplicate candidates with tolerance
+        vector<coord_t> cand;
+        for(coord_t t: ts) {
+            t = max(0.0, min(1.0, t));
+            if(cand.empty() || fabs(t - cand.back()) > 1e-12) {
+                cand.push_back(t);
+            }
+        }
+
+        // Check if a parameter t lies within interval set E[k]
+        auto in_E = [&](coord_t t, int k) {
+            for(auto& [lo, hi]: E[k]) {
+                if(t >= lo - Point::eps && t <= hi + Point::eps) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Prepare quadratic coefficients for |P(t)|^2
+        coord_t dx = ab.x, dy = ab.y;
+        coord_t qa = dx * dx + dy * dy;
+        coord_t qb = 2 * (a.x * dx + a.y * dy);
+        coord_t qc = a.x * a.x + a.y * a.y;
+
+        // Antiderivative of |P(t)|^2:
+        // ∫ (qa t^2 + qb t + qc) dt = qa/3 t^3 + qb/2 t^2 + qc t
+        auto F = [&](coord_t t) {
+            return qa / 3 * t * t * t + qb / 2 * t * t + qc * t;
+        };
+
+        // Sweep consecutive candidate intervals; test midpoint for feasibility
+        for(int i = 0; i + 1 < (int)cand.size(); i++) {
+            coord_t tlo = cand[i], thi = cand[i + 1];
+            if(thi - tlo < 1e-12) continue;
+
+            coord_t mid = (tlo + thi) / 2;
+
+            // Feasible iff midpoint is in all three E sets
+            if(in_E(mid, 0) && in_E(mid, 1) && in_E(mid, 2)) {
+                // Add arc length: ds = L dt
+                total_length += (thi - tlo) * L;
+                // Add integral of area: ∫ 2|P|^2 ds = 2L ∫ |P|^2 dt
+                total_integral += 2 * L * (F(thi) - F(tlo));
+            }
+        }
+
+        // Also collect discrete feasible points at the candidates themselves
+        for(coord_t t: cand) {
+            if(in_E(t, 0) && in_E(t, 1) && in_E(t, 2)) {
+                discrete_points.push_back(a + ab * t);
+            }
+        }
+    }
+
+    cout << fixed << setprecision(10);
+
+    // If feasible set has positive length, expected value is integral/length
+    if(total_length > 1e-9) {
+        cout << total_integral / total_length << '\n';
+    } else {
+        // Otherwise: dedupe feasible points and average their areas
+        vector<Point> uniq;
+        for(auto& p: discrete_points) {
+            bool found = false;
+            for(auto& q: uniq) {
+                if((p - q).norm() < 1e-6) {
+                    found = true;
+                    break;
+                }
+            }
+            if(!found) uniq.push_back(p);
+        }
+
+        coord_t sum_area = 0;
+        for(auto& p: uniq) {
+            sum_area += 2 * p.norm2();
+        }
+        cout << sum_area / (coord_t)uniq.size() << '\n';
+    }
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int T = 1; // single test
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+    return 0;
+}
+```
+
+---
+
+## 4) Python solution (same algorithm, with detailed comments)
+
+```python
+import sys
+import math
+
+EPS = 1e-9
+EPS_MERGE = 1e-12
+
+class Point:
+    __slots__ = ("x", "y")
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def __add__(self, other): return Point(self.x + other.x, self.y + other.y)
+    def __sub__(self, other): return Point(self.x - other.x, self.y - other.y)
+    def __mul__(self, k):     return Point(self.x * k, self.y * k)
+    def __truediv__(self, k): return Point(self.x / k, self.y / k)
+
+    # dot product
+    def dot(self, other): return self.x * other.x + self.y * other.y
+    # cross product (2D scalar)
+    def cross(self, other): return self.x * other.y - self.y * other.x
+
+    def norm2(self): return self.x * self.x + self.y * self.y
+    def norm(self):  return math.hypot(self.x, self.y)
+
+def rotate_cw(p: Point, k: int) -> Point:
+    """Rotate point clockwise by 90 degrees k times."""
+    k %= 4
+    x, y = p.x, p.y
+    for _ in range(k):
+        x, y = y, -x
+    return Point(x, y)
+
+def segseg_intersection(a: Point, b: Point, c: Point, d: Point):
+    """
+    Segment-segment intersection:
+      returns [] no intersection
+      returns [P] intersection point
+      returns [P,Q] overlapping segment endpoints (collinear overlap)
+    """
+    ab = b - a
+    cd = d - c
+    denom = ab.cross(cd)
+
+    # Non-parallel: check if intersection parameters lie in [0,1]
+    if abs(denom) > EPS:
+        t = (c - a).cross(cd) / denom
+        s = (c - a).cross(ab) / denom
+        if -EPS <= t <= 1 + EPS and -EPS <= s <= 1 + EPS:
+            return [a + ab * t]
+        return []
+
+    # Parallel: if not collinear => no intersection
+    if abs((c - a).cross(ab)) > EPS:
+        return []
+
+    # Collinear: project c and d onto ab to get t-parameters
+    len2 = ab.norm2()
+    tc = (c - a).dot(ab) / len2
+    td = (d - a).dot(ab) / len2
+    if tc > td:
+        tc, td = td, tc
+
+    lo = max(0.0, tc)
+    hi = min(1.0, td)
+    if hi < lo - EPS:
+        return []
+
+    P = a + ab * lo
+    Q = a + ab * hi
+    if hi - lo < EPS:
+        return [P]
+    return [P, Q]
+
+def merge_intervals(intervals):
+    """Merge sorted intervals [lo,hi] with small tolerance."""
+    intervals.sort()
+    merged = []
+    for lo, hi in intervals:
+        if not merged or lo > merged[-1][1] + EPS_MERGE:
+            merged.append([lo, hi])
+        else:
+            merged[-1][1] = max(merged[-1][1], hi)
+    return merged
+
+def in_intervals(t, intervals):
+    """Check if t belongs to union of intervals (with EPS)."""
+    for lo, hi in intervals:
+        if t >= lo - EPS and t <= hi + EPS:
+            return True
+    return False
+
+def solve(segs):
+    total_length = 0.0
+    total_integral = 0.0
+    discrete_points = []
+
+    for a, b in segs:
+        ab = b - a
+        L = ab.norm()
+        if L < 1e-12:
+            continue
+        len2 = ab.norm2()
+
+        # Build E[k] for k=1..3 (store at index 0..2)
+        E = []
+        for k in (1, 2, 3):
+            raw = []
+            for c, d in segs:
+                c2 = rotate_cw(c, k)
+                d2 = rotate_cw(d, k)
+                inter = segseg_intersection(a, b, c2, d2)
+                if not inter:
+                    continue
+
+                # map to t on [a,b]
+                t1 = (inter[0] - a).dot(ab) / len2
+                t1 = max(0.0, min(1.0, t1))
+                if len(inter) == 1:
+                    raw.append((t1, t1))
+                else:
+                    t2 = (inter[1] - a).dot(ab) / len2
+                    t2 = max(0.0, min(1.0, t2))
+                    if t1 > t2:
+                        t1, t2 = t2, t1
+                    raw.append((t1, t2))
+
+            E.append(merge_intervals(raw))
+
+        # Candidate t values are all endpoints + {0,1}
+        ts = [0.0, 1.0]
+        for k in range(3):
+            for lo, hi in E[k]:
+                ts.append(lo)
+                ts.append(hi)
+        ts.sort()
+
+        # dedupe with tolerance
+        cand = []
+        for t in ts:
+            t = max(0.0, min(1.0, t))
+            if not cand or abs(t - cand[-1]) > EPS_MERGE:
+                cand.append(t)
+
+        # coefficients for |P(t)|^2 = qa t^2 + qb t + qc
+        dx, dy = ab.x, ab.y
+        qa = dx*dx + dy*dy
+        qb = 2.0 * (a.x*dx + a.y*dy)
+        qc = a.x*a.x + a.y*a.y
+
+        # antiderivative of |P(t)|^2
+        def F(t):
+            return (qa/3.0)*t*t*t + (qb/2.0)*t*t + qc*t
+
+        # integrate over feasible subintervals determined by midpoint test
+        for i in range(len(cand) - 1):
+            tlo, thi = cand[i], cand[i+1]
+            if thi - tlo < EPS_MERGE:
+                continue
+            mid = 0.5 * (tlo + thi)
+            if (in_intervals(mid, E[0]) and
+                in_intervals(mid, E[1]) and
+                in_intervals(mid, E[2])):
+
+                total_length += (thi - tlo) * L
+                total_integral += 2.0 * L * (F(thi) - F(tlo))
+
+        # collect discrete feasible candidates (for 0D case)
+        for t in cand:
+            if (in_intervals(t, E[0]) and
+                in_intervals(t, E[1]) and
+                in_intervals(t, E[2])):
+                discrete_points.append(a + ab * t)
+
+    if total_length > 1e-9:
+        return total_integral / total_length
+
+    # If only points, dedupe and average 2|P|^2
+    uniq = []
+    for p in discrete_points:
+        ok = True
+        for q in uniq:
+            if (p - q).norm() < 1e-6:
+                ok = False
+                break
+        if ok:
+            uniq.append(p)
+
+    # guaranteed at least one solution
+    s = 0.0
+    for p in uniq:
+        s += 2.0 * p.norm2()
+    return s / len(uniq)
+
+def main():
+    data = sys.stdin.read().strip().split()
+    if not data:
+        return
+    it = iter(data)
+    n = int(next(it))
+    segs = []
+    for _ in range(n):
+        x1 = int(next(it)); y1 = int(next(it))
+        x2 = int(next(it)); y2 = int(next(it))
+        segs.append((Point(x1, y1), Point(x2, y2)))
+
+    ans = solve(segs)
+    print(f"{ans:.10f}")
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## 5) Compressed editorial
+
+Let \(U\) be the union of given segments. A square centered at the origin with first vertex \(P\) has other vertices \(R^k(P)\) (90° rotations). Validity is:
+\[
+P \in V = U \cap R^{-1}(U) \cap R^{-2}(U) \cap R^{-3}(U)
+\]
+Area is \(2|P|^2\). We need \(\mathbb{E}[2|P|^2]\) for uniform \(P\in V\) (by length if 1D, else uniform over points).
+
+Process each segment \(S_i=[A,B]\) with parameter \(P(t)=A+t(B-A)\). For each \(k=1..3\), compute the set \(E_k\subset[0,1]\) where \(P(t)\) lies on some rotated segment \(R^{-k}(S_j)\). This is obtained by intersecting \(S_i\) with every \(R^{-k}(S_j)\), mapping intersection points/overlaps back to t-intervals, then merging.
+
+Feasible t are those in \(E_1\cap E_2\cap E_3\). Gather all endpoints from \(E_k\) plus {0,1}, sort/dedupe, and for each consecutive pair test midpoint membership to decide if the whole subinterval is feasible; integrate there. Since \(|P(t)|^2\) is quadratic in t, integrate analytically. Accumulate total feasible arc length and integral of \(2|P|^2\) times arc-length; output ratio.
+
+If total feasible length is 0, collect feasible candidate endpoints, dedupe points, and average \(2|P|^2\) over them.

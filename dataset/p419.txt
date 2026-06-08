@@ -1,0 +1,794 @@
+## 1. Abridged problem statement
+
+A tank moves on a hexagonal grid. It starts at cell `(0, 0)` facing direction `d1`, and must reach cell `(x, y)` facing direction `d2`.
+
+In one turn, it can either:
+
+- move forward in its current direction, or
+- turn left by one direction modulo `6`, then move forward.
+
+It cannot move more than `b` consecutive times in the same direction.
+
+Given `x, y, d2, d1, b`, find the minimum number of turns needed.
+
+Constraints include `|x|, |y| ≤ 10^12`, so simulation or graph search is impossible.
+
+---
+
+## 2. Detailed editorial
+
+### Direction system
+
+The six hex-grid directions are represented as vectors:
+
+```text
+0: ( 1,  0)
+1: ( 0,  1)
+2: (-1,  1)
+3: (-1,  0)
+4: ( 0, -1)
+5: ( 1, -1)
+```
+
+Notice:
+
+```text
+dir 3 = -dir 0
+dir 4 = -dir 1
+dir 5 = -dir 2
+dir 2 = dir 1 - dir 0
+```
+
+---
+
+### Shape of any valid path
+
+The tank can only keep its current direction or increase it by `1 mod 6`.
+
+Therefore, the sequence of directions used by the tank consists of consecutive direction blocks:
+
+```text
+f, f + 1, f + 2, ...
+```
+
+modulo `6`.
+
+Each maximal block of equal direction is called a **run**. Each run has length between `1` and `b`.
+
+At the first move, the tank has two choices:
+
+1. move immediately in direction `d1`,
+2. turn left first and move in direction `(d1 + 1) mod 6`.
+
+So the first run direction `f` is either:
+
+```text
+d1
+```
+
+or
+
+```text
+d1 + 1 mod 6
+```
+
+The last run direction must be `d2`.
+
+If the first run direction is `f`, then the number of runs `R` must satisfy:
+
+```text
+f + R - 1 ≡ d2 mod 6
+```
+
+Thus:
+
+```text
+R = R0 + 6m
+```
+
+where:
+
+```text
+R0 = ((d2 - f) mod 6) + 1
+```
+
+and `m ≥ 0` is the number of extra full cycles around the six directions.
+
+---
+
+### Forced moves and extra moves
+
+Each run must have at least one move.
+
+For a fixed starting direction `f` and lap count `m`, direction `k` appears in:
+
+```text
+n[k] = m + c[k]
+```
+
+runs, where `c[k]` is `1` if direction `k` appears in the initial fragment of `R0` runs, otherwise possibly `0`.
+
+Each of those runs contributes at least one forced move, so total forced moves are:
+
+```text
+R0 + 6m
+```
+
+Each run can have up to `b` moves, so direction `k` can receive extra moves:
+
+```text
+s[k] ∈ [0, (m + c[k]) * (b - 1)]
+```
+
+Let:
+
+```text
+cap[k] = (m + c[k]) * (b - 1)
+```
+
+A full cycle of all six directions has zero displacement, so the displacement of the forced one-move-per-run part depends only on the initial fragment `c[k]`, not on `m`.
+
+Let this forced displacement be `(Cx, Cy)`.
+
+Then the extra moves must create displacement:
+
+```text
+Dx = x - Cx
+Dy = y - Cy
+```
+
+---
+
+### Reducing the six directions to one variable
+
+Pair opposite directions:
+
+```text
+axis 0: direction 0 vs direction 3
+axis 1: direction 1 vs direction 4
+axis 2: direction 2 vs direction 5
+```
+
+Define signed net movement on these axes:
+
+```text
+A = s[0] - s[3]
+B = s[1] - s[4]
+C = s[2] - s[5]
+```
+
+Because:
+
+```text
+dir 2 = dir 1 - dir 0
+```
+
+the displacement from extras is:
+
+```text
+A * dir0 + B * dir1 + C * dir2
+= (A - C, B + C)
+```
+
+We need this to equal `(Dx, Dy)`:
+
+```text
+A - C = Dx
+B + C = Dy
+```
+
+So:
+
+```text
+A = Dx + C
+B = Dy - C
+```
+
+Now only one variable remains: `C`.
+
+For a fixed `C`, the minimum number of extra moves is:
+
+```text
+|A| + |B| + |C|
+= |Dx + C| + |Dy - C| + |C|
+```
+
+---
+
+### Feasibility interval for `C`
+
+For each axis, the signed net movement must be achievable within the capacities.
+
+For axis `0`:
+
+```text
+A = s[0] - s[3]
+-cap[3] ≤ A ≤ cap[0]
+```
+
+Since `A = Dx + C`:
+
+```text
+-cap[3] - Dx ≤ C ≤ cap[0] - Dx
+```
+
+For axis `1`:
+
+```text
+B = s[1] - s[4]
+-cap[4] ≤ B ≤ cap[1]
+```
+
+Since `B = Dy - C`:
+
+```text
+Dy - cap[1] ≤ C ≤ Dy + cap[4]
+```
+
+For axis `2`:
+
+```text
+C = s[2] - s[5]
+-cap[5] ≤ C ≤ cap[2]
+```
+
+So the valid interval is:
+
+```text
+lo = max(-cap[5], -cap[3] - Dx, Dy - cap[1])
+hi = min( cap[2],  cap[0] - Dx, Dy + cap[4])
+```
+
+If `lo > hi`, this `m` is infeasible.
+
+---
+
+### Minimizing extra moves for fixed `m`
+
+For feasible `m`, minimize:
+
+```text
+g(C) = |Dx + C| + |Dy - C| + |C|
+```
+
+over:
+
+```text
+C ∈ [lo, hi]
+```
+
+This is a convex piecewise-linear function.
+
+Without the interval restriction, its minimum is at the median of:
+
+```text
+-Dx, Dy, 0
+```
+
+Call this value `Cstar`.
+
+With the interval restriction, the optimal `C` is:
+
+```text
+C = clamp(Cstar, lo, hi)
+```
+
+Then:
+
+```text
+answer(m) = R0 + 6m + g(C)
+```
+
+---
+
+### Optimizing over `m`
+
+As `m` increases, capacities only increase, so feasibility is monotonic.
+
+First, binary search the smallest feasible `m`.
+
+Then, because the total answer as a function of `m` is discrete convex/unimodal, binary search the first `m` where:
+
+```text
+answer(m + 1) >= answer(m)
+```
+
+Do this for both possible first directions:
+
+```text
+d1
+(d1 + 1) mod 6
+```
+
+Take the smaller answer.
+
+Special case: if the tank is already at `(0, 0)` facing `d2 == d1`, answer is `0`.
+
+Complexity:
+
+```text
+O(log 10^12)
+```
+
+with constant memory.
+
+---
+
+## 3. Provided C++ solution with detailed comments
+
+```cpp
+#include <bits/stdc++.h> // Includes almost all standard C++ headers.
+
+using namespace std; // Allows using standard library names without std:: prefix.
+
+// Output operator for pairs.
+// Not essential for this solution, but included in the original template.
+template<typename T1, typename T2>
+ostream& operator<<(ostream& out, const pair<T1, T2>& x) {
+    return out << x.first << ' ' << x.second; // Print the two pair elements.
+}
+
+// Input operator for pairs.
+// Not essential here, but useful in general.
+template<typename T1, typename T2>
+istream& operator>>(istream& in, pair<T1, T2>& x) {
+    return in >> x.first >> x.second; // Read the two pair elements.
+}
+
+// Input operator for vectors.
+// Reads all existing elements of a vector.
+template<typename T>
+istream& operator>>(istream& in, vector<T>& a) {
+    for(auto& x: a) { // Iterate over vector elements by reference.
+        in >> x;      // Read each element.
+    }
+    return in;        // Return stream to allow chaining.
+};
+
+// Output operator for vectors.
+// Prints elements separated by spaces.
+template<typename T>
+ostream& operator<<(ostream& out, const vector<T>& a) {
+    for(auto x: a) {  // Iterate over vector elements.
+        out << x << ' '; // Print each element followed by a space.
+    }
+    return out;       // Return stream to allow chaining.
+};
+
+// Target coordinates.
+int64_t x, y;
+
+// Final direction d2, initial direction d1, and max same-direction run length b.
+int d1, d2, b;
+
+// Reads input.
+// Input order is x y d2 d1 b.
+void read() {
+    cin >> x >> y >> d2 >> d1 >> b;
+}
+
+void solve() {
+    // Direction vectors for the hexagonal coordinate system.
+    // Direction 0 = (1, 0), direction 1 = (0, 1), etc.
+    const int vx[6] = {1, 0, -1, -1, 0, 1};
+    const int vy[6] = {0, 1, 1, 0, -1, -1};
+
+    // If the tank is already in the target cell and already has the needed
+    // direction, no move is required.
+    if(x == 0 && y == 0 && d1 == d2) {
+        cout << 0 << '\n';
+        return;
+    }
+
+    // Best answer over the two possible first-move directions.
+    int64_t best = LLONG_MAX;
+
+    // Large enough upper bound for binary searches on the number of full laps.
+    const int64_t MHI = (int64_t)6e12;
+
+    // The first move can be either:
+    // turn = 0: move in initial direction d1,
+    // turn = 1: turn left once, then move in direction d1 + 1.
+    for(int turn = 0; turn < 2; turn++) {
+        // First direction actually used.
+        int fd = (d1 + turn) % 6;
+
+        // Minimal number of runs needed so that the last run direction is d2.
+        // If fd + R0 - 1 == d2 mod 6, then R0 is in [1, 6].
+        int R0 = (((d2 - fd) % 6 + 6) % 6) + 1;
+
+        // c[k] counts how many times direction k appears in the base fragment
+        // of R0 consecutive runs.
+        int64_t c[6] = {0, 0, 0, 0, 0, 0};
+
+        // Fill the base fragment directions.
+        for(int i = 0; i < R0; i++) {
+            c[(fd + i) % 6]++;
+        }
+
+        // Compute displacement contributed by the mandatory one move
+        // in each base-fragment run.
+        int64_t Cx = 0, Cy = 0;
+
+        // Full extra laps have zero net displacement, so only c[k] matters.
+        for(int k = 0; k < 6; k++) {
+            Cx += c[k] * vx[k];
+            Cy += c[k] * vy[k];
+        }
+
+        // Remaining displacement that must be produced by extra moves.
+        int64_t Dx = x - Cx;
+        int64_t Dy = y - Cy;
+
+        // The unconstrained minimizer of:
+        // |Dx + C| + |Dy - C| + |C|
+        // is median(-Dx, Dy, 0).
+        //
+        // This expression computes the median as sum - min - max.
+        int64_t Cstar = (-Dx) + Dy - min({-Dx, Dy, (int64_t)0}) -
+                        max({-Dx, Dy, (int64_t)0});
+
+        // Capacity of extra moves in direction k for a given number of full
+        // laps m. Direction k appears m + c[k] times as a run, and each run
+        // can receive at most b - 1 extra moves.
+        auto cap = [&](int64_t m, int k) -> int64_t {
+            return (m + c[k]) * (b - 1);
+        };
+
+        // Evaluates whether a given m is feasible, and if so returns the
+        // minimal total number of moves for this m.
+        auto eval = [&](int64_t m) -> pair<bool, int64_t> {
+            // Feasible interval for the signed net movement C on axis 2.
+            //
+            // Axis 2 condition:
+            // -cap[5] <= C <= cap[2]
+            //
+            // Axis 0 condition:
+            // -cap[3] <= Dx + C <= cap[0]
+            //
+            // Axis 1 condition:
+            // -cap[4] <= Dy - C <= cap[1]
+            int64_t lo = max({-cap(m, 5), -cap(m, 3) - Dx, Dy - cap(m, 1)});
+            int64_t hi = min({cap(m, 2), cap(m, 0) - Dx, Dy + cap(m, 4)});
+
+            // Empty interval means impossible for this m.
+            if(lo > hi) {
+                return {false, 0};
+            }
+
+            // Clamp the unconstrained optimum Cstar to the feasible interval.
+            int64_t C = max(lo, min(hi, Cstar));
+
+            // Minimal number of extra moves needed for this C.
+            int64_t g = abs(Dx + C) + abs(Dy - C) + abs(C);
+
+            // Total moves = forced one move per run + extra moves.
+            return {true, R0 + 6 * m + g};
+        };
+
+        // First binary search:
+        // find the smallest m for which the target is reachable.
+        int64_t mlo = 0, mhi = MHI;
+
+        while(mlo < mhi) {
+            // Middle point.
+            int64_t mid = mlo + (mhi - mlo) / 2;
+
+            // Feasibility is monotonic: once feasible, larger m stays feasible.
+            if(eval(mid).first) {
+                mhi = mid;
+            } else {
+                mlo = mid + 1;
+            }
+        }
+
+        // Second binary search:
+        // the answer as a function of m is discrete convex/unimodal.
+        // Find the first m where answer(m + 1) >= answer(m).
+        int64_t lo = mlo, hi = MHI;
+
+        while(lo < hi) {
+            // Middle point.
+            int64_t mid = lo + (hi - lo) / 2;
+
+            // If increasing m no longer improves the answer, optimum is at
+            // mid or to the left.
+            if(eval(mid + 1).second >= eval(mid).second) {
+                hi = mid;
+            } else {
+                // Otherwise answer is still decreasing, so go right.
+                lo = mid + 1;
+            }
+        }
+
+        // Update global best using the optimal m for this starting direction.
+        best = min(best, eval(lo).second);
+    }
+
+    // Print the best answer over the two possible first directions.
+    cout << best << '\n';
+}
+
+int main() {
+    // Speeds up C++ input/output.
+    ios_base::sync_with_stdio(false);
+
+    // Unties cin from cout for faster input.
+    cin.tie(nullptr);
+
+    // There is only one test case.
+    int T = 1;
+
+    // Original template supports multiple tests, but this problem has one.
+    // cin >> T;
+
+    // Process the test case.
+    for(int test = 1; test <= T; test++) {
+        read();
+        solve();
+    }
+
+    // Successful program termination.
+    return 0;
+}
+```
+
+---
+
+## 4. Python solution with detailed comments
+
+```python
+import sys
+
+
+def solve():
+    # Read input.
+    # Input order is: x y d2 d1 b
+    data = list(map(int, sys.stdin.read().split()))
+    x, y, d2, d1, b = data
+
+    # Hex-grid direction vectors.
+    vx = [1, 0, -1, -1, 0, 1]
+    vy = [0, 1, 1, 0, -1, -1]
+
+    # If already at the target position with the target heading,
+    # zero turns are needed.
+    if x == 0 and y == 0 and d1 == d2:
+        print(0)
+        return
+
+    # Large enough upper bound for number of full laps.
+    MHI = 6_000_000_000_000
+
+    # Store the best answer over the two possible first directions.
+    best = None
+
+    # First move can be:
+    # turn = 0: move in direction d1,
+    # turn = 1: turn left first, then move in direction d1 + 1.
+    for turn in range(2):
+        # First direction used.
+        fd = (d1 + turn) % 6
+
+        # Minimal number of direction-runs needed so that the final run
+        # direction is d2.
+        R0 = ((d2 - fd) % 6) + 1
+
+        # c[k] = number of times direction k appears in the base fragment
+        # of R0 consecutive runs.
+        c = [0] * 6
+        for i in range(R0):
+            c[(fd + i) % 6] += 1
+
+        # Compute forced displacement from one mandatory move in each run
+        # of the base fragment.
+        #
+        # Extra full laps over all 6 directions have zero displacement,
+        # so they do not affect this forced displacement.
+        Cx = 0
+        Cy = 0
+        for k in range(6):
+            Cx += c[k] * vx[k]
+            Cy += c[k] * vy[k]
+
+        # Remaining displacement to be produced by extra moves.
+        Dx = x - Cx
+        Dy = y - Cy
+
+        # The function to minimize over variable C is:
+        # |Dx + C| + |Dy - C| + |C|.
+        #
+        # Its unconstrained optimum is median(-Dx, Dy, 0).
+        vals = [-Dx, Dy, 0]
+        vals.sort()
+        Cstar = vals[1]
+
+        def cap(m, k):
+            """
+            Maximum number of extra moves allowed in direction k.
+
+            Direction k appears m + c[k] times as a run.
+            Each run already has one mandatory move and can receive
+            at most b - 1 extra moves.
+            """
+            return (m + c[k]) * (b - 1)
+
+        def evaluate(m):
+            """
+            For a fixed number of full laps m:
+            - determine feasibility,
+            - if feasible, compute the minimal total number of moves.
+            """
+
+            # Let C be the signed net movement along axis 2:
+            # C = s[2] - s[5].
+            #
+            # The other signed axes are forced:
+            # A = Dx + C = s[0] - s[3]
+            # B = Dy - C = s[1] - s[4]
+            #
+            # Apply capacity constraints for all three axes.
+
+            lo = max(
+                -cap(m, 5),          # from -cap[5] <= C
+                -cap(m, 3) - Dx,     # from -cap[3] <= Dx + C
+                Dy - cap(m, 1),      # from Dy - C <= cap[1]
+            )
+
+            hi = min(
+                cap(m, 2),           # from C <= cap[2]
+                cap(m, 0) - Dx,      # from Dx + C <= cap[0]
+                Dy + cap(m, 4),      # from -cap[4] <= Dy - C
+            )
+
+            # No feasible value of C.
+            if lo > hi:
+                return False, 0
+
+            # Clamp the unconstrained optimum to the feasible interval.
+            C = max(lo, min(hi, Cstar))
+
+            # Minimum number of extra moves.
+            extra = abs(Dx + C) + abs(Dy - C) + abs(C)
+
+            # Forced moves are one per run:
+            # R0 runs in the base fragment and 6m runs from full laps.
+            total = R0 + 6 * m + extra
+
+            return True, total
+
+        # Binary search for the smallest feasible m.
+        left = 0
+        right = MHI
+
+        while left < right:
+            mid = (left + right) // 2
+
+            feasible, _ = evaluate(mid)
+
+            # Feasibility is monotonic in m.
+            if feasible:
+                right = mid
+            else:
+                left = mid + 1
+
+        first_feasible = left
+
+        # Now minimize the unimodal/discrete-convex answer function.
+        left = first_feasible
+        right = MHI
+
+        while left < right:
+            mid = (left + right) // 2
+
+            _, value_mid = evaluate(mid)
+            _, value_next = evaluate(mid + 1)
+
+            # If moving to mid + 1 does not improve the answer,
+            # the optimum is at mid or to the left.
+            if value_next >= value_mid:
+                right = mid
+            else:
+                # Otherwise the function is still decreasing.
+                left = mid + 1
+
+        # Best value for this initial first direction.
+        _, candidate = evaluate(left)
+
+        # Update global best.
+        if best is None or candidate < best:
+            best = candidate
+
+    print(best)
+
+
+if __name__ == "__main__":
+    solve()
+```
+
+---
+
+## 5. Compressed editorial
+
+A valid path consists of direction runs. Since the tank can only continue straight or turn left by one, the run directions are consecutive modulo `6`.
+
+The first run direction is either `d1` or `d1 + 1`. For a fixed first direction `f`, the number of runs must be:
+
+```text
+R = R0 + 6m
+R0 = ((d2 - f) mod 6) + 1
+```
+
+where `m` is the number of extra full cycles.
+
+Each run has length at least `1`, so one move per run is forced. Direction `k` appears `m + c[k]` times, so it can receive:
+
+```text
+cap[k] = (m + c[k]) * (b - 1)
+```
+
+extra moves.
+
+The forced displacement from full cycles is zero, so only the initial fragment contributes. Let the remaining displacement be `(Dx, Dy)`.
+
+Group opposite directions into three signed axes:
+
+```text
+A = s0 - s3
+B = s1 - s4
+C = s2 - s5
+```
+
+Since direction `2 = direction 1 - direction 0`, the extra displacement is:
+
+```text
+(A - C, B + C)
+```
+
+Thus:
+
+```text
+A = Dx + C
+B = Dy - C
+```
+
+For fixed `m`, only `C` is free.
+
+Capacity constraints give an interval:
+
+```text
+lo = max(-cap5, -cap3 - Dx, Dy - cap1)
+hi = min( cap2,  cap0 - Dx, Dy + cap4)
+```
+
+If `lo > hi`, this `m` is impossible.
+
+Otherwise minimize:
+
+```text
+|Dx + C| + |Dy - C| + |C|
+```
+
+over `[lo, hi]`.
+
+The unconstrained optimum is:
+
+```text
+median(-Dx, Dy, 0)
+```
+
+Clamp it into `[lo, hi]`.
+
+Then:
+
+```text
+answer(m) = R0 + 6m + extra
+```
+
+Feasibility is monotonic in `m`, so binary search the first feasible `m`. The answer function is unimodal/discrete convex, so binary search the first `m` where:
+
+```text
+answer(m + 1) >= answer(m)
+```
+
+Try both possible first directions and output the minimum.
