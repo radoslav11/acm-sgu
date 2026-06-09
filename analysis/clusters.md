@@ -1,0 +1,485 @@
+# SGU-Editorial thematic clusters
+
+## Elementary Number/Math Problems (79 problems)
+_All problems hinge on straightforward arithmetic or classical number theory (gcd, primes, totients, modular residues, weighted medians, date offsets) without heavy data structures or advanced algorithms._
+
+- p100 — A+B
+- p102 — Coprimes
+- p105 — Div 3
+- p107 — 987654321 problem
+- p113 — Nearly prime numbers
+- p114 — Telecasting station
+- p115 — Calendar
+- p116 — Index of super-prime
+- p117 — Counting
+- p118 — Digital Root
+- p119 — Magic Pairs
+- p123 — The sum
+- p126 — Boxes
+- p127 — Telephone directory
+- p130 — Circle
+- p133 — Border
+- p137 — Funny Strings
+- p140 — Integer Sequences
+- p144 — Meeting
+- p146 — The Runner
+- p148 — B-Station
+- p152 — Making round
+- p154 — Factorial
+- p160 — Magic Multiplying Machine
+- p163 — Wise King
+- p169 — Numbers
+- p171 — Sarov zones
+- p178 — Golden chain
+- p180 — Inversions
+- p181 — X-Sequence
+- p184 — Patties
+- p186 — The Chain
+- p193 — Chinese Girls' Amusement
+- p199 — Beautiful People
+- p203 — Hyperhuffman
+- p207 — Robbers
+- p231 — Prime Sum
+- p246 — Black & White
+- p254 — Strange Random
+- p259 — Printed PR
+- p275 — To xor or not to xor
+- p276 — Andrew's Troubles
+- p296 — Sasha vs. Kate
+- p297 — Fair-play
+- p299 — Triangle
+- p316 — Code Tanks
+- p347 — Join the Strings
+- p349 — Wolves and Sheep
+- p353 — Billing
+- p355 — Numbers Painting
+- p365 — Ships of the Desert
+- p374 — Save Vasya
+- p375 — Amplifiers
+- p398 — Friends of Friends
+- p403 — Scientific Problem
+- p404 — Fortune-telling with camomile
+- p405 — Totalizator
+- p407 — Number of Paths in the Empire
+- p415 — Necessary Coins
+- p417 — Heavy Disc
+- p443 — Everlasting...?
+- p444 — Headstrong Student
+- p455 — Sequence analysis
+- p456 — Annuity Payment Scheme
+- p460 — Plural Form of Nouns
+- p467 — Chessmaster
+- p473 — Droid formation
+- p481 — Hero of Our Time
+- p486 — "Bulls and Cows"
+- p491 — Game for Little Johnny
+- p492 — Hotel in Ves Lagos
+- p495 — Kids and Prizes
+- p497 — Abelian Groups
+- p499 — Greatest Greatest Common Divisor
+- p524 — Buoys
+- p531 — Bonnie and Clyde
+- p533 — Dice Tower
+- p549 — Dumbbells
+- p551 — Preparing Problem
+
+## Diverse Algorithmic Techniques (67 problems)
+_The problems span unrelated methods—graph Euler trails and matchings, big-integer arithmetic and modular constraints, logical algebra over DAGs, combinatorial graph selection, and sequence data structures—without a single unifying algorithmic theme._
+
+- p101 — Domino
+- p111 — Very simple problem
+- p132 — Another Chocolate Maniac
+- p147 — Black-white king
+- p159 — Self-Replicating Numbers
+- p161 — Intuitionistic Logic
+- p164 — Airlines
+- p187 — Twist and whirl - want to cheat
+- p188 — Factory guard
+- p205 — Quantization Problem
+- p229 — Divide and conquer
+- p235 — You are given a chessboard with side equal to N. There are some chess pieces on it. The only White Queen on the board is able to move and to attack black pieces. Other pieces are not allowed to move or to attack any pieces. You are given a position of all chess pieces on the board. Your task is to find, how many different cells on the field the White Queen can occupy after exactly M moves.
+- p237 — Galaxy X: Episode I - Masters of Mind
+- p245 — Black-White Army
+- p247 — Difficult Choice
+- p256 — Balloons
+- p263 — Towers
+- p268 — Hyper Almost Permutative String
+- p271 — Book Pile
+- p273 — Game Po
+- p281 — Championship
+- p287 — Amusing Qc Machine
+- p295 — Identifier Duplicated!
+- p298 — King Berl VI
+- p302 — BHTML 1.0
+- p306 — Balance
+- p311 — Ice-cream Tycoon
+- p317 — Fast Ride
+- p318 — Grants
+- p319 — Kalevich Strikes Back
+- p329 — Black-and-White Triangle
+- p330 — Numbers
+- p334 — Tiny Puzzle
+- p339 — Segments
+- p342 — Reihenfolge
+- p357 — Remote Control
+- p360 — B++ Interpreter
+- p362 — Robot-Annihilator
+- p366 — Computer Game
+- p371 — Subway
+- p372 — Tea Party
+- p377 — The Lesson of Physical Culture
+- p382 — Cantor Function
+- p389 — Strange Planet
+- p393 — Bergamot Problem
+- p395 — "Binary Cat" Club
+- p399 — Berodoskar Development
+- p410 — Galaxy in danger
+- p411 — Petya the Hero
+- p418 — Deducing Grammar
+- p419 — Hexagonal Walkaround
+- p436 — The Diputs notation
+- p447 — Optimal Rest
+- p450 — Ramen Shop
+- p453 — Meetings
+- p458 — The Monochrome Picture
+- p475 — Be a Smart Raftsman
+- p479 — Funny Feature
+- p480 — Gena's Soul Cakes
+- p494 — Journal
+- p504 — Square Palindrome
+- p510 — Distinct Substrings
+- p516 — Schedule
+- p535 — Dirty Dishes
+- p540 — Traffic Lights
+- p542 — Gena vs Petya
+- p547 — Divide The Kingdom
+
+## Geometric and Dynamic Programming Methods (67 problems)
+_These problems center on geometric reconstruction/measurement and optimization (midpoint polygon recovery, train-door placement, tetrahedron volume, projectile motion) plus structured dynamic programming for constrained sequences and grid/string selections._
+
+- p136 — Erasing Edges
+- p158 — Commuter Train
+- p162 — Pyramids
+- p165 — Basketball
+- p167 — I-country.
+- p204 — Little Jumper
+- p214 — Weird Dissimilarity
+- p240 — Runaway
+- p248 — Integer Linear Programming
+- p250 — Constructive Plan
+- p257 — Debt
+- p265 — Wizards
+- p285 — What? Where? When?
+- p300 — Train
+- p301 — Boring. Hot. Summer...
+- p308 — Hyperboloid Distance
+- p309 — Real Fun
+- p313 — Circular Railway
+- p331 — Traffic Jam
+- p335 — Thiefs And Cops
+- p338 — Casino
+- p343 — VaR
+- p346 — Snooker
+- p363 — Baggage Room
+- p364 — Lemmings
+- p367 — Contest
+- p368 — Tests
+- p376 — Berland All-Round Competitions
+- p378 — Save the Fisher
+- p380 — Synchronised Alpinism
+- p386 — Happy Birthday, Jedi Knight!
+- p390 — Tickets
+- p391 — Mr. X
+- p394 — Berhatton
+- p396 — Dance it up!
+- p400 — The last hour of the contest
+- p401 — Geologist Dubrovsky
+- p408 — Game with points
+- p422 — Fast Typing
+- p423 — Battle
+- p427 — Hamiltonian polyhedron
+- p429 — Problem Stacks
+- p430 — Unit-distance graph
+- p433 — Japhshan and Ramshut
+- p434 — Chemists
+- p445 — Dig or Climb
+- p446 — Rotation Estimation
+- p452 — Colony Maintenance
+- p463 — Walking around Berhattan
+- p464 — Optimal bribing
+- p465 — Fire Station Building
+- p466 — Parking at Secret Object
+- p470 — The Death Cube
+- p471 — Funny Game
+- p472 — Sokoban
+- p477 — Doors
+- p478 — Excursion
+- p482 — Impudent Thief
+- p493 — Illumination of Buildings
+- p501 — Octahedron And Dominoes
+- p509 — Chameleons All Around
+- p521 — "North-East"
+- p526 — Running Hero
+- p532 — Building Foundation
+- p543 — Cafe
+- p545 — Cut the rope, another rope and so on!
+- p553 — Sultan's Pearls
+
+## DP and number-theoretic constructions (56 problems)
+_The problems center on structured dynamic programming and constructive algorithms, often reducing constraints to linear Diophantine equations or simple combinatorial formulas to count or construct valid configurations._
+
+- p104 — Little shop of flowers
+- p106 — The equation
+- p125 — Shtirlits
+- p135 — Drawing Lines
+- p141 — Jumping Joe
+- p142 — Keyword
+- p155 — Cartesian Tree
+- p168 — Matrix
+- p175 — Encoding
+- p177 — Square
+- p179 — Brackets light
+- p190 — Dominoes
+- p191 — Exhibition
+- p196 — Matrix Multiplication
+- p201 — Non Absorbing DFA
+- p202 — The Towers of Hanoi Revisited
+- p220 — Little Bishops
+- p221 — Big Bishops
+- p222 — Little Rooks
+- p223 — Little Kings
+- p230 — Weighings
+- p238 — Uncle Vasya and Bags for Potatoes
+- p241 — The United Fields of Chessboardia
+- p249 — Matrix
+- p258 — Almost Lucky Numbers
+- p262 — Symbol Recognition
+- p269 — Rooks
+- p274 — Spam-filter
+- p291 — Evolution
+- p292 — Field for the Cemetery
+- p307 — Cipher
+- p310 — Hippopotamus
+- p320 — The Influence of the Mafia
+- p328 — A Coloring Game
+- p344 — Weed
+- p350 — XOR-omania
+- p358 — Median of Medians
+- p361 — National Flag
+- p369 — Game
+- p379 — Elevator
+- p397 — Text Editor
+- p406 — Goggle
+- p409 — Berland Flag
+- p425 — Control function
+- p428 — Rebus
+- p437 — Hexodoku
+- p484 — Kola
+- p488 — Dales and Hills
+- p490 — Figure ans Spots
+- p496 — L-Shapes
+- p506 — Subsequences Of Substrings
+- p517 — Cornerless Tiling
+- p519 — 3D City Model
+- p523 — Elevator
+- p536 — Berland Chess
+- p538 — Emoticons
+
+## Graph and Tree Algorithms (50 problems)
+_All problems are centered on structural and algorithmic properties of graphs or trees, including paths, cycles (Hamiltonian), colorings, centroids, and distance-related computations._
+
+- p103 — Traffic Lights
+- p121 — Bridges painting
+- p122 — The book
+- p134 — Centroid
+- p143 — Long Live the Queen
+- p149 — Computer Network
+- p156 — Strange Graph
+- p172 — eXam
+- p174 — Walls
+- p176 — Flow construction
+- p185 — Two shortest
+- p194 — Reactor Cooling
+- p195 — New Year Bonus Grant
+- p206 — Roads
+- p212 — Data Transmission
+- p213 — Strong Defence
+- p216 — Royal Federation
+- p218 — Unstable Systems
+- p226 — Colored graph
+- p236 — Greedy Path
+- p242 — Student's Morning
+- p252 — Railway Communication
+- p272 — Evacuation plan
+- p280 — Trade centers
+- p286 — Ancient decoration
+- p314 — Shortest Paths
+- p321 — The Spy Network
+- p322 — The Great Union
+- p323 — Aviamachinations
+- p326 — Perspective
+- p352 — Beerland Attacks
+- p381 — Bidirected Graph
+- p384 — Country
+- p402 — Terrorists in Berland
+- p413 — Berland Division
+- p424 — Beautiful graph
+- p438 — The Glorious Karlutka River =)
+- p457 — Snow in Berland
+- p462 — Electrician
+- p487 — Courier's Route
+- p503 — Running City
+- p507 — Treediff
+- p513 — Maximal Clique
+- p515 — Recover path
+- p518 — Kidnapping
+- p520 — Fire in the Country
+- p525 — Revolutionary Roads
+- p529 — It's Time to Repair the Roads
+- p534 — Computer Network
+- p541 — BR Privatization
+
+## Constructive algorithms and DP (45 problems)
+_These problems mainly involve designing explicit constructions or using dynamic programming / state-based methods (profile DP, game DP, big-integer simulation, invariants) to satisfy structural constraints or count configurations._
+
+- p108 — Self-numbers 2
+- p109 — Magic of David Copperfield II
+- p112 — ab-ba
+- p131 — Hardwood floor
+- p138 — Games of Chess
+- p139 — Help Needed!
+- p153 — Playing with matches
+- p157 — Codeforces
+- p170 — Particles
+- p183 — Painting the balls
+- p197 — Nice Patterns Strike Back
+- p200 — Cracking RSA
+- p210 — Beloved Sons
+- p224 — Little Queens
+- p225 — Little Knights
+- p232 — Infinite Fraction
+- p239 — Minesweeper
+- p255 — Winsock 3 Beta
+- p261 — Discrete Roots
+- p282 — Isomorphism
+- p288 — Best Tournament Schedule
+- p294 — He's Circles
+- p304 — Mars Stomatology
+- p337 — Keven
+- p354 — Just Matrix
+- p356 — Extrasensory Perception
+- p370 — Rifleman
+- p385 — Highlander
+- p416 — Optimal Dartboard
+- p441 — Set Division
+- p448 — Controlled Tournament
+- p468 — A bit of classic
+- p476 — Coach's Trouble
+- p483 — Jealous Cucumber
+- p485 — Arrays
+- p489 — Extremal Permutations
+- p498 — Coins
+- p502 — Digits Permutation
+- p508 — Black-white balls
+- p527 — Explode 'Em All
+- p537 — Divisibility
+- p544 — Chess Championship
+- p546 — Ternary Password
+- p548 — Dragons and Princesses
+- p552 — Database optimization
+
+## Stateful simulation and algebraic transforms (45 problems)
+_All problems involve simulating or interpreting stateful systems (editors, substrings, counters, term‑rewriting, chip‑firing) or constructing algebraic/boolean transformations under constraints, often with careful handling of structure and equivalence._
+
+- p166 — Editor
+- p173 — Coins
+- p182 — Open the brackets
+- p189 — Perl-like Substr
+- p208 — Toral Tickets
+- p211 — Strange Counter
+- p215 — PL/Cool
+- p219 — Synchrograph
+- p234 — Black-White King Strikes Back
+- p243 — Broken Chessboard
+- p260 — Puzzle
+- p264 — Travel
+- p270 — Thimbles
+- p279 — Bipermutations
+- p284 — Grammar
+- p289 — Challenging Tic-Tac-Toe
+- p293 — Game with Q an C
+- p305 — Exhibition
+- p324 — The Text Formatting
+- p325 — Palindrome
+- p327 — Yet Another Palindrome
+- p336 — Elections
+- p340 — TeX2HTML
+- p341 — Circuits
+- p348 — Twisting the Number
+- p359 — Pointers
+- p388 — Soap Opera
+- p392 — Cyclic Troubles
+- p420 — Number Permutations
+- p421 — k-th Product
+- p426 — Double cyclic
+- p431 — Wildcards
+- p432 — XYZX 2009
+- p439 — A Secret Book
+- p442 — X + R(X) = N
+- p449 — Dendrograms
+- p451 — Cousin's Aunt
+- p454 — Kakuro
+- p459 — Choreographer Problem
+- p461 — Wiki Lists
+- p505 — Prefixes and suffixes
+- p511 — Fermat's Last Theorem
+- p528 — Bencoding
+- p530 — Recruiting
+- p539 — Multiswap Sorting
+
+## Planar and Spatial Geometry Algorithms (43 problems)
+_All problems center on geometric constructions or queries in 2D/3D space, involving polygons, segments, projections, and reflections solved with computational geometry techniques._
+
+- p110 — Dungeon
+- p120 — Archipelago
+- p124 — Broken line
+- p128 — Snake
+- p129 — Inheritance
+- p150 — Mr. Beetle II
+- p151 — Construct a triangle
+- p192 — RGB
+- p198 — Get Out!
+- p209 — Areas
+- p217 — Two Cylinders
+- p227 — The art to the broad masses!
+- p228 — Archipelago
+- p233 — The Greatest Angle
+- p244 — Height, Bisector and Median
+- p251 — Polymania
+- p253 — Theodore Roosevelt
+- p266 — Berlion
+- p267 — Optimist vs. Pessimist
+- p277 — Heroes
+- p278 — Fuel
+- p283 — Mechanics
+- p290 — Defend the Milky Way
+- p303 — Great Berland Wall
+- p312 — 4-3 King
+- p315 — The Highway Belt
+- p332 — Largest Circle
+- p333 — Random Shooting
+- p345 — Revolution
+- p351 — A Mission for a Scout
+- p373 — Carlsson vs. Winnie-the-Pooh
+- p383 — Caravans
+- p387 — Lazy Judges
+- p412 — Expedition
+- p414 — Orthogonal Circles
+- p435 — UFO Circles
+- p440 — Moles and Holes
+- p469 — Ghostbusters
+- p474 — All for Love
+- p500 — Circular Island
+- p512 — Friendly Points
+- p514 — Polygon
+- p522 — Oil Wells
